@@ -19,13 +19,13 @@ export default function DashboardShell({ userName, children }: { userName: strin
     <div className="min-h-screen bg-paper">
       <header className="bg-deep text-[#EAF1EE]">
         <div className="max-w-6xl mx-auto flex flex-wrap items-center justify-between gap-3 px-4 py-3">
-          <div className="flex items-center gap-2.5 font-display font-bold">
+          <a href="https://watheqapp.netlify.app" className="flex items-center gap-2.5 font-display font-bold hover:opacity-90" title="العودة إلى موقع وثيق">
             <span className="w-8 h-8 rounded-lg bg-deep2 grid place-items-center text-goldSoft">و</span>
             <div>
               <div>وثيق</div>
               <div className="text-[.65rem] font-normal text-[#9FB8B3] -mt-1">لوحة التحكم</div>
             </div>
-          </div>
+          </a>
 
           <div className="inline-flex bg-white/10 border border-white/15 rounded-xl p-1">
             <Link href="/dashboard/association"
