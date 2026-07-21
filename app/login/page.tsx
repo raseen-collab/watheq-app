@@ -56,13 +56,13 @@ function LoginInner() {
   return (
     <div className="min-h-screen grid place-items-center p-4 bg-paper">
       <div className="w-full max-w-md bg-white border border-line rounded-2xl shadow-lg p-8">
-        <div className="flex items-center gap-3 mb-6">
+        <a href="https://watheqapp.netlify.app" className="flex items-center gap-3 mb-6 hover:opacity-90" title="العودة إلى موقع وثيق">
           <div className="w-10 h-10 rounded-lg bg-deep grid place-items-center text-goldSoft font-bold font-display">و</div>
           <div>
             <div className="font-bold font-display text-deep text-lg">وثيق</div>
             <div className="text-xs text-muted">لوحة التحكم</div>
           </div>
-        </div>
+        </a>
 
         <h1 className="font-display text-2xl font-bold text-deep mb-1">{mode === "signin" ? "تسجيل الدخول" : "إنشاء حساب جديد"}</h1>
         <p className="text-sm text-muted mb-5">{mode === "signin" ? "أدخل بريدك وكلمة المرور." : "أنشئ حسابك المجاني لإدارة جمعياتك أو عقاراتك."}</p>
@@ -97,6 +97,9 @@ function LoginInner() {
           ) : (
             <>لديك حساب؟ <button className="text-gold font-semibold" onClick={() => { setMode("signin"); setError(null); }}>سجّل الدخول</button></>
           )}
+        </div>
+        <div className="text-center mt-4 pt-4 border-t border-line text-sm">
+          <a href="https://watheqapp.netlify.app" className="text-muted hover:text-deep">← العودة إلى موقع وثيق</a>
         </div>
       </div>
     </div>
