@@ -1,9 +1,17 @@
 "use client";
-import { useState } from "react";
+import { Suspense, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase-client";
 
 export default function LoginPage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen grid place-items-center text-muted">جارٍ التحميل…</div>}>
+      <LoginInner />
+    </Suspense>
+  );
+}
+
+function LoginInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const next = searchParams.get("next") || "/dashboard";
@@ -36,7 +44,6 @@ export default function LoginPage() {
       }
     } catch (e: any) {
       const msg = String(e?.message || e);
-      // ترجمة أخطاء شائعة
       if (msg.includes("Invalid login")) setError("بريد أو كلمة مرور غير صحيحة.");
       else if (msg.includes("already registered")) setError("هذا البريد مسجّل مسبقًا — سجّل الدخول.");
       else if (msg.includes("Password should")) setError("كلمة المرور قصيرة — استخدم 6 أحرف على الأقل.");
