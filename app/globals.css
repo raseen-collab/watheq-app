@@ -1,0 +1,26 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root { color-scheme: light; }
+html, body { padding: 0; margin: 0; }
+body {
+  font-family: "IBM Plex Sans Arabic", system-ui, sans-serif;
+  background: #FBF8F1;
+  color: #0B211F;
+  -webkit-font-smoothing: antialiased;
+}
+* { box-sizing: border-box; }
+
+/* أنماط قابلة لإعادة الاستخدام */
+.btn { display:inline-flex; align-items:center; gap:.5rem; font-weight:600; padding:.55rem 1rem; border-radius:.6rem; transition:all .15s ease; }
+.btn-primary { background:#0E3A37; color:#F6F1E4; }
+.btn-primary:hover { background:#0A2C2A; }
+.btn-gold { background:#B8791F; color:#fff; }
+.btn-gold:hover { background:#8a5a11; }
+.btn-ghost { background:#fff; color:#0E3A37; border:1px solid #E4DDCD; }
+.btn-ghost:hover { background:#F3EEE2; }
+.btn-wa { background:#1FA855; color:#fff; }
+.btn-wa:hover { background:#18944a; }
+.fld { background:#FBF8F1; border:1px solid #E4DDCD; border-radius:.5rem; padding:.55rem .7rem; font-size:.9rem; width:100%; color:#0B211F; }
+.fld:focus { outline:2px solid #E7C877; outline-offset:1px; }
