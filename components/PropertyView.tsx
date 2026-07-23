@@ -1,74 +1,85 @@
 "use client";
 import { useMemo, useState } from "react";
+import Link from "next/link";
 import { createClient } from "@/lib/supabase-client";
-import { sar, daysLeft, waLink, today } from "@/lib/utils";
+import { sar, waLink, today } from "@/lib/utils";
+import { contractState, buildSchedule, FREQUENCIES, freqLabel, freqShort, derivedEndDate, type Frequency } from "@/lib/contracts";
+import { PROPERTY_TYPES, typeLabel, unitLabel, typeIcon } from "@/lib/domain";
 
 type Tenant = {
   id: string; name: string; unit: string | null; phone: string | null; national_id: string | null;
   rent_amount: number; contract_start: string | null; contract_end: string | null;
-  months_late: number; last_paid: string | null;
+  payment_frequency: string | null; paid_periods: number | null; contract_periods: number | null;
 };
 type Note = { id: string; note_date: string; text: string };
 type Property = {
-  id: string; name: string; address: string | null; manager: string | null; collected: number;
+  id: string; name: string; address: string | null; city: string | null; manager: string | null;
+  property_type: string | null; collected: number;
   tenants: Tenant[]; property_notes: Note[];
 };
 
-export default function PropertyView({ initial }: { initial: Property[] }) {
+export default function PropertyView({ initial, orgName }: { initial: Property[]; orgName: string }) {
   const supabase = createClient();
   const [items, setItems] = useState<Property[]>(initial);
   const [activeId, setActiveId] = useState<string | null>(initial[0]?.id || null);
-  const [modal, setModal] = useState<null | { kind: "newProp" | "editProp" | "newTenant" | "editTenant"; id?: string }>(null);
-  const [notice, setNotice] = useState<null | { name: string; body: string }>(null);
+  const [modal, setModal] = useState<null | { kind: "newProp" | "editProp" | "tenant"; id?: string }>(null);
+  const [doc, setDoc] = useState<null | { title: string; body: string }>(null);
+  const [schedule, setSchedule] = useState<Tenant | null>(null);
 
   const active = useMemo(() => items.find((p) => p.id === activeId) || null, [items, activeId]);
 
-  // ---------- عقار ----------
-  async function createProperty(d: Partial<Property>) {
-    const { data, error } = await supabase.from("properties").insert({
-      name: d.name, address: d.address || null, manager: d.manager || null, collected: 0,
-    }).select("*").single();
-    if (error) return alert(error.message);
-    const next = { ...(data as any), tenants: [], property_notes: [] };
-    setItems([next, ...items]); setActiveId(next.id); setModal(null);
-  }
-  async function updateProperty(d: Partial<Property>) {
-    if (!active) return;
-    const { error } = await supabase.from("properties").update({
-      name: d.name, address: d.address || null, manager: d.manager || null,
-    }).eq("id", active.id);
-    if (error) return alert(error.message);
-    setItems(items.map((p) => p.id === active.id ? { ...p, ...d } as any : p));
+  async function saveProperty(d: any, id?: string) {
+    const payload = {
+      name: d.name, address: d.address || null, city: d.city || null,
+      manager: d.manager || orgName || null, property_type: d.property_type || "residential",
+    };
+    if (id) {
+      const { error } = await supabase.from("properties").update(payload).eq("id", id);
+      if (error) return alert(error.message);
+      setItems(items.map((p) => (p.id === id ? { ...p, ...payload } as Property : p)));
+    } else {
+      const { data, error } = await supabase.from("properties").insert({ ...payload, collected: 0 }).select("*").single();
+      if (error) return alert(error.message);
+      const next = { ...(data as any), tenants: [], property_notes: [] };
+      setItems([next, ...items]); setActiveId(next.id);
+    }
     setModal(null);
   }
+
   async function deleteProperty() {
-    if (!active || !confirm("حذف العقار وكل مستأجريه؟")) return;
+    if (!active || !confirm("حذف العقار وكل وحداته؟")) return;
     const { error } = await supabase.from("properties").delete().eq("id", active.id);
     if (error) return alert(error.message);
     const rest = items.filter((p) => p.id !== active.id);
     setItems(rest); setActiveId(rest[0]?.id || null); setModal(null);
   }
 
-  // ---------- مستأجر ----------
-  async function saveTenant(d: Partial<Tenant>, id?: string) {
+  async function saveTenant(d: any, id?: string) {
     if (!active) return;
+    const freq = (d.payment_frequency || "monthly") as Frequency;
+    const periods = d.contract_periods ? Number(d.contract_periods) : null;
     const payload = {
       property_id: active.id, name: d.name, unit: d.unit || null, phone: d.phone || null,
-      national_id: d.national_id || null, rent_amount: d.rent_amount || 0,
-      contract_start: d.contract_start || null, contract_end: d.contract_end || null,
+      national_id: d.national_id || null, rent_amount: Number(d.rent_amount) || 0,
+      contract_start: d.contract_start || null,
+      payment_frequency: freq,
+      contract_periods: periods,
+      contract_end: d.contract_start ? derivedEndDate(d.contract_start, freq, periods) : null,
     };
     if (id) {
       const { error } = await supabase.from("tenants").update(payload).eq("id", id);
       if (error) return alert(error.message);
-      setItems(items.map((p) => p.id === active.id ? { ...p, tenants: p.tenants.map((t) => t.id === id ? { ...t, ...payload } as any : t) } : p));
+      setItems(items.map((p) => p.id === active.id
+        ? { ...p, tenants: p.tenants.map((t) => (t.id === id ? { ...t, ...payload } as Tenant : t)) } : p));
     } else {
-      const { data, error } = await supabase.from("tenants").insert({ ...payload, months_late: 0 }).select("*").single();
+      const { data, error } = await supabase.from("tenants").insert({ ...payload, paid_periods: 0 }).select("*").single();
       if (error) return alert(error.message);
-      setItems(items.map((p) => p.id === active.id ? { ...p, tenants: [...p.tenants, data as Tenant] } : p));
+      setItems(items.map((p) => (p.id === active.id ? { ...p, tenants: [...p.tenants, data as Tenant] } : p)));
     }
     setModal(null);
   }
-  async function tenantPatch(id: string, patch: Partial<Tenant>, collectedDelta = 0) {
+
+  async function patchTenant(id: string, patch: any, collectedDelta = 0) {
     if (!active) return;
     const { error } = await supabase.from("tenants").update(patch).eq("id", id);
     if (error) return alert(error.message);
@@ -76,266 +87,400 @@ export default function PropertyView({ initial }: { initial: Property[] }) {
     setItems(items.map((p) => p.id === active.id ? {
       ...p,
       collected: collectedDelta ? (p.collected || 0) + collectedDelta : p.collected,
-      tenants: p.tenants.map((t) => t.id === id ? { ...t, ...patch } : t),
+      tenants: p.tenants.map((t) => (t.id === id ? { ...t, ...patch } : t)),
     } : p));
   }
+
   async function deleteTenant(id: string) {
-    if (!active || !confirm("حذف المستأجر؟")) return;
+    if (!active || !confirm("حذف هذه الوحدة؟")) return;
     const { error } = await supabase.from("tenants").delete().eq("id", id);
     if (error) return alert(error.message);
-    setItems(items.map((p) => p.id === active.id ? { ...p, tenants: p.tenants.filter((t) => t.id !== id) } : p));
+    setItems(items.map((p) => (p.id === active.id ? { ...p, tenants: p.tenants.filter((t) => t.id !== id) } : p)));
   }
 
-  // ---------- ملاحظات ----------
   async function addNote(text: string) {
     if (!active || !text.trim()) return;
-    const { data, error } = await supabase.from("property_notes").insert({
-      property_id: active.id, text: text.trim(), note_date: today(),
-    }).select("*").single();
+    const { data, error } = await supabase.from("property_notes")
+      .insert({ property_id: active.id, text: text.trim(), note_date: today() }).select("*").single();
     if (error) return alert(error.message);
-    setItems(items.map((p) => p.id === active.id ? { ...p, property_notes: [data as Note, ...p.property_notes] } : p));
+    setItems(items.map((p) => (p.id === active.id ? { ...p, property_notes: [data as Note, ...p.property_notes] } : p)));
   }
+
   async function deleteNote(id: string) {
     if (!active) return;
-    const { error } = await supabase.from("property_notes").delete().eq("id", id);
-    if (error) return alert(error.message);
-    setItems(items.map((p) => p.id === active.id ? { ...p, property_notes: p.property_notes.filter((n) => n.id !== id) } : p));
+    await supabase.from("property_notes").delete().eq("id", id);
+    setItems(items.map((p) => (p.id === active.id ? { ...p, property_notes: p.property_notes.filter((n) => n.id !== id) } : p)));
   }
 
-  // ---------- إنذارات ----------
-  function tenantRemindLink(t: Tenant) {
+  function remindLink(t: Tenant) {
     if (!active) return "#";
-    const rent = t.rent_amount || 0, total = t.months_late * rent, mgr = active.manager || "إدارة الأملاك";
-    const msg = t.months_late <= 1
-      ? `مساء الخير ${t.name} 🌿\nتذكير ودّي بأن إيجار الوحدة (${t.unit || "—"}) بعقار ${active.name}${rent ? ` وقدره ${sar(rent)} ريال` : ""} أصبح مستحقًا. نأمل السداد في موعده.\n— ${mgr}`
-      : `تحية طيبة ${t.name}،\nالأجرة المتأخرة (${t.months_late} أشهر)${total ? ` بمبلغ ${sar(total)} ريال` : ""} عن الوحدة (${t.unit || "—"}) بعقار ${active.name} لم تُسدَّد. نأمل المبادرة تفاديًا للإجراءات وفق عقد الإيجار الموحّد.\n— ${mgr}`;
+    const st = contractState(t);
+    const who = active.manager || orgName || "إدارة الأملاك";
+    const ul = unitLabel(active.property_type);
+    const msg = st.unpaid === 0
+      ? `مساء الخير ${t.name}\nتذكير ودّي: تستحق دفعة إيجار ${ul} (${t.unit || "—"}) بعقار ${active.name}${t.rent_amount ? ` وقدرها ${sar(t.rent_amount)} ريال` : ""} بتاريخ ${st.nextDueDate}. شكرًا لتعاونكم.\n— ${who}`
+      : `تحية طيبة ${t.name}،\nنفيدكم بوجود ${st.unpaid} دفعة متأخرة${st.amountDue ? ` بمبلغ ${sar(st.amountDue)} ريال` : ""} عن ${ul} (${t.unit || "—"}) بعقار ${active.name}. نأمل المبادرة بالسداد.\n— ${who}`;
     return waLink(t.phone, msg);
   }
-  function generateNotice(t: Tenant) {
+
+  function makeNotice(t: Tenant) {
     if (!active) return;
-    const rent = t.rent_amount || 0, total = (t.months_late || 1) * rent, mgr = active.manager || "إدارة الأملاك";
-    const body =
-`إنذار نهائي بسداد الأجرة المتأخرة
-التاريخ: ${today()}
-
-من: ${mgr} — بصفته المؤجر/الوكيل عن مالك العقار.
-إلى: المستأجر / ${t.name}${t.national_id ? `، هوية/إقامة رقم (${t.national_id})` : ""}، شاغل الوحدة رقم (${t.unit || "—"}) بعقار ${active.name}${active.address ? ` — ${active.address}` : ""}.
-
-الموضوع: إنذار نهائي بسداد الأجرة المتأخرة بموجب عقد الإيجار الموحّد المسجّل في شبكة إيجار.
-
-بالإشارة إلى عقد الإيجار الموحّد المشار إليه أعلاه، فقد ترصّد بذمّتكم مبلغ ${sar(total)} ريال قيمة أجرة متأخرة عن (${t.months_late || 1}) شهرًا، ولم تُسدَّد رغم تنبيهكم بذلك.
-
-وعليه، نُنذركم إنذارًا نهائيًّا بسداد كامل المبلغ المذكور خلال مدة أقصاها (5) أيام من تاريخ استلامكم هذا الإنذار.
-
-وفي حال عدم السداد خلال المهلة المحددة، فإن المؤجر يحتفظ بكامل حقوقه النظامية في اتخاذ الإجراءات المقرّرة نظامًا — بما في ذلك المطالبة بإخلاء العين المؤجرة واستيفاء الأجرة المتأخرة والتعويضات — عن طريق التقدّم بطلب تنفيذ عقد الإيجار الموحّد لدى محكمة التنفيذ عبر منصة ناجز، استنادًا إلى نظام التنفيذ وأحكام عقد الإيجار الموحّد.
-
-هذا إشعار وإنذار نظامي لحفظ الحقوق.
-
-المؤجر/الوكيل: ${mgr}
-التوقيع: ____________________     التاريخ: ${today()}`;
-    setNotice({ name: t.name, body });
+    const st = contractState(t);
+    const who = active.manager || orgName || "إدارة الأملاك";
+    const ul = unitLabel(active.property_type);
+    const body = [
+      "إشعار بسداد مستحقات متأخرة",
+      `التاريخ: ${today()}`,
+      "",
+      `من: ${who}`,
+      `إلى: ${t.name}${t.national_id ? ` — هوية/سجل رقم (${t.national_id})` : ""}، شاغل ${ul} رقم (${t.unit || "—"}) بعقار ${active.name}${active.address ? ` — ${active.address}` : ""}.`,
+      "",
+      "الموضوع: إشعار بسداد الأجرة المتأخرة.",
+      "",
+      `نفيدكم بأنه بموجب عقد الإيجار المبرم بيننا (بداية العقد: ${t.contract_start || "—"}، دورة السداد: ${freqLabel(t.payment_frequency)})، قد ترصّد بذمّتكم مبلغ ${sar(st.amountDue)} ريال، قيمة (${st.unpaid}) دفعة متأخرة، ولم تُسدَّد حتى تاريخه.`,
+      "",
+      "نأمل المبادرة بسداد المبلغ المذكور خلال (5) أيام من تاريخ استلامكم هذا الإشعار، حفاظًا على العلاقة التعاقدية بين الطرفين.",
+      "",
+      "وفي حال عدم السداد، سيتخذ المؤجر ما يحفظ حقوقه وفق ما تقتضيه الأنظمة المعمول بها والعقد المبرم بين الطرفين.",
+      "",
+      "وتقبلوا تحياتنا،",
+      who,
+      `التوقيع: ____________________     التاريخ: ${today()}`,
+    ].join("\n");
+    setDoc({ title: `إشعار سداد — ${t.name}`, body });
   }
 
-  // ---------- عرض ----------
   if (!items.length) {
     return (
-      <div className="max-w-lg mx-auto bg-white border border-line rounded-2xl shadow-sm p-8 mt-10 text-center">
-        <div className="w-12 h-12 rounded-lg bg-deep grid place-items-center text-goldSoft font-bold font-display mx-auto mb-4">و</div>
-        <h2 className="font-display text-xl font-bold text-deep mb-2">ابدأ بإضافة عقارك</h2>
-        <p className="text-muted mb-6">أدر مستأجريك، الإيجارات، والعقود من مكان واحد.</p>
-        <button className="btn btn-gold" onClick={() => setModal({ kind: "newProp" })}>+ إنشاء عقار</button>
-        <PropertyModal open={modal?.kind === "newProp"} title="عقار جديد" onClose={() => setModal(null)} onSubmit={createProperty} />
+      <div className="max-w-lg mx-auto bg-white border border-line rounded-2xl shadow-sm p-8 mt-8 text-center">
+        <div className="text-4xl mb-3">🏢</div>
+        <h2 className="font-display text-xl font-bold text-deep mb-2">أضف أول عقار لك</h2>
+        <p className="text-muted mb-6">عمارة، معرض تجاري، مكتب، مستودع، فيلا، أو أرض — كلها مدعومة.</p>
+        <div className="flex gap-2 justify-center flex-wrap">
+          <button className="btn btn-gold" onClick={() => setModal({ kind: "newProp" })}>+ إضافة عقار</button>
+          <Link href="/dashboard/property/import" className="btn btn-ghost">رفع من ملف Excel</Link>
+        </div>
+        <PropertyModal open={modal?.kind === "newProp"} orgName={orgName} onClose={() => setModal(null)} onSubmit={(d) => saveProperty(d)} />
       </div>
     );
   }
 
   const p = active!;
-  const total = p.tenants.length;
-  const late = p.tenants.filter((t) => t.months_late > 0);
-  const overdue = late.reduce((s, t) => s + t.months_late * (t.rent_amount || 0), 0);
-  const pct = total ? Math.round(((total - late.length) / total) * 100) : 0;
-  const soon = p.tenants
-    .map((t) => ({ t, dl: daysLeft(t.contract_end) }))
-    .filter((x) => x.dl !== null && x.dl! <= 60 && x.dl! >= 0)
-    .sort((a, b) => (a.dl! - b.dl!))[0];
-
-  const editingTenant = modal?.kind === "editTenant" ? p.tenants.find((x) => x.id === modal.id) : undefined;
+  const ul = unitLabel(p.property_type);
+  const states = p.tenants.map((t) => ({ t, st: contractState(t) }));
+  const late = states.filter((x) => x.st.status === "late");
+  const soon = states.filter((x) => x.st.status === "soon");
+  const overdue = late.reduce((s, x) => s + x.st.amountDue, 0);
+  const pct = states.length ? Math.round(((states.length - late.length) / states.length) * 100) : 100;
+  const expiring = states
+    .filter((x) => x.st.daysToEnd !== null && x.st.daysToEnd <= 60 && x.st.daysToEnd >= 0)
+    .sort((a, b) => (a.st.daysToEnd || 0) - (b.st.daysToEnd || 0))[0];
+  const editing = modal?.kind === "tenant" && modal.id ? p.tenants.find((t) => t.id === modal.id) : undefined;
 
   return (
     <div>
       <div className="flex flex-wrap items-center gap-2 mb-5">
         <div className="flex-1 min-w-0">
-          <h1 className="font-display font-bold text-deep text-xl">{p.name}</h1>
-          <div className="text-sm text-muted">إدارة الأملاك والمستأجرين</div>
+          <h1 className="font-display font-bold text-deep text-xl flex items-center gap-2">
+            <span>{typeIcon(p.property_type)}</span> {p.name}
+          </h1>
+          <div className="text-sm text-muted">{typeLabel(p.property_type)}{p.city ? ` · ${p.city}` : ""} · {p.tenants.length} {ul}</div>
         </div>
         <select value={p.id} onChange={(e) => setActiveId(e.target.value)} className="fld max-w-[220px] font-semibold text-deep">
-          {items.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
+          {items.map((x) => <option key={x.id} value={x.id}>{typeIcon(x.property_type)} {x.name}</option>)}
         </select>
-        <button className="btn btn-ghost text-sm" onClick={() => setModal({ kind: "editProp" })}>⚙︎ إعدادات</button>
+        <button className="btn btn-ghost text-sm" onClick={() => setModal({ kind: "editProp" })}>الإعدادات</button>
         <button className="btn btn-gold text-sm" onClick={() => setModal({ kind: "newProp" })}>+ عقار</button>
       </div>
 
-      {soon && (
-        <div className={`flex flex-wrap items-center gap-3 rounded-xl p-3.5 mb-4 border ${soon.dl! <= 30 ? "bg-[#FBE9E7] border-[#F5C6C2] text-[#8f2b26]" : "bg-[#FBF1DF] border-[#EBD9AA] text-[#8a5a11]"}`}>
-          <span>📄</span><span><b>عقد {soon.t.name} (وحدة {soon.t.unit || "—"}) ينتهي خلال {soon.dl} يومًا</b> ({soon.t.contract_end}). جهّز التجديد أو الإخلاء.</span>
+      {expiring && (
+        <div className={`flex flex-wrap items-center gap-3 rounded-xl p-3.5 mb-4 border text-sm ${
+          (expiring.st.daysToEnd || 0) <= 30 ? "bg-[#FBE9E7] border-[#F5C6C2] text-[#8f2b26]" : "bg-[#FBF1DF] border-[#EBD9AA] text-[#8a5a11]"}`}>
+          <span>عقد {expiring.t.name} ({ul} {expiring.t.unit || "—"}) ينتهي خلال <b>{expiring.st.daysToEnd}</b> يومًا ({expiring.st.endDate}). جهّز التجديد أو الإخلاء.</span>
         </div>
       )}
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
-        <Stat v={`${pct}٪`} l="نسبة التحصيل" tone="ok" />
-        <Stat v={String(late.length)} l="مستأجرون متأخرون" tone={late.length ? "warn" : undefined} />
+        <Stat v={`${pct}٪`} l="نسبة الانتظام" tone="ok" />
+        <Stat v={String(late.length)} l="وحدات متأخرة" tone={late.length ? "warn" : undefined} />
         <Stat v={sar(overdue)} l="إجمالي المتأخر (ريال)" tone={overdue ? "warn" : undefined} />
-        <Stat v={sar(p.collected)} l="المُحصّل (ريال)" />
+        <Stat v={String(soon.length)} l="دفعات خلال ٧ أيام" />
       </div>
 
-      <div className="grid md:grid-cols-[1.6fr_1fr] gap-5 items-start">
+      <div className="grid md:grid-cols-[1.65fr_1fr] gap-5 items-start">
         <div className="bg-white border border-line rounded-2xl shadow-sm">
-          <div className="flex items-center justify-between border-b border-line px-5 py-4">
-            <h2 className="font-semibold">المستأجرون <span className="text-sm font-normal text-muted">· {total} وحدة</span></h2>
-            <button className="btn btn-gold text-xs" onClick={() => setModal({ kind: "newTenant" })}>+ مستأجر</button>
+          <div className="flex items-center justify-between border-b border-line px-5 py-4 gap-2 flex-wrap">
+            <h2 className="font-semibold">الوحدات والمستأجرون</h2>
+            <div className="flex gap-2">
+              <Link href="/dashboard/property/import" className="btn btn-ghost text-xs">رفع Excel</Link>
+              <button className="btn btn-gold text-xs" onClick={() => setModal({ kind: "tenant" })}>+ وحدة</button>
+            </div>
           </div>
           <div className="p-4 flex flex-col gap-2">
-            {p.tenants.length ? p.tenants.map((t) => {
-              const l = t.months_late > 0, totalDue = t.months_late * (t.rent_amount || 0);
-              return (
-                <div key={t.id} className="flex flex-wrap items-center gap-3 rounded-xl border border-line bg-paper p-3">
-                  <span className="w-9 h-9 rounded-lg bg-paper2 grid place-items-center font-semibold text-deep">{(t.name || "?").charAt(0)}</span>
+            {states.length ? states.map(({ t, st }) => (
+              <div key={t.id} className="rounded-xl border border-line bg-paper p-3">
+                <div className="flex flex-wrap items-center gap-3">
+                  <span className="w-9 h-9 rounded-lg bg-paper2 grid place-items-center font-semibold text-deep shrink-0">{(t.name || "?").charAt(0)}</span>
                   <div className="min-w-0 flex-1">
                     <div className="font-semibold">{t.name}</div>
-                    <div className="text-xs text-muted">وحدة {t.unit || "—"} · إيجار {sar(t.rent_amount)} ريال{l && totalDue > t.rent_amount ? ` · متأخر ${sar(totalDue)} ريال` : ""}{t.contract_end ? ` · ينتهي ${t.contract_end}` : ""}</div>
+                    <div className="text-xs text-muted">
+                      {ul} {t.unit || "—"} · {sar(t.rent_amount)} ريال / {freqShort(t.payment_frequency)}
+                      {st.nextDueDate && st.unpaid === 0 ? ` · القادمة ${st.nextDueDate}` : ""}
+                      {st.amountDue ? ` · متأخر ${sar(st.amountDue)} ريال` : ""}
+                    </div>
                   </div>
-                  {l
-                    ? <span className="inline-flex items-center gap-1.5 text-xs font-semibold bg-[#FBE9E7] text-[#a5322c] rounded-lg px-2.5 py-1"><span className="w-1.5 h-1.5 rounded-full bg-late"/>متأخر {t.months_late > 1 ? `${t.months_late} أشهر` : "شهر"}</span>
-                    : <span className="inline-flex items-center gap-1.5 text-xs font-semibold bg-[#E6F4EC] text-[#137a50] rounded-lg px-2.5 py-1"><span className="w-1.5 h-1.5 rounded-full bg-paid"/>مسدّد</span>}
-                  <div className="flex flex-wrap gap-1.5 justify-end">
-                    <button className="btn btn-ghost text-xs" onClick={() => tenantPatch(t.id, { months_late: Math.max(0, t.months_late - 1), last_paid: today() }, t.rent_amount || 0)}>تسجيل دفعة</button>
-                    <button className="btn btn-ghost text-xs" onClick={() => tenantPatch(t.id, { months_late: t.months_late + 1 })}>+ استحقاق</button>
-                    {l && <a href={tenantRemindLink(t)} target="_blank" rel="noreferrer" className="btn btn-wa text-xs">تذكير</a>}
-                    {l && <button className="btn btn-gold text-xs" onClick={() => generateNotice(t)}>توليد إنذار</button>}
-                    <button className="text-deep text-sm px-2" onClick={() => setModal({ kind: "editTenant", id: t.id })} title="تعديل">✎</button>
-                    <button className="text-late text-sm px-2" onClick={() => deleteTenant(t.id)} title="حذف">✕</button>
-                  </div>
+                  <StatusPill state={st.status} label={st.statusLabel} />
                 </div>
-              );
-            }) : <div className="text-center text-muted py-6 text-sm">لا يوجد مستأجرون — أضف أول مستأجر.</div>}
+                <div className="flex flex-wrap gap-1.5 justify-end mt-2.5">
+                  <button className="btn btn-ghost text-xs" onClick={() => patchTenant(t.id, { paid_periods: (t.paid_periods || 0) + 1 }, t.rent_amount || 0)}>سجّل دفعة</button>
+                  {(t.paid_periods || 0) > 0 && (
+                    <button className="btn btn-ghost text-xs" onClick={() => patchTenant(t.id, { paid_periods: Math.max(0, (t.paid_periods || 0) - 1) })}>تراجع</button>
+                  )}
+                  <button className="btn btn-ghost text-xs" onClick={() => setSchedule(t)}>الجدول</button>
+                  <a href={remindLink(t)} target="_blank" rel="noreferrer" className="btn btn-wa text-xs">تذكير واتساب</a>
+                  {st.unpaid > 0 && <button className="btn btn-gold text-xs" onClick={() => makeNotice(t)}>نموذج إشعار</button>}
+                  <button className="text-deep text-sm px-2" onClick={() => setModal({ kind: "tenant", id: t.id })} title="تعديل">تعديل</button>
+                  <button className="text-late text-sm px-2" onClick={() => deleteTenant(t.id)} title="حذف">حذف</button>
+                </div>
+              </div>
+            )) : (
+              <div className="text-center text-muted py-8 text-sm">
+                لا توجد وحدات بعد.
+                <div className="mt-3 flex gap-2 justify-center">
+                  <button className="btn btn-gold text-xs" onClick={() => setModal({ kind: "tenant" })}>+ أضف وحدة</button>
+                  <Link href="/dashboard/property/import" className="btn btn-ghost text-xs">رفع Excel</Link>
+                </div>
+              </div>
+            )}
           </div>
         </div>
 
         <div className="bg-white border border-line rounded-2xl shadow-sm">
           <div className="border-b border-line px-5 py-4"><h2 className="font-semibold">سجل العقار</h2></div>
           <div className="p-4">
-            <AddNote onAdd={addNote} placeholder="أضف ملاحظة (صيانة، تجديد عقد…)" />
+            <AddNote onAdd={addNote} />
             {p.property_notes.length ? p.property_notes.map((n) => (
               <div key={n.id} className="flex gap-2.5 py-2.5 border-b border-dashed border-line last:border-0 text-sm">
                 <span className="text-xs font-semibold text-[#8a5a11] w-16 shrink-0">{n.note_date}</span>
                 <span className="flex-1 text-[#33413d]">{n.text}</span>
-                <button className="text-muted text-sm opacity-60 hover:opacity-100 hover:text-late" onClick={() => deleteNote(n.id)}>✕</button>
+                <button className="text-muted opacity-60 hover:opacity-100 hover:text-late" onClick={() => deleteNote(n.id)}>حذف</button>
               </div>
             )) : <div className="text-center text-muted py-6 text-sm">لا ملاحظات بعد.</div>}
           </div>
         </div>
       </div>
 
-      <PropertyModal open={modal?.kind === "newProp"} title="عقار جديد" onClose={() => setModal(null)} onSubmit={createProperty} />
-      <PropertyModal open={modal?.kind === "editProp"} title="إعدادات العقار" initial={active || undefined} onClose={() => setModal(null)} onSubmit={updateProperty} onDelete={deleteProperty} />
-      <TenantModal open={modal?.kind === "newTenant" || modal?.kind === "editTenant"} initial={editingTenant} onClose={() => setModal(null)} onSubmit={(d) => saveTenant(d, editingTenant?.id)} />
+      <PropertyModal open={modal?.kind === "newProp"} orgName={orgName} onClose={() => setModal(null)} onSubmit={(d) => saveProperty(d)} />
+      <PropertyModal open={modal?.kind === "editProp"} initial={active || undefined} orgName={orgName}
+        onClose={() => setModal(null)} onSubmit={(d) => saveProperty(d, active!.id)} onDelete={deleteProperty} />
+      <TenantModal open={modal?.kind === "tenant"} initial={editing} unitWord={ul}
+        onClose={() => setModal(null)} onSubmit={(d) => saveTenant(d, editing?.id)} />
 
-      {notice && (
-        <div className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4" onClick={() => setNotice(null)}>
-          <div className="w-full max-w-2xl bg-white rounded-2xl shadow-xl p-6 max-h-[90vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
-            <h3 className="font-display font-bold text-deep text-lg mb-1">إنذار نهائي — {notice.name}</h3>
-            <p className="text-xs text-[#8a5a11] mb-4">مسودّة استرشادية — راجعها مع مختص مرخّص قبل الاعتماد الرسمي. التنفيذ عبر ناجز يتطلب عقدًا موحّدًا موثّقًا في شبكة إيجار.</p>
-            <pre className="whitespace-pre-wrap bg-paper border border-line rounded-xl p-4 text-sm leading-8 text-ink" style={{ fontFamily: "inherit" }}>{notice.body}</pre>
-            <div className="flex gap-2 mt-4">
-              <button onClick={() => navigator.clipboard?.writeText(notice.body)} className="btn btn-primary flex-1 justify-center">نسخ النص</button>
-              <button onClick={() => { const w = window.open("", "_blank"); if (w) { w.document.write(`<pre dir="rtl" style="font-family:sans-serif;white-space:pre-wrap;padding:24px;line-height:1.9">${notice.body.replace(/</g, "&lt;")}</pre>`); w.document.close(); w.print(); } }} className="btn btn-ghost flex-1 justify-center">طباعة / PDF</button>
-              <button onClick={() => setNotice(null)} className="btn text-muted">إغلاق</button>
-            </div>
-          </div>
-        </div>
-      )}
+      {schedule && <ScheduleModal tenant={schedule} unitWord={ul} onClose={() => setSchedule(null)} />}
+      {doc && <DocModal doc={doc} onClose={() => setDoc(null)} />}
     </div>
   );
 }
 
 function Stat({ v, l, tone }: { v: string; l: string; tone?: "ok" | "warn" }) {
-  const color = tone === "ok" ? "text-paid" : tone === "warn" ? "text-late" : "text-deep";
+  const c = tone === "ok" ? "text-paid" : tone === "warn" ? "text-late" : "text-deep";
   return (
     <div className="bg-white border border-line rounded-xl p-4 shadow-sm">
-      <div className={`font-display font-bold text-2xl leading-none ${color}`}>{v}</div>
+      <div className={`font-display font-bold text-2xl leading-none ${c}`}>{v}</div>
       <div className="mt-1.5 text-sm text-muted">{l}</div>
     </div>
   );
 }
 
-function AddNote({ onAdd, placeholder }: { onAdd: (t: string) => void; placeholder: string }) {
+function StatusPill({ state, label }: { state: "late" | "soon" | "ok"; label: string }) {
+  const map = { late: "bg-[#FBE9E7] text-[#a5322c]", soon: "bg-[#FBF1DF] text-[#8a5a11]", ok: "bg-[#E6F4EC] text-[#137a50]" };
+  const dot = { late: "bg-late", soon: "bg-gold", ok: "bg-paid" };
+  return (
+    <span className={`inline-flex items-center gap-1.5 text-xs font-semibold rounded-lg px-2.5 py-1 ${map[state]}`}>
+      <span className={`w-1.5 h-1.5 rounded-full ${dot[state]}`} /> {label}
+    </span>
+  );
+}
+
+function AddNote({ onAdd }: { onAdd: (t: string) => void }) {
   const [t, setT] = useState("");
   return (
     <div className="flex gap-2 mb-3">
-      <input className="fld" value={t} onChange={(e) => setT(e.target.value)} placeholder={placeholder} onKeyDown={(e) => { if (e.key === "Enter" && t.trim()) { onAdd(t); setT(""); } }} />
+      <input className="fld" value={t} onChange={(e) => setT(e.target.value)} placeholder="ملاحظة (صيانة، تجديد عقد...)"
+        onKeyDown={(e) => { if (e.key === "Enter" && t.trim()) { onAdd(t); setT(""); } }} />
       <button className="btn btn-primary text-sm" onClick={() => { if (t.trim()) { onAdd(t); setT(""); } }}>حفظ</button>
     </div>
   );
 }
 
-function PropertyModal({ open, title, initial, onClose, onSubmit, onDelete }: {
-  open: boolean; title?: string; initial?: Property; onClose: () => void;
-  onSubmit: (d: Partial<Property>) => void; onDelete?: () => void;
-}) {
-  const [d, setD] = useState<any>(initial || {});
-  if (!open) return null;
+function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
+  return (
+    <label className="block">
+      <span className="block text-sm font-semibold mb-1">{label} {hint && <span className="text-muted font-normal text-xs">— {hint}</span>}</span>
+      {children}
+    </label>
+  );
+}
+
+function Shell({ children, onClose, wide }: { children: React.ReactNode; onClose: () => void; wide?: boolean }) {
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4" onClick={onClose}>
-      <div className="w-full max-w-md bg-white rounded-2xl shadow-xl p-6" onClick={(e) => e.stopPropagation()}>
-        <h2 className="font-display font-bold text-deep text-xl mb-4">{title}</h2>
-        <div className="space-y-3">
-          <Field label="اسم العقار"><input className="fld" value={d.name || ""} onChange={(e) => setD({ ...d, name: e.target.value })} /></Field>
-          <Field label="العنوان"><input className="fld" value={d.address || ""} onChange={(e) => setD({ ...d, address: e.target.value })} /></Field>
-          <Field label="اسم المكتب / المدير (يظهر في الإنذارات)"><input className="fld" value={d.manager || ""} onChange={(e) => setD({ ...d, manager: e.target.value })} /></Field>
-        </div>
-        <div className="flex gap-2 mt-6">
-          <button className="btn btn-ghost flex-1 justify-center" onClick={onClose}>إلغاء</button>
-          <button className="btn btn-gold flex-1 justify-center" onClick={() => { if ((d.name || "").trim()) onSubmit(d); }}>حفظ</button>
-        </div>
-        {onDelete && <div className="text-center mt-3"><button className="text-late text-sm font-semibold underline" onClick={onDelete}>حذف العقار نهائيًّا</button></div>}
+      <div className={`w-full ${wide ? "max-w-2xl" : "max-w-md"} bg-white rounded-2xl shadow-xl p-6 max-h-[90vh] overflow-auto`} onClick={(e) => e.stopPropagation()}>
+        {children}
       </div>
     </div>
   );
 }
 
-function TenantModal({ open, initial, onClose, onSubmit }: {
-  open: boolean; initial?: Tenant; onClose: () => void; onSubmit: (d: Partial<Tenant>) => void;
+function PropertyModal({ open, initial, orgName, onClose, onSubmit, onDelete }: {
+  open: boolean; initial?: Property; orgName: string; onClose: () => void;
+  onSubmit: (d: any) => void; onDelete?: () => void;
 }) {
-  const [d, setD] = useState<any>(initial || {});
+  const [d, setD] = useState<any>(initial || { property_type: "residential", manager: orgName });
   if (!open) return null;
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4" onClick={onClose}>
-      <div className="w-full max-w-md bg-white rounded-2xl shadow-xl p-6" onClick={(e) => e.stopPropagation()}>
-        <h2 className="font-display font-bold text-deep text-xl mb-4">{initial ? "تعديل مستأجر" : "مستأجر جديد"}</h2>
-        <div className="space-y-3">
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="اسم المستأجر"><input className="fld" value={d.name || ""} onChange={(e) => setD({ ...d, name: e.target.value })} /></Field>
-            <Field label="رقم الوحدة"><input className="fld" value={d.unit || ""} onChange={(e) => setD({ ...d, unit: e.target.value })} /></Field>
+    <Shell onClose={onClose}>
+      <h2 className="font-display font-bold text-deep text-xl mb-4">{initial ? "إعدادات العقار" : "عقار جديد"}</h2>
+      <div className="space-y-3">
+        <Field label="نوع العقار">
+          <div className="grid grid-cols-3 gap-2">
+            {PROPERTY_TYPES.map((pt) => (
+              <button key={pt.value} onClick={() => setD({ ...d, property_type: pt.value })}
+                className={`border-2 rounded-xl p-2.5 text-center text-xs font-semibold transition ${
+                  d.property_type === pt.value ? "border-gold bg-[#FBF1DF]" : "border-line hover:border-goldSoft"}`}>
+                <div className="text-lg mb-0.5">{pt.icon}</div>{pt.label}
+              </button>
+            ))}
           </div>
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="قيمة الإيجار (ريال)"><input className="fld" type="number" value={d.rent_amount || ""} onChange={(e) => setD({ ...d, rent_amount: +e.target.value })} /></Field>
-            <Field label="جوال المستأجر"><input className="fld" value={d.phone || ""} onChange={(e) => setD({ ...d, phone: e.target.value })} /></Field>
-          </div>
-          <Field label="رقم الهوية/الإقامة (للإنذار النظامي)"><input className="fld" value={d.national_id || ""} onChange={(e) => setD({ ...d, national_id: e.target.value })} /></Field>
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="بداية العقد"><input className="fld" type="date" value={d.contract_start || ""} onChange={(e) => setD({ ...d, contract_start: e.target.value })} /></Field>
-            <Field label="نهاية العقد"><input className="fld" type="date" value={d.contract_end || ""} onChange={(e) => setD({ ...d, contract_end: e.target.value })} /></Field>
-          </div>
+        </Field>
+        <Field label="اسم العقار"><input className="fld" value={d.name || ""} onChange={(e) => setD({ ...d, name: e.target.value })} placeholder="برج الياسمين" /></Field>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="المدينة"><input className="fld" value={d.city || ""} onChange={(e) => setD({ ...d, city: e.target.value })} placeholder="الرياض" /></Field>
+          <Field label="الحي / العنوان"><input className="fld" value={d.address || ""} onChange={(e) => setD({ ...d, address: e.target.value })} placeholder="حي الياسمين" /></Field>
         </div>
-        <div className="flex gap-2 mt-6">
-          <button className="btn btn-ghost flex-1 justify-center" onClick={onClose}>إلغاء</button>
-          <button className="btn btn-gold flex-1 justify-center" onClick={() => { if ((d.name || "").trim()) onSubmit(d); }}>حفظ</button>
-        </div>
+        <Field label="اسم المالك أو المكتب" hint="يظهر في الخطابات"><input className="fld" value={d.manager || ""} onChange={(e) => setD({ ...d, manager: e.target.value })} placeholder={orgName || "مكتب اليمامة"} /></Field>
       </div>
-    </div>
+      <div className="flex gap-2 mt-6">
+        <button className="btn btn-ghost flex-1 justify-center" onClick={onClose}>إلغاء</button>
+        <button className="btn btn-gold flex-1 justify-center" onClick={() => (d.name || "").trim() && onSubmit(d)}>حفظ</button>
+      </div>
+      {onDelete && <div className="text-center mt-3"><button className="text-late text-sm font-semibold underline" onClick={onDelete}>حذف العقار</button></div>}
+    </Shell>
   );
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return <label className="block"><span className="block text-sm font-semibold mb-1">{label}</span>{children}</label>;
+function TenantModal({ open, initial, unitWord, onClose, onSubmit }: {
+  open: boolean; initial?: Tenant; unitWord: string; onClose: () => void; onSubmit: (d: any) => void;
+}) {
+  const [d, setD] = useState<any>(initial || { payment_frequency: "monthly", contract_start: today() });
+  if (!open) return null;
+  const preview = d.contract_start && d.rent_amount ? contractState({ ...d, paid_periods: d.paid_periods || 0 }) : null;
+  const totalValue = (Number(d.rent_amount) || 0) * (Number(d.contract_periods) || 12);
+  return (
+    <Shell onClose={onClose}>
+      <h2 className="font-display font-bold text-deep text-xl mb-1">{initial ? "تعديل الوحدة" : `${unitWord} جديدة`}</h2>
+      <p className="text-sm text-muted mb-4">أدخل تاريخ البداية والدورة والقيمة — والنظام يستنتج بقية التواريخ والدفعات تلقائيًّا.</p>
+      <div className="space-y-3">
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="اسم المستأجر"><input className="fld" value={d.name || ""} onChange={(e) => setD({ ...d, name: e.target.value })} /></Field>
+          <Field label={`رقم ${unitWord}`}><input className="fld" value={d.unit || ""} onChange={(e) => setD({ ...d, unit: e.target.value })} placeholder="101" /></Field>
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="قيمة الدفعة (ريال)"><input className="fld" type="number" value={d.rent_amount || ""} onChange={(e) => setD({ ...d, rent_amount: e.target.value })} placeholder="2500" /></Field>
+          <Field label="جوال المستأجر"><input className="fld" value={d.phone || ""} onChange={(e) => setD({ ...d, phone: e.target.value })} placeholder="05xxxxxxxx" /></Field>
+        </div>
+        <Field label="دورة السداد">
+          <div className="grid grid-cols-3 gap-2">
+            {FREQUENCIES.map((f) => (
+              <button key={f.value} onClick={() => setD({ ...d, payment_frequency: f.value })}
+                className={`border-2 rounded-lg py-2 text-xs font-semibold transition ${
+                  d.payment_frequency === f.value ? "border-gold bg-[#FBF1DF]" : "border-line hover:border-goldSoft"}`}>
+                {f.label}
+              </button>
+            ))}
+          </div>
+        </Field>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="بداية العقد"><input className="fld" type="date" value={d.contract_start || ""} onChange={(e) => setD({ ...d, contract_start: e.target.value })} /></Field>
+          <Field label="عدد الدفعات" hint="فارغ = سنة">
+            <input className="fld" type="number" value={d.contract_periods || ""} onChange={(e) => setD({ ...d, contract_periods: e.target.value })} placeholder="12" />
+          </Field>
+        </div>
+        <Field label="رقم الهوية / السجل" hint="للخطابات"><input className="fld" value={d.national_id || ""} onChange={(e) => setD({ ...d, national_id: e.target.value })} /></Field>
+        {preview && (
+          <div className="bg-paper border border-line rounded-xl p-3 text-sm">
+            <div className="font-semibold text-deep mb-1.5">استنتاج تلقائي</div>
+            <div className="text-muted space-y-1 text-xs leading-relaxed">
+              <div>الدفعة القادمة: <b className="text-ink">{preview.nextDueDate}</b></div>
+              <div>نهاية العقد: <b className="text-ink">{preview.endDate}</b></div>
+              <div>إجمالي قيمة العقد: <b className="text-ink">{sar(totalValue)} ريال</b></div>
+            </div>
+          </div>
+        )}
+      </div>
+      <div className="flex gap-2 mt-6">
+        <button className="btn btn-ghost flex-1 justify-center" onClick={onClose}>إلغاء</button>
+        <button className="btn btn-gold flex-1 justify-center" onClick={() => (d.name || "").trim() && onSubmit(d)}>حفظ</button>
+      </div>
+    </Shell>
+  );
+}
+
+function ScheduleModal({ tenant, unitWord, onClose }: { tenant: Tenant; unitWord: string; onClose: () => void }) {
+  const rows = buildSchedule(tenant);
+  const st = contractState(tenant);
+  return (
+    <Shell onClose={onClose} wide>
+      <h3 className="font-display font-bold text-deep text-lg mb-1">جدول الدفعات — {tenant.name}</h3>
+      <p className="text-sm text-muted mb-4">{unitWord} {tenant.unit || "—"} · {freqLabel(tenant.payment_frequency)} · {sar(tenant.rent_amount)} ريال/دفعة</p>
+      <div className="grid grid-cols-3 gap-2 mb-4 text-center">
+        <div className="bg-[#E6F4EC] rounded-lg p-2"><div className="font-bold text-[#137a50]">{st.paid}</div><div className="text-xs text-muted">مسدّدة</div></div>
+        <div className="bg-[#FBE9E7] rounded-lg p-2"><div className="font-bold text-[#a5322c]">{st.unpaid}</div><div className="text-xs text-muted">متأخرة</div></div>
+        <div className="bg-paper2 rounded-lg p-2"><div className="font-bold text-deep">{Math.max(0, rows.length - st.due)}</div><div className="text-xs text-muted">قادمة</div></div>
+      </div>
+      <div className="border border-line rounded-xl overflow-hidden max-h-[45vh] overflow-y-auto">
+        <table className="w-full text-sm">
+          <thead className="bg-paper2 sticky top-0"><tr>
+            <th className="p-2 text-right font-semibold">#</th>
+            <th className="p-2 text-right font-semibold">التاريخ</th>
+            <th className="p-2 text-right font-semibold">المبلغ</th>
+            <th className="p-2 text-right font-semibold">الحالة</th>
+          </tr></thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.n} className="border-t border-line">
+                <td className="p-2 text-muted">{r.n}</td>
+                <td className="p-2">{r.date}</td>
+                <td className="p-2">{sar(r.amount)}</td>
+                <td className="p-2">
+                  {r.status === "paid" ? <span className="text-[#137a50] font-semibold">مسدّدة</span>
+                   : r.status === "late" ? <span className="text-[#a5322c] font-semibold">متأخرة</span>
+                   : <span className="text-muted">قادمة</span>}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <button className="btn btn-ghost w-full justify-center mt-4" onClick={onClose}>إغلاق</button>
+    </Shell>
+  );
+}
+
+function DocModal({ doc, onClose }: { doc: { title: string; body: string }; onClose: () => void }) {
+  return (
+    <Shell onClose={onClose} wide>
+      <h3 className="font-display font-bold text-deep text-lg mb-1">{doc.title}</h3>
+      <p className="text-xs text-[#8a5a11] mb-4 bg-[#FBF1DF] border border-[#EBD9AA] rounded-lg p-2.5 leading-relaxed">
+        هذا <b>نموذج خطاب تذكير</b> تستخدمه بنفسك. وثيق لا يقدّم خدمات قانونية، ولا يرفع دعاوى، ولا يستلم أو يحوّل أي مبالغ.
+        راجع النص مع مختص مرخّص قبل أي استخدام رسمي.
+      </p>
+      <pre className="whitespace-pre-wrap bg-paper border border-line rounded-xl p-4 text-sm leading-8 text-ink" style={{ fontFamily: "inherit" }}>{doc.body}</pre>
+      <div className="flex gap-2 mt-4">
+        <button onClick={() => navigator.clipboard?.writeText(doc.body)} className="btn btn-primary flex-1 justify-center">نسخ النص</button>
+        <button onClick={() => { const w = window.open("", "_blank"); if (w) { w.document.write('<pre dir="rtl" style="font-family:sans-serif;white-space:pre-wrap;padding:24px;line-height:1.9">' + doc.body.replace(/</g, "&lt;") + "</pre>"); w.document.close(); w.print(); } }} className="btn btn-ghost flex-1 justify-center">طباعة</button>
+        <button onClick={onClose} className="btn text-muted">إغلاق</button>
+      </div>
+    </Shell>
+  );
 }

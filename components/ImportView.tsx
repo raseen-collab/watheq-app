@@ -1,0 +1,247 @@
+"use client";
+import { useState } from "react";
+import { useRouter } from "next/navigation";
+import { createClient } from "@/lib/supabase-client";
+import { derivedEndDate, FREQUENCIES, type Frequency } from "@/lib/contracts";
+import { typeIcon, unitLabel } from "@/lib/domain";
+import { sar } from "@/lib/utils";
+
+type Prop = { id: string; name: string; property_type: string | null };
+type Row = {
+  name: string; unit: string; rent_amount: number; phone: string; national_id: string;
+  contract_start: string; payment_frequency: Frequency; contract_periods: number | null;
+  _error?: string;
+};
+
+const HEADERS = ["اسم المستأجر", "رقم الوحدة", "قيمة الدفعة", "دورة السداد", "بداية العقد", "عدد الدفعات", "الجوال", "رقم الهوية"];
+
+const FREQ_MAP: Record<string, Frequency> = {
+  "يومي": "daily", "اسبوعي": "weekly", "أسبوعي": "weekly", "شهري": "monthly",
+  "ربع سنوي": "quarterly", "كل 3 اشهر": "quarterly", "كل ٣ أشهر": "quarterly",
+  "نصف سنوي": "semiannual", "كل 6 اشهر": "semiannual", "كل ٦ أشهر": "semiannual",
+  "سنوي": "annual", "daily": "daily", "weekly": "weekly", "monthly": "monthly",
+  "quarterly": "quarterly", "semiannual": "semiannual", "annual": "annual",
+};
+
+/** تحويل الأرقام العربية والتواريخ */
+const toEnDigits = (s: string) => s.replace(/[٠-٩]/g, (d) => String("٠١٢٣٤٥٦٧٨٩".indexOf(d)));
+
+function normalizeDate(v: string): string {
+  const s = toEnDigits(String(v || "").trim());
+  if (!s) return "";
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  const m = s.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})$/);
+  if (m) return `${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
+  const d = new Date(s);
+  return isNaN(d.getTime()) ? "" : d.toISOString().slice(0, 10);
+}
+
+/** قارئ CSV بسيط يدعم علامات الاقتباس */
+function parseCSV(text: string): string[][] {
+  const rows: string[][] = [];
+  let row: string[] = [], cell = "", q = false;
+  const t = text.replace(/^\uFEFF/, "");
+  for (let i = 0; i < t.length; i++) {
+    const c = t[i];
+    if (q) {
+      if (c === '"' && t[i + 1] === '"') { cell += '"'; i++; }
+      else if (c === '"') q = false;
+      else cell += c;
+    } else if (c === '"') q = true;
+    else if (c === "," || c === ";") { row.push(cell); cell = ""; }
+    else if (c === "\n") { row.push(cell); rows.push(row); row = []; cell = ""; }
+    else if (c !== "\r") cell += c;
+  }
+  if (cell || row.length) { row.push(cell); rows.push(row); }
+  return rows.filter((r) => r.some((x) => String(x).trim()));
+}
+
+export default function ImportView({ properties }: { properties: Prop[] }) {
+  const router = useRouter();
+  const supabase = createClient();
+  const [propId, setPropId] = useState(properties[0]?.id || "");
+  const [rows, setRows] = useState<Row[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState<number | null>(null);
+  const [fileName, setFileName] = useState("");
+
+  const activeProp = properties.find((p) => p.id === propId);
+  const ul = unitLabel(activeProp?.property_type);
+
+  function downloadTemplate() {
+    const sample = [
+      HEADERS,
+      ["عبدالله الحربي", "101", "2500", "شهري", "2026-01-01", "12", "0501234567", "1012345678"],
+      ["مؤسسة النور التجارية", "معرض 2", "18000", "كل 3 اشهر", "2026-02-15", "4", "0559876543", "7001234567"],
+      ["خالد القحطاني", "أرض A", "60000", "سنوي", "2025-06-01", "3", "0533334444", ""],
+    ];
+    const csv = "\uFEFF" + sample.map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(",")).join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "watheq-template.csv";
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }
+
+  async function handleFile(f: File) {
+    setFileName(f.name); setDone(null);
+    const text = await f.text();
+    const grid = parseCSV(text);
+    if (!grid.length) return;
+
+    // تخطّي صف العناوين إن وُجد
+    const start = grid[0].some((c) => String(c).includes("اسم") || String(c).toLowerCase().includes("name")) ? 1 : 0;
+
+    const parsed: Row[] = grid.slice(start).map((r) => {
+      const [name, unit, rent, freq, startDate, periods, phone, nid] = r.map((x) => String(x ?? "").trim());
+      const rentN = Number(toEnDigits(rent).replace(/[^\d.]/g, "")) || 0;
+      const freqKey = toEnDigits(freq).toLowerCase().trim();
+      const frequency = FREQ_MAP[freq.trim()] || FREQ_MAP[freqKey] || "monthly";
+      const cs = normalizeDate(startDate);
+      const pr = Number(toEnDigits(periods)) || null;
+      let err = "";
+      if (!name) err = "الاسم مفقود";
+      else if (!rentN) err = "قيمة الدفعة مفقودة";
+      else if (startDate && !cs) err = "تاريخ غير مفهوم";
+      return {
+        name, unit, rent_amount: rentN, phone: toEnDigits(phone), national_id: toEnDigits(nid),
+        contract_start: cs, payment_frequency: frequency, contract_periods: pr,
+        _error: err || undefined,
+      };
+    });
+    setRows(parsed);
+  }
+
+  async function importRows() {
+    if (!propId) return alert("اختر العقار أولًا");
+    const valid = rows.filter((r) => !r._error);
+    if (!valid.length) return alert("لا توجد صفوف صالحة");
+    setBusy(true);
+    const payload = valid.map((r) => ({
+      property_id: propId,
+      name: r.name, unit: r.unit || null, phone: r.phone || null, national_id: r.national_id || null,
+      rent_amount: r.rent_amount, contract_start: r.contract_start || null,
+      payment_frequency: r.payment_frequency, contract_periods: r.contract_periods,
+      contract_end: r.contract_start ? derivedEndDate(r.contract_start, r.payment_frequency, r.contract_periods) : null,
+      paid_periods: 0,
+    }));
+    const { error } = await supabase.from("tenants").insert(payload);
+    setBusy(false);
+    if (error) return alert(error.message);
+    setDone(valid.length); setRows([]);
+    router.refresh();
+  }
+
+  const validCount = rows.filter((r) => !r._error).length;
+  const errorCount = rows.length - validCount;
+
+  return (
+    <div className="max-w-4xl mx-auto">
+      <h1 className="font-display font-bold text-deep text-2xl mb-1">رفع الوحدات من ملف Excel</h1>
+      <p className="text-muted mb-6">لديك عشرات المستأجرين؟ ارفعهم دفعة واحدة بدل الإدخال اليدوي.</p>
+
+      {!properties.length ? (
+        <div className="bg-white border border-line rounded-2xl p-8 text-center">
+          <p className="text-muted mb-4">أضف عقارًا أولًا لترفع وحداته.</p>
+          <a href="/dashboard/property" className="btn btn-gold">← الذهاب للعقارات</a>
+        </div>
+      ) : (
+        <>
+          {/* الخطوات */}
+          <div className="grid md:grid-cols-3 gap-3 mb-6">
+            <StepCard n="١" title="حمّل القالب" desc="ملف جاهز بالأعمدة الصحيحة وأمثلة توضيحية.">
+              <button onClick={downloadTemplate} className="btn btn-ghost text-xs mt-2">⬇ تحميل القالب</button>
+            </StepCard>
+            <StepCard n="٢" title="املأ بياناتك" desc="افتحه بـ Excel أو Numbers، واملأ صفًّا لكل وحدة، ثم احفظه بصيغة CSV." />
+            <StepCard n="٣" title="ارفعه هنا" desc="سنتحقق من البيانات ونعرضها لك قبل الحفظ." />
+          </div>
+
+          <div className="bg-white border border-line rounded-2xl p-5 mb-5">
+            <label className="block text-sm font-semibold mb-2">العقار الذي ستُضاف إليه الوحدات</label>
+            <select className="fld mb-4" value={propId} onChange={(e) => setPropId(e.target.value)}>
+              {properties.map((p) => <option key={p.id} value={p.id}>{typeIcon(p.property_type)} {p.name}</option>)}
+            </select>
+
+            <label className="block border-2 border-dashed border-line rounded-xl p-8 text-center cursor-pointer hover:border-goldSoft transition">
+              <input type="file" accept=".csv,.txt" className="hidden"
+                onChange={(e) => e.target.files?.[0] && handleFile(e.target.files[0])} />
+              <div className="text-3xl mb-2">📄</div>
+              <div className="font-semibold text-deep">{fileName || "اضغط لاختيار ملف CSV"}</div>
+              <div className="text-xs text-muted mt-1">من Excel: ملف ← حفظ باسم ← CSV UTF-8</div>
+            </label>
+          </div>
+
+          {done !== null && (
+            <div className="bg-[#E6F4EC] border border-[#B7DFC7] text-[#137a50] rounded-xl p-4 mb-5 flex items-center justify-between flex-wrap gap-3">
+              <span>✓ تم استيراد <b>{done}</b> وحدة بنجاح.</span>
+              <a href="/dashboard/property" className="btn btn-primary text-sm">عرض العقار ←</a>
+            </div>
+          )}
+
+          {rows.length > 0 && (
+            <div className="bg-white border border-line rounded-2xl overflow-hidden mb-5">
+              <div className="px-5 py-4 border-b border-line flex items-center justify-between flex-wrap gap-2">
+                <div>
+                  <h2 className="font-semibold">معاينة قبل الحفظ</h2>
+                  <div className="text-sm text-muted">
+                    <span className="text-paid font-semibold">{validCount} صالحة</span>
+                    {errorCount > 0 && <> · <span className="text-late font-semibold">{errorCount} بها مشكلة</span></>}
+                  </div>
+                </div>
+                <button onClick={importRows} disabled={busy || !validCount} className="btn btn-gold text-sm disabled:opacity-40">
+                  {busy ? "..." : `حفظ ${validCount} وحدة`}
+                </button>
+              </div>
+              <div className="overflow-x-auto max-h-[50vh]">
+                <table className="w-full text-sm">
+                  <thead className="bg-paper2 sticky top-0">
+                    <tr>
+                      <th className="p-2 text-right font-semibold">المستأجر</th>
+                      <th className="p-2 text-right font-semibold">{ul}</th>
+                      <th className="p-2 text-right font-semibold">الدفعة</th>
+                      <th className="p-2 text-right font-semibold">الدورة</th>
+                      <th className="p-2 text-right font-semibold">البداية</th>
+                      <th className="p-2 text-right font-semibold">الحالة</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rows.map((r, i) => (
+                      <tr key={i} className={`border-t border-line ${r._error ? "bg-[#FBE9E7]" : ""}`}>
+                        <td className="p-2 font-medium">{r.name || "—"}</td>
+                        <td className="p-2">{r.unit || "—"}</td>
+                        <td className="p-2">{sar(r.rent_amount)}</td>
+                        <td className="p-2">{FREQUENCIES.find((f) => f.value === r.payment_frequency)?.label}</td>
+                        <td className="p-2">{r.contract_start || "—"}</td>
+                        <td className="p-2">{r._error
+                          ? <span className="text-late font-semibold">{r._error}</span>
+                          : <span className="text-paid font-semibold">جاهزة</span>}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          <div className="bg-paper2 border border-line rounded-xl p-4 text-sm text-muted leading-relaxed">
+            <b className="text-deep">ملاحظات:</b> الأعمدة المطلوبة: {HEADERS.join(" · ")}.
+            دورة السداد تقبل: يومي، أسبوعي، شهري، كل ٣ أشهر، كل ٦ أشهر، سنوي.
+            التواريخ تُقبل بصيغة 2026-01-01 أو 01/01/2026. الأرقام العربية مدعومة.
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function StepCard({ n, title, desc, children }: { n: string; title: string; desc: string; children?: React.ReactNode }) {
+  return (
+    <div className="bg-white border border-line rounded-xl p-4 relative">
+      <div className="absolute -top-3 right-4 w-7 h-7 rounded-lg bg-gold text-white grid place-items-center font-display font-bold text-sm">{n}</div>
+      <div className="font-semibold text-deep mt-2 mb-1">{title}</div>
+      <div className="text-xs text-muted leading-relaxed">{desc}</div>
+      {children}
+    </div>
+  );
+}

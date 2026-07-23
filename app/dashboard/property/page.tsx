@@ -10,5 +10,9 @@ export default async function PropertyPage() {
     .select("*, tenants(*), property_notes(*)")
     .order("created_at", { ascending: false });
 
-  return <PropertyView initial={properties || []} />;
+  const { data: { user } } = await supabase.auth.getUser();
+  const { data: profile } = await supabase
+    .from("profiles").select("org_name").eq("id", user!.id).maybeSingle();
+
+  return <PropertyView initial={properties || []} orgName={profile?.org_name || ""} />;
 }

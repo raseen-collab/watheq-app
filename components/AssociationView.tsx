@@ -103,7 +103,7 @@ export default function AssociationView({ initial }: { initial: Association[] })
   function ownerNoticeLink(o: Owner) {
     if (!active) return "#";
     const total = o.months_late * (active.fee || 0);
-    return waLink(WATHEQ_WA, `مرحبًا، أرغب بإصدار إنذار سداد رسمي عبر وثيق.\nالجمعية: ${active.name}\nمالك الوحدة: ${o.unit || "—"} (${o.name})\nالمتأخرات: ${o.months_late} أشهر${total ? ` بمبلغ ${sar(total)} ريال` : ""}.`);
+    return waLink(WATHEQ_WA, `مرحبًا، أرغب بتجهيز نموذج خطاب تذكير بالسداد عبر وثيق.\nالجمعية: ${active.name}\nمالك الوحدة: ${o.unit || "—"} (${o.name})\nالمتأخرات: ${o.months_late} أشهر${total ? ` بمبلغ ${sar(total)} ريال` : ""}.`);
   }
   function renewLink() {
     if (!active) return "#";
@@ -191,7 +191,7 @@ export default function AssociationView({ initial }: { initial: Association[] })
                     <button className="btn btn-ghost text-xs" onClick={() => ownerPatch(o.id, { months_late: Math.max(0, o.months_late - 1), last_paid: today() }, a.fee || 0)}>سجّل دفعة</button>
                     <button className="btn btn-ghost text-xs" onClick={() => ownerPatch(o.id, { months_late: o.months_late + 1 })}>+ استحقاق</button>
                     {o.months_late > 0 && <a href={ownerRemindLink(o)} target="_blank" rel="noreferrer" className="btn btn-wa text-xs">تذكير</a>}
-                    {o.months_late >= 2 && <a href={ownerNoticeLink(o)} target="_blank" rel="noreferrer" className="btn btn-gold text-xs">إنذار رسمي</a>}
+                    {o.months_late >= 2 && <a href={ownerNoticeLink(o)} target="_blank" rel="noreferrer" className="btn btn-gold text-xs">نموذج خطاب</a>}
                     <button className="text-late text-sm px-2" onClick={() => deleteOwner(o.id)} title="حذف">✕</button>
                   </div>
                 </div>
