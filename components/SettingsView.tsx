@@ -5,6 +5,8 @@ import { createClient } from "@/lib/supabase-client";
 import { useRouter } from "next/navigation";
 import { ACCOUNT_TYPES, normalizeAccountType } from "@/lib/roles";
 
+const BOT_USERNAME = "watheq_alerts_bot"; // غيّره لاسم بوتك من BotFather
+
 export default function SettingsView({ profile }: { profile: any }) {
   const supabase = createClient();
   const router = useRouter();
@@ -12,6 +14,29 @@ export default function SettingsView({ profile }: { profile: any }) {
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<{ t: "ok" | "err"; m: string } | null>(null);
   const [testing, setTesting] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  function copyCode() {
+    navigator.clipboard?.writeText(`/link ${p.telegram_link_code || ""}`);
+    setCopied(true); setTimeout(() => setCopied(false), 2000);
+  }
+
+  async function regen() {
+    const { data, error } = await supabase.rpc("regen_link_code", { p_user: p.id });
+    if (error) return setMsg({ t: "err", m: error.message });
+    setP({ ...p, telegram_link_code: data });
+    setMsg({ t: "ok", m: "أُنشئ رمز جديد — الرمز القديم لم يعد صالحًا." });
+  }
+
+  async function unlink() {
+    if (!confirm("فكّ ربط تليجرام؟ ستتوقف التنبيهات اليومية.")) return;
+    const { error } = await supabase.from("profiles")
+      .update({ telegram_chat_id: null, telegram_username: null, telegram_linked_at: null }).eq("id", p.id);
+    if (error) return setMsg({ t: "err", m: error.message });
+    setP({ ...p, telegram_chat_id: null, telegram_username: null });
+    setMsg({ t: "ok", m: "فُكّ الربط." });
+    router.refresh();
+  }
 
   async function save() {
     setSaving(true); setMsg(null);
@@ -22,7 +47,6 @@ export default function SettingsView({ profile }: { profile: any }) {
       billing_phone: p.billing_phone || null,
       cr_number: p.cr_number || null,
       vat_number: p.vat_number || null,
-      telegram_chat_id: p.telegram_chat_id || null,
       notify_enabled: p.notify_enabled ?? true,
       notify_days_before: Number(p.notify_days_before) || 5,
     }).eq("id", p.id);
@@ -88,29 +112,64 @@ export default function SettingsView({ profile }: { profile: any }) {
 
       {/* تنبيهات تليجرام */}
       <section className="bg-white border border-line rounded-2xl p-6 mb-5">
-        <h2 className="font-semibold text-deep text-lg mb-1">📨 تنبيهات تليجرام</h2>
+        <div className="flex items-start justify-between gap-3 flex-wrap mb-1">
+          <h2 className="font-semibold text-deep text-lg">📨 بوت تليجرام</h2>
+          {p.telegram_chat_id ? (
+            <span className="text-xs font-bold bg-[#E6F4EC] text-[#137a50] border border-[#B7DFC7] rounded-full px-3 py-1">✓ مربوط</span>
+          ) : (
+            <span className="text-xs font-bold bg-[#FBF1DF] text-[#8a5a11] border border-[#EBD9AA] rounded-full px-3 py-1">غير مربوط</span>
+          )}
+        </div>
         <p className="text-sm text-muted mb-4">
-          ملخّص إداري يومي يصلك على تليجرام: ما يستحق قريبًا، المتأخرات، والعقود المنتهية.
+          ملخّص إداري يومي على تليجرام: المستحقات القريبة، المتأخرات، والعقود المنتهية.
           <b> التنبيهات لك وحدك</b> — رسائل المستأجرين تبقى عبر واتساب منك مباشرة.
         </p>
 
-        <div className="bg-paper border border-line rounded-xl p-4 mb-4 text-sm">
-          <div className="font-semibold text-deep mb-2">كيف تربطه في دقيقة؟</div>
-          <ol className="text-muted text-xs leading-relaxed space-y-1 list-decimal pr-4">
-            <li>افتح تليجرام وابحث عن <b className="text-ink">@userinfobot</b> واضغط Start.</li>
-            <li>سيعطيك رقمًا اسمه <b className="text-ink">Id</b> — انسخه.</li>
-            <li>الصقه بالأسفل، ثم افتح بوت وثيق واضغط Start ليُسمح له بمراسلتك.</li>
-            <li>اضغط «إرسال رسالة تجريبية» للتأكد.</li>
-          </ol>
-        </div>
+        {!p.telegram_chat_id ? (
+          <div className="bg-paper border border-line rounded-xl p-5 mb-4">
+            <div className="font-semibold text-deep mb-3">اربط حسابك في خطوتين</div>
 
-        <label className="block mb-3">
-          <span className="block text-sm font-semibold mb-1">معرّف المحادثة (Chat ID)</span>
-          <input className="fld" value={p.telegram_chat_id || ""} placeholder="123456789"
-            onChange={(e) => setP({ ...p, telegram_chat_id: e.target.value })} />
-        </label>
+            <div className="flex gap-3 mb-4">
+              <span className="w-7 h-7 rounded-lg bg-gold text-white grid place-items-center font-bold text-sm shrink-0">١</span>
+              <div className="flex-1">
+                <div className="text-sm font-semibold mb-2">افتح البوت واضغط Start</div>
+                <a href={`https://t.me/${BOT_USERNAME}`} target="_blank" rel="noreferrer"
+                   className="btn text-sm" style={{ background: "#229ED9", color: "#fff" }}>
+                  فتح @{BOT_USERNAME}
+                </a>
+              </div>
+            </div>
 
-        <div className="grid sm:grid-cols-2 gap-3 mb-4">
+            <div className="flex gap-3">
+              <span className="w-7 h-7 rounded-lg bg-gold text-white grid place-items-center font-bold text-sm shrink-0">٢</span>
+              <div className="flex-1">
+                <div className="text-sm font-semibold mb-2">أرسل له هذا الأمر</div>
+                <div className="flex gap-2 items-center flex-wrap">
+                  <code className="bg-deep text-goldSoft px-4 py-2.5 rounded-lg font-mono text-base tracking-wider select-all">
+                    /link {p.telegram_link_code || "……"}
+                  </code>
+                  <button onClick={copyCode} className="btn btn-ghost text-sm">{copied ? "✓ نُسخ" : "نسخ"}</button>
+                  <button onClick={regen} className="text-xs text-muted underline hover:text-deep">رمز جديد</button>
+                </div>
+                <p className="text-xs text-muted mt-2">سيردّ عليك البوت بتأكيد الربط فورًا، ثم حدّث هذه الصفحة.</p>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="bg-[#E6F4EC] border border-[#B7DFC7] rounded-xl p-4 mb-4 flex items-center justify-between gap-3 flex-wrap">
+            <div className="text-sm text-[#137a50]">
+              <b>حسابك مربوط بتليجرام</b>
+              {p.telegram_username ? ` — @${p.telegram_username}` : ""}
+              <div className="text-xs mt-1 opacity-80">جرّب في البوت: /summary أو /late</div>
+            </div>
+            <div className="flex gap-2">
+              <button onClick={testTelegram} disabled={testing} className="btn btn-ghost text-sm">{testing ? "..." : "رسالة تجريبية"}</button>
+              <button onClick={unlink} className="text-sm text-late underline">فكّ الربط</button>
+            </div>
+          </div>
+        )}
+
+        <div className="grid sm:grid-cols-2 gap-3">
           <label className="block">
             <span className="block text-sm font-semibold mb-1">التنبيه قبل الاستحقاق بـ</span>
             <select className="fld" value={p.notify_days_before ?? 5}
@@ -124,10 +183,6 @@ export default function SettingsView({ profile }: { profile: any }) {
             <span className="text-sm font-semibold">تفعيل الملخّص اليومي</span>
           </label>
         </div>
-
-        <button onClick={testTelegram} disabled={testing} className="btn btn-ghost text-sm">
-          {testing ? "..." : "إرسال رسالة تجريبية"}
-        </button>
       </section>
 
       {/* بيانات الفوترة */}

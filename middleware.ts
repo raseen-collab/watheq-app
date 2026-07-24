@@ -22,7 +22,7 @@ export async function middleware(request: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser();
 
   const path = request.nextUrl.pathname;
-  const isDashboard = path.startsWith("/dashboard");
+  const isDashboard = path.startsWith("/dashboard") || path.startsWith("/onboarding");
   const isLogin = path.startsWith("/login");
 
   if (isDashboard && !user) {
