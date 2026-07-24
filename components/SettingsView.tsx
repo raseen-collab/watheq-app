@@ -5,7 +5,7 @@ import { createClient } from "@/lib/supabase-client";
 import { useRouter } from "next/navigation";
 import { ACCOUNT_TYPES, normalizeAccountType } from "@/lib/roles";
 
-const BOT_USERNAME = "watheq_alerts_bot"; // غيّره لاسم بوتك من BotFather
+const BOT_USERNAME = "watheqapp_bot"; // غيّره لاسم بوتك من BotFather
 
 export default function SettingsView({ profile }: { profile: any }) {
   const supabase = createClient();
