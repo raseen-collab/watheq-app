@@ -165,3 +165,37 @@ export function buildSchedule(t: {
     };
   });
 }
+
+/**
+ * تجديد العقد — يبدأ مدة جديدة تلقائيًّا من تاريخ انتهاء المدة الحالية.
+ * يعيد الحقول الجاهزة للحفظ.
+ */
+export function renewContract(t: {
+  contract_start?: string | null;
+  contract_end?: string | null;
+  payment_frequency?: string | null;
+  contract_periods?: number | null;
+  rent_amount?: number | null;
+}, opts: { periods?: number | null; newAmount?: number | null; newFrequency?: Frequency | null } = {}) {
+  const oldFreq = (t.payment_frequency || "monthly") as Frequency;
+  const freq = (opts.newFrequency || oldFreq) as Frequency;
+  const st = contractState(t);
+  // المدة الجديدة تبدأ من نهاية الحالية (أو من اليوم إن كانت منتهية منذ زمن)
+  const startISO = st.endDate || new Date().toISOString().slice(0, 10);
+  const periods = opts.periods && opts.periods > 0 ? opts.periods : (t.contract_periods || defaultTermPeriods(freq));
+  const amount = opts.newAmount && opts.newAmount > 0 ? opts.newAmount : (Number(t.rent_amount) || 0);
+  return {
+    contract_start: startISO,
+    contract_end: derivedEndDate(startISO, freq, periods),
+    payment_frequency: freq,
+    contract_periods: periods,
+    rent_amount: amount,
+    paid_periods: 0, // مدة جديدة تبدأ بصفر دفعات مسدّدة
+  };
+}
+
+/** هل العقد يستحق التجديد؟ (منتهٍ أو يقترب) */
+export function needsRenewal(t: Parameters<typeof contractState>[0], withinDays = 60): boolean {
+  const st = contractState(t);
+  return st.daysToEnd !== null && st.daysToEnd <= withinDays;
+}

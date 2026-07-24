@@ -59,7 +59,8 @@ export default function DashboardShell({
           </nav>
 
           <div className="flex items-center gap-2 text-sm">
-            <span className="text-[#9FB8B3] hidden sm:inline max-w-[160px] truncate">{userName}</span>
+            <Link href="/settings" className="text-[#CFE0DB] hover:text-white text-sm" title="الإعدادات">الإعدادات</Link>
+            <span className="text-[#9FB8B3] hidden sm:inline max-w-[140px] truncate">{userName}</span>
             <button onClick={signOut} className="btn text-sm bg-white/10 text-[#EAF1EE] hover:bg-white/20 border border-white/15">خروج</button>
           </div>
         </div>

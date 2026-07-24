@@ -1,10 +1,17 @@
 "use client";
 import { useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase-client";
 import { sar, waLink, today } from "@/lib/utils";
-import { contractState, buildSchedule, FREQUENCIES, freqLabel, freqShort, derivedEndDate, type Frequency } from "@/lib/contracts";
+import { contractState, buildSchedule, FREQUENCIES, freqLabel, freqShort, derivedEndDate, renewContract, needsRenewal, type Frequency } from "@/lib/contracts";
 import { PROPERTY_TYPES, typeLabel, unitLabel, typeIcon } from "@/lib/domain";
+import { statementHTML, invoiceHTML, propertyStatementHTML, openDoc } from "@/lib/documents";
+
+/** تحويل كل دورة إلى مكافئ شهري لحساب الدخل التقريبي */
+const PERIODS_PER_MONTH: Record<Frequency, number> = {
+  daily: 30, weekly: 4.33, monthly: 1, quarterly: 1 / 3, semiannual: 1 / 6, annual: 1 / 12,
+};
 
 type Tenant = {
   id: string; name: string; unit: string | null; phone: string | null; national_id: string | null;
@@ -18,13 +25,15 @@ type Property = {
   tenants: Tenant[]; property_notes: Note[];
 };
 
-export default function PropertyView({ initial, orgName }: { initial: Property[]; orgName: string }) {
+export default function PropertyView({ initial, orgName, issuer }: { initial: Property[]; orgName: string; issuer?: any }) {
   const supabase = createClient();
+  const router = useRouter();
   const [items, setItems] = useState<Property[]>(initial);
   const [activeId, setActiveId] = useState<string | null>(initial[0]?.id || null);
   const [modal, setModal] = useState<null | { kind: "newProp" | "editProp" | "tenant"; id?: string }>(null);
   const [doc, setDoc] = useState<null | { title: string; body: string }>(null);
   const [schedule, setSchedule] = useState<Tenant | null>(null);
+  const [renewing, setRenewing] = useState<Tenant | null>(null);
 
   const active = useMemo(() => items.find((p) => p.id === activeId) || null, [items, activeId]);
 
@@ -112,6 +121,57 @@ export default function PropertyView({ initial, orgName }: { initial: Property[]
     setItems(items.map((p) => (p.id === active.id ? { ...p, property_notes: p.property_notes.filter((n) => n.id !== id) } : p)));
   }
 
+  async function doRenew(t: Tenant, opts: { periods: number; newAmount: number | null; newFrequency: Frequency }) {
+    if (!active) return;
+    const fields = renewContract(t, { periods: opts.periods, newAmount: opts.newAmount, newFrequency: opts.newFrequency });
+    const { error } = await supabase.from("tenants").update(fields).eq("id", t.id);
+    if (error) return alert(error.message);
+    // توثيق التجديد في سجل العقار
+    await supabase.from("property_notes").insert({
+      property_id: active.id, note_date: today(),
+      text: `تجديد عقد ${t.name} (${unitLabel(active.property_type)} ${t.unit || "—"}) — من ${fields.contract_start} إلى ${fields.contract_end} بقيمة ${sar(fields.rent_amount)} ريال / ${freqShort(fields.payment_frequency)}`,
+    });
+    setItems(items.map((pp) => pp.id === active.id ? {
+      ...pp,
+      tenants: pp.tenants.map((x) => (x.id === t.id ? { ...x, ...fields } as Tenant : x)),
+    } : pp));
+    setRenewing(null);
+    router.refresh();
+  }
+
+  function openStatement(t: Tenant) {
+    if (!active) return;
+    openDoc(statementHTML(t as any, active as any, issuer || {}));
+  }
+
+  function openPropertyStatement() {
+    if (!active) return;
+    openDoc(propertyStatementHTML(active as any, issuer || {}));
+  }
+
+  async function openInvoice(t: Tenant) {
+    if (!active) return;
+    const st = contractState(t);
+    const total = t.contract_periods || 12;
+    const n = Math.min((t.paid_periods || 0) + 1, total);
+    const period = `الدفعة ${n} من ${total}`;
+    const amount = Number(t.rent_amount) || 0;
+    const dueDate = st.nextDueDate || today();
+
+    // ترقيم متسلسل من قاعدة البيانات
+    let invoiceNo = `INV-${new Date().getFullYear()}-0001`;
+    const { data } = await supabase.rpc("next_invoice_no", { p_user: (await supabase.auth.getUser()).data.user?.id });
+    if (typeof data === "string") invoiceNo = data;
+
+    await supabase.from("invoices").insert({
+      user_id: (await supabase.auth.getUser()).data.user?.id,
+      tenant_id: t.id, property_id: active.id,
+      invoice_no: invoiceNo, due_date: dueDate, period_label: period, amount,
+    });
+
+    openDoc(invoiceHTML(t as any, active as any, { invoice_no: invoiceNo, amount, due_date: dueDate, period_label: period }, issuer || {}));
+  }
+
   function remindLink(t: Tenant) {
     if (!active) return "#";
     const st = contractState(t);
@@ -177,8 +237,33 @@ export default function PropertyView({ initial, orgName }: { initial: Property[]
     .sort((a, b) => (a.st.daysToEnd || 0) - (b.st.daysToEnd || 0))[0];
   const editing = modal?.kind === "tenant" && modal.id ? p.tenants.find((t) => t.id === modal.id) : undefined;
 
+  // ملخّص المحفظة كاملة (كل العقارات)
+  const portfolio = items.reduce((acc, prop) => {
+    prop.tenants.forEach((t) => {
+      const st = contractState(t);
+      acc.units++;
+      if (st.status === "late") { acc.late++; acc.overdue += st.amountDue; }
+      if (st.status === "soon") acc.soon++;
+      if (st.daysToEnd !== null && st.daysToEnd <= 60 && st.daysToEnd >= 0) acc.expiring++;
+      acc.monthly += (Number(t.rent_amount) || 0) * PERIODS_PER_MONTH[(t.payment_frequency || "monthly") as Frequency];
+    });
+    return acc;
+  }, { units: 0, late: 0, soon: 0, overdue: 0, expiring: 0, monthly: 0 });
+
   return (
     <div>
+      {items.length > 1 && (
+        <div className="bg-deep text-[#EAF1EE] rounded-2xl p-4 mb-5 flex flex-wrap items-center gap-x-6 gap-y-3">
+          <div className="font-display font-bold text-sm text-goldSoft">محفظتك · {items.length} عقارات</div>
+          <PortfolioStat v={String(portfolio.units)} l="وحدة" />
+          <PortfolioStat v={String(portfolio.late)} l="متأخرة" tone={portfolio.late ? "warn" : undefined} />
+          <PortfolioStat v={sar(portfolio.overdue)} l="ريال متأخر" tone={portfolio.overdue ? "warn" : undefined} />
+          <PortfolioStat v={String(portfolio.soon)} l="تستحق خلال ٧ أيام" />
+          <PortfolioStat v={String(portfolio.expiring)} l="عقود تنتهي قريبًا" />
+          <PortfolioStat v={sar(Math.round(portfolio.monthly))} l="دخل شهري تقريبي" />
+        </div>
+      )}
+
       <div className="flex flex-wrap items-center gap-2 mb-5">
         <div className="flex-1 min-w-0">
           <h1 className="font-display font-bold text-deep text-xl flex items-center gap-2">
@@ -212,6 +297,7 @@ export default function PropertyView({ initial, orgName }: { initial: Property[]
           <div className="flex items-center justify-between border-b border-line px-5 py-4 gap-2 flex-wrap">
             <h2 className="font-semibold">الوحدات والمستأجرون</h2>
             <div className="flex gap-2">
+              <button className="btn btn-ghost text-xs" onClick={openPropertyStatement}>كشف حساب العقار</button>
               <Link href="/dashboard/property/import" className="btn btn-ghost text-xs">رفع Excel</Link>
               <button className="btn btn-gold text-xs" onClick={() => setModal({ kind: "tenant" })}>+ وحدة</button>
             </div>
@@ -237,8 +323,11 @@ export default function PropertyView({ initial, orgName }: { initial: Property[]
                     <button className="btn btn-ghost text-xs" onClick={() => patchTenant(t.id, { paid_periods: Math.max(0, (t.paid_periods || 0) - 1) })}>تراجع</button>
                   )}
                   <button className="btn btn-ghost text-xs" onClick={() => setSchedule(t)}>الجدول</button>
+                  <button className="btn btn-ghost text-xs" onClick={() => openStatement(t)}>كشف حساب</button>
+                  <button className="btn btn-ghost text-xs" onClick={() => openInvoice(t)}>فاتورة</button>
                   <a href={remindLink(t)} target="_blank" rel="noreferrer" className="btn btn-wa text-xs">تذكير واتساب</a>
                   {st.unpaid > 0 && <button className="btn btn-gold text-xs" onClick={() => makeNotice(t)}>نموذج إشعار</button>}
+                  {needsRenewal(t) && <button className="btn text-xs" style={{ background: "#0E3A37", color: "#F6F1E4" }} onClick={() => setRenewing(t)}>تجديد العقد</button>}
                   <button className="text-deep text-sm px-2" onClick={() => setModal({ kind: "tenant", id: t.id })} title="تعديل">تعديل</button>
                   <button className="text-late text-sm px-2" onClick={() => deleteTenant(t.id)} title="حذف">حذف</button>
                 </div>
@@ -277,6 +366,7 @@ export default function PropertyView({ initial, orgName }: { initial: Property[]
         onClose={() => setModal(null)} onSubmit={(d) => saveTenant(d, editing?.id)} />
 
       {schedule && <ScheduleModal tenant={schedule} unitWord={ul} onClose={() => setSchedule(null)} />}
+      {renewing && <RenewModal tenant={renewing} unitWord={ul} onClose={() => setRenewing(null)} onRenew={(o) => doRenew(renewing, o)} />}
       {doc && <DocModal doc={doc} onClose={() => setDoc(null)} />}
     </div>
   );
@@ -480,6 +570,95 @@ function DocModal({ doc, onClose }: { doc: { title: string; body: string }; onCl
         <button onClick={() => navigator.clipboard?.writeText(doc.body)} className="btn btn-primary flex-1 justify-center">نسخ النص</button>
         <button onClick={() => { const w = window.open("", "_blank"); if (w) { w.document.write('<pre dir="rtl" style="font-family:sans-serif;white-space:pre-wrap;padding:24px;line-height:1.9">' + doc.body.replace(/</g, "&lt;") + "</pre>"); w.document.close(); w.print(); } }} className="btn btn-ghost flex-1 justify-center">طباعة</button>
         <button onClick={onClose} className="btn text-muted">إغلاق</button>
+      </div>
+    </Shell>
+  );
+}
+
+
+function PortfolioStat({ v, l, tone }: { v: string; l: string; tone?: "warn" }) {
+  return (
+    <div>
+      <div className={`font-display font-bold text-lg leading-none ${tone === "warn" ? "text-[#F5A9A4]" : "text-[#EAF1EE]"}`}>{v}</div>
+      <div className="text-[.7rem] text-[#9FB8B3] mt-1">{l}</div>
+    </div>
+  );
+}
+
+function RenewModal({ tenant, unitWord, onClose, onRenew }: {
+  tenant: Tenant; unitWord: string; onClose: () => void;
+  onRenew: (o: { periods: number; newAmount: number | null; newFrequency: Frequency }) => void;
+}) {
+  const cur = contractState(tenant);
+  const curFreq = (tenant.payment_frequency || "monthly") as Frequency;
+  const [freq, setFreq] = useState<Frequency>(curFreq);
+  const [periods, setPeriods] = useState<string>(String(tenant.contract_periods || 12));
+  const [amount, setAmount] = useState<string>(String(tenant.rent_amount || ""));
+  const [busy, setBusy] = useState(false);
+
+  const preview = renewContract(tenant, {
+    periods: Number(periods) || null,
+    newAmount: Number(amount) || null,
+    newFrequency: freq,
+  });
+  const changed = Number(amount) !== Number(tenant.rent_amount);
+  const diff = Number(amount) - Number(tenant.rent_amount || 0);
+
+  return (
+    <Shell onClose={onClose}>
+      <h3 className="font-display font-bold text-deep text-xl mb-1">تجديد العقد</h3>
+      <p className="text-sm text-muted mb-4">{tenant.name} · {unitWord} {tenant.unit || "—"}</p>
+
+      <div className="bg-paper2 border border-line rounded-xl p-3 mb-4 text-sm">
+        <div className="font-semibold text-deep mb-1">المدة الحالية</div>
+        <div className="text-muted text-xs leading-relaxed">
+          من {tenant.contract_start || "—"} إلى <b className="text-ink">{cur.endDate}</b> ·
+          {" "}{sar(tenant.rent_amount)} ريال / {freqShort(curFreq)} ·
+          {" "}{cur.daysToEnd !== null && cur.daysToEnd >= 0 ? `متبقٍ ${cur.daysToEnd} يومًا` : "منتهية"}
+        </div>
+      </div>
+
+      <div className="space-y-3">
+        <Field label="دورة السداد للمدة الجديدة">
+          <div className="grid grid-cols-3 gap-2">
+            {FREQUENCIES.map((f) => (
+              <button key={f.value} onClick={() => setFreq(f.value)}
+                className={`border-2 rounded-lg py-2 text-xs font-semibold transition ${
+                  freq === f.value ? "border-gold bg-[#FBF1DF]" : "border-line hover:border-goldSoft"}`}>
+                {f.label}
+              </button>
+            ))}
+          </div>
+        </Field>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="عدد الدفعات"><input className="fld" type="number" value={periods} onChange={(e) => setPeriods(e.target.value)} placeholder="12" /></Field>
+          <Field label="قيمة الدفعة (ريال)"><input className="fld" type="number" value={amount} onChange={(e) => setAmount(e.target.value)} /></Field>
+        </div>
+      </div>
+
+      <div className="bg-[#E6F4EC] border border-[#B7DFC7] rounded-xl p-3 mt-4 text-sm">
+        <div className="font-semibold text-[#137a50] mb-1.5">المدة الجديدة بعد التجديد</div>
+        <div className="text-[#137a50] space-y-1 text-xs leading-relaxed">
+          <div>تبدأ: <b>{preview.contract_start}</b> · تنتهي: <b>{preview.contract_end}</b></div>
+          <div>إجمالي قيمة المدة: <b>{sar(preview.rent_amount * preview.contract_periods)} ريال</b></div>
+          {changed && (
+            <div>تغيّر الإيجار: <b>{diff > 0 ? "+" : ""}{sar(diff)} ريال</b> لكل دفعة
+              {Number(tenant.rent_amount) > 0 && ` (${diff > 0 ? "+" : ""}${Math.round((diff / Number(tenant.rent_amount)) * 100)}٪)`}
+            </div>
+          )}
+        </div>
+      </div>
+
+      <p className="text-xs text-muted mt-3 leading-relaxed">
+        سيبدأ عدّاد الدفعات من الصفر للمدة الجديدة، وسيُسجَّل التجديد تلقائيًّا في سجل العقار.
+      </p>
+
+      <div className="flex gap-2 mt-5">
+        <button className="btn btn-ghost flex-1 justify-center" onClick={onClose}>إلغاء</button>
+        <button className="btn btn-gold flex-1 justify-center" disabled={busy || !Number(periods)}
+          onClick={() => { setBusy(true); onRenew({ periods: Number(periods), newAmount: Number(amount) || null, newFrequency: freq }); }}>
+          {busy ? "..." : "تأكيد التجديد"}
+        </button>
       </div>
     </Shell>
   );
