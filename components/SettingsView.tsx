@@ -2,10 +2,13 @@
 import { useState } from "react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase-client";
+import { useRouter } from "next/navigation";
+import { ACCOUNT_TYPES, normalizeAccountType } from "@/lib/roles";
 
 export default function SettingsView({ profile }: { profile: any }) {
   const supabase = createClient();
-  const [p, setP] = useState<any>(profile);
+  const router = useRouter();
+  const [p, setP] = useState<any>({ ...profile, account_type: normalizeAccountType(profile) });
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<{ t: "ok" | "err"; m: string } | null>(null);
   const [testing, setTesting] = useState(false);
@@ -13,6 +16,7 @@ export default function SettingsView({ profile }: { profile: any }) {
   async function save() {
     setSaving(true); setMsg(null);
     const { error } = await supabase.from("profiles").update({
+      account_type: p.account_type || null,
       org_name: p.org_name || null,
       billing_name: p.billing_name || null,
       billing_phone: p.billing_phone || null,
@@ -23,7 +27,9 @@ export default function SettingsView({ profile }: { profile: any }) {
       notify_days_before: Number(p.notify_days_before) || 5,
     }).eq("id", p.id);
     setSaving(false);
-    setMsg(error ? { t: "err", m: error.message } : { t: "ok", m: "تم الحفظ." });
+    if (error) { setMsg({ t: "err", m: error.message }); return; }
+    setMsg({ t: "ok", m: "تم الحفظ." });
+    router.refresh();
   }
 
   async function testTelegram() {
@@ -57,6 +63,28 @@ export default function SettingsView({ profile }: { profile: any }) {
           ? "bg-[#E6F4EC] border border-[#B7DFC7] text-[#137a50]"
           : "bg-[#FBE9E7] border border-[#F5C6C2] text-late"}`}>{msg.m}</div>
       )}
+
+      {/* نوع الحساب */}
+      <section className="bg-white border border-line rounded-2xl p-6 mb-5">
+        <h2 className="font-semibold text-deep text-lg mb-1">👤 نوع الحساب</h2>
+        <p className="text-sm text-muted mb-4">يحدّد اللوحة التي تُفتح لك عند الدخول. اختر «الاثنان معًا» لتحصل على لوحتين وتبدّل بينهما.</p>
+        <div className="grid sm:grid-cols-3 gap-3">
+          {ACCOUNT_TYPES.map((a) => (
+            <button key={a.value} onClick={() => setP({ ...p, account_type: a.value })}
+              className={`text-right border-2 rounded-xl p-3.5 transition ${
+                p.account_type === a.value ? "border-gold bg-[#FBF1DF]" : "border-line hover:border-goldSoft"}`}>
+              <div className="text-xl mb-1.5">{a.icon}</div>
+              <div className="font-semibold text-sm text-deep leading-snug">{a.short}</div>
+              <div className="text-xs text-muted mt-1 leading-relaxed">{a.desc}</div>
+            </button>
+          ))}
+        </div>
+        {p.account_type === "both" && (
+          <p className="text-xs text-[#137a50] bg-[#E6F4EC] border border-[#B7DFC7] rounded-lg p-3 mt-3 leading-relaxed">
+            🔀 الحساب المزدوج مفعّل — يظهر مبدّل اللوحتين في الشريط العلوي.
+          </p>
+        )}
+      </section>
 
       {/* تنبيهات تليجرام */}
       <section className="bg-white border border-line rounded-2xl p-6 mb-5">

@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase-server";
 import { redirect } from "next/navigation";
 import DashboardShell from "@/components/DashboardShell";
+import { normalizeAccountType, canSwitch } from "@/lib/roles";
 
 export const dynamic = "force-dynamic";
 
@@ -11,20 +12,21 @@ export default async function DashboardLayout({ children }: { children: React.Re
 
   const { data: profile } = await supabase
     .from("profiles")
-    .select("role, full_name, org_name, trial_ends_at")
+    .select("account_type, role, full_name, org_name, trial_ends_at, last_dashboard")
     .eq("id", user.id)
     .maybeSingle();
 
-  // لم يختر دوره بعد → صفحة التهيئة
-  if (!profile?.role) redirect("/onboarding");
+  const accountType = normalizeAccountType(profile || {});
+  if (!accountType) redirect("/onboarding");
 
-  const name = profile.org_name || profile.full_name || (user.user_metadata?.name as string) || user.email || "";
+  const name = profile?.org_name || profile?.full_name || (user.user_metadata?.name as string) || user.email || "";
 
   return (
     <DashboardShell
       userName={name}
-      role={profile.role as "association" | "property"}
-      trialEndsAt={profile.trial_ends_at}
+      accountType={accountType}
+      showSwitcher={canSwitch(accountType)}
+      trialEndsAt={profile?.trial_ends_at}
     >
       {children}
     </DashboardShell>

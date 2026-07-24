@@ -3,18 +3,22 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase-client";
 import { trialDaysLeft } from "@/lib/domain";
+import type { AccountType } from "@/lib/roles";
 
 export default function DashboardShell({
-  userName, role, trialEndsAt, children,
+  userName, accountType, showSwitcher, trialEndsAt, children,
 }: {
   userName: string;
-  role: "association" | "property";
+  accountType: AccountType;
+  showSwitcher: boolean;
   trialEndsAt?: string | null;
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
   const router = useRouter();
   const days = trialDaysLeft(trialEndsAt);
+  const onProperty = pathname.includes("/property");
+  const current = onProperty ? "property" : "association";
 
   async function signOut() {
     const supabase = createClient();
@@ -23,15 +27,13 @@ export default function DashboardShell({
     router.refresh();
   }
 
-  // الواجهة معيارية: روابط الدور فقط — لا مبدّل بين عالمين مختلفين
-  const nav = role === "property"
+  // روابط اللوحة الحالية فقط — لا تزاحم بين عالمين
+  const nav = onProperty
     ? [
         { href: "/dashboard/property", label: "عقاراتي" },
-        { href: "/dashboard/property/import", label: "رفع من Excel" },
+        { href: "/dashboard/property/import", label: "رفع Excel" },
       ]
-    : [
-        { href: "/dashboard/association", label: "جمعيتي" },
-      ];
+    : [{ href: "/dashboard/association", label: "جمعيتي" }];
 
   return (
     <div className="min-h-screen bg-paper">
@@ -42,25 +44,43 @@ export default function DashboardShell({
             <div>
               <div>وثيق</div>
               <div className="text-[.65rem] font-normal text-[#9FB8B3] -mt-1">
-                {role === "property" ? "إدارة الأملاك" : "جمعية الملاك"}
+                {onProperty ? "إدارة الأملاك" : "جمعية الملاك"}
               </div>
             </div>
           </a>
 
-          <nav className="inline-flex bg-white/10 border border-white/15 rounded-xl p-1">
-            {nav.map((n) => (
-              <Link key={n.href} href={n.href}
-                className={`px-4 py-1.5 rounded-lg text-sm font-semibold transition ${
-                  pathname === n.href ? "bg-goldSoft text-deep2" : "text-[#CFE0DB] hover:bg-white/10"
-                }`}>
-                {n.label}
-              </Link>
-            ))}
-          </nav>
+          <div className="flex items-center gap-2 flex-wrap">
+            {/* مبدّل اللوحتين — للحساب المزدوج فقط */}
+            {showSwitcher && (
+              <div className="inline-flex bg-white/10 border border-white/15 rounded-xl p-1" role="tablist" aria-label="تبديل اللوحة">
+                <Link href="/dashboard/property" role="tab" aria-selected={onProperty}
+                  className={`px-3.5 py-1.5 rounded-lg text-sm font-semibold transition ${
+                    onProperty ? "bg-goldSoft text-deep2" : "text-[#CFE0DB] hover:bg-white/10"}`}>
+                  🏢 الأملاك
+                </Link>
+                <Link href="/dashboard/association" role="tab" aria-selected={!onProperty}
+                  className={`px-3.5 py-1.5 rounded-lg text-sm font-semibold transition ${
+                    !onProperty ? "bg-goldSoft text-deep2" : "text-[#CFE0DB] hover:bg-white/10"}`}>
+                  🏗️ الجمعية
+                </Link>
+              </div>
+            )}
+
+            {/* روابط اللوحة الحالية */}
+            <nav className="inline-flex bg-white/5 border border-white/10 rounded-xl p-1">
+              {nav.map((n) => (
+                <Link key={n.href} href={n.href}
+                  className={`px-3.5 py-1.5 rounded-lg text-sm font-semibold transition ${
+                    pathname === n.href ? "bg-white/15 text-white" : "text-[#CFE0DB] hover:bg-white/10"}`}>
+                  {n.label}
+                </Link>
+              ))}
+            </nav>
+          </div>
 
           <div className="flex items-center gap-2 text-sm">
-            <Link href="/settings" className="text-[#CFE0DB] hover:text-white text-sm" title="الإعدادات">الإعدادات</Link>
-            <span className="text-[#9FB8B3] hidden sm:inline max-w-[140px] truncate">{userName}</span>
+            <Link href="/settings" className="text-[#CFE0DB] hover:text-white text-sm">الإعدادات</Link>
+            <span className="text-[#9FB8B3] hidden sm:inline max-w-[130px] truncate">{userName}</span>
             <button onClick={signOut} className="btn text-sm bg-white/10 text-[#EAF1EE] hover:bg-white/20 border border-white/15">خروج</button>
           </div>
         </div>
@@ -72,7 +92,7 @@ export default function DashboardShell({
                     : "bg-[#FBF1DF] text-[#8a5a11] border-b border-[#EBD9AA]"}`}>
           {days > 0
             ? <>🎁 تجربتك المجانية — متبقٍ <b>{days}</b> يومًا من أصل ٣٠. كل المزايا مفعّلة.</>
-            : <>انتهت تجربتك المجانية. <a href="https://wa.me/966596300591" target="_blank" rel="noreferrer" className="underline font-bold">راسلنا لتفعيل اشتراكك</a></>}
+            : <>انتهت تجربتك المجانية. <a href="https://t.me/+966550165210" target="_blank" rel="noreferrer" className="underline font-bold">راسلنا لتفعيل اشتراكك</a></>}
         </div>
       )}
 
@@ -80,7 +100,11 @@ export default function DashboardShell({
 
       <footer className="max-w-6xl mx-auto px-4 pb-8 text-center text-xs text-muted leading-relaxed">
         وثيق أداة تنظيمية تُنشئ <b>نماذج خطابات تذكير وإشعارات</b> لتستخدمها بنفسك.
-        لا نقدّم خدمات قانونية، ولا نرفع دعاوى، ولا نستلم أو نحوّل أي مبالغ — التحصيل يتم بينك وبين الطرف الآخر مباشرة.
+        لا نقدّم خدمات قانونية، ولا نرفع دعاوى، ولا نستلم أو نحوّل أي مبالغ.
+        <br />
+        <a href="https://t.me/+966550165210" target="_blank" rel="noreferrer" className="text-gold font-semibold">تليجرام</a>
+        {" · "}
+        <a href="mailto:watheqdocs@gmail.com" className="text-gold font-semibold">watheqdocs@gmail.com</a>
       </footer>
     </div>
   );
