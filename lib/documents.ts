@@ -1,4 +1,4 @@
-import { contractState, buildSchedule, freqLabel } from "./contracts";
+import { contractState, buildSchedule, freqLabel, splitVat } from "./contracts";
 import { unitLabel, typeLabel } from "./domain";
 
 const sar = (n: number) => (Number(n) || 0).toLocaleString("en-US");
@@ -8,8 +8,13 @@ type Tenant = {
   id: string; name: string; unit: string | null; phone: string | null; national_id: string | null;
   rent_amount: number; contract_start: string | null; contract_end: string | null;
   payment_frequency: string | null; paid_periods: number | null; contract_periods: number | null;
+  partial_amount?: number | null;
 };
-type Property = { name: string; address: string | null; city: string | null; manager: string | null; property_type: string | null };
+type Property = {
+  name: string; address: string | null; city: string | null; manager: string | null; property_type: string | null;
+  grace_days?: number | null;
+  vat_enabled?: boolean | null; vat_rate?: number | null; vat_inclusive?: boolean | null;
+};
 type Issuer = { billing_name?: string | null; vat_number?: string | null; cr_number?: string | null; billing_phone?: string | null };
 
 const SHELL = (title: string, inner: string) => `<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8">
@@ -63,6 +68,13 @@ const SHELL = (title: string, inner: string) => `<!DOCTYPE html><html lang="ar" 
 ${inner}
 </body></html>`;
 
+/** إعدادات الضريبة الخاصة بالعقار */
+const vatOf = (p: Property) => ({
+  enabled: !!p.vat_enabled, rate: Number(p.vat_rate) || 15, inclusive: p.vat_inclusive !== false,
+});
+/** فترة السماح الخاصة بالعقار */
+const graceOf = (p: Property) => ({ graceDays: Number(p.grace_days) || 0 });
+
 const header = (docTitle: string, docNo: string) => `
 <div class="hd">
   <div class="lg"><div class="seal">و</div><div><div class="t">وثيق</div><div class="s">إدارة الأملاك العقارية</div></div></div>
@@ -78,12 +90,15 @@ const footer = () => `
 
 /** كشف حساب مستأجر — كامل الدفعات والأرصدة */
 export function statementHTML(t: Tenant, p: Property, issuer: Issuer = {}) {
-  const st = contractState(t);
+  const st = contractState(t, graceOf(p));
   const rows = buildSchedule(t);
   const ul = unitLabel(p.property_type);
   const who = issuer.billing_name || p.manager || "إدارة الأملاك";
-  const totalContract = (Number(t.rent_amount) || 0) * rows.length;
-  const totalPaid = st.paid * (Number(t.rent_amount) || 0);
+  const v = vatOf(p);
+  const unit = splitVat(Number(t.rent_amount) || 0, v);      // تفصيل الدفعة الواحدة
+  const totalContract = unit.total * rows.length;
+  const totalPaid = st.paid * unit.total;
+  const dueSplit = splitVat(st.amountDue, v);                 // تفصيل الرصيد المستحق
 
   const body = `
 ${header("كشف حساب", `${t.name}`)}
@@ -113,13 +128,17 @@ ${header("كشف حساب", `${t.name}`)}
     <div class="r"><span>بداية العقد</span><span>${t.contract_start || "—"}</span></div>
     <div class="r"><span>نهاية العقد</span><span>${st.endDate || "—"}</span></div>
     <div class="r"><span>دورة السداد</span><span>${freqLabel(t.payment_frequency)}</span></div>
-    <div class="r"><span>قيمة الدفعة</span><span>${sar(t.rent_amount)} ريال</span></div>
+    <div class="r"><span>قيمة الدفعة${v.enabled ? " (شاملة الضريبة)" : ""}</span><span>${sar(unit.total)} ريال</span></div>
+    ${v.enabled ? `<div class="r"><span>منها إيجار أساسي</span><span>${sar(unit.base)} ريال</span></div>
+    <div class="r"><span>ضريبة القيمة المضافة (${v.rate}%)</span><span>${sar(unit.vat)} ريال</span></div>` : ""}
   </div>
   <div class="box">
     <h3>ملخّص مالي</h3>
     <div class="r"><span>إجمالي قيمة العقد</span><span>${sar(totalContract)} ريال</span></div>
     <div class="r"><span>المسدَّد</span><span>${sar(totalPaid)} ريال</span></div>
     <div class="r"><span>المتأخر</span><span>${sar(st.amountDue)} ريال</span></div>
+    ${v.enabled && st.amountDue > 0 ? `<div class="r"><span>منه ضريبة</span><span>${sar(dueSplit.vat)} ريال</span></div>` : ""}
+    ${st.hasPartial ? `<div class="r"><span>مدفوع جزئيًّا</span><span>${sar(st.partial)} ريال</span></div>` : ""}
     <div class="r"><span>الدفعة القادمة</span><span>${st.nextDueDate || "—"}</span></div>
   </div>
 </div>
@@ -135,14 +154,17 @@ ${st.amountDue > 0 ? `<div class="due"><span class="l">الرصيد المستح
 
 <h1 style="font-size:1rem">تفصيل الدفعات</h1>
 <table>
-  <thead><tr><th>#</th><th>تاريخ الاستحقاق</th><th>المبلغ (ريال)</th><th>الحالة</th></tr></thead>
+  <thead><tr><th>#</th><th>تاريخ الاستحقاق</th>${v.enabled ? "<th>الأساس</th><th>الضريبة</th>" : ""}<th>الإجمالي (ريال)</th><th>الحالة</th></tr></thead>
   <tbody>
-    ${rows.map((r) => `<tr>
-      <td>${r.n}</td><td>${r.date}</td><td>${sar(r.amount)}</td>
+    ${rows.map((r) => { const x = splitVat(r.amount, v); return `<tr>
+      <td>${r.n}</td><td>${r.date}</td>
+      ${v.enabled ? `<td>${sar(x.base)}</td><td>${sar(x.vat)}</td>` : ""}
+      <td>${sar(x.total)}</td>
       <td>${r.status === "paid" ? '<span class="pill p">مسدّدة</span>'
+          : r.status === "partial" ? '<span class="pill u">سداد جزئي</span>'
           : r.status === "late" ? '<span class="pill l">متأخرة</span>'
           : '<span class="pill u">قادمة</span>'}</td>
-    </tr>`).join("")}
+    </tr>`; }).join("")}
   </tbody>
 </table>
 
@@ -164,9 +186,11 @@ export function invoiceHTML(
 ) {
   const ul = unitLabel(p.property_type);
   const who = issuer.billing_name || p.manager || "إدارة الأملاك";
+  const v = vatOf(p);
+  const x = splitVat(Number(inv.amount) || 0, v);
   const body = `
-${header("فاتورة", inv.invoice_no)}
-<h1>فاتورة أجرة</h1>
+${header(v.enabled ? "فاتورة ضريبية" : "فاتورة", inv.invoice_no)}
+<h1>${v.enabled ? "فاتورة ضريبية — أجرة" : "فاتورة أجرة"}</h1>
 <div class="sub">${inv.period_label} · ${freqLabel(t.payment_frequency)}</div>
 
 <div class="grid">
@@ -187,18 +211,30 @@ ${header("فاتورة", inv.invoice_no)}
 </div>
 
 <table>
-  <thead><tr><th>البيان</th><th>الفترة</th><th>تاريخ الاستحقاق</th><th>المبلغ (ريال)</th></tr></thead>
+  <thead><tr><th>البيان</th><th>الفترة</th><th>تاريخ الاستحقاق</th><th>المبلغ قبل الضريبة (ريال)</th></tr></thead>
   <tbody>
     <tr>
       <td>أجرة ${ul} رقم (${t.unit || "—"}) بعقار ${p.name}</td>
       <td>${inv.period_label}</td>
       <td>${inv.due_date}</td>
-      <td>${sar(inv.amount)}</td>
+      <td>${sar(x.base)}</td>
     </tr>
   </tbody>
 </table>
 
-<div class="due"><span class="l">الإجمالي المستحق</span><span class="v">${sar(inv.amount)} ريال</span></div>
+${v.enabled ? `<table style="max-width:340px;margin-inline-start:auto">
+  <tbody>
+    <tr><td>الإجمالي قبل الضريبة</td><td style="text-align:left;font-weight:600">${sar(x.base)}</td></tr>
+    <tr><td>ضريبة القيمة المضافة (${v.rate}%)</td><td style="text-align:left;font-weight:600">${sar(x.vat)}</td></tr>
+    <tr><td style="font-weight:700">الإجمالي شامل الضريبة</td><td style="text-align:left;font-weight:700">${sar(x.total)}</td></tr>
+  </tbody>
+</table>` : ""}
+
+<div class="due"><span class="l">الإجمالي المستحق${v.enabled ? " (شامل الضريبة)" : ""}</span><span class="v">${sar(x.total)} ريال</span></div>
+
+${v.enabled && !issuer.vat_number ? `<div class="note" style="border-inline-start-color:#D0453F;background:#FBE9E7;color:#a5322c">
+  <b>تنبيه:</b> الضريبة مفعّلة لكن الرقم الضريبي للمُصدِر غير مسجَّل. أضِفه في إعدادات الحساب قبل اعتماد الفاتورة رسميًّا.
+</div>` : ""}
 
 <div class="note">
   فاتورة إدارية صادرة عن المؤجّر لغرض التوثيق بين الطرفين. السداد يتم مباشرةً للمؤجّر بالوسيلة المتفق عليها —
@@ -217,9 +253,11 @@ ${footer()}`;
 export function propertyStatementHTML(p: Property & { tenants: Tenant[] }, issuer: Issuer = {}) {
   const ul = unitLabel(p.property_type);
   const who = issuer.billing_name || p.manager || "إدارة الأملاك";
-  const rows = p.tenants.map((t) => ({ t, st: contractState(t) }));
+  const v = vatOf(p);
+  const rows = p.tenants.map((t) => ({ t, st: contractState(t, graceOf(p)) }));
   const totalDue = rows.reduce((s, r) => s + r.st.amountDue, 0);
-  const totalPaid = rows.reduce((s, r) => s + r.st.paid * (Number(r.t.rent_amount) || 0), 0);
+  const totalPaid = rows.reduce((s, r) => s + r.st.paid * splitVat(Number(r.t.rent_amount) || 0, v).total, 0);
+  const totalVat = v.enabled ? rows.reduce((s, r) => s + splitVat(r.st.amountDue, v).vat, 0) : 0;
   const late = rows.filter((r) => r.st.status === "late").length;
 
   const body = `
@@ -234,7 +272,7 @@ ${header("كشف حساب عقار", p.name)}
   <div><div class="v">${sar(totalPaid)}</div><div class="l">المُحصَّل (ريال)</div></div>
 </div>
 
-${totalDue > 0 ? `<div class="due"><span class="l">إجمالي المستحق على العقار</span><span class="v">${sar(totalDue)} ريال</span></div>` : ""}
+${totalDue > 0 ? `<div class="due"><span class="l">إجمالي المستحق على العقار${v.enabled ? ` (منه ضريبة ${sar(totalVat)} ريال)` : ""}</span><span class="v">${sar(totalDue)} ريال</span></div>` : ""}
 
 <table>
   <thead><tr><th>${ul}</th><th>المستأجر</th><th>الدفعة</th><th>الدورة</th><th>القادمة</th><th>المتأخر</th><th>الحالة</th></tr></thead>
@@ -242,11 +280,13 @@ ${totalDue > 0 ? `<div class="due"><span class="l">إجمالي المستحق �
     ${rows.map(({ t, st }) => `<tr>
       <td>${t.unit || "—"}</td>
       <td>${t.name}</td>
-      <td>${sar(t.rent_amount)}</td>
+      <td>${sar(splitVat(Number(t.rent_amount) || 0, v).total)}</td>
       <td>${freqLabel(t.payment_frequency)}</td>
       <td>${st.nextDueDate || "—"}</td>
       <td>${st.amountDue ? sar(st.amountDue) : "—"}</td>
-      <td>${st.status === "late" ? '<span class="pill l">متأخر</span>'
+      <td>${st.inGrace ? '<span class="pill u">فترة سماح</span>'
+          : st.hasPartial && st.status === "late" ? '<span class="pill u">سداد جزئي</span>'
+          : st.status === "late" ? '<span class="pill l">متأخر</span>'
           : st.status === "soon" ? '<span class="pill u">يستحق قريبًا</span>'
           : '<span class="pill p">منتظم</span>'}</td>
     </tr>`).join("")}
