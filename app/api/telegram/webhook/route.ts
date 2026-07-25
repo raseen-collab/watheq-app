@@ -1,246 +1,194 @@
 import { NextResponse } from "next/server";
-import { createClient as createAdmin } from "@supabase/supabase-js";
-import { sendTelegram } from "@/lib/telegram";
-import { contractState } from "@/lib/contracts";
-import { unitLabel } from "@/lib/domain";
+import { createClient } from "@supabase/supabase-js";
+import { tgSend, tgEdit, tgAnswer, navButtons, TgKeyboard } from "@/lib/telegram";
+import { buildReport, getUnpaid, markPaid, buildReminder, sar } from "@/lib/reports";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
 
-const sar = (n: number) => (Number(n) || 0).toLocaleString("en-US");
-const APP = "https://watheq-app.vercel.app";
-
-function db() {
-  return createAdmin(
+/** عميل Supabase بصلاحية الخدمة — لأن المُنادي هنا تليجرام وليس مستخدمًا مسجّلًا */
+function admin() {
+  return createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.SUPABASE_SERVICE_ROLE_KEY!,
     { auth: { persistSession: false } }
   );
 }
+type DB = ReturnType<typeof admin>;
 
-/* ============ نصوص ============ */
-const WELCOME = `<b>أهلًا بك في وثيق</b> 🌿
-
-أنا مساعدك لمتابعة عقاراتك وجمعيتك — أنبّهك قبل كل استحقاق، وأخبرك بالمتأخرات والعقود المنتهية.
-
-<b>لنبدأ:</b> اربط حسابك برمز الربط.
-افتح ${APP}/settings وانسخ الرمز، ثم أرسله لي هكذا:
-
-<code>/link ABC123</code>
-
-ما عندك حساب بعد؟ أنشئ واحدًا مجانًا ٣٠ يومًا: ${APP}`;
-
-const HELP = `<b>أوامر وثيق</b>
-
-/link — اربط حسابك برمز الربط
-/today — ما يستحق خلال الأيام القادمة
-/late — المتأخرات وقيمتها
-/contracts — العقود التي تنتهي قريبًا
-/summary — ملخّص شامل لمحفظتك
-/status — حالة حسابك والربط
-/help — هذه القائمة
-
-<b>ملاحظة:</b> التنبيهات تصلك تلقائيًّا كل صباح — لا تحتاج طلبها يدويًّا.`;
-
-const NOT_LINKED = `حسابك غير مربوط بعد.
-
-افتح ${APP}/settings وانسخ رمز الربط، ثم أرسله هكذا:
-<code>/link ABC123</code>`;
-
-/* ============ جلب بيانات المستخدم ============ */
-async function getProfile(chatId: string) {
-  const { data } = await db()
-    .from("profiles")
-    .select("id, org_name, account_type, notify_days_before, notify_enabled, trial_ends_at")
-    .eq("telegram_chat_id", chatId)
-    .maybeSingle();
+async function findProfileByChat(db: DB, chatId: number | string) {
+  const { data } = await db.from("profiles").select("*").eq("telegram_chat_id", String(chatId)).maybeSingle();
   return data;
 }
 
-async function collectProperty(userId: string) {
-  const { data: props } = await db().from("properties").select("*, tenants(*)").eq("user_id", userId);
-  const soon: string[] = [], late: string[] = [], expiring: string[] = [];
-  let totalDue = 0, units = 0;
-  for (const p of (props || []) as any[]) {
-    const ul = unitLabel(p.property_type);
-    for (const t of p.tenants || []) {
-      units++;
-      const st = contractState(t);
-      if (st.status === "late") {
-        totalDue += st.amountDue;
-        late.push(`• ${t.name} — ${ul} ${t.unit || "—"} (${p.name})\n  <b>${sar(st.amountDue)}</b> ريال · ${st.unpaid} دفعة`);
-      } else if (st.daysToNextDue !== null && st.daysToNextDue >= 0) {
-        soon.push(`• ${t.name} — ${ul} ${t.unit || "—"}\n  ${sar(t.rent_amount)} ريال · ${st.nextDueDate} (بعد ${st.daysToNextDue} يوم)`);
-      }
-      if (st.daysToEnd !== null && st.daysToEnd >= 0 && st.daysToEnd <= 60) {
-        expiring.push(`• ${t.name} — ${ul} ${t.unit || "—"}\n  ينتهي ${st.endDate} (بعد ${st.daysToEnd} يومًا)`);
-      }
-    }
+/** أزرار التقرير: أفعال (لليوم/المتأخرات) + تنقّل */
+function reportButtons(scope: string): TgKeyboard {
+  const nav: TgKeyboard = [
+    [{ text: "📅 اليوم", callback_data: "cmd:today" }, { text: "⚠️ المتأخرات", callback_data: "cmd:late" }],
+    [{ text: "📊 ملخّص شامل", callback_data: "cmd:summary" }],
+  ];
+  if (scope === "today" || scope === "late") {
+    return [
+      [{ text: "✅ سجّل دفعة", callback_data: `paylist:${scope}` }, { text: "🔔 ذكّر مستأجر", callback_data: `remindlist:${scope}` }],
+      ...nav,
+    ];
   }
-  return { props: props || [], soon, late, expiring, totalDue, units };
+  return nav;
 }
 
-async function collectAssociation(userId: string) {
-  const { data: assocs } = await db().from("associations").select("*, owners(*)").eq("user_id", userId);
-  const late: string[] = [];
-  let totalDue = 0, owners = 0;
-  const certs: string[] = [];
-  for (const a of (assocs || []) as any[]) {
-    for (const o of a.owners || []) {
-      owners++;
-      if ((o.months_late || 0) > 0) {
-        const amt = (o.months_late || 0) * (Number(a.fee) || 0);
-        totalDue += amt;
-        late.push(`• ${o.name} — وحدة ${o.unit || "—"} (${a.name})\n  <b>${sar(amt)}</b> ريال · ${o.months_late} شهر`);
-      }
-    }
-    if (a.cert_expiry) {
-      const d = Math.ceil((new Date(a.cert_expiry).getTime() - Date.now()) / 86400000);
-      if (d <= 90) certs.push(`• ${a.name} — الشهادة ${d < 0 ? "منتهية منذ " + Math.abs(d) + " يومًا" : "تنتهي بعد " + d + " يومًا"} (${a.cert_expiry})`);
-    }
-  }
-  return { assocs: assocs || [], late, certs, totalDue, owners };
+const backBtn = (scope: string): TgKeyboard[number] => [{ text: "⬅️ رجوع", callback_data: `back:${scope}` }];
+
+/** ربط حساب بالرمز */
+async function linkAccount(db: DB, chatId: number, code: string, username: string | null) {
+  const { data: p } = await db.from("profiles").select("id, telegram_chat_id").eq("telegram_link_code", code).maybeSingle();
+  if (!p) return tgSend(chatId, "رمز الربط غير صحيح أو منتهٍ. افتح «الإعدادات» في المنصة واطلب رمزًا جديدًا.");
+  await db.from("profiles").update({
+    telegram_chat_id: String(chatId),
+    telegram_username: username,
+    telegram_linked_at: new Date().toISOString(),
+    telegram_link_code: null,
+  }).eq("id", p.id);
+  return tgSend(chatId, "✅ <b>تم ربط حسابك بوثيق بنجاح.</b>\n\nيصلك هنا تنبيه قبل كل استحقاق، وتقدر تستعلم وتتحكّم من هنا:", navButtons());
 }
 
-/* ============ معالج الأوامر ============ */
-async function handle(chatId: string, text: string, from: any) {
-  const cmd = text.trim().split(/\s+/)[0].toLowerCase().replace(/@.*$/, "");
-  const arg = text.trim().split(/\s+/).slice(1).join(" ").trim();
+const helpText = () => [
+  "🤖 <b>أوامر وثيق</b>", "",
+  "/today — استحقاقات اليوم والقريبة",
+  "/late — المتأخرات",
+  "/summary — ملخّص شامل",
+  "/menu — القائمة الرئيسية", "",
+  "من داخل «اليوم» و«المتأخرات» تقدر <b>تسجّل دفعة</b> أو <b>تذكّر المستأجر</b> بضغطة.",
+].join("\n");
 
-  if (cmd === "/start") return WELCOME;
-  if (cmd === "/help") return HELP;
+// ======================= الرسائل النصّية =======================
 
-  /* ---- الربط ---- */
-  if (cmd === "/link") {
-    if (!arg) return `أرسل الرمز بعد الأمر، هكذا:\n<code>/link ABC123</code>\n\nتجده في ${APP}/settings`;
-    const code = arg.toUpperCase().replace(/[^A-Z0-9]/g, "");
-    const { data: prof } = await db()
-      .from("profiles").select("id, org_name").eq("telegram_link_code", code).maybeSingle();
-    if (!prof) return `❌ رمز غير صحيح.\n\nتأكّد من نسخه كما هو من ${APP}/settings`;
+async function handleMessage(db: DB, msg: any) {
+  const chatId = msg.chat?.id;
+  const text = String(msg.text || "").trim();
+  const username = msg.chat?.username || msg.from?.username || null;
+  if (!chatId) return;
 
-    await db().from("profiles").update({
-      telegram_chat_id: chatId,
-      telegram_username: from?.username || null,
-      telegram_linked_at: new Date().toISOString(),
-      notify_enabled: true,
-    }).eq("id", prof.id);
-
-    return `✅ <b>تم ربط حسابك بنجاح</b>${prof.org_name ? `\n${prof.org_name}` : ""}
-
-ستصلك من الآن تنبيهات يومية بالمستحقات والمتأخرات والعقود المنتهية.
-
-جرّب: /summary`;
+  if (text.startsWith("/start")) {
+    const code = text.split(/\s+/)[1];
+    if (code) return linkAccount(db, chatId, code, username);
+    const p = await findProfileByChat(db, chatId);
+    if (p) return tgSend(chatId, "أهلًا بك من جديد 👋 اختر من القائمة:", navButtons());
+    return tgSend(chatId, "أهلًا بك في <b>وثيق</b> 👋\n\nلربط حسابك: افتح <b>الإعدادات</b> في المنصة، اضغط «ربط تليجرام»، وأرسل الرمز الظاهر هنا.");
   }
 
-  /* ---- الأوامر التي تحتاج ربطًا ---- */
-  const prof = await getProfile(chatId);
-  if (!prof) return NOT_LINKED;
-
-  const isProp = prof.account_type === "landlord" || prof.account_type === "both";
-  const isHoa = prof.account_type === "hoa_manager" || prof.account_type === "both";
-
-  if (cmd === "/status") {
-    const days = prof.trial_ends_at
-      ? Math.max(0, Math.ceil((new Date(prof.trial_ends_at).getTime() - Date.now()) / 86400000)) : null;
-    return `<b>حالة حسابك</b>
-
-الجهة: ${prof.org_name || "—"}
-النوع: ${prof.account_type === "both" ? "أملاك + جمعية" : prof.account_type === "landlord" ? "إدارة أملاك" : "جمعية ملاك"}
-الربط: ✅ مفعّل
-التنبيهات: ${prof.notify_enabled ? "مفعّلة" : "موقوفة"}
-التنبيه قبل: ${prof.notify_days_before ?? 5} أيام
-${days !== null ? `التجربة المجانية: ${days > 0 ? `متبقٍ ${days} يومًا` : "منتهية"}` : ""}
-
-لوحتك: ${APP}/dashboard`;
+  const p = await findProfileByChat(db, chatId);
+  if (!p) {
+    if (/^[A-Za-z0-9]{6,12}$/.test(text)) return linkAccount(db, chatId, text, username);
+    return tgSend(chatId, "حسابك غير مربوط بعد. افتح «الإعدادات» في منصة وثيق واضغط «ربط تليجرام»، ثم أرسل الرمز هنا.");
   }
 
-  if (cmd === "/today") {
-    const within = prof.notify_days_before ?? 5;
-    const parts: string[] = [`🟡 <b>مستحقات خلال ${within} أيام</b>\n`];
-    let any = false;
-    if (isProp) {
-      const { soon } = await collectProperty(prof.id);
-      const f = soon.slice(0, 15);
-      if (f.length) { any = true; parts.push(...f); }
+  const cmd = text.replace(/^\//, "").split(/[\s@]/)[0].toLowerCase();
+  switch (cmd) {
+    case "today": case "late": case "summary": {
+      const r = await buildReport(db, p, cmd);
+      return tgSend(chatId, r, reportButtons(cmd));
     }
-    if (!any) return `✅ لا مستحقات قريبة خلال ${within} أيام. كل شيء منتظم.`;
-    parts.push(`\n${APP}/dashboard/property`);
-    return parts.join("\n");
+    case "help": return tgSend(chatId, helpText(), navButtons());
+    case "menu": default: return tgSend(chatId, "اختر من القائمة:", reportButtons("late"));
   }
-
-  if (cmd === "/late") {
-    const parts: string[] = [];
-    let total = 0, any = false;
-    if (isProp) {
-      const r = await collectProperty(prof.id);
-      if (r.late.length) { any = true; total += r.totalDue; parts.push(`🔴 <b>متأخرات الأملاك (${r.late.length})</b>\n`, ...r.late.slice(0, 15), ""); }
-    }
-    if (isHoa) {
-      const r = await collectAssociation(prof.id);
-      if (r.late.length) { any = true; total += r.totalDue; parts.push(`🔴 <b>متأخرات اشتراكات الجمعية (${r.late.length})</b>\n`, ...r.late.slice(0, 15), ""); }
-    }
-    if (!any) return "✅ لا متأخرات. كل المستحقات مسدّدة.";
-    parts.unshift(`<b>إجمالي المتأخر: ${sar(total)} ريال</b>\n`);
-    parts.push(`${APP}/dashboard`);
-    return parts.join("\n");
-  }
-
-  if (cmd === "/contracts") {
-    if (!isProp) return "هذا الأمر خاص بحسابات إدارة الأملاك.";
-    const { expiring } = await collectProperty(prof.id);
-    if (!expiring.length) return "✅ لا عقود تنتهي خلال ٦٠ يومًا.";
-    return [`📄 <b>عقود تنتهي قريبًا (${expiring.length})</b>\n`, ...expiring.slice(0, 15), `\n${APP}/dashboard/property`].join("\n");
-  }
-
-  if (cmd === "/summary") {
-    const parts: string[] = [`🗂️ <b>ملخّص وثيق</b>${prof.org_name ? ` — ${prof.org_name}` : ""}\n`];
-    if (isProp) {
-      const r = await collectProperty(prof.id);
-      parts.push(`<b>الأملاك</b>`,
-        `العقارات: ${r.props.length} · الوحدات: ${r.units}`,
-        `متأخرة: ${r.late.length} (${sar(r.totalDue)} ريال)`,
-        `عقود تنتهي قريبًا: ${r.expiring.length}`, "");
-    }
-    if (isHoa) {
-      const r = await collectAssociation(prof.id);
-      parts.push(`<b>الجمعية</b>`,
-        `الجمعيات: ${r.assocs.length} · الملّاك: ${r.owners}`,
-        `متأخرون: ${r.late.length} (${sar(r.totalDue)} ريال)`, "");
-      if (r.certs.length) parts.push(`⚠️ <b>شهادات</b>`, ...r.certs, "");
-    }
-    parts.push(`التفاصيل: ${APP}/dashboard`);
-    return parts.join("\n");
-  }
-
-  return `لم أفهم الأمر. أرسل /help لعرض القائمة.`;
 }
 
-/* ============ نقطة الاستقبال ============ */
+// ======================= الأزرار (Callbacks) =======================
+
+/** قائمة اختيار دفعة لتسجيلها مدفوعة */
+async function showPayList(db: DB, chatId: number, messageId: number, p: any, scope: string) {
+  const rows = await getUnpaid(db, p, scope);
+  if (!rows.length) return tgEdit(chatId, messageId, "لا توجد دفعات غير مسدّدة في هذا القسم ✅", reportButtons(scope));
+  const buttons: TgKeyboard = rows.slice(0, 15).map((r) => [
+    { text: `${r.unit} — ${sar(r.amount)}﷼ — ${r.due}`, callback_data: `pay:${scope}:${r.id}` },
+  ]);
+  buttons.push(backBtn(scope));
+  return tgEdit(chatId, messageId, "اختر الدفعة لتسجيلها <b>كمدفوعة</b>:", buttons);
+}
+
+/** شاشة تأكيد قبل التسجيل */
+async function confirmPay(db: DB, chatId: number, messageId: number, p: any, scope: string, id: string) {
+  const row = (await getUnpaid(db, p, scope)).find((r) => r.id === id);
+  if (!row) return tgEdit(chatId, messageId, "لم تُعثر على الدفعة (ربما سُجّلت).", reportButtons(scope));
+  const buttons: TgKeyboard = [
+    [{ text: "✅ نعم، سجّلها مدفوعة", callback_data: `payok:${scope}:${id}` }],
+    backBtn(scope),
+  ];
+  return tgEdit(chatId, messageId, `تأكيد تسجيل دفعة:\n\n<b>${row.unit}</b> — ${row.tenant}\nالمبلغ: <b>${sar(row.amount)}</b> ﷼ · الاستحقاق: ${row.due}`, buttons);
+}
+
+/** تنفيذ التسجيل ثم تحديث التقرير */
+async function doPay(db: DB, chatId: number, messageId: number, p: any, scope: string, id: string) {
+  const res = await markPaid(db, p, id);
+  const rep = await buildReport(db, p, scope);
+  const banner = res.ok ? `✅ ${res.msg}` : `⚠️ ${res.msg}`;
+  return tgEdit(chatId, messageId, `${banner}\n\n${rep}`, reportButtons(scope));
+}
+
+/** قائمة اختيار مستأجر لتذكيره */
+async function showRemindList(db: DB, chatId: number, messageId: number, p: any, scope: string) {
+  const rows = await getUnpaid(db, p, scope);
+  if (!rows.length) return tgEdit(chatId, messageId, "لا يوجد مستأجرون عليهم مستحقات في هذا القسم ✅", reportButtons(scope));
+  const seen = new Set<string>();
+  const buttons: TgKeyboard = [];
+  for (const r of rows) {
+    if (seen.has(r.contractId)) continue;
+    seen.add(r.contractId);
+    buttons.push([{ text: `${r.unit} — ${r.tenant}`, callback_data: `remind:${scope}:${r.contractId}` }]);
+    if (buttons.length >= 15) break;
+  }
+  buttons.push(backBtn(scope));
+  return tgEdit(chatId, messageId, "اختر المستأجر لإرسال تذكير له:", buttons);
+}
+
+/** تجهيز رابط واتساب التذكير */
+async function doRemind(db: DB, chatId: number, messageId: number, p: any, scope: string, contractId: string) {
+  const r = await buildReminder(db, p, contractId);
+  if (!r.ok) return tgEdit(chatId, messageId, r.text, [backBtn(scope)]);
+  const buttons: TgKeyboard = [[{ text: "📲 افتح واتساب المستأجر", url: r.url! }], backBtn(scope)];
+  return tgEdit(chatId, messageId, r.text, buttons);
+}
+
+async function handleCallback(db: DB, cq: any) {
+  const chatId = cq.message?.chat?.id;
+  const messageId = cq.message?.message_id;
+  const data = String(cq.data || "");
+  await tgAnswer(cq.id);
+  if (!chatId) return;
+
+  const p = await findProfileByChat(db, chatId);
+  if (!p) return tgEdit(chatId, messageId, "حسابك غير مربوط. افتح «الإعدادات» في المنصة.");
+
+  const [action, a1, a2] = data.split(":");
+  switch (action) {
+    case "cmd":
+    case "back": {
+      const rep = await buildReport(db, p, a1);
+      return tgEdit(chatId, messageId, rep, reportButtons(a1));
+    }
+    case "paylist": return showPayList(db, chatId, messageId, p, a1);
+    case "pay": return confirmPay(db, chatId, messageId, p, a1, a2);
+    case "payok": return doPay(db, chatId, messageId, p, a1, a2);
+    case "remindlist": return showRemindList(db, chatId, messageId, p, a1);
+    case "remind": return doRemind(db, chatId, messageId, p, a1, a2);
+    default: return;
+  }
+}
+
 export async function POST(req: Request) {
-  // تحقّق أمني: تليجرام يرسل هذا الترويسة إن ضبطتها عند تسجيل الـ webhook
-  const secret = process.env.TELEGRAM_WEBHOOK_SECRET;
-  if (secret && req.headers.get("x-telegram-bot-api-secret-token") !== secret) {
+  const secret = req.headers.get("x-telegram-bot-api-secret-token");
+  if (!process.env.TELEGRAM_WEBHOOK_SECRET || secret !== process.env.TELEGRAM_WEBHOOK_SECRET) {
     return NextResponse.json({ ok: false }, { status: 401 });
   }
+  const update = await req.json().catch(() => null);
+  if (!update) return NextResponse.json({ ok: true });
 
-  let update: any;
-  try { update = await req.json(); } catch { return NextResponse.json({ ok: true }); }
-
-  const msg = update?.message || update?.edited_message;
-  const chatId = msg?.chat?.id ? String(msg.chat.id) : null;
-  const text = msg?.text ? String(msg.text) : "";
-  if (!chatId || !text) return NextResponse.json({ ok: true });
-
+  const db = admin();
   try {
-    const reply = await handle(chatId, text, msg.from);
-    await sendTelegram(chatId, reply);
+    if (update.message) await handleMessage(db, update.message);
+    else if (update.callback_query) await handleCallback(db, update.callback_query);
   } catch (e) {
-    await sendTelegram(chatId, "حدث خطأ مؤقّت. جرّب مرة أخرى بعد قليل.");
+    console.error("telegram webhook error:", e);
   }
   return NextResponse.json({ ok: true });
-}
-
-// للتأكد من عمل المسار في المتصفّح
-export async function GET() {
-  return NextResponse.json({ ok: true, service: "watheq-telegram-webhook" });
 }
