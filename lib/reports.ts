@@ -17,15 +17,11 @@ const monthEndISO = () => { const d = new Date(); return iso(new Date(d.getFullY
 export const sar = (n: number) => (Number(n) || 0).toLocaleString("en-US");
 const esc = (s: any) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
-/** حالات الفاتورة المعتبرة "مسدّدة" أو "متجاهَلة" — الباقي غير مسدّد */
-const PAID = new Set(["paid", "مدفوع", "مدفوعة", "collected", "محصل", "محصلة", "closed", "settled"]);
-const SKIP = new Set(["cancelled", "canceled", "ملغي", "ملغى", "ملغاة", "draft", "مسودة", "void"]);
+/** حالات الفاتورة الرسمية (يفرضها CHECK في قاعدة البيانات): issued | paid | void
+ *  غير المسدّد = issued فقط (paid مدفوعة، void ملغاة). */
 function invoiceUnpaid(status: any): boolean {
-  const s = String(status ?? "").trim().toLowerCase();
-  if (!s) return true;              // بلا حالة = نعتبرها غير مسدّدة
-  if (PAID.has(s)) return false;
-  if (SKIP.has(s)) return false;
-  return true;
+  const s = String(status ?? "issued").trim().toLowerCase();
+  return s === "issued";
 }
 
 /** تطبيع رقم سعودي إلى صيغة دولية بدون + (للـ wa.me) */
