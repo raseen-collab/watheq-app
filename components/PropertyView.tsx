@@ -16,7 +16,7 @@ const PERIODS_PER_MONTH: Record<Frequency, number> = {
 type Tenant = {
   id: string; name: string; unit: string | null; phone: string | null; national_id: string | null;
   rent_amount: number; contract_start: string | null; contract_end: string | null;
-payment_frequency: string | null; paid_periods: number | null; contract_periods: number | null;
+  payment_frequency: string | null; paid_periods: number | null; contract_periods: number | null;
   litigation?: boolean | null; enforcement_no?: string | null; enforcement_order?: string | null;
 };
 type Note = { id: string; note_date: string; text: string };
@@ -25,6 +25,28 @@ type Property = {
   property_type: string | null; collected: number;
   tenants: Tenant[]; property_notes: Note[];
 };
+
+/** حالة الصف المعروضة (تشمل «في التنفيذ») */
+type RowKey = "litigation" | "late" | "soon" | "expiring" | "ok";
+type Row = { t: Tenant; st: ReturnType<typeof contractState>; key: RowKey };
+
+const ROW_META: Record<RowKey, { label: string; dot: string; cls: string }> = {
+  litigation: { label: "في التنفيذ",  dot: "bg-[#64748B]", cls: "bg-[#EEF1F4] text-[#475569]" },
+  late:       { label: "متأخر",        dot: "bg-late",      cls: "bg-[#FBE9E7] text-[#a5322c]" },
+  soon:       { label: "يستحق قريبًا", dot: "bg-gold",      cls: "bg-[#FBF1DF] text-[#8a5a11]" },
+  expiring:   { label: "نافذة التجديد", dot: "bg-[#7C3AED]", cls: "bg-[#F1EBFC] text-[#5B21B6]" },
+  ok:         { label: "منتظم",        dot: "bg-paid",      cls: "bg-[#E6F4EC] text-[#137a50]" },
+};
+
+function rowKey(t: Tenant, st: ReturnType<typeof contractState>): RowKey {
+  if (t.litigation) return "litigation";
+  if (st.status === "late") return "late";
+  if (st.status === "soon") return "soon";
+  if (st.daysToEnd !== null && st.daysToEnd <= 60 && st.daysToEnd >= 0) return "expiring";
+  return "ok";
+}
+
+const URGENCY: Record<RowKey, number> = { late: 0, soon: 1, expiring: 2, litigation: 3, ok: 4 };
 
 export default function PropertyView({ initial, orgName, issuer }: { initial: Property[]; orgName: string; issuer?: any }) {
   const supabase = createClient();
@@ -35,9 +57,19 @@ export default function PropertyView({ initial, orgName, issuer }: { initial: Pr
   const [doc, setDoc] = useState<null | { title: string; body: string }>(null);
   const [schedule, setSchedule] = useState<Tenant | null>(null);
   const [renewing, setRenewing] = useState<Tenant | null>(null);
+  const [enforcing, setEnforcing] = useState<Tenant | null>(null);
+
+  // ---------- أدوات العرض: بحث / تصفية / فرز / إشعار ----------
+  const [q, setQ] = useState("");
+  const [filter, setFilter] = useState<"all" | RowKey>("all");
+  const [sort, setSort] = useState<"urgent" | "due" | "amount" | "name">("urgent");
+  const [toast, setToast] = useState<null | { k: "ok" | "err"; m: string }>(null);
+  function notify(k: "ok" | "err", m: string) {
+    setToast({ k, m });
+    setTimeout(() => setToast(null), 3600);
+  }
 
   const active = useMemo(() => items.find((p) => p.id === activeId) || null, [items, activeId]);
-
   async function saveProperty(d: any, id?: string) {
     const payload = {
       name: d.name, address: d.address || null, city: d.city || null,
@@ -45,11 +77,11 @@ export default function PropertyView({ initial, orgName, issuer }: { initial: Pr
     };
     if (id) {
       const { error } = await supabase.from("properties").update(payload).eq("id", id);
-      if (error) return alert(error.message);
+      if (error) return notify("err", error.message);
       setItems(items.map((p) => (p.id === id ? { ...p, ...payload } as Property : p)));
     } else {
       const { data, error } = await supabase.from("properties").insert({ ...payload, collected: 0 }).select("*").single();
-      if (error) return alert(error.message);
+      if (error) return notify("err", error.message);
       const next = { ...(data as any), tenants: [], property_notes: [] };
       setItems([next, ...items]); setActiveId(next.id);
     }
@@ -59,7 +91,7 @@ export default function PropertyView({ initial, orgName, issuer }: { initial: Pr
   async function deleteProperty() {
     if (!active || !confirm("حذف العقار وكل وحداته؟")) return;
     const { error } = await supabase.from("properties").delete().eq("id", active.id);
-    if (error) return alert(error.message);
+    if (error) return notify("err", error.message);
     const rest = items.filter((p) => p.id !== active.id);
     setItems(rest); setActiveId(rest[0]?.id || null); setModal(null);
   }
@@ -78,12 +110,12 @@ export default function PropertyView({ initial, orgName, issuer }: { initial: Pr
     };
     if (id) {
       const { error } = await supabase.from("tenants").update(payload).eq("id", id);
-      if (error) return alert(error.message);
+      if (error) return notify("err", error.message);
       setItems(items.map((p) => p.id === active.id
         ? { ...p, tenants: p.tenants.map((t) => (t.id === id ? { ...t, ...payload } as Tenant : t)) } : p));
     } else {
       const { data, error } = await supabase.from("tenants").insert({ ...payload, paid_periods: 0 }).select("*").single();
-      if (error) return alert(error.message);
+      if (error) return notify("err", error.message);
       setItems(items.map((p) => (p.id === active.id ? { ...p, tenants: [...p.tenants, data as Tenant] } : p)));
     }
     setModal(null);
@@ -92,7 +124,7 @@ export default function PropertyView({ initial, orgName, issuer }: { initial: Pr
   async function patchTenant(id: string, patch: any, collectedDelta = 0) {
     if (!active) return;
     const { error } = await supabase.from("tenants").update(patch).eq("id", id);
-    if (error) return alert(error.message);
+    if (error) return notify("err", error.message);
     if (collectedDelta) await supabase.from("properties").update({ collected: (active.collected || 0) + collectedDelta }).eq("id", active.id);
     setItems(items.map((p) => p.id === active.id ? {
       ...p,
@@ -104,7 +136,7 @@ export default function PropertyView({ initial, orgName, issuer }: { initial: Pr
   async function deleteTenant(id: string) {
     if (!active || !confirm("حذف هذه الوحدة؟")) return;
     const { error } = await supabase.from("tenants").delete().eq("id", id);
-    if (error) return alert(error.message);
+    if (error) return notify("err", error.message);
     setItems(items.map((p) => (p.id === active.id ? { ...p, tenants: p.tenants.filter((t) => t.id !== id) } : p)));
   }
 
@@ -112,7 +144,7 @@ export default function PropertyView({ initial, orgName, issuer }: { initial: Pr
     if (!active || !text.trim()) return;
     const { data, error } = await supabase.from("property_notes")
       .insert({ property_id: active.id, text: text.trim(), note_date: today() }).select("*").single();
-    if (error) return alert(error.message);
+    if (error) return notify("err", error.message);
     setItems(items.map((p) => (p.id === active.id ? { ...p, property_notes: [data as Note, ...p.property_notes] } : p)));
   }
 
@@ -126,7 +158,7 @@ export default function PropertyView({ initial, orgName, issuer }: { initial: Pr
     if (!active) return;
     const fields = renewContract(t, { periods: opts.periods, newAmount: opts.newAmount, newFrequency: opts.newFrequency });
     const { error } = await supabase.from("tenants").update(fields).eq("id", t.id);
-    if (error) return alert(error.message);
+    if (error) return notify("err", error.message);
     // توثيق التجديد في سجل العقار
     await supabase.from("property_notes").insert({
       property_id: active.id, note_date: today(),
@@ -226,15 +258,44 @@ export default function PropertyView({ initial, orgName, issuer }: { initial: Pr
     );
   }
 
+
   const p = active!;
   const ul = unitLabel(p.property_type);
-  const states = p.tenants.map((t) => ({ t, st: contractState(t) }));
-  const late = states.filter((x) => x.st.status === "late");
-  const soon = states.filter((x) => x.st.status === "soon");
-  const overdue = late.reduce((s, x) => s + x.st.amountDue, 0);
-  const pct = states.length ? Math.round(((states.length - late.length) / states.length) * 100) : 100;
-  const expiring = states
-    .filter((x) => x.st.daysToEnd !== null && x.st.daysToEnd <= 60 && x.st.daysToEnd >= 0)
+
+  // كل الصفوف مع حالتها (تُستخدم للإحصاءات)
+  const allRows: Row[] = p.tenants.map((t) => {
+    const st = contractState(t);
+    return { t, st, key: rowKey(t, st) };
+  });
+
+  const counts = allRows.reduce((acc, r) => { acc[r.key] = (acc[r.key] || 0) + 1; return acc; },
+    {} as Record<RowKey, number>);
+  const lateRows = allRows.filter((r) => r.key === "late");
+  const overdue = lateRows.reduce((s, r) => s + r.st.amountDue, 0);
+  const pct = allRows.length ? Math.round(((allRows.length - lateRows.length) / allRows.length) * 100) : 100;
+
+  // الصفوف المعروضة: بحث ← تصفية ← فرز
+  const rows = useMemo(() => {
+    const needle = q.trim().toLowerCase();
+    let out = allRows.filter((r) => {
+      if (filter !== "all" && r.key !== filter) return false;
+      if (!needle) return true;
+      return [r.t.name, r.t.unit, r.t.phone].filter(Boolean)
+        .some((v) => String(v).toLowerCase().includes(needle));
+    });
+    out = [...out].sort((a, b) => {
+      if (sort === "amount") return b.st.amountDue - a.st.amountDue;
+      if (sort === "name") return String(a.t.name || "").localeCompare(String(b.t.name || ""), "ar");
+      if (sort === "due") return String(a.st.nextDueDate || "9999").localeCompare(String(b.st.nextDueDate || "9999"));
+      // urgent: الأهم أولًا، ثم الأكبر مبلغًا
+      const d = URGENCY[a.key] - URGENCY[b.key];
+      return d !== 0 ? d : b.st.amountDue - a.st.amountDue;
+    });
+    return out;
+  }, [allRows, q, filter, sort]);
+
+  const expiringSoon = allRows
+    .filter((r) => r.st.daysToEnd !== null && r.st.daysToEnd <= 60 && r.st.daysToEnd >= 0 && !r.t.litigation)
     .sort((a, b) => (a.st.daysToEnd || 0) - (b.st.daysToEnd || 0))[0];
   const editing = modal?.kind === "tenant" && modal.id ? p.tenants.find((t) => t.id === modal.id) : undefined;
 
@@ -251,8 +312,23 @@ export default function PropertyView({ initial, orgName, issuer }: { initial: Pr
     return acc;
   }, { units: 0, late: 0, soon: 0, overdue: 0, expiring: 0, monthly: 0 });
 
+  const chips: { k: "all" | RowKey; label: string }[] = [
+    { k: "all", label: `الكل ${allRows.length}` },
+    { k: "late", label: `متأخر ${counts.late || 0}` },
+    { k: "soon", label: `قريب ${counts.soon || 0}` },
+    { k: "expiring", label: `تجديد ${counts.expiring || 0}` },
+    { k: "litigation", label: `تنفيذ ${counts.litigation || 0}` },
+  ];
+
   return (
     <div>
+      {toast && (
+        <div className={`fixed bottom-5 left-1/2 -translate-x-1/2 z-[60] rounded-xl px-4 py-3 text-sm font-semibold shadow-lg border ${
+          toast.k === "ok" ? "bg-[#E6F4EC] text-[#137a50] border-[#B7DFC7]" : "bg-[#FBE9E7] text-[#a5322c] border-[#F5C6C2]"}`}>
+          {toast.m}
+        </div>
+      )}
+
       {items.length > 1 && (
         <div className="bg-deep text-[#EAF1EE] rounded-2xl p-4 mb-5 flex flex-wrap items-center gap-x-6 gap-y-3">
           <div className="font-display font-bold text-sm text-goldSoft">محفظتك · {items.length} عقارات</div>
@@ -279,18 +355,20 @@ export default function PropertyView({ initial, orgName, issuer }: { initial: Pr
         <button className="btn btn-gold text-sm" onClick={() => setModal({ kind: "newProp" })}>+ عقار</button>
       </div>
 
-      {expiring && (
+      {expiringSoon && (
         <div className={`flex flex-wrap items-center gap-3 rounded-xl p-3.5 mb-4 border text-sm ${
-          (expiring.st.daysToEnd || 0) <= 30 ? "bg-[#FBE9E7] border-[#F5C6C2] text-[#8f2b26]" : "bg-[#FBF1DF] border-[#EBD9AA] text-[#8a5a11]"}`}>
-          <span>عقد {expiring.t.name} ({ul} {expiring.t.unit || "—"}) ينتهي خلال <b>{expiring.st.daysToEnd}</b> يومًا ({expiring.st.endDate}). جهّز التجديد أو الإخلاء.</span>
+          (expiringSoon.st.daysToEnd || 0) <= 30 ? "bg-[#FBE9E7] border-[#F5C6C2] text-[#8f2b26]" : "bg-[#FBF1DF] border-[#EBD9AA] text-[#8a5a11]"}`}>
+          <span>عقد {expiringSoon.t.name} ({ul} {expiringSoon.t.unit || "—"}) ينتهي خلال <b>{expiringSoon.st.daysToEnd}</b> يومًا ({expiringSoon.st.endDate}). جهّز التجديد أو الإخلاء.</span>
+          <button className="btn btn-ghost text-xs mr-auto" onClick={() => setRenewing(expiringSoon.t)}>تجديد الآن</button>
         </div>
       )}
 
+      {/* إحصاءات — قابلة للنقر للتصفية */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
-        <Stat v={`${pct}٪`} l="نسبة الانتظام" tone="ok" />
-        <Stat v={String(late.length)} l="وحدات متأخرة" tone={late.length ? "warn" : undefined} />
-        <Stat v={sar(overdue)} l="إجمالي المتأخر (ريال)" tone={overdue ? "warn" : undefined} />
-        <Stat v={String(soon.length)} l="دفعات خلال ٧ أيام" />
+        <Stat v={`${pct}٪`} l="نسبة الانتظام" tone="ok" onClick={() => setFilter("all")} active={filter === "all"} />
+        <Stat v={String(counts.late || 0)} l="وحدات متأخرة" tone={counts.late ? "warn" : undefined} onClick={() => setFilter("late")} active={filter === "late"} />
+        <Stat v={sar(overdue)} l="إجمالي المتأخر (ريال)" tone={overdue ? "warn" : undefined} onClick={() => { setFilter("late"); setSort("amount"); }} />
+        <Stat v={String(counts.soon || 0)} l="دفعات خلال ٧ أيام" onClick={() => setFilter("soon")} active={filter === "soon"} />
       </div>
 
       <div className="grid md:grid-cols-[1.65fr_1fr] gap-5 items-start">
@@ -300,47 +378,101 @@ export default function PropertyView({ initial, orgName, issuer }: { initial: Pr
             <div className="flex gap-2">
               <button className="btn btn-ghost text-xs" onClick={openPropertyStatement}>كشف حساب العقار</button>
               <Link href="/dashboard/property/import" className="btn btn-ghost text-xs">رفع Excel</Link>
-              <button className="btn btn-gold text-xs" onClick={() => setModal({ kind: "tenant" })}>+ وحدة</button>
+              <button className="btn btn-gold text-xs" onClick={() => setModal({ kind: "tenant" })}>+ {ul}</button>
             </div>
           </div>
-          <div className="p-4 flex flex-col gap-2">
-            {states.length ? states.map(({ t, st }) => (
-              <div key={t.id} className="rounded-xl border border-line bg-paper p-3">
-                <div className="flex flex-wrap items-center gap-3">
-                  <span className="w-9 h-9 rounded-lg bg-paper2 grid place-items-center font-semibold text-deep shrink-0">{(t.name || "?").charAt(0)}</span>
-                  <div className="min-w-0 flex-1">
-                    <div className="font-semibold">{t.name}</div>
-                    <div className="text-xs text-muted">
-                      {ul} {t.unit || "—"} · {sar(t.rent_amount)} ريال / {freqShort(t.payment_frequency)}
-                      {st.nextDueDate && st.unpaid === 0 ? ` · القادمة ${st.nextDueDate}` : ""}
-                      {st.amountDue ? ` · متأخر ${sar(st.amountDue)} ريال` : ""}
-                    </div>
-                  </div>
-                  <StatusPill state={st.status} label={st.statusLabel} />
-                </div>
-                <div className="flex flex-wrap gap-1.5 justify-end mt-2.5">
-                  <button className="btn btn-ghost text-xs" onClick={() => patchTenant(t.id, { paid_periods: (t.paid_periods || 0) + 1 }, t.rent_amount || 0)}>سجّل دفعة</button>
-                  {(t.paid_periods || 0) > 0 && (
-                    <button className="btn btn-ghost text-xs" onClick={() => patchTenant(t.id, { paid_periods: Math.max(0, (t.paid_periods || 0) - 1) })}>تراجع</button>
-                  )}
-                  <button className="btn btn-ghost text-xs" onClick={() => setSchedule(t)}>الجدول</button>
-                  <button className="btn btn-ghost text-xs" onClick={() => openStatement(t)}>كشف حساب</button>
-                  <button className="btn btn-ghost text-xs" onClick={() => openInvoice(t)}>فاتورة</button>
-                  <a href={remindLink(t)} target="_blank" rel="noreferrer" className="btn btn-wa text-xs">تذكير واتساب</a>
-                  {st.unpaid > 0 && <button className="btn btn-gold text-xs" onClick={() => makeNotice(t)}>نموذج إشعار</button>}
-                  {needsRenewal(t) && <button className="btn text-xs" style={{ background: "#0E3A37", color: "#F6F1E4" }} onClick={() => setRenewing(t)}>تجديد العقد</button>}
-                  <button className="text-deep text-sm px-2" onClick={() => setModal({ kind: "tenant", id: t.id })} title="تعديل">تعديل</button>
-                  <button className="text-late text-sm px-2" onClick={() => deleteTenant(t.id)} title="حذف">حذف</button>
-                </div>
+
+          {/* شريط التحكّم: بحث · تصفية · فرز */}
+          {p.tenants.length > 0 && (
+            <div className="border-b border-line px-4 py-3 flex flex-wrap gap-2 items-center bg-paper">
+              <input className="fld flex-1 min-w-[150px]" value={q} onChange={(e) => setQ(e.target.value)}
+                placeholder={`ابحث باسم المستأجر أو رقم ${ul}…`} />
+              <select className="fld max-w-[170px]" value={sort} onChange={(e) => setSort(e.target.value as any)}>
+                <option value="urgent">الأهم أولًا</option>
+                <option value="due">الأقرب استحقاقًا</option>
+                <option value="amount">الأكبر متأخرًا</option>
+                <option value="name">الاسم</option>
+              </select>
+              <div className="flex flex-wrap gap-1.5 w-full">
+                {chips.map((c) => (
+                  <button key={c.k} onClick={() => setFilter(c.k)}
+                    className={`text-xs font-semibold rounded-lg px-2.5 py-1 border transition ${
+                      filter === c.k ? "bg-deep text-[#F6F1E4] border-deep" : "bg-white text-deep border-line hover:border-goldSoft"}`}>
+                    {c.label}
+                  </button>
+                ))}
               </div>
-            )) : (
+            </div>
+          )}
+
+          <div className="p-4 flex flex-col gap-2">
+            {!p.tenants.length ? (
               <div className="text-center text-muted py-8 text-sm">
                 لا توجد وحدات بعد.
                 <div className="mt-3 flex gap-2 justify-center">
-                  <button className="btn btn-gold text-xs" onClick={() => setModal({ kind: "tenant" })}>+ أضف وحدة</button>
+                  <button className="btn btn-gold text-xs" onClick={() => setModal({ kind: "tenant" })}>+ أضف {ul}</button>
                   <Link href="/dashboard/property/import" className="btn btn-ghost text-xs">رفع Excel</Link>
                 </div>
               </div>
+            ) : !rows.length ? (
+              <div className="text-center text-muted py-8 text-sm">
+                لا نتائج مطابقة.
+                <button className="btn btn-ghost text-xs mt-3 mx-auto" onClick={() => { setQ(""); setFilter("all"); }}>مسح البحث والتصفية</button>
+              </div>
+            ) : rows.map(({ t, st, key }) => (
+              <div key={t.id} className={`rounded-xl border p-3 ${key === "litigation" ? "border-[#CBD5E1] bg-[#F8FAFC]" : "border-line bg-paper"}`}>
+                <div className="flex items-center gap-3">
+                  <span className="w-9 h-9 rounded-lg bg-paper2 grid place-items-center font-semibold text-deep shrink-0">{(t.name || "?").charAt(0)}</span>
+                  <div className="min-w-0 flex-1">
+                    <div className="font-semibold truncate">{t.name}</div>
+                    <div className="text-xs text-muted">
+                      {ul} {t.unit || "—"} · {sar(t.rent_amount)} ريال / {freqShort(t.payment_frequency)}
+                    </div>
+                  </div>
+                  {/* عمود ثابت: الحالة + الرقم المهم */}
+                  <div className="text-left shrink-0">
+                    <StatusPill k={key} />
+                    <div className="text-xs mt-1 tabular-nums">
+                      {key === "late" ? <span className="text-late font-semibold">متأخر {sar(st.amountDue)}</span>
+                        : key === "expiring" && st.daysToEnd !== null ? <span className="text-[#5B21B6] font-semibold">ينتهي بعد {st.daysToEnd} يوم</span>
+                        : key === "litigation" ? <span className="text-[#475569]">{t.enforcement_no ? `طلب ${t.enforcement_no}` : "متابعة نظامية"}</span>
+                        : st.nextDueDate ? <span className="text-muted">القادمة {st.nextDueDate}</span> : null}
+                    </div>
+                  </div>
+                </div>
+
+                {/* إجراء رئيسي + قائمة المزيد */}
+                <div className="flex flex-wrap gap-1.5 justify-end mt-2.5 items-center">
+                  {key === "litigation" ? (
+                    <>
+                      <button className="btn btn-ghost text-xs" onClick={() => setEnforcing(t)}>متابعة التنفيذ</button>
+                      <button className="btn btn-ghost text-xs" onClick={() => { if (confirm("إلغاء رفع العقد للتنفيذ؟ ستعود الإشعارات الودية.")) patchTenant(t.id, { litigation: false }); }}>إلغاء الرفع</button>
+                    </>
+                  ) : (
+                    <>
+                      <button className="btn btn-primary text-xs" onClick={() => patchTenant(t.id, { paid_periods: (t.paid_periods || 0) + 1 }, t.rent_amount || 0)}>سجّل دفعة</button>
+                      <a href={remindLink(t)} target="_blank" rel="noreferrer" className="btn btn-wa text-xs">تذكير</a>
+                      {st.unpaid > 0 && <button className="btn btn-gold text-xs" onClick={() => makeNotice(t)}>نموذج إشعار</button>}
+                      {needsRenewal(t) && <button className="btn text-xs" style={{ background: "#0E3A37", color: "#F6F1E4" }} onClick={() => setRenewing(t)}>تجديد</button>}
+                    </>
+                  )}
+                  <RowMenu
+                    items={[
+                      { label: "📅 جدول الدفعات", run: () => setSchedule(t) },
+                      { label: "🧾 كشف حساب", run: () => openStatement(t) },
+                      { label: "📄 إصدار فاتورة", run: () => openInvoice(t) },
+                      ...((t.paid_periods || 0) > 0 ? [{ label: "↩︎ تراجع عن دفعة", run: () => patchTenant(t.id, { paid_periods: Math.max(0, (t.paid_periods || 0) - 1) }) }] : []),
+                      ...(!t.litigation && st.unpaid > 0 ? [{ label: "⚖️ رفع للتنفيذ", run: () => setEnforcing(t) }] : []),
+                      { label: "✎ تعديل البيانات", run: () => setModal({ kind: "tenant", id: t.id }) },
+                      { label: "🗑 حذف", run: () => deleteTenant(t.id), danger: true },
+                    ]}
+                  />
+                </div>
+              </div>
+            ))}
+
+            {p.tenants.length > 0 && rows.length > 0 && (
+              <div className="text-center text-xs text-muted pt-1">عرض {rows.length} من {allRows.length} {ul}</div>
             )}
           </div>
         </div>
@@ -368,30 +500,64 @@ export default function PropertyView({ initial, orgName, issuer }: { initial: Pr
 
       {schedule && <ScheduleModal tenant={schedule} unitWord={ul} onClose={() => setSchedule(null)} />}
       {renewing && <RenewModal tenant={renewing} unitWord={ul} onClose={() => setRenewing(null)} onRenew={(o) => doRenew(renewing, o)} />}
+      {enforcing && <EnforcementModal tenant={enforcing} unitWord={ul}
+        onClose={() => setEnforcing(null)}
+        onSubmit={(no, order) => { patchTenant(enforcing.id, { litigation: true, enforcement_no: no || null, enforcement_order: order || null }); setEnforcing(null); }} />}
       {doc && <DocModal doc={doc} onClose={() => setDoc(null)} />}
     </div>
   );
 }
 
-function Stat({ v, l, tone }: { v: string; l: string; tone?: "ok" | "warn" }) {
+/** بطاقة إحصاء — قابلة للنقر للتصفية */
+function Stat({ v, l, tone, onClick, active }: { v: string; l: string; tone?: "ok" | "warn"; onClick?: () => void; active?: boolean }) {
   const c = tone === "ok" ? "text-paid" : tone === "warn" ? "text-late" : "text-deep";
-  return (
-    <div className="bg-white border border-line rounded-xl p-4 shadow-sm">
+  const base = `bg-white border rounded-xl p-4 shadow-sm text-right w-full transition ${active ? "border-gold ring-1 ring-goldSoft" : "border-line"}`;
+  const inner = (
+    <>
       <div className={`font-display font-bold text-2xl leading-none ${c}`}>{v}</div>
       <div className="mt-1.5 text-sm text-muted">{l}</div>
+    </>
+  );
+  if (!onClick) return <div className={base}>{inner}</div>;
+  return <button type="button" onClick={onClick} className={`${base} hover:border-goldSoft cursor-pointer`}>{inner}</button>;
+}
+
+/** شارة الحالة — تقرأ من ROW_META */
+function StatusPill({ k }: { k: RowKey }) {
+  const m = ROW_META[k];
+  return (
+    <span className={`inline-flex items-center gap-1.5 text-xs font-semibold rounded-lg px-2.5 py-1 ${m.cls}`}>
+      <span className={`w-1.5 h-1.5 rounded-full ${m.dot}`} /> {m.label}
+    </span>
+  );
+}
+
+/** قائمة إجراءات منسدلة — تُخفي الأزرار الثانوية */
+function RowMenu({ items }: { items: { label: string; run: () => void; danger?: boolean }[] }) {
+  const [open, setOpen] = useState(false);
+  if (!items.length) return null;
+  return (
+    <div className="relative">
+      <button type="button" onClick={() => setOpen((v) => !v)} aria-label="إجراءات أخرى"
+        className="btn btn-ghost text-xs px-2.5" title="المزيد">⋯</button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
+          <div className="absolute z-50 top-full mt-1 left-0 min-w-[190px] bg-white border border-line rounded-xl shadow-lg overflow-hidden py-1">
+            {items.map((it, i) => (
+              <button key={i} type="button"
+                onClick={() => { setOpen(false); it.run(); }}
+                className={`block w-full text-right px-3.5 py-2 text-xs font-semibold hover:bg-paper2 transition ${it.danger ? "text-late" : "text-deep"}`}>
+                {it.label}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
     </div>
   );
 }
 
-function StatusPill({ state, label }: { state: "late" | "soon" | "ok"; label: string }) {
-  const map = { late: "bg-[#FBE9E7] text-[#a5322c]", soon: "bg-[#FBF1DF] text-[#8a5a11]", ok: "bg-[#E6F4EC] text-[#137a50]" };
-  const dot = { late: "bg-late", soon: "bg-gold", ok: "bg-paid" };
-  return (
-    <span className={`inline-flex items-center gap-1.5 text-xs font-semibold rounded-lg px-2.5 py-1 ${map[state]}`}>
-      <span className={`w-1.5 h-1.5 rounded-full ${dot[state]}`} /> {label}
-    </span>
-  );
-}
 
 function AddNote({ onAdd }: { onAdd: (t: string) => void }) {
   const [t, setT] = useState("");
@@ -659,6 +825,33 @@ function RenewModal({ tenant, unitWord, onClose, onRenew }: {
         <button className="btn btn-gold flex-1 justify-center" disabled={busy || !Number(periods)}
           onClick={() => { setBusy(true); onRenew({ periods: Number(periods), newAmount: Number(amount) || null, newFrequency: freq }); }}>
           {busy ? "..." : "تأكيد التجديد"}
+        </button>
+      </div>
+    </Shell>
+  );
+}
+
+function EnforcementModal({ tenant, unitWord, onClose, onSubmit }: {
+  tenant: Tenant; unitWord: string; onClose: () => void; onSubmit: (no: string, order: string) => void;
+}) {
+  const [no, setNo] = useState(tenant.enforcement_no || "");
+  const [order, setOrder] = useState(tenant.enforcement_order || "");
+  const already = !!tenant.litigation;
+  return (
+    <Shell onClose={onClose}>
+      <h3 className="font-display font-bold text-deep text-xl mb-1">{already ? "متابعة التنفيذ" : "رفع العقد للتنفيذ"}</h3>
+      <p className="text-sm text-muted mb-4">{tenant.name} · {unitWord} {tenant.unit || "—"}</p>
+      <div className="bg-[#F1F5F9] border border-[#CBD5E1] rounded-xl p-3 mb-4 text-xs text-[#475569] leading-relaxed">
+        عند الرفع للتنفيذ تُجمّد الإشعارات الودّية (التذكير والخطابات) لهذا العقد، وتتحوّل حالته إلى «في التنفيذ». هذه متابعة إدارية فقط — وثيق لا يقدّم خدمات قانونية ولا يرفع دعاوى.
+      </div>
+      <div className="space-y-3">
+        <Field label="رقم طلب التنفيذ" hint="من ناجز"><input className="fld" value={no} onChange={(e) => setNo(e.target.value)} placeholder="مثال: 4512345678" /></Field>
+        <Field label="سند الأمر" hint="اختياري"><input className="fld" value={order} onChange={(e) => setOrder(e.target.value)} placeholder="رقم/وصف سند الأمر" /></Field>
+      </div>
+      <div className="flex gap-2 mt-6">
+        <button className="btn btn-ghost flex-1 justify-center" onClick={onClose}>إلغاء</button>
+        <button className="btn flex-1 justify-center" style={{ background: "#475569", color: "#fff" }} onClick={() => onSubmit(no.trim(), order.trim())}>
+          {already ? "حفظ" : "رفع للتنفيذ"}
         </button>
       </div>
     </Shell>
