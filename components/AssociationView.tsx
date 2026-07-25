@@ -421,7 +421,8 @@ function OwnerPaymentModal({ owner, fee, onClose, onSubmit }: {
   const leftover = fee > 0 ? +(pool - months * fee).toFixed(2) : 0;
 
   return (
-    <Shell onClose={onClose}>
+    <div className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4" onClick={onClose}>
+      <div className="w-full max-w-md bg-white rounded-2xl shadow-xl p-6 max-h-[90vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
       <h3 className="font-display font-bold text-deep text-xl mb-1">تسجيل مبلغ مستلم</h3>
       <p className="text-sm text-muted mb-4">{owner.name} · {owner.unit ? `وحدة ${owner.unit}` : "—"}</p>
 
@@ -459,7 +460,8 @@ function OwnerPaymentModal({ owner, fee, onClose, onSubmit }: {
         <button className="btn btn-ghost flex-1 justify-center" onClick={onClose}>إلغاء</button>
         <button className="btn btn-gold flex-1 justify-center" disabled={!amt} onClick={() => onSubmit(amt)}>تسجيل</button>
       </div>
-    </Shell>
+      </div>
+    </div>
   );
 }
 
