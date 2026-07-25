@@ -217,7 +217,7 @@ export default function AssociationView({ initial }: { initial: Association[] })
 
       {/* إحصاءات — قابلة للنقر للتصفية */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
-        <Stat v={`${pct}٪`} l="نسبة السداد" tone="ok" onClick={() => setFilter("all")} active={filter === "all"} />
+        <Stat v={`${pct}%`} l="نسبة السداد" tone="ok" onClick={() => setFilter("all")} active={filter === "all"} />
         <Stat v={String(late.length)} l="ملاك متأخرون" tone={late.length ? "warn" : undefined} onClick={() => setFilter("late")} active={filter === "late"} />
         <Stat v={sar(owedTotal)} l="إجمالي المتأخر (ريال)" tone={owedTotal ? "warn" : undefined} onClick={() => { setFilter("all"); setSort("amount"); }} />
         <Stat v={dl === null ? "—" : String(dl)} l="يوم حتى انتهاء الشهادة" tone={dl !== null && dl <= 30 ? "warn" : undefined} />

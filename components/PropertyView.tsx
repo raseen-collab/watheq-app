@@ -335,7 +335,7 @@ export default function PropertyView({ initial, orgName, issuer }: { initial: Pr
           <PortfolioStat v={String(portfolio.units)} l="وحدة" />
           <PortfolioStat v={String(portfolio.late)} l="متأخرة" tone={portfolio.late ? "warn" : undefined} />
           <PortfolioStat v={sar(portfolio.overdue)} l="ريال متأخر" tone={portfolio.overdue ? "warn" : undefined} />
-          <PortfolioStat v={String(portfolio.soon)} l="تستحق خلال ٧ أيام" />
+          <PortfolioStat v={String(portfolio.soon)} l="تستحق خلال 7 أيام" />
           <PortfolioStat v={String(portfolio.expiring)} l="عقود تنتهي قريبًا" />
           <PortfolioStat v={sar(Math.round(portfolio.monthly))} l="دخل شهري تقريبي" />
         </div>
@@ -365,10 +365,10 @@ export default function PropertyView({ initial, orgName, issuer }: { initial: Pr
 
       {/* إحصاءات — قابلة للنقر للتصفية */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
-        <Stat v={`${pct}٪`} l="نسبة الانتظام" tone="ok" onClick={() => setFilter("all")} active={filter === "all"} />
+        <Stat v={`${pct}%`} l="نسبة الانتظام" tone="ok" onClick={() => setFilter("all")} active={filter === "all"} />
         <Stat v={String(counts.late || 0)} l="وحدات متأخرة" tone={counts.late ? "warn" : undefined} onClick={() => setFilter("late")} active={filter === "late"} />
         <Stat v={sar(overdue)} l="إجمالي المتأخر (ريال)" tone={overdue ? "warn" : undefined} onClick={() => { setFilter("late"); setSort("amount"); }} />
-        <Stat v={String(counts.soon || 0)} l="دفعات خلال ٧ أيام" onClick={() => setFilter("soon")} active={filter === "soon"} />
+        <Stat v={String(counts.soon || 0)} l="دفعات خلال 7 أيام" onClick={() => setFilter("soon")} active={filter === "soon"} />
       </div>
 
       <div className="grid md:grid-cols-[1.65fr_1fr] gap-5 items-start">
@@ -810,7 +810,7 @@ function RenewModal({ tenant, unitWord, onClose, onRenew }: {
           <div>إجمالي قيمة المدة: <b>{sar(preview.rent_amount * preview.contract_periods)} ريال</b></div>
           {changed && (
             <div>تغيّر الإيجار: <b>{diff > 0 ? "+" : ""}{sar(diff)} ريال</b> لكل دفعة
-              {Number(tenant.rent_amount) > 0 && ` (${diff > 0 ? "+" : ""}${Math.round((diff / Number(tenant.rent_amount)) * 100)}٪)`}
+              {Number(tenant.rent_amount) > 0 && ` (${diff > 0 ? "+" : ""}${Math.round((diff / Number(tenant.rent_amount)) * 100)}%)`}
             </div>
           )}
         </div>
