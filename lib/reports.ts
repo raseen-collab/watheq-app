@@ -5,6 +5,7 @@
  *  ============================================================ */
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { classifyContract, STATE_ORDER, stateMeta, stateLabel } from "./contract-state";
 
 type DB = SupabaseClient<any, any, any>;
 type Track = "properties" | "associations";
@@ -301,3 +302,132 @@ export async function buildReminder(db: DB, profile: any, contractId: string): P
     return { ok: true, text: `جاهز لتذكير <b>${esc(name)}</b>${unit ? " — " + esc(unit) : ""} عبر واتساب:`, url };
   } catch (e: any) { return { ok: false, text: "تعذّر تجهيز التذكير: " + e.message }; }
 }
+
+// ======================= آلة حالات العقد =======================
+
+export type ContractCard = {
+  tenantId: string;
+  label: string;
+  tenant: string;
+  phone: string;
+  state: ReturnType<typeof classifyContract>;
+};
+
+/** يصنّف كل عقود المالك (مسار العقارات) */
+async function propContractCards(db: DB, profile: any): Promise<ContractCard[]> {
+  const { propName, tenants, invoices } = await propContext(db, profile);
+  const byTenant: Record<string, any[]> = {};
+  invoices.forEach((inv: any) => {
+    const k = inv.tenant_id; if (!k) return;
+    (byTenant[k] = byTenant[k] || []).push(inv);
+  });
+  return tenants.map((t: any) => {
+    const st = classifyContract(t, byTenant[t.id] || [], todayISO());
+    const place = propName[t.property_id] || "";
+    const unit = t.unit ? `وحدة ${t.unit}` : "";
+    const label = [place, unit].filter(Boolean).join(" · ") || (t.name || "عقد");
+    return { tenantId: t.id, label, tenant: t.name || "—", phone: t.phone || "", state: st };
+  });
+}
+
+/** تقرير حالة العقود (نص) */
+export async function statusReport(db: DB, profile: any): Promise<string> {
+  try {
+    const track = await detectTrack(db, profile);
+    if (track !== "properties") {
+      const { owners } = await assocContext(db, profile);
+      const late = owners.filter((o: any) => (Number(o.months_late) || 0) > 0).length;
+      return `📋 <b>حالة الحسابات</b>\n\n🟢 منتظم: <b>${owners.length - late}</b>\n🔴 متأخر: <b>${late}</b>`;
+    }
+    const cards = await propContractCards(db, profile);
+    if (!cards.length) return "📋 <b>حالة العقود</b>\n\nلا توجد عقود مسجّلة بعد.";
+    const counts: Record<string, number> = {};
+    cards.forEach((c) => (counts[c.state.key] = (counts[c.state.key] || 0) + 1));
+    const head = STATE_ORDER.filter((k) => counts[k])
+      .map((k) => `${stateMeta(k).dot} ${stateMeta(k).label}: <b>${counts[k]}</b>`).join("  ·  ");
+    const flagged = cards.filter((c) => c.state.key !== "active")
+      .sort((a, b) => STATE_ORDER.indexOf(a.state.key) - STATE_ORDER.indexOf(b.state.key)).slice(0, 8);
+    const lines = flagged.map((c) => {
+      const s = c.state;
+      const extra = s.key === "arrears" ? ` — ${sar(s.owed)} ﷼`
+        : s.key === "expiring" && s.daysToEnd != null ? ` — ينتهي خلال ${s.daysToEnd} يوم`
+        : (s.key === "due_soon" && s.nextDue) ? ` — ${s.nextDue}` : "";
+      return `${s.dot} <b>${esc(c.label)}</b> — ${esc(c.tenant)}${extra}`;
+    }).join("\n");
+    return `📋 <b>حالة العقود</b>\n\n${head}\n\n${lines || "كل العقود منتظمة ✅"}`;
+  } catch (e: any) { return `تعذّر بناء حالة العقود.\n<code>${esc(e.message)}</code>`; }
+}
+
+/** العقود ضمن حالة معيّنة (لأزرار الاختيار) */
+export async function contractsInState(db: DB, profile: any, key: string): Promise<ContractCard[]> {
+  const cards = await propContractCards(db, profile);
+  return cards.filter((c) => c.state.key === key);
+}
+
+/** بطاقة عقد واحد */
+export async function contractCard(db: DB, profile: any, tenantId: string): Promise<ContractCard | null> {
+  const cards = await propContractCards(db, profile);
+  return cards.find((c) => c.tenantId === tenantId) || null;
+}
+
+/** تسجيل أقدم فاتورة متأخرة لهذا المستأجر كمدفوعة */
+export async function payTenantOldest(db: DB, profile: any, tenantId: string): Promise<{ ok: boolean; msg: string }> {
+  try {
+    const { data: t } = await db.from("tenants").select("id,property_id").eq("id", tenantId).maybeSingle();
+    if (!t) return { ok: false, msg: "العقد غير موجود." };
+    const { data: prop } = await db.from("properties").select("id,user_id").eq("id", t.property_id).maybeSingle();
+    if (!prop || String(prop.user_id) !== String(profile.id)) return { ok: false, msg: "غير مصرّح." };
+    const { data: invs } = await db.from("invoices").select("*").eq("tenant_id", tenantId).eq("user_id", profile.id);
+    const unpaid = (invs || []).filter((i: any) => invoiceUnpaid(i.status))
+      .sort((a: any, b: any) => String(a.due_date).localeCompare(String(b.due_date)));
+    if (!unpaid.length) return { ok: true, msg: "لا توجد فواتير غير مسدّدة." };
+    const { error } = await db.from("invoices").update({ status: "paid" }).eq("id", unpaid[0].id);
+    if (error) return { ok: false, msg: "تعذّر الحفظ: " + error.message };
+    return { ok: true, msg: `سُجّلت دفعة (${sar(unpaid[0].amount)} ﷼) كمدفوعة.` };
+  } catch (e: any) { return { ok: false, msg: e.message }; }
+}
+
+/** تجديد العقد سنة (يمدّد contract_end) */
+export async function renewContract(db: DB, profile: any, tenantId: string): Promise<{ ok: boolean; msg: string }> {
+  try {
+    const { data: t } = await db.from("tenants").select("*").eq("id", tenantId).maybeSingle();
+    if (!t) return { ok: false, msg: "العقد غير موجود." };
+    const { data: prop } = await db.from("properties").select("id,user_id").eq("id", t.property_id).maybeSingle();
+    if (!prop || String(prop.user_id) !== String(profile.id)) return { ok: false, msg: "غير مصرّح." };
+    const base = t.contract_end && String(t.contract_end) >= todayISO() ? new Date(t.contract_end) : new Date();
+    base.setFullYear(base.getFullYear() + 1);
+    const newEnd = iso(base);
+    const { error } = await db.from("tenants").update({ contract_end: newEnd }).eq("id", tenantId);
+    if (error) return { ok: false, msg: "تعذّر الحفظ: " + error.message };
+    return { ok: true, msg: `تم تجديد العقد حتى ${newEnd}.` };
+  } catch (e: any) { return { ok: false, msg: e.message }; }
+}
+
+/** إشعار رسمي عبر واتساب: مطالبة سداد أو عدم تجديد */
+export async function buildNotice(
+  db: DB, profile: any, tenantId: string, kind: "claim" | "nonrenewal"
+): Promise<{ ok: boolean; text: string; url?: string }> {
+  try {
+    const { data: t } = await db.from("tenants").select("*").eq("id", tenantId).maybeSingle();
+    if (!t) return { ok: false, text: "العقد غير موجود." };
+    const { data: prop } = await db.from("properties").select("id,user_id").eq("id", t.property_id).maybeSingle();
+    if (!prop || String(prop.user_id) !== String(profile.id)) return { ok: false, text: "غير مصرّح." };
+    if (!t.phone) return { ok: false, text: `لا يوجد رقم جوال مسجّل لـ ${esc(t.name || "المستأجر")}.` };
+
+    const unit = t.unit ? `وحدة ${t.unit}` : "العقار";
+    const digits = normalizeSaudi(t.phone);
+    let msg: string, title: string;
+    if (kind === "claim") {
+      const amount = (Number(t.months_late) || 0) * (Number(t.rent_amount) || 0);
+      title = "مطالبة رسمية";
+      msg = `السلام عليكم ${t.name || ""}،\nنفيدكم بوجود مبلغ متأخر${amount ? ` قدره ${sar(amount)} ﷼` : ""} عن إيجار «${unit}». نأمل سرعة السداد تفاديًا للإجراءات النظامية.\nإدارة وثيق`;
+    } else {
+      title = "إشعار عدم تجديد";
+      msg = `السلام عليكم ${t.name || ""}،\nنفيدكم برغبتنا بعدم تجديد عقد إيجار «${unit}»${t.contract_end ? ` المنتهي بتاريخ ${t.contract_end}` : ""}. شاكرين لكم حسن التعامل.\nإدارة وثيق`;
+    }
+    const url = `https://wa.me/${digits}?text=${encodeURIComponent(msg)}`;
+    return { ok: true, text: `جاهز لإرسال <b>${title}</b> إلى <b>${esc(t.name || "المستأجر")}</b> — ${esc(unit)}:`, url };
+  } catch (e: any) { return { ok: false, text: "تعذّر تجهيز الإشعار: " + e.message }; }
+}
+
+export { stateLabel };
