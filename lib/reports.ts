@@ -40,7 +40,6 @@ async function detectTrack(db: DB, profile: any): Promise<Track> {
   const hint = String(profile.account_type || profile.last_dashboard || profile.role || "").toLowerCase();
   if (/(assoc|hoa|جمع|owner|ملاك|ملّاك)/.test(hint)) return "associations";
   if (/(prop|real|عقار|ايجار|إيجار|مؤجر|مؤجّر)/.test(hint)) return "properties";
-  // استدلال بالبيانات
   const { count: assocN } = await db.from("associations").select("*", { count: "exact", head: true }).eq("user_id", profile.id);
   if (assocN && assocN > 0) {
     const { count: propN } = await db.from("properties").select("*", { count: "exact", head: true }).eq("user_id", profile.id);
@@ -77,7 +76,6 @@ function invWho(inv: any, tenantById: Record<string, any>, propName: Record<stri
   return { label, tenant: t?.name || "—", phone: t?.phone || "", tenantId: inv.tenant_id || "" };
 }
 
-/** الفواتير غير المسدّدة (اختياريًا ضمن نطاق تواريخ) */
 function unpaidInvoices(invoices: any[], fromISO?: string, toISO?: string) {
   return invoices
     .filter((inv) => invoiceUnpaid(inv.status))
@@ -130,7 +128,6 @@ export async function todayReport(db: DB, profile: any): Promise<string> {
       return `📅 <b>استحقاقات اليوم والقريبة</b> (خلال ${days} أيام)\n\n${lines}\n\n— الإجمالي: <b>${sar(total)}</b> ﷼ · ${rows.length} فاتورة`;
     }
 
-    // جمعيات: تنبيه شهادات قاربت على الانتهاء + عدد المتأخرين
     const { assocs, owners } = await assocContext(db, profile);
     const soon = assocs.filter((a: any) => a.cert_expiry && a.cert_expiry >= todayISO() && a.cert_expiry <= addDaysISO(60));
     const lateCount = owners.filter((o: any) => (Number(o.months_late) || 0) > 0).length;
@@ -214,13 +211,8 @@ export async function buildReport(db: DB, profile: any, which: string): Promise<
 // ======================= بيانات منظّمة للأزرار =======================
 
 export type UnpaidRow = {
-  id: string;          // العنصر القابل للتسجيل (فاتورة أو مالك)
-  amount: number;
-  due: string;
-  unit: string;
-  tenant: string;
-  phone: string;
-  contractId: string;  // للتذكير/التجميع (مستأجر أو مالك)
+  id: string; amount: number; due: string;
+  unit: string; tenant: string; phone: string; contractId: string;
 };
 
 export async function getUnpaid(db: DB, profile: any, scope: string): Promise<UnpaidRow[]> {
@@ -247,7 +239,6 @@ export async function getUnpaid(db: DB, profile: any, scope: string): Promise<Un
 
 // ======================= الأفعال (كتابة) =======================
 
-/** تسجيل دفعة كمدفوعة — مع تحقّق من الملكية */
 export async function markPaid(db: DB, profile: any, id: string): Promise<{ ok: boolean; msg: string }> {
   try {
     const track = await detectTrack(db, profile);
@@ -262,7 +253,6 @@ export async function markPaid(db: DB, profile: any, id: string): Promise<{ ok: 
       return { ok: true, msg: "سُجّلت الفاتورة كمدفوعة." };
     }
 
-    // جمعيات: تصفير تأخّر المالك
     const { data: owner } = await db.from("owners").select("*").eq("id", id).maybeSingle();
     if (!owner) return { ok: false, msg: "المالك غير موجود." };
     const { data: assoc } = await db.from("associations").select("id,user_id").eq("id", owner.association_id).maybeSingle();
@@ -273,7 +263,6 @@ export async function markPaid(db: DB, profile: any, id: string): Promise<{ ok: 
   } catch (e: any) { return { ok: false, msg: e.message }; }
 }
 
-/** يبني رابط واتساب جاهز برسالة تذكير */
 export async function buildReminder(db: DB, profile: any, contractId: string): Promise<{ ok: boolean; text: string; url?: string }> {
   try {
     const track = await detectTrack(db, profile);
@@ -282,7 +271,6 @@ export async function buildReminder(db: DB, profile: any, contractId: string): P
     if (track === "properties") {
       const { data: t } = await db.from("tenants").select("*").eq("id", contractId).maybeSingle();
       if (!t) return { ok: false, text: "المستأجر غير موجود أو غير مصرّح." };
-      // تحقّق الملكية عبر العقار
       const { data: prop } = await db.from("properties").select("id,user_id").eq("id", t.property_id).maybeSingle();
       if (!prop || String(prop.user_id) !== String(profile.id)) return { ok: false, text: "غير مصرّح." };
       name = t.name || "المستأجر"; phone = t.phone || ""; unit = t.unit ? `وحدة ${t.unit}` : "";
@@ -313,7 +301,6 @@ export type ContractCard = {
   state: ReturnType<typeof classifyContract>;
 };
 
-/** يصنّف كل عقود المالك (مسار العقارات) */
 async function propContractCards(db: DB, profile: any): Promise<ContractCard[]> {
   const { propName, tenants, invoices } = await propContext(db, profile);
   const byTenant: Record<string, any[]> = {};
@@ -330,7 +317,6 @@ async function propContractCards(db: DB, profile: any): Promise<ContractCard[]> 
   });
 }
 
-/** تقرير حالة العقود (نص) */
 export async function statusReport(db: DB, profile: any): Promise<string> {
   try {
     const track = await detectTrack(db, profile);
@@ -358,19 +344,16 @@ export async function statusReport(db: DB, profile: any): Promise<string> {
   } catch (e: any) { return `تعذّر بناء حالة العقود.\n<code>${esc(e.message)}</code>`; }
 }
 
-/** العقود ضمن حالة معيّنة (لأزرار الاختيار) */
 export async function contractsInState(db: DB, profile: any, key: string): Promise<ContractCard[]> {
   const cards = await propContractCards(db, profile);
   return cards.filter((c) => c.state.key === key);
 }
 
-/** بطاقة عقد واحد */
 export async function contractCard(db: DB, profile: any, tenantId: string): Promise<ContractCard | null> {
   const cards = await propContractCards(db, profile);
   return cards.find((c) => c.tenantId === tenantId) || null;
 }
 
-/** تسجيل أقدم فاتورة متأخرة لهذا المستأجر كمدفوعة */
 export async function payTenantOldest(db: DB, profile: any, tenantId: string): Promise<{ ok: boolean; msg: string }> {
   try {
     const { data: t } = await db.from("tenants").select("id,property_id").eq("id", tenantId).maybeSingle();
@@ -387,7 +370,6 @@ export async function payTenantOldest(db: DB, profile: any, tenantId: string): P
   } catch (e: any) { return { ok: false, msg: e.message }; }
 }
 
-/** تجديد العقد سنة (يمدّد contract_end) */
 export async function renewContract(db: DB, profile: any, tenantId: string): Promise<{ ok: boolean; msg: string }> {
   try {
     const { data: t } = await db.from("tenants").select("*").eq("id", tenantId).maybeSingle();
@@ -403,7 +385,6 @@ export async function renewContract(db: DB, profile: any, tenantId: string): Pro
   } catch (e: any) { return { ok: false, msg: e.message }; }
 }
 
-/** إشعار رسمي عبر واتساب: مطالبة سداد أو عدم تجديد */
 export async function buildNotice(
   db: DB, profile: any, tenantId: string, kind: "claim" | "nonrenewal"
 ): Promise<{ ok: boolean; text: string; url?: string }> {
