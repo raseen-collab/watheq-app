@@ -11,6 +11,17 @@ type Association = {
   owners: Owner[]; association_notes: Note[];
 };
 
+/** حالة المالك المعروضة */
+type OwnerKey = "critical" | "late" | "ok";
+const OWNER_META: Record<OwnerKey, { label: string; dot: string; cls: string }> = {
+  critical: { label: "حرج", dot: "bg-late", cls: "bg-[#F7DAD7] text-[#8f2b26]" },
+  late:     { label: "متأخر", dot: "bg-late", cls: "bg-[#FBE9E7] text-[#a5322c]" },
+  ok:       { label: "مسدّد", dot: "bg-paid", cls: "bg-[#E6F4EC] text-[#137a50]" },
+};
+const ownerKey = (o: Owner): OwnerKey =>
+  o.months_late >= 3 ? "critical" : o.months_late > 0 ? "late" : "ok";
+const OWNER_URGENCY: Record<OwnerKey, number> = { critical: 0, late: 1, ok: 2 };
+
 export default function AssociationView({ initial }: { initial: Association[] }) {
   const supabase = createClient();
   const [items, setItems] = useState<Association[]>(initial);
@@ -18,15 +29,24 @@ export default function AssociationView({ initial }: { initial: Association[] })
   const [modal, setModal] = useState<null | "new" | "edit">(null);
   const [busy, setBusy] = useTransition();
 
-  const active = useMemo(() => items.find((a) => a.id === activeId) || null, [items, activeId]);
+  // ---------- أدوات العرض: بحث / تصفية / فرز / إشعار ----------
+  const [q, setQ] = useState("");
+  const [filter, setFilter] = useState<"all" | OwnerKey>("all");
+  const [sort, setSort] = useState<"urgent" | "amount" | "name" | "unit">("urgent");
+  const [toast, setToast] = useState<null | { k: "ok" | "err"; m: string }>(null);
+  function notify(k: "ok" | "err", m: string) {
+    setToast({ k, m });
+    setTimeout(() => setToast(null), 3600);
+  }
 
+  const active = useMemo(() => items.find((a) => a.id === activeId) || null, [items, activeId]);
   // ---------- جمعية ----------
   async function createAssociation(data: Partial<Association>) {
     const { data: row, error } = await supabase.from("associations").insert({
       name: data.name, units: data.units || 0, fee: data.fee || 0,
       cert_expiry: data.cert_expiry || null, fund_balance: data.fund_balance || 0,
     }).select("*").single();
-    if (error) return alert(error.message);
+    if (error) return notify("err", error.message);
     const next = { ...(row as any), owners: [], association_notes: [] };
     setItems([next, ...items]); setActiveId(next.id); setModal(null);
   }
@@ -36,14 +56,14 @@ export default function AssociationView({ initial }: { initial: Association[] })
       name: data.name, units: data.units || 0, fee: data.fee || 0,
       cert_expiry: data.cert_expiry || null, fund_balance: data.fund_balance || 0,
     }).eq("id", active.id);
-    if (error) return alert(error.message);
+    if (error) return notify("err", error.message);
     setItems(items.map((a) => a.id === active.id ? { ...a, ...data } as any : a));
     setModal(null);
   }
   async function deleteAssociation() {
     if (!active || !confirm("حذف الجمعية وكل بياناتها؟")) return;
     const { error } = await supabase.from("associations").delete().eq("id", active.id);
-    if (error) return alert(error.message);
+    if (error) return notify("err", error.message);
     const rest = items.filter((a) => a.id !== active.id);
     setItems(rest); setActiveId(rest[0]?.id || null); setModal(null);
   }
@@ -54,13 +74,13 @@ export default function AssociationView({ initial }: { initial: Association[] })
     const { data, error } = await supabase.from("owners").insert({
       association_id: active.id, name: name.trim(), unit: unit || null, phone: phone || null, months_late: 0,
     }).select("*").single();
-    if (error) return alert(error.message);
+    if (error) return notify("err", error.message);
     setItems(items.map((a) => a.id === active.id ? { ...a, owners: [...a.owners, data as Owner] } : a));
   }
   async function ownerPatch(id: string, patch: Partial<Owner>, fundDelta = 0) {
     if (!active) return;
     const { error } = await supabase.from("owners").update(patch).eq("id", id);
-    if (error) return alert(error.message);
+    if (error) return notify("err", error.message);
     if (fundDelta) await supabase.from("associations").update({ fund_balance: (active.fund_balance || 0) + fundDelta }).eq("id", active.id);
     setItems(items.map((a) => a.id === active.id ? {
       ...a,
@@ -71,7 +91,7 @@ export default function AssociationView({ initial }: { initial: Association[] })
   async function deleteOwner(id: string) {
     if (!active || !confirm("حذف المالك؟")) return;
     const { error } = await supabase.from("owners").delete().eq("id", id);
-    if (error) return alert(error.message);
+    if (error) return notify("err", error.message);
     setItems(items.map((a) => a.id === active.id ? { ...a, owners: a.owners.filter((o) => o.id !== id) } : a));
   }
 
@@ -81,13 +101,13 @@ export default function AssociationView({ initial }: { initial: Association[] })
     const { data, error } = await supabase.from("association_notes").insert({
       association_id: active.id, text: text.trim(), note_date: today(),
     }).select("*").single();
-    if (error) return alert(error.message);
+    if (error) return notify("err", error.message);
     setItems(items.map((a) => a.id === active.id ? { ...a, association_notes: [data as Note, ...a.association_notes] } : a));
   }
   async function deleteNote(id: string) {
     if (!active) return;
     const { error } = await supabase.from("association_notes").delete().eq("id", id);
-    if (error) return alert(error.message);
+    if (error) return notify("err", error.message);
     setItems(items.map((a) => a.id === active.id ? { ...a, association_notes: a.association_notes.filter((n) => n.id !== id) } : a));
   }
 
@@ -127,16 +147,51 @@ export default function AssociationView({ initial }: { initial: Association[] })
   const a = active!;
   const total = a.owners.length;
   const late = a.owners.filter((o) => o.months_late > 0);
+  const critical = a.owners.filter((o) => o.months_late >= 3);
   const pct = total ? Math.round(((total - late.length) / total) * 100) : 0;
   const dl = daysLeft(a.cert_expiry);
+  const owedTotal = late.reduce((s, o) => s + o.months_late * (a.fee || 0), 0);
+
+  // الصفوف المعروضة: بحث ← تصفية ← فرز
+  const rows = useMemo(() => {
+    const needle = q.trim().toLowerCase();
+    let out = a.owners.filter((o) => {
+      if (filter !== "all" && ownerKey(o) !== filter) return false;
+      if (!needle) return true;
+      return [o.name, o.unit, o.phone].filter(Boolean)
+        .some((v) => String(v).toLowerCase().includes(needle));
+    });
+    out = [...out].sort((x, y) => {
+      if (sort === "amount") return y.months_late - x.months_late;
+      if (sort === "name") return String(x.name || "").localeCompare(String(y.name || ""), "ar");
+      if (sort === "unit") return String(x.unit || "").localeCompare(String(y.unit || ""), "ar", { numeric: true });
+      const d = OWNER_URGENCY[ownerKey(x)] - OWNER_URGENCY[ownerKey(y)];
+      return d !== 0 ? d : y.months_late - x.months_late;
+    });
+    return out;
+  }, [a.owners, q, filter, sort]);
+
+  const chips: { k: "all" | OwnerKey; label: string }[] = [
+    { k: "all", label: `الكل ${total}` },
+    { k: "critical", label: `حرج ${critical.length}` },
+    { k: "late", label: `متأخر ${late.length - critical.length}` },
+    { k: "ok", label: `مسدّد ${total - late.length}` },
+  ];
 
   return (
     <div>
+      {toast && (
+        <div className={`fixed bottom-5 left-1/2 -translate-x-1/2 z-[60] rounded-xl px-4 py-3 text-sm font-semibold shadow-lg border ${
+          toast.k === "ok" ? "bg-[#E6F4EC] text-[#137a50] border-[#B7DFC7]" : "bg-[#FBE9E7] text-[#a5322c] border-[#F5C6C2]"}`}>
+          {toast.m}
+        </div>
+      )}
+
       {/* شريط اختيار الجمعية */}
       <div className="flex flex-wrap items-center gap-2 mb-5">
         <div className="flex-1 min-w-0">
           <h1 className="font-display font-bold text-deep text-xl">{a.name}</h1>
-          <div className="text-sm text-muted">إدارة جمعية الملاك</div>
+          <div className="text-sm text-muted">إدارة جمعية الملاك · {total} من {a.units || total} وحدة</div>
         </div>
         <select value={a.id} onChange={(e) => setActiveId(e.target.value)} className="fld max-w-[220px] font-semibold text-deep">
           {items.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
@@ -160,11 +215,11 @@ export default function AssociationView({ initial }: { initial: Association[] })
         </div>
       )}
 
-      {/* إحصاءات */}
+      {/* إحصاءات — قابلة للنقر للتصفية */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
-        <Stat v={`${pct}٪`} l="نسبة السداد" tone="ok" />
-        <Stat v={String(late.length)} l="ملاك متأخرون" tone={late.length ? "warn" : undefined} />
-        <Stat v={sar(a.fund_balance)} l="رصيد الصندوق (ريال)" />
+        <Stat v={`${pct}٪`} l="نسبة السداد" tone="ok" onClick={() => setFilter("all")} active={filter === "all"} />
+        <Stat v={String(late.length)} l="ملاك متأخرون" tone={late.length ? "warn" : undefined} onClick={() => setFilter("late")} active={filter === "late"} />
+        <Stat v={sar(owedTotal)} l="إجمالي المتأخر (ريال)" tone={owedTotal ? "warn" : undefined} onClick={() => { setFilter("all"); setSort("amount"); }} />
         <Stat v={dl === null ? "—" : String(dl)} l="يوم حتى انتهاء الشهادة" tone={dl !== null && dl <= 30 ? "warn" : undefined} />
       </div>
 
@@ -172,30 +227,92 @@ export default function AssociationView({ initial }: { initial: Association[] })
         {/* الملّاك */}
         <div className="bg-white border border-line rounded-2xl shadow-sm">
           <div className="flex items-center justify-between border-b border-line px-5 py-4">
-            <h2 className="font-semibold">الملّاك وحالة السداد <span className="text-sm font-normal text-muted">· {total} من {a.units || total} وحدة</span></h2>
+            <h2 className="font-semibold">الملّاك وحالة السداد</h2>
+            {a.fee > 0 && <span className="text-xs text-muted">الاشتراك {sar(a.fee)} ريال/شهر</span>}
           </div>
+
           <div className="p-4">
             <AddOwner onAdd={addOwner} />
-            <div className="flex flex-col gap-2">
-              {a.owners.length ? a.owners.map((o) => (
-                <div key={o.id} className="flex flex-wrap items-center gap-3 rounded-xl border border-line bg-paper p-3">
-                  <span className="w-9 h-9 rounded-lg bg-paper2 grid place-items-center font-semibold text-deep">{(o.name || "?").charAt(0)}</span>
-                  <div className="min-w-0 flex-1">
-                    <div className="font-semibold">{o.name}</div>
-                    <div className="text-xs text-muted">{o.unit ? `وحدة ${o.unit}` : "—"}{o.phone ? ` · ${o.phone}` : ""}</div>
-                  </div>
-                  {o.months_late > 0
-                    ? <span className="inline-flex items-center gap-1.5 text-xs font-semibold bg-[#FBE9E7] text-[#a5322c] rounded-lg px-2.5 py-1"><span className="w-1.5 h-1.5 rounded-full bg-late"/>متأخر {o.months_late > 1 ? `${o.months_late} أشهر` : "شهر"}</span>
-                    : <span className="inline-flex items-center gap-1.5 text-xs font-semibold bg-[#E6F4EC] text-[#137a50] rounded-lg px-2.5 py-1"><span className="w-1.5 h-1.5 rounded-full bg-paid"/>مسدّد</span>}
-                  <div className="flex flex-wrap gap-1.5 justify-end">
-                    <button className="btn btn-ghost text-xs" onClick={() => ownerPatch(o.id, { months_late: Math.max(0, o.months_late - 1), last_paid: today() }, a.fee || 0)}>سجّل دفعة</button>
-                    <button className="btn btn-ghost text-xs" onClick={() => ownerPatch(o.id, { months_late: o.months_late + 1 })}>+ استحقاق</button>
-                    {o.months_late > 0 && <a href={ownerRemindLink(o)} target="_blank" rel="noreferrer" className="btn btn-wa text-xs">تذكير</a>}
-                    {o.months_late >= 2 && <a href={ownerNoticeLink(o)} target="_blank" rel="noreferrer" className="btn btn-gold text-xs">نموذج خطاب</a>}
-                    <button className="text-late text-sm px-2" onClick={() => deleteOwner(o.id)} title="حذف">✕</button>
-                  </div>
+
+            {/* شريط التحكّم: بحث · تصفية · فرز */}
+            {total > 0 && (
+              <div className="flex flex-wrap gap-2 items-center mb-3">
+                <input className="fld flex-1 min-w-[150px]" value={q} onChange={(e) => setQ(e.target.value)} placeholder="ابحث باسم المالك أو رقم الوحدة…" />
+                <select className="fld max-w-[165px]" value={sort} onChange={(e) => setSort(e.target.value as any)}>
+                  <option value="urgent">الأهم أولًا</option>
+                  <option value="amount">الأكثر تأخّرًا</option>
+                  <option value="unit">رقم الوحدة</option>
+                  <option value="name">الاسم</option>
+                </select>
+                <div className="flex flex-wrap gap-1.5 w-full">
+                  {chips.map((c) => (
+                    <button key={c.k} onClick={() => setFilter(c.k)}
+                      className={`text-xs font-semibold rounded-lg px-2.5 py-1 border transition ${
+                        filter === c.k ? "bg-deep text-[#F6F1E4] border-deep" : "bg-white text-deep border-line hover:border-goldSoft"}`}>
+                      {c.label}
+                    </button>
+                  ))}
                 </div>
-              )) : <div className="text-center text-muted py-6 text-sm">لا يوجد ملّاك — أضف أول مالك بالأعلى.</div>}
+              </div>
+            )}
+
+            <div className="flex flex-col gap-2">
+              {!total ? (
+                <div className="text-center text-muted py-6 text-sm">لا يوجد ملّاك — أضف أول مالك بالأعلى.</div>
+              ) : !rows.length ? (
+                <div className="text-center text-muted py-6 text-sm">
+                  لا نتائج مطابقة.
+                  <button className="btn btn-ghost text-xs mt-3 mx-auto" onClick={() => { setQ(""); setFilter("all"); }}>مسح البحث والتصفية</button>
+                </div>
+              ) : rows.map((o) => {
+                const k = ownerKey(o);
+                const owed = o.months_late * (a.fee || 0);
+                return (
+                  <div key={o.id} className={`rounded-xl border p-3 ${k === "critical" ? "border-[#F5C6C2] bg-[#FEF7F6]" : "border-line bg-paper"}`}>
+                    <div className="flex items-center gap-3">
+                      <span className="w-9 h-9 rounded-lg bg-paper2 grid place-items-center font-semibold text-deep shrink-0">{(o.name || "?").charAt(0)}</span>
+                      <div className="min-w-0 flex-1">
+                        <div className="font-semibold truncate">{o.name}</div>
+                        <div className="text-xs text-muted">
+                          {o.unit ? `وحدة ${o.unit}` : "—"}{o.last_paid ? ` · آخر سداد ${o.last_paid}` : ""}
+                        </div>
+                      </div>
+                      <div className="text-left shrink-0">
+                        <StatusPill k={k} />
+                        <div className="text-xs mt-1 tabular-nums">
+                          {o.months_late > 0
+                            ? <span className="text-late font-semibold">{o.months_late} شهر · {sar(owed)} ريال</span>
+                            : <span className="text-muted">لا مستحقات</span>}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* إجراء رئيسي + قائمة المزيد */}
+                    <div className="flex flex-wrap gap-1.5 justify-end mt-2.5 items-center">
+                      {o.months_late > 0 && (
+                        <button className="btn btn-primary text-xs"
+                          onClick={() => ownerPatch(o.id, { months_late: Math.max(0, o.months_late - 1), last_paid: today() }, a.fee || 0)}>
+                          سجّل دفعة
+                        </button>
+                      )}
+                      {o.months_late > 0 && <a href={ownerRemindLink(o)} target="_blank" rel="noreferrer" className="btn btn-wa text-xs">تذكير</a>}
+                      {o.months_late >= 2 && <a href={ownerNoticeLink(o)} target="_blank" rel="noreferrer" className="btn btn-gold text-xs">نموذج خطاب</a>}
+                      <RowMenu
+                        items={[
+                          { label: "➕ إضافة استحقاق", run: () => ownerPatch(o.id, { months_late: o.months_late + 1 }) },
+                          ...(o.months_late === 0 ? [{ label: "💬 رسالة للمالك", run: () => window.open(ownerRemindLink(o), "_blank") }] : []),
+                          ...(o.months_late > 0 ? [{ label: "✅ سدّد الكل", run: () => ownerPatch(o.id, { months_late: 0, last_paid: today() }, o.months_late * (a.fee || 0)) }] : []),
+                          { label: "🗑 حذف المالك", run: () => deleteOwner(o.id), danger: true },
+                        ]}
+                      />
+                    </div>
+                  </div>
+                );
+              })}
+
+              {total > 0 && rows.length > 0 && (
+                <div className="text-center text-xs text-muted pt-1">عرض {rows.length} من {total} مالك</div>
+              )}
             </div>
           </div>
         </div>
@@ -223,16 +340,55 @@ export default function AssociationView({ initial }: { initial: Association[] })
 }
 
 // ---------- مكوّنات فرعية ----------
-function Stat({ v, l, tone }: { v: string; l: string; tone?: "ok" | "warn" }) {
+
+/** بطاقة إحصاء — قابلة للنقر للتصفية */
+function Stat({ v, l, tone, onClick, active }: { v: string; l: string; tone?: "ok" | "warn"; onClick?: () => void; active?: boolean }) {
   const color = tone === "ok" ? "text-paid" : tone === "warn" ? "text-late" : "text-deep";
-  return (
-    <div className="bg-white border border-line rounded-xl p-4 shadow-sm">
+  const base = `bg-white border rounded-xl p-4 shadow-sm text-right w-full transition ${active ? "border-gold ring-1 ring-goldSoft" : "border-line"}`;
+  const inner = (
+    <>
       <div className={`font-display font-bold text-2xl leading-none ${color}`}>{v}</div>
       <div className="mt-1.5 text-sm text-muted">{l}</div>
-    </div>
+    </>
+  );
+  if (!onClick) return <div className={base}>{inner}</div>;
+  return <button type="button" onClick={onClick} className={`${base} hover:border-goldSoft cursor-pointer`}>{inner}</button>;
+}
+
+/** شارة حالة المالك */
+function StatusPill({ k }: { k: OwnerKey }) {
+  const m = OWNER_META[k];
+  return (
+    <span className={`inline-flex items-center gap-1.5 text-xs font-semibold rounded-lg px-2.5 py-1 ${m.cls}`}>
+      <span className={`w-1.5 h-1.5 rounded-full ${m.dot}`} /> {m.label}
+    </span>
   );
 }
 
+/** قائمة إجراءات منسدلة — تُخفي الأزرار الثانوية */
+function RowMenu({ items }: { items: { label: string; run: () => void; danger?: boolean }[] }) {
+  const [open, setOpen] = useState(false);
+  if (!items.length) return null;
+  return (
+    <div className="relative">
+      <button type="button" onClick={() => setOpen((v) => !v)} aria-label="إجراءات أخرى"
+        className="btn btn-ghost text-xs px-2.5" title="المزيد">⋯</button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
+          <div className="absolute z-50 top-full mt-1 left-0 min-w-[190px] bg-white border border-line rounded-xl shadow-lg overflow-hidden py-1">
+            {items.map((it, i) => (
+              <button key={i} type="button" onClick={() => { setOpen(false); it.run(); }}
+                className={`block w-full text-right px-3.5 py-2 text-xs font-semibold hover:bg-paper2 transition ${it.danger ? "text-late" : "text-deep"}`}>
+                {it.label}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
 function AddOwner({ onAdd }: { onAdd: (n: string, u: string, p: string) => void }) {
   const [n, setN] = useState(""); const [u, setU] = useState(""); const [p, setP] = useState("");
   return (
