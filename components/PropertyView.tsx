@@ -16,8 +16,9 @@ const PERIODS_PER_MONTH: Record<Frequency, number> = {
 type Tenant = {
   id: string; name: string; unit: string | null; phone: string | null; national_id: string | null;
   rent_amount: number; contract_start: string | null; contract_end: string | null;
-  payment_frequency: string | null; paid_periods: number | null; contract_periods: number | null;
-};
+payment_frequency: string | null; paid_periods: number | null; contract_periods: number | null;
+  litigation?: boolean | null; enforcement_no?: string | null; enforcement_order?: string | null;
+};};
 type Note = { id: string; note_date: string; text: string };
 type Property = {
   id: string; name: string; address: string | null; city: string | null; manager: string | null;
