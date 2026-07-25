@@ -39,7 +39,7 @@ export async function tgSend(chatId: string | number, text: string, buttons?: Tg
   });
 }
 
-/** تعديل رسالة قائمة قائمة (بعد ضغط زر) بدل إرسال رسالة جديدة */
+/** تعديل رسالة قائمة (بعد ضغط زر) بدل إرسال رسالة جديدة */
 export async function tgEdit(
   chatId: string | number,
   messageId: number,
