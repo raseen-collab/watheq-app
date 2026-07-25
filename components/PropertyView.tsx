@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase-client";
 import { sar, waLink, today } from "@/lib/utils";
-import { contractState, buildSchedule, FREQUENCIES, freqLabel, freqShort, derivedEndDate, renewContract, needsRenewal, type Frequency } from "@/lib/contracts";
+import { contractState, buildSchedule, FREQUENCIES, freqLabel, freqShort, derivedEndDate, renewContract, needsRenewal, applyPayment, splitVat, isCommercial, type Frequency } from "@/lib/contracts";
 import { PROPERTY_TYPES, typeLabel, unitLabel, typeIcon } from "@/lib/domain";
 import { statementHTML, invoiceHTML, propertyStatementHTML, openDoc } from "@/lib/documents";
 
@@ -17,22 +17,26 @@ type Tenant = {
   id: string; name: string; unit: string | null; phone: string | null; national_id: string | null;
   rent_amount: number; contract_start: string | null; contract_end: string | null;
   payment_frequency: string | null; paid_periods: number | null; contract_periods: number | null;
+  partial_amount?: number | null;
   litigation?: boolean | null; enforcement_no?: string | null; enforcement_order?: string | null;
 };
 type Note = { id: string; note_date: string; text: string };
 type Property = {
   id: string; name: string; address: string | null; city: string | null; manager: string | null;
   property_type: string | null; collected: number;
+  grace_days?: number | null;
+  vat_enabled?: boolean | null; vat_rate?: number | null; vat_inclusive?: boolean | null;
   tenants: Tenant[]; property_notes: Note[];
 };
 
 /** حالة الصف المعروضة (تشمل «في التنفيذ») */
-type RowKey = "litigation" | "late" | "soon" | "expiring" | "ok";
+type RowKey = "litigation" | "late" | "partial" | "soon" | "expiring" | "ok";
 type Row = { t: Tenant; st: ReturnType<typeof contractState>; key: RowKey };
 
 const ROW_META: Record<RowKey, { label: string; dot: string; cls: string }> = {
   litigation: { label: "في التنفيذ",  dot: "bg-[#64748B]", cls: "bg-[#EEF1F4] text-[#475569]" },
   late:       { label: "متأخر",        dot: "bg-late",      cls: "bg-[#FBE9E7] text-[#a5322c]" },
+  partial:    { label: "سداد جزئي",    dot: "bg-[#EA8C00]", cls: "bg-[#FDF0DC] text-[#9A5B00]" },
   soon:       { label: "يستحق قريبًا", dot: "bg-gold",      cls: "bg-[#FBF1DF] text-[#8a5a11]" },
   expiring:   { label: "نافذة التجديد", dot: "bg-[#7C3AED]", cls: "bg-[#F1EBFC] text-[#5B21B6]" },
   ok:         { label: "منتظم",        dot: "bg-paid",      cls: "bg-[#E6F4EC] text-[#137a50]" },
@@ -40,13 +44,13 @@ const ROW_META: Record<RowKey, { label: string; dot: string; cls: string }> = {
 
 function rowKey(t: Tenant, st: ReturnType<typeof contractState>): RowKey {
   if (t.litigation) return "litigation";
-  if (st.status === "late") return "late";
+  if (st.status === "late") return st.hasPartial ? "partial" : "late";
   if (st.status === "soon") return "soon";
   if (st.daysToEnd !== null && st.daysToEnd <= 60 && st.daysToEnd >= 0) return "expiring";
   return "ok";
 }
 
-const URGENCY: Record<RowKey, number> = { late: 0, soon: 1, expiring: 2, litigation: 3, ok: 4 };
+const URGENCY: Record<RowKey, number> = { late: 0, partial: 1, soon: 2, expiring: 3, litigation: 4, ok: 5 };
 
 export default function PropertyView({ initial, orgName, issuer }: { initial: Property[]; orgName: string; issuer?: any }) {
   const supabase = createClient();
@@ -58,6 +62,7 @@ export default function PropertyView({ initial, orgName, issuer }: { initial: Pr
   const [schedule, setSchedule] = useState<Tenant | null>(null);
   const [renewing, setRenewing] = useState<Tenant | null>(null);
   const [enforcing, setEnforcing] = useState<Tenant | null>(null);
+  const [paying, setPaying] = useState<Tenant | null>(null);
 
   // ---------- أدوات العرض: بحث / تصفية / فرز / إشعار ----------
   const [q, setQ] = useState("");
@@ -70,10 +75,25 @@ export default function PropertyView({ initial, orgName, issuer }: { initial: Pr
   }
 
   const active = useMemo(() => items.find((p) => p.id === activeId) || null, [items, activeId]);
+
+  /** تسجيل مبلغ مستلم — يحوّل الجزئي إلى دفعات كاملة تلقائيًّا */
+  async function recordPayment(t: Tenant, amount: number) {
+    const amt = Math.max(0, Number(amount) || 0);
+    if (!amt) return;
+    const r = applyPayment(t, amt);
+    await patchTenant(t.id, { paid_periods: r.paid_periods, partial_amount: r.partial_amount }, amt);
+    notify("ok", r.completed > 0
+      ? `سُجّل ${sar(amt)} ريال — اكتملت ${r.completed} دفعة`
+      : `سُجّل ${sar(amt)} ريال كسداد جزئي`);
+  }
   async function saveProperty(d: any, id?: string) {
     const payload = {
       name: d.name, address: d.address || null, city: d.city || null,
       manager: d.manager || orgName || null, property_type: d.property_type || "residential",
+      grace_days: Math.max(0, Math.min(30, Number(d.grace_days) || 0)),
+      vat_enabled: !!d.vat_enabled,
+      vat_rate: Number(d.vat_rate) || 15,
+      vat_inclusive: d.vat_inclusive !== false,
     };
     if (id) {
       const { error } = await supabase.from("properties").update(payload).eq("id", id);
@@ -184,7 +204,7 @@ export default function PropertyView({ initial, orgName, issuer }: { initial: Pr
 
   async function openInvoice(t: Tenant) {
     if (!active) return;
-    const st = contractState(t);
+    const st = contractState(t, { graceDays: Number(active?.grace_days) || 0 });
     const total = t.contract_periods || 12;
     const n = Math.min((t.paid_periods || 0) + 1, total);
     const period = `الدفعة ${n} من ${total}`;
@@ -207,7 +227,7 @@ export default function PropertyView({ initial, orgName, issuer }: { initial: Pr
 
   function remindLink(t: Tenant) {
     if (!active) return "#";
-    const st = contractState(t);
+    const st = contractState(t, { graceDays: Number(active?.grace_days) || 0 });
     const who = active.manager || orgName || "إدارة الأملاك";
     const ul = unitLabel(active.property_type);
     const msg = st.unpaid === 0
@@ -218,7 +238,7 @@ export default function PropertyView({ initial, orgName, issuer }: { initial: Pr
 
   function makeNotice(t: Tenant) {
     if (!active) return;
-    const st = contractState(t);
+    const st = contractState(t, { graceDays: Number(active?.grace_days) || 0 });
     const who = active.manager || orgName || "إدارة الأملاك";
     const ul = unitLabel(active.property_type);
     const body = [
@@ -263,14 +283,19 @@ export default function PropertyView({ initial, orgName, issuer }: { initial: Pr
   const ul = unitLabel(p.property_type);
 
   // كل الصفوف مع حالتها (تُستخدم للإحصاءات)
+  const grace = { graceDays: Number(p.grace_days) || 0 };
+  const vat = { enabled: !!p.vat_enabled, rate: Number(p.vat_rate) || 15, inclusive: p.vat_inclusive !== false };
   const allRows: Row[] = p.tenants.map((t) => {
-    const st = contractState(t);
+    const st = contractState(t, grace);
     return { t, st, key: rowKey(t, st) };
   });
 
   const counts = allRows.reduce((acc, r) => { acc[r.key] = (acc[r.key] || 0) + 1; return acc; },
     {} as Record<RowKey, number>);
-  const lateRows = allRows.filter((r) => r.key === "late");
+  const lateRows = allRows.filter((r) => r.key === "late" || r.key === "partial");
+  const lateCount = lateRows.length;
+  const monthlyIncome = p.tenants.reduce((sum, t) =>
+    sum + (Number(t.rent_amount) || 0) * PERIODS_PER_MONTH[(t.payment_frequency || "monthly") as Frequency], 0);
   const overdue = lateRows.reduce((s, r) => s + r.st.amountDue, 0);
   const pct = allRows.length ? Math.round(((allRows.length - lateRows.length) / allRows.length) * 100) : 100;
 
@@ -302,7 +327,7 @@ export default function PropertyView({ initial, orgName, issuer }: { initial: Pr
   // ملخّص المحفظة كاملة (كل العقارات)
   const portfolio = items.reduce((acc, prop) => {
     prop.tenants.forEach((t) => {
-      const st = contractState(t);
+      const st = contractState(t, { graceDays: Number(prop.grace_days) || 0 });
       acc.units++;
       if (st.status === "late") { acc.late++; acc.overdue += st.amountDue; }
       if (st.status === "soon") acc.soon++;
@@ -365,10 +390,10 @@ export default function PropertyView({ initial, orgName, issuer }: { initial: Pr
 
       {/* إحصاءات — قابلة للنقر للتصفية */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
-        <Stat v={`${pct}%`} l="نسبة الانتظام" tone="ok" onClick={() => setFilter("all")} active={filter === "all"} />
-        <Stat v={String(counts.late || 0)} l="وحدات متأخرة" tone={counts.late ? "warn" : undefined} onClick={() => setFilter("late")} active={filter === "late"} />
-        <Stat v={sar(overdue)} l="إجمالي المتأخر (ريال)" tone={overdue ? "warn" : undefined} onClick={() => { setFilter("late"); setSort("amount"); }} />
-        <Stat v={String(counts.soon || 0)} l="دفعات خلال 7 أيام" onClick={() => setFilter("soon")} active={filter === "soon"} />
+        <Stat v={sar(Math.round(monthlyIncome))} l="الدخل الشهري التقريبي" kpi="income" icon="↑" onClick={() => setFilter("all")} active={filter === "all"} />
+        <Stat v={sar(overdue)} l={`المتأخر (${lateCount} وحدة)`} kpi="overdue" icon="!" onClick={() => { setFilter("late"); setSort("amount"); }} active={filter === "late"} />
+        <Stat v={String(counts.soon || 0)} l="تستحق خلال 7 أيام" kpi="soon" icon="●" onClick={() => setFilter("soon")} active={filter === "soon"} />
+        <Stat v={String(counts.expiring || 0)} l="عقود تنتهي قريبًا" kpi="expiring" icon="↻" onClick={() => setFilter("expiring")} active={filter === "expiring"} />
       </div>
 
       <div className="grid md:grid-cols-[1.65fr_1fr] gap-5 items-start">
@@ -421,19 +446,28 @@ export default function PropertyView({ initial, orgName, issuer }: { initial: Pr
               </div>
             ) : rows.map(({ t, st, key }) => (
               <div key={t.id} className={`rounded-xl border p-3 ${key === "litigation" ? "border-[#CBD5E1] bg-[#F8FAFC]" : "border-line bg-paper"}`}>
-                <div className="flex items-center gap-3">
-                  <span className="w-9 h-9 rounded-lg bg-paper2 grid place-items-center font-semibold text-deep shrink-0">{(t.name || "?").charAt(0)}</span>
-                  <div className="min-w-0 flex-1">
-                    <div className="font-semibold truncate">{t.name}</div>
-                    <div className="text-xs text-muted">
-                      {ul} {t.unit || "—"} · {sar(t.rent_amount)} ريال / {freqShort(t.payment_frequency)}
+                <div className="flex flex-col sm:flex-row sm:items-center gap-2.5 sm:gap-3">
+                  <div className="flex items-center gap-3 min-w-0 flex-1">
+                    <span className="w-9 h-9 rounded-lg bg-paper2 grid place-items-center font-semibold text-deep shrink-0">{(t.name || "?").charAt(0)}</span>
+                    <div className="min-w-0 flex-1">
+                      <div className="font-semibold truncate">{t.name}</div>
+                      <div className="text-xs text-muted">
+                        {ul} {t.unit || "—"} · {sar(t.rent_amount)} ريال / {freqShort(t.payment_frequency)}
+                      </div>
+                      {vat.enabled && (() => { const v = splitVat(Number(t.rent_amount) || 0, vat); return (
+                        <div className="text-[.7rem] text-muted mt-0.5">
+                          أساسي {sar(v.base)} + ضريبة {sar(v.vat)} = <b className="text-deep">{sar(v.total)}</b>
+                        </div>
+                      ); })()}
                     </div>
                   </div>
-                  {/* عمود ثابت: الحالة + الرقم المهم */}
-                  <div className="text-left shrink-0">
+                  {/* الحالة + الرقم المهم — تنتقل لسطر مستقل على الجوال */}
+                  <div className="text-right sm:text-left shrink-0">
                     <StatusPill k={key} />
                     <div className="text-xs mt-1 tabular-nums">
-                      {key === "late" ? <span className="text-late font-semibold">متأخر {sar(st.amountDue)}</span>
+                      {st.inGrace ? <span className="text-[#8a5a11] font-semibold">فترة سماح — {st.graceDaysLeft} يوم</span>
+                        : key === "partial" ? <span className="text-[#9A5B00] font-semibold">دُفع {sar(st.partial)} · متبقٍ {sar(st.amountDue)}</span>
+                        : key === "late" ? <span className="text-late font-bold">متأخر {sar(st.amountDue)}</span>
                         : key === "expiring" && st.daysToEnd !== null ? <span className="text-[#5B21B6] font-semibold">ينتهي بعد {st.daysToEnd} يوم</span>
                         : key === "litigation" ? <span className="text-[#475569]">{t.enforcement_no ? `طلب ${t.enforcement_no}` : "متابعة نظامية"}</span>
                         : st.nextDueDate ? <span className="text-muted">القادمة {st.nextDueDate}</span> : null}
@@ -442,7 +476,7 @@ export default function PropertyView({ initial, orgName, issuer }: { initial: Pr
                 </div>
 
                 {/* إجراء رئيسي + قائمة المزيد */}
-                <div className="flex flex-wrap gap-1.5 justify-end mt-2.5 items-center">
+                <div className="flex flex-wrap gap-1.5 justify-stretch sm:justify-end mt-2.5 items-center [&>*]:flex-1 sm:[&>*]:flex-none [&>*]:justify-center">
                   {key === "litigation" ? (
                     <>
                       <button className="btn btn-ghost text-xs" onClick={() => setEnforcing(t)}>متابعة التنفيذ</button>
@@ -450,8 +484,11 @@ export default function PropertyView({ initial, orgName, issuer }: { initial: Pr
                     </>
                   ) : (
                     <>
-                      <button className="btn btn-primary text-xs" onClick={() => patchTenant(t.id, { paid_periods: (t.paid_periods || 0) + 1 }, t.rent_amount || 0)}>سجّل دفعة</button>
-                      <a href={remindLink(t)} target="_blank" rel="noreferrer" className="btn btn-wa text-xs">تذكير</a>
+                      <QuickBtn title="تأكيد استلام الدفعة كاملة" cls="btn-primary" onClick={() => recordPayment(t, Number(t.rent_amount) || 0)}>&#10004;</QuickBtn>
+                      <QuickBtn title="سداد جزئي" cls="btn-ghost" onClick={() => setPaying(t)}>&#189;</QuickBtn>
+                      <a href={remindLink(t)} target="_blank" rel="noreferrer" className="btn btn-wa text-xs px-2.5" title="إرسال تذكير واتساب">&#128172;</a>
+                      {t.phone && <a href={`tel:${String(t.phone).replace(/[^0-9+]/g, "")}`} className="btn btn-ghost text-xs px-2.5 sm:hidden" title="اتصال مباشر">&#128222;</a>}
+                      <QuickBtn title="إصدار فاتورة" cls="btn-ghost" onClick={() => openInvoice(t)}>&#128196;</QuickBtn>
                       {st.unpaid > 0 && <button className="btn btn-gold text-xs" onClick={() => makeNotice(t)}>نموذج إشعار</button>}
                       {needsRenewal(t) && <button className="btn text-xs" style={{ background: "#0E3A37", color: "#F6F1E4" }} onClick={() => setRenewing(t)}>تجديد</button>}
                     </>
@@ -460,7 +497,6 @@ export default function PropertyView({ initial, orgName, issuer }: { initial: Pr
                     items={[
                       { label: "📅 جدول الدفعات", run: () => setSchedule(t) },
                       { label: "🧾 كشف حساب", run: () => openStatement(t) },
-                      { label: "📄 إصدار فاتورة", run: () => openInvoice(t) },
                       ...((t.paid_periods || 0) > 0 ? [{ label: "↩︎ تراجع عن دفعة", run: () => patchTenant(t.id, { paid_periods: Math.max(0, (t.paid_periods || 0) - 1) }) }] : []),
                       ...(!t.litigation && st.unpaid > 0 ? [{ label: "⚖️ رفع للتنفيذ", run: () => setEnforcing(t) }] : []),
                       { label: "✎ تعديل البيانات", run: () => setModal({ kind: "tenant", id: t.id }) },
@@ -503,24 +539,102 @@ export default function PropertyView({ initial, orgName, issuer }: { initial: Pr
       {enforcing && <EnforcementModal tenant={enforcing} unitWord={ul}
         onClose={() => setEnforcing(null)}
         onSubmit={(no, order) => { patchTenant(enforcing.id, { litigation: true, enforcement_no: no || null, enforcement_order: order || null }); setEnforcing(null); }} />}
+      {paying && <PaymentModal tenant={paying} unitWord={ul} onClose={() => setPaying(null)}
+        onSubmit={(amt) => { recordPayment(paying, amt); setPaying(null); }} />}
       {doc && <DocModal doc={doc} onClose={() => setDoc(null)} />}
     </div>
   );
 }
 
 /** بطاقة إحصاء — قابلة للنقر للتصفية */
-function Stat({ v, l, tone, onClick, active }: { v: string; l: string; tone?: "ok" | "warn"; onClick?: () => void; active?: boolean }) {
-  const c = tone === "ok" ? "text-paid" : tone === "warn" ? "text-late" : "text-deep";
+/** بطاقة KPI — أيقونة ولون دلالي لقراءة بصرية خاطفة */
+const KPI: Record<string, { ring: string; icon: string; val: string; bold?: boolean }> = {
+  income:   { ring: "bg-[#E6F4EC] text-[#137a50]", icon: "text-[#137a50]", val: "text-paid" },
+  overdue:  { ring: "bg-[#FBE9E7] text-[#a5322c]", icon: "text-[#a5322c]", val: "text-late", bold: true },
+  soon:     { ring: "bg-[#FBF1DF] text-[#8a5a11]", icon: "text-[#8a5a11]", val: "text-[#8a5a11]" },
+  expiring: { ring: "bg-[#F1EBFC] text-[#5B21B6]", icon: "text-[#5B21B6]", val: "text-[#5B21B6]" },
+  plain:    { ring: "bg-paper2 text-deep",          icon: "text-deep",      val: "text-deep" },
+};
+
+function Stat({ v, l, kpi = "plain", icon, onClick, active }: {
+  v: string; l: string; kpi?: keyof typeof KPI | string; icon?: string; onClick?: () => void; active?: boolean;
+}) {
+  const k = KPI[kpi] || KPI.plain;
   const base = `bg-white border rounded-xl p-4 shadow-sm text-right w-full transition ${active ? "border-gold ring-1 ring-goldSoft" : "border-line"}`;
   const inner = (
     <>
-      <div className={`font-display font-bold text-2xl leading-none ${c}`}>{v}</div>
-      <div className="mt-1.5 text-sm text-muted">{l}</div>
+      <div className="flex items-center gap-2 mb-1.5">
+        {icon && <span className={`w-7 h-7 rounded-lg grid place-items-center text-sm font-bold shrink-0 ${k.ring}`}>{icon}</span>}
+        <div className={`font-display leading-none ${k.val} ${k.bold ? "font-extrabold text-2xl" : "font-bold text-2xl"}`}>{v}</div>
+      </div>
+      <div className="text-sm text-muted">{l}</div>
     </>
   );
   if (!onClick) return <div className={base}>{inner}</div>;
   return <button type="button" onClick={onClick} className={`${base} hover:border-goldSoft cursor-pointer`}>{inner}</button>;
 }
+
+/** زر إجراء سريع أيقوني */
+function QuickBtn({ children, title, cls, onClick }: { children: React.ReactNode; title: string; cls: string; onClick: () => void }) {
+  return (
+    <button type="button" title={title} aria-label={title} onClick={onClick}
+      className={`btn ${cls} text-xs px-2.5`}>{children}</button>
+  );
+}
+
+/** نافذة تسجيل مبلغ مستلم — كامل أو جزئي */
+function PaymentModal({ tenant, unitWord, onClose, onSubmit }: {
+  tenant: Tenant; unitWord: string; onClose: () => void; onSubmit: (amount: number) => void;
+}) {
+  const rent = Number(tenant.rent_amount) || 0;
+  const already = Number(tenant.partial_amount) || 0;
+  const remaining = Math.max(0, rent - already);
+  const [amount, setAmount] = useState<string>(String(remaining || rent));
+  const amt = Number(amount) || 0;
+  const pool = already + amt;
+  const completed = rent > 0 ? Math.floor(pool / rent) : 0;
+  const leftover = rent > 0 ? +(pool - completed * rent).toFixed(2) : 0;
+
+  return (
+    <Shell onClose={onClose}>
+      <h3 className="font-display font-bold text-deep text-xl mb-1">تسجيل مبلغ مستلم</h3>
+      <p className="text-sm text-muted mb-4">{tenant.name} · {unitWord} {tenant.unit || "—"}</p>
+
+      <div className="bg-paper2 border border-line rounded-xl p-3 mb-4 text-sm">
+        <div className="flex justify-between"><span className="text-muted">قيمة الدفعة</span><b className="tabular-nums">{sar(rent)} ريال</b></div>
+        {already > 0 && (
+          <div className="flex justify-between mt-1"><span className="text-muted">مدفوع جزئيًّا سابقًا</span>
+            <b className="tabular-nums text-[#9A5B00]">{sar(already)} ريال</b></div>
+        )}
+      </div>
+
+      <Field label="المبلغ المستلم (ريال)">
+        <input className="fld" type="number" autoFocus value={amount} onChange={(e) => setAmount(e.target.value)} />
+      </Field>
+      <div className="flex gap-2 mt-2 flex-wrap">
+        {remaining > 0 && remaining !== rent && (
+          <button className="btn btn-ghost text-xs" onClick={() => setAmount(String(remaining))}>إكمال الدفعة ({sar(remaining)})</button>
+        )}
+        <button className="btn btn-ghost text-xs" onClick={() => setAmount(String(rent))}>دفعة كاملة ({sar(rent)})</button>
+        <button className="btn btn-ghost text-xs" onClick={() => setAmount(String(Math.round(rent / 2)))}>نصف الدفعة</button>
+      </div>
+
+      {amt > 0 && (
+        <div className="bg-[#E6F4EC] border border-[#B7DFC7] rounded-xl p-3 mt-4 text-xs text-[#137a50] leading-relaxed">
+          {completed > 0 && <div>ستكتمل <b>{completed}</b> دفعة.</div>}
+          {leftover > 0 && <div>ويتبقّى <b>{sar(leftover)} ريال</b> مسجّلة كسداد جزئي على الدفعة التالية.</div>}
+          {completed === 0 && leftover > 0 && <div>لن تكتمل دفعة — يُسجَّل المبلغ جزئيًّا فقط.</div>}
+        </div>
+      )}
+
+      <div className="flex gap-2 mt-5">
+        <button className="btn btn-ghost flex-1 justify-center" onClick={onClose}>إلغاء</button>
+        <button className="btn btn-gold flex-1 justify-center" disabled={!amt} onClick={() => onSubmit(amt)}>تسجيل</button>
+      </div>
+    </Shell>
+  );
+}
+
 
 /** شارة الحالة — تقرأ من ROW_META */
 function StatusPill({ k }: { k: RowKey }) {
@@ -616,6 +730,47 @@ function PropertyModal({ open, initial, orgName, onClose, onSubmit, onDelete }: 
           <Field label="الحي / العنوان"><input className="fld" value={d.address || ""} onChange={(e) => setD({ ...d, address: e.target.value })} placeholder="حي الياسمين" /></Field>
         </div>
         <Field label="اسم المالك أو المكتب" hint="يظهر في الخطابات"><input className="fld" value={d.manager || ""} onChange={(e) => setD({ ...d, manager: e.target.value })} placeholder={orgName || "مكتب اليمامة"} /></Field>
+
+        <Field label="فترة السماح (أيام)" hint="لا تُحتسب الدفعة متأخرة خلالها">
+          <div className="flex gap-2 flex-wrap">
+            {[0, 3, 5, 7].map((g) => (
+              <button key={g} onClick={() => setD({ ...d, grace_days: g })}
+                className={`border-2 rounded-lg px-3.5 py-2 text-xs font-semibold transition ${
+                  (Number(d.grace_days) || 0) === g ? "border-gold bg-[#FBF1DF]" : "border-line hover:border-goldSoft"}`}>
+                {g === 0 ? "بدون" : `${g} أيام`}
+              </button>
+            ))}
+            <input className="fld max-w-[90px]" type="number" min={0} max={30} placeholder="مخصّص"
+              value={[0, 3, 5, 7].includes(Number(d.grace_days) || 0) ? "" : (d.grace_days ?? "")}
+              onChange={(e) => setD({ ...d, grace_days: e.target.value })} />
+          </div>
+        </Field>
+
+        <div className="border border-line rounded-xl p-3 bg-paper">
+          <label className="flex items-center gap-2.5 cursor-pointer">
+            <input type="checkbox" className="w-4 h-4 accent-[#B8791F]" checked={!!d.vat_enabled}
+              onChange={(e) => setD({ ...d, vat_enabled: e.target.checked })} />
+            <span className="text-sm font-semibold">تطبيق ضريبة القيمة المضافة (15%)</span>
+          </label>
+          <p className="text-xs text-muted mt-1.5 leading-relaxed">
+            تُفصل قيمة الإيجار الأساسي عن الضريبة في كشوف الحساب والفواتير.
+            {isCommercial(d.property_type) ? " موصى بها للعقارات التجارية." : ""}
+          </p>
+          {d.vat_enabled && (
+            <div className="grid grid-cols-2 gap-3 mt-3">
+              <Field label="النسبة %">
+                <input className="fld" type="number" value={d.vat_rate ?? 15} onChange={(e) => setD({ ...d, vat_rate: e.target.value })} />
+              </Field>
+              <Field label="قيمة الإيجار المُدخلة">
+                <select className="fld" value={d.vat_inclusive === false ? "ex" : "in"}
+                  onChange={(e) => setD({ ...d, vat_inclusive: e.target.value === "in" })}>
+                  <option value="in">شاملة الضريبة</option>
+                  <option value="ex">غير شاملة (تُضاف فوقها)</option>
+                </select>
+              </Field>
+            </div>
+          )}
+        </div>
       </div>
       <div className="flex gap-2 mt-6">
         <button className="btn btn-ghost flex-1 justify-center" onClick={onClose}>إلغاء</button>

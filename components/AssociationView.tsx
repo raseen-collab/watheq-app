@@ -3,24 +3,27 @@ import { useMemo, useState, useTransition } from "react";
 import { createClient } from "@/lib/supabase-client";
 import { sar, daysLeft, waLink, WATHEQ_WA, today } from "@/lib/utils";
 
-type Owner = { id: string; name: string; unit: string | null; phone: string | null; months_late: number; last_paid: string | null };
+type Owner = { id: string; name: string; unit: string | null; phone: string | null; months_late: number; last_paid: string | null; partial_amount?: number | null };
 type Note = { id: string; note_date: string; text: string };
 type Association = {
   id: string; name: string; units: number; fee: number;
-  cert_expiry: string | null; fund_balance: number;
+  cert_expiry: string | null; fund_balance: number; grace_days?: number | null;
   owners: Owner[]; association_notes: Note[];
 };
 
 /** حالة المالك المعروضة */
-type OwnerKey = "critical" | "late" | "ok";
+type OwnerKey = "critical" | "late" | "partial" | "ok";
 const OWNER_META: Record<OwnerKey, { label: string; dot: string; cls: string }> = {
   critical: { label: "حرج", dot: "bg-late", cls: "bg-[#F7DAD7] text-[#8f2b26]" },
   late:     { label: "متأخر", dot: "bg-late", cls: "bg-[#FBE9E7] text-[#a5322c]" },
+  partial:  { label: "سداد جزئي", dot: "bg-[#EA8C00]", cls: "bg-[#FDF0DC] text-[#9A5B00]" },
   ok:       { label: "مسدّد", dot: "bg-paid", cls: "bg-[#E6F4EC] text-[#137a50]" },
 };
 const ownerKey = (o: Owner): OwnerKey =>
-  o.months_late >= 3 ? "critical" : o.months_late > 0 ? "late" : "ok";
-const OWNER_URGENCY: Record<OwnerKey, number> = { critical: 0, late: 1, ok: 2 };
+  o.months_late >= 3 ? "critical"
+    : o.months_late > 0 ? ((Number(o.partial_amount) || 0) > 0 ? "partial" : "late")
+    : "ok";
+const OWNER_URGENCY: Record<OwnerKey, number> = { critical: 0, late: 1, partial: 2, ok: 3 };
 
 export default function AssociationView({ initial }: { initial: Association[] }) {
   const supabase = createClient();
@@ -33,6 +36,7 @@ export default function AssociationView({ initial }: { initial: Association[] })
   const [q, setQ] = useState("");
   const [filter, setFilter] = useState<"all" | OwnerKey>("all");
   const [sort, setSort] = useState<"urgent" | "amount" | "name" | "unit">("urgent");
+  const [paying, setPaying] = useState<Owner | null>(null);
   const [toast, setToast] = useState<null | { k: "ok" | "err"; m: string }>(null);
   function notify(k: "ok" | "err", m: string) {
     setToast({ k, m });
@@ -40,11 +44,30 @@ export default function AssociationView({ initial }: { initial: Association[] })
   }
 
   const active = useMemo(() => items.find((a) => a.id === activeId) || null, [items, activeId]);
+
+  /** تسجيل مبلغ مستلم من مالك — يحوّل الجزئي إلى أشهر مسدّدة */
+  async function recordOwnerPayment(o: Owner, fee: number, amount: number) {
+    const amt = Math.max(0, Number(amount) || 0);
+    if (!amt || fee <= 0) return;
+    const pool = (Number(o.partial_amount) || 0) + amt;
+    const months = Math.floor(pool / fee);
+    const rest = +(pool - months * fee).toFixed(2);
+    const newLate = Math.max(0, o.months_late - months);
+    await ownerPatch(o.id, {
+      months_late: newLate,
+      partial_amount: rest,
+      ...(months > 0 ? { last_paid: today() } : {}),
+    }, amt);
+    notify("ok", months > 0
+      ? `سُجّل ${sar(amt)} ريال — سُدّد ${months} شهر`
+      : `سُجّل ${sar(amt)} ريال كسداد جزئي`);
+  }
   // ---------- جمعية ----------
   async function createAssociation(data: Partial<Association>) {
     const { data: row, error } = await supabase.from("associations").insert({
       name: data.name, units: data.units || 0, fee: data.fee || 0,
       cert_expiry: data.cert_expiry || null, fund_balance: data.fund_balance || 0,
+      grace_days: Math.max(0, Math.min(30, Number(data.grace_days) || 0)),
     }).select("*").single();
     if (error) return notify("err", error.message);
     const next = { ...(row as any), owners: [], association_notes: [] };
@@ -55,6 +78,7 @@ export default function AssociationView({ initial }: { initial: Association[] })
     const { error } = await supabase.from("associations").update({
       name: data.name, units: data.units || 0, fee: data.fee || 0,
       cert_expiry: data.cert_expiry || null, fund_balance: data.fund_balance || 0,
+      grace_days: Math.max(0, Math.min(30, Number(data.grace_days) || 0)),
     }).eq("id", active.id);
     if (error) return notify("err", error.message);
     setItems(items.map((a) => a.id === active.id ? { ...a, ...data } as any : a));
@@ -150,7 +174,8 @@ export default function AssociationView({ initial }: { initial: Association[] })
   const critical = a.owners.filter((o) => o.months_late >= 3);
   const pct = total ? Math.round(((total - late.length) / total) * 100) : 0;
   const dl = daysLeft(a.cert_expiry);
-  const owedTotal = late.reduce((s, o) => s + o.months_late * (a.fee || 0), 0);
+  const owedTotal = late.reduce((s, o) => s + Math.max(0, o.months_late * (a.fee || 0) - (Number(o.partial_amount) || 0)), 0);
+  const expectedMonthly = total * (a.fee || 0);
 
   // الصفوف المعروضة: بحث ← تصفية ← فرز
   const rows = useMemo(() => {
@@ -174,7 +199,8 @@ export default function AssociationView({ initial }: { initial: Association[] })
   const chips: { k: "all" | OwnerKey; label: string }[] = [
     { k: "all", label: `الكل ${total}` },
     { k: "critical", label: `حرج ${critical.length}` },
-    { k: "late", label: `متأخر ${late.length - critical.length}` },
+    { k: "late", label: `متأخر ${a.owners.filter((o) => ownerKey(o) === "late").length}` },
+    { k: "partial", label: `سداد جزئي ${a.owners.filter((o) => ownerKey(o) === "partial").length}` },
     { k: "ok", label: `مسدّد ${total - late.length}` },
   ];
 
@@ -217,10 +243,10 @@ export default function AssociationView({ initial }: { initial: Association[] })
 
       {/* إحصاءات — قابلة للنقر للتصفية */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
-        <Stat v={`${pct}%`} l="نسبة السداد" tone="ok" onClick={() => setFilter("all")} active={filter === "all"} />
-        <Stat v={String(late.length)} l="ملاك متأخرون" tone={late.length ? "warn" : undefined} onClick={() => setFilter("late")} active={filter === "late"} />
-        <Stat v={sar(owedTotal)} l="إجمالي المتأخر (ريال)" tone={owedTotal ? "warn" : undefined} onClick={() => { setFilter("all"); setSort("amount"); }} />
-        <Stat v={dl === null ? "—" : String(dl)} l="يوم حتى انتهاء الشهادة" tone={dl !== null && dl <= 30 ? "warn" : undefined} />
+        <Stat v={sar(expectedMonthly)} l="الدخل الشهري المتوقّع" kpi="income" icon="\u2191" onClick={() => setFilter("all")} active={filter === "all"} />
+        <Stat v={sar(owedTotal)} l={`المتأخر (${late.length} مالك)`} kpi="overdue" icon="!" onClick={() => { setFilter("late"); setSort("amount"); }} active={filter === "late"} />
+        <Stat v={`${pct}%`} l="نسبة السداد" kpi="soon" icon="\u25CF" onClick={() => setFilter("ok")} active={filter === "ok"} />
+        <Stat v={dl === null ? "—" : String(dl)} l="يوم حتى انتهاء الشهادة" kpi={dl !== null && dl <= 30 ? "overdue" : "expiring"} icon="\u21BB" />
       </div>
 
       <div className="grid md:grid-cols-[1.6fr_1fr] gap-5 items-start">
@@ -269,33 +295,36 @@ export default function AssociationView({ initial }: { initial: Association[] })
                 const owed = o.months_late * (a.fee || 0);
                 return (
                   <div key={o.id} className={`rounded-xl border p-3 ${k === "critical" ? "border-[#F5C6C2] bg-[#FEF7F6]" : "border-line bg-paper"}`}>
-                    <div className="flex items-center gap-3">
-                      <span className="w-9 h-9 rounded-lg bg-paper2 grid place-items-center font-semibold text-deep shrink-0">{(o.name || "?").charAt(0)}</span>
-                      <div className="min-w-0 flex-1">
-                        <div className="font-semibold truncate">{o.name}</div>
-                        <div className="text-xs text-muted">
-                          {o.unit ? `وحدة ${o.unit}` : "—"}{o.last_paid ? ` · آخر سداد ${o.last_paid}` : ""}
+                    <div className="flex flex-col sm:flex-row sm:items-center gap-2.5 sm:gap-3">
+                      <div className="flex items-center gap-3 min-w-0 flex-1">
+                        <span className="w-9 h-9 rounded-lg bg-paper2 grid place-items-center font-semibold text-deep shrink-0">{(o.name || "?").charAt(0)}</span>
+                        <div className="min-w-0 flex-1">
+                          <div className="font-semibold truncate">{o.name}</div>
+                          <div className="text-xs text-muted">
+                            {o.unit ? `وحدة ${o.unit}` : "—"}{o.last_paid ? ` · آخر سداد ${o.last_paid}` : ""}
+                          </div>
                         </div>
                       </div>
-                      <div className="text-left shrink-0">
+                      <div className="text-right sm:text-left shrink-0">
                         <StatusPill k={k} />
                         <div className="text-xs mt-1 tabular-nums">
                           {o.months_late > 0
-                            ? <span className="text-late font-semibold">{o.months_late} شهر · {sar(owed)} ريال</span>
+                            ? (Number(o.partial_amount) || 0) > 0
+                              ? <span className="text-[#9A5B00] font-semibold">دُفع {sar(Number(o.partial_amount) || 0)} · متبقٍ {sar(owed)}</span>
+                              : <span className="text-late font-bold">{o.months_late} شهر · {sar(owed)} ريال</span>
                             : <span className="text-muted">لا مستحقات</span>}
                         </div>
                       </div>
                     </div>
 
                     {/* إجراء رئيسي + قائمة المزيد */}
-                    <div className="flex flex-wrap gap-1.5 justify-end mt-2.5 items-center">
+                    <div className="flex flex-wrap gap-1.5 justify-stretch sm:justify-end mt-2.5 items-center [&>*]:flex-1 sm:[&>*]:flex-none [&>*]:justify-center">
                       {o.months_late > 0 && (
-                        <button className="btn btn-primary text-xs"
-                          onClick={() => ownerPatch(o.id, { months_late: Math.max(0, o.months_late - 1), last_paid: today() }, a.fee || 0)}>
-                          سجّل دفعة
-                        </button>
+                        <QuickBtn title="تأكيد استلام اشتراك شهر" cls="btn-primary" onClick={() => recordOwnerPayment(o, a.fee || 0, a.fee || 0)}>&#10004;</QuickBtn>
                       )}
-                      {o.months_late > 0 && <a href={ownerRemindLink(o)} target="_blank" rel="noreferrer" className="btn btn-wa text-xs">تذكير</a>}
+                      {o.months_late > 0 && <QuickBtn title="سداد جزئي" cls="btn-ghost" onClick={() => setPaying(o)}>&#189;</QuickBtn>}
+                      {o.months_late > 0 && <a href={ownerRemindLink(o)} target="_blank" rel="noreferrer" className="btn btn-wa text-xs px-2.5" title="إرسال تذكير واتساب">&#128172;</a>}
+                      {o.phone && <a href={`tel:${String(o.phone).replace(/[^0-9+]/g, "")}`} className="btn btn-ghost text-xs px-2.5 sm:hidden" title="اتصال مباشر">&#128222;</a>}
                       {o.months_late >= 2 && <a href={ownerNoticeLink(o)} target="_blank" rel="noreferrer" className="btn btn-gold text-xs">نموذج خطاب</a>}
                       <RowMenu
                         items={[
@@ -333,6 +362,8 @@ export default function AssociationView({ initial }: { initial: Association[] })
         </div>
       </div>
 
+      {paying && <OwnerPaymentModal owner={paying} fee={a.fee || 0} onClose={() => setPaying(null)}
+        onSubmit={(amt) => { recordOwnerPayment(paying, a.fee || 0, amt); setPaying(null); }} />}
       <FormModal open={modal === "new"} title="جمعية جديدة" onClose={() => setModal(null)} onSubmit={createAssociation} />
       <FormModal open={modal === "edit"} title="إعدادات الجمعية" initial={active || undefined} onClose={() => setModal(null)} onSubmit={updateAssociation} onDelete={deleteAssociation} />
     </div>
@@ -342,18 +373,96 @@ export default function AssociationView({ initial }: { initial: Association[] })
 // ---------- مكوّنات فرعية ----------
 
 /** بطاقة إحصاء — قابلة للنقر للتصفية */
-function Stat({ v, l, tone, onClick, active }: { v: string; l: string; tone?: "ok" | "warn"; onClick?: () => void; active?: boolean }) {
-  const color = tone === "ok" ? "text-paid" : tone === "warn" ? "text-late" : "text-deep";
+/** بطاقة KPI — أيقونة ولون دلالي لقراءة بصرية خاطفة */
+const KPI: Record<string, { ring: string; val: string; bold?: boolean }> = {
+  income:   { ring: "bg-[#E6F4EC] text-[#137a50]", val: "text-paid" },
+  overdue:  { ring: "bg-[#FBE9E7] text-[#a5322c]", val: "text-late", bold: true },
+  soon:     { ring: "bg-[#FBF1DF] text-[#8a5a11]", val: "text-[#8a5a11]" },
+  expiring: { ring: "bg-[#F1EBFC] text-[#5B21B6]", val: "text-[#5B21B6]" },
+  plain:    { ring: "bg-paper2 text-deep",          val: "text-deep" },
+};
+
+function Stat({ v, l, kpi = "plain", icon, onClick, active }: {
+  v: string; l: string; kpi?: string; icon?: string; onClick?: () => void; active?: boolean;
+}) {
+  const k = KPI[kpi] || KPI.plain;
   const base = `bg-white border rounded-xl p-4 shadow-sm text-right w-full transition ${active ? "border-gold ring-1 ring-goldSoft" : "border-line"}`;
   const inner = (
     <>
-      <div className={`font-display font-bold text-2xl leading-none ${color}`}>{v}</div>
-      <div className="mt-1.5 text-sm text-muted">{l}</div>
+      <div className="flex items-center gap-2 mb-1.5">
+        {icon && <span className={`w-7 h-7 rounded-lg grid place-items-center text-sm font-bold shrink-0 ${k.ring}`}>{icon}</span>}
+        <div className={`font-display leading-none text-2xl ${k.val} ${k.bold ? "font-extrabold" : "font-bold"}`}>{v}</div>
+      </div>
+      <div className="text-sm text-muted">{l}</div>
     </>
   );
   if (!onClick) return <div className={base}>{inner}</div>;
   return <button type="button" onClick={onClick} className={`${base} hover:border-goldSoft cursor-pointer`}>{inner}</button>;
 }
+
+/** زر إجراء سريع أيقوني */
+function QuickBtn({ children, title, cls, onClick }: { children: React.ReactNode; title: string; cls: string; onClick: () => void }) {
+  return (
+    <button type="button" title={title} aria-label={title} onClick={onClick}
+      className={`btn ${cls} text-xs px-2.5`}>{children}</button>
+  );
+}
+
+/** نافذة تسجيل مبلغ مستلم من مالك — كامل أو جزئي */
+function OwnerPaymentModal({ owner, fee, onClose, onSubmit }: {
+  owner: Owner; fee: number; onClose: () => void; onSubmit: (amount: number) => void;
+}) {
+  const already = Number(owner.partial_amount) || 0;
+  const remaining = Math.max(0, fee - already);
+  const [amount, setAmount] = useState<string>(String(remaining || fee));
+  const amt = Number(amount) || 0;
+  const pool = already + amt;
+  const months = fee > 0 ? Math.floor(pool / fee) : 0;
+  const leftover = fee > 0 ? +(pool - months * fee).toFixed(2) : 0;
+
+  return (
+    <Shell onClose={onClose}>
+      <h3 className="font-display font-bold text-deep text-xl mb-1">تسجيل مبلغ مستلم</h3>
+      <p className="text-sm text-muted mb-4">{owner.name} · {owner.unit ? `وحدة ${owner.unit}` : "—"}</p>
+
+      <div className="bg-paper2 border border-line rounded-xl p-3 mb-4 text-sm">
+        <div className="flex justify-between"><span className="text-muted">الاشتراك الشهري</span><b className="tabular-nums">{sar(fee)} ريال</b></div>
+        <div className="flex justify-between mt-1"><span className="text-muted">أشهر متأخرة</span><b className="tabular-nums text-late">{owner.months_late}</b></div>
+        {already > 0 && (
+          <div className="flex justify-between mt-1"><span className="text-muted">مدفوع جزئيًّا سابقًا</span>
+            <b className="tabular-nums text-[#9A5B00]">{sar(already)} ريال</b></div>
+        )}
+      </div>
+
+      <Field label="المبلغ المستلم (ريال)">
+        <input className="fld" type="number" autoFocus value={amount} onChange={(e) => setAmount(e.target.value)} />
+      </Field>
+      <div className="flex gap-2 mt-2 flex-wrap">
+        {remaining > 0 && remaining !== fee && (
+          <button className="btn btn-ghost text-xs" onClick={() => setAmount(String(remaining))}>إكمال الشهر ({sar(remaining)})</button>
+        )}
+        <button className="btn btn-ghost text-xs" onClick={() => setAmount(String(fee))}>شهر كامل ({sar(fee)})</button>
+        {owner.months_late > 1 && (
+          <button className="btn btn-ghost text-xs" onClick={() => setAmount(String(owner.months_late * fee - already))}>سداد الكل</button>
+        )}
+      </div>
+
+      {amt > 0 && (
+        <div className="bg-[#E6F4EC] border border-[#B7DFC7] rounded-xl p-3 mt-4 text-xs text-[#137a50] leading-relaxed">
+          {months > 0 && <div>سيُسدَّد <b>{Math.min(months, owner.months_late)}</b> شهر.</div>}
+          {leftover > 0 && <div>ويتبقّى <b>{sar(leftover)} ريال</b> مسجّلة كسداد جزئي.</div>}
+          {months === 0 && leftover > 0 && <div>لن يكتمل شهر — يُسجَّل المبلغ جزئيًّا فقط.</div>}
+        </div>
+      )}
+
+      <div className="flex gap-2 mt-5">
+        <button className="btn btn-ghost flex-1 justify-center" onClick={onClose}>إلغاء</button>
+        <button className="btn btn-gold flex-1 justify-center" disabled={!amt} onClick={() => onSubmit(amt)}>تسجيل</button>
+      </div>
+    </Shell>
+  );
+}
+
 
 /** شارة حالة المالك */
 function StatusPill({ k }: { k: OwnerKey }) {
@@ -430,6 +539,17 @@ function FormModal({ open, title, initial, onClose, onSubmit, onDelete }: {
           <div className="grid grid-cols-2 gap-3">
             <Field label="انتهاء الشهادة"><input className="fld" type="date" value={d.cert_expiry || ""} onChange={(e) => setD({ ...d, cert_expiry: e.target.value })} /></Field>
             <Field label="رصيد الصندوق (ريال)"><input className="fld" type="number" value={d.fund_balance ?? ""} onChange={(e) => setD({ ...d, fund_balance: +e.target.value })} /></Field>
+            <Field label="فترة السماح (أيام)">
+              <div className="flex gap-2 flex-wrap">
+                {[0, 3, 5, 7].map((g) => (
+                  <button key={g} type="button" onClick={() => setD({ ...d, grace_days: g })}
+                    className={`border-2 rounded-lg px-3 py-2 text-xs font-semibold transition ${
+                      (Number(d.grace_days) || 0) === g ? "border-gold bg-[#FBF1DF]" : "border-line hover:border-goldSoft"}`}>
+                    {g === 0 ? "بدون" : `${g} أيام`}
+                  </button>
+                ))}
+              </div>
+            </Field>
           </div>
         </div>
         <div className="flex gap-2 mt-6">
