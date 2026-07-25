@@ -1,7 +1,10 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { tgSend, tgEdit, tgAnswer, navButtons, TgKeyboard } from "@/lib/telegram";
-import { buildReport, getUnpaid, markPaid, buildReminder, sar } from "@/lib/reports";
+import {
+  buildReport, getUnpaid, markPaid, buildReminder, sar,
+  statusReport, contractsInState, contractCard, payTenantOldest, renewContract, buildNotice, stateLabel,
+} from "@/lib/reports";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -25,7 +28,7 @@ async function findProfileByChat(db: DB, chatId: number | string) {
 function reportButtons(scope: string): TgKeyboard {
   const nav: TgKeyboard = [
     [{ text: "📅 اليوم", callback_data: "cmd:today" }, { text: "⚠️ المتأخرات", callback_data: "cmd:late" }],
-    [{ text: "📊 ملخّص شامل", callback_data: "cmd:summary" }],
+    [{ text: "📊 ملخّص شامل", callback_data: "cmd:summary" }, { text: "📋 حالة العقود", callback_data: "back:status" }],
   ];
   if (scope === "today" || scope === "late") {
     return [
@@ -55,9 +58,10 @@ const helpText = () => [
   "🤖 <b>أوامر وثيق</b>", "",
   "/today — استحقاقات اليوم والقريبة",
   "/late — المتأخرات",
+  "/status — حالة العقود (منتظم/متأخر/تجديد…)",
   "/summary — ملخّص شامل",
   "/menu — القائمة الرئيسية", "",
-  "من داخل «اليوم» و«المتأخرات» تقدر <b>تسجّل دفعة</b> أو <b>تذكّر المستأجر</b> بضغطة.",
+  "من «حالة العقود» تتحكّم بكل عقد حسب حالته: تذكير، مطالبة، تجديد، أو تسجيل دفعة.",
 ].join("\n");
 
 // ======================= الرسائل النصّية =======================
@@ -87,6 +91,10 @@ async function handleMessage(db: DB, msg: any) {
     case "today": case "late": case "summary": {
       const r = await buildReport(db, p, cmd);
       return tgSend(chatId, r, reportButtons(cmd));
+    }
+    case "status": {
+      const r = await statusReport(db, p);
+      return tgSend(chatId, r, statusButtons());
     }
     case "help": return tgSend(chatId, helpText(), navButtons());
     case "menu": default: return tgSend(chatId, "اختر من القائمة:", reportButtons("late"));
@@ -161,8 +169,12 @@ async function handleCallback(db: DB, cq: any) {
 
   const [action, a1, a2] = data.split(":");
   switch (action) {
-    case "cmd":
+    case "cmd": {
+      const rep = await buildReport(db, p, a1);
+      return tgEdit(chatId, messageId, rep, reportButtons(a1));
+    }
     case "back": {
+      if (a1 === "status") return tgEdit(chatId, messageId, await statusReport(db, p), statusButtons());
       const rep = await buildReport(db, p, a1);
       return tgEdit(chatId, messageId, rep, reportButtons(a1));
     }
@@ -171,6 +183,14 @@ async function handleCallback(db: DB, cq: any) {
     case "payok": return doPay(db, chatId, messageId, p, a1, a2);
     case "remindlist": return showRemindList(db, chatId, messageId, p, a1);
     case "remind": return doRemind(db, chatId, messageId, p, a1, a2);
+    // آلة حالات العقد
+    case "st": return showState(db, chatId, messageId, p, a1);
+    case "card": return showCard(db, chatId, messageId, p, a2);
+    case "payt": return doPayTenant(db, chatId, messageId, p, a1);
+    case "renew": return confirmRenew(db, chatId, messageId, p, a1);
+    case "renewok": return doRenew(db, chatId, messageId, p, a1);
+    case "claim": return doNotice(db, chatId, messageId, p, a1, "claim");
+    case "nonrenew": return doNotice(db, chatId, messageId, p, a1, "nonrenewal");
     default: return;
   }
 }
@@ -191,4 +211,106 @@ export async function POST(req: Request) {
     console.error("telegram webhook error:", e);
   }
   return NextResponse.json({ ok: true });
+}
+
+// ======================= آلة حالات العقد (أزرار) =======================
+
+const escHtml = (s: any) =>
+  String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+/** أزرار شاشة الحالة الرئيسية */
+function statusButtons(): TgKeyboard {
+  return [
+    [{ text: "🔴 متأخر", callback_data: "st:arrears" }, { text: "🟡 يستحق قريبًا", callback_data: "st:due_soon" }],
+    [{ text: "🟣 التجديد", callback_data: "st:expiring" }, { text: "⚖️ في التنفيذ", callback_data: "st:litigation" }],
+    [{ text: "📅 اليوم", callback_data: "cmd:today" }, { text: "⚠️ المتأخرات", callback_data: "cmd:late" }],
+  ];
+}
+
+/** نصّ بطاقة العقد */
+function cardText(c: any): string {
+  const s = c.state;
+  const L = [`${s.dot} <b>${escHtml(c.label)}</b>`, `المستأجر: ${escHtml(c.tenant)}`, `الحالة: <b>${s.label}</b>`];
+  if (s.key === "arrears") L.push(`المتأخر المتراكم: <b>${sar(s.owed)}</b> ﷼`);
+  if (s.key === "due_soon") L.push(s.nextDue ? `الدفعة القادمة: ${s.nextDue}` : "");
+  if (s.key === "expiring" && s.daysToEnd != null) L.push(`ينتهي خلال ${s.daysToEnd} يوم (${s.endDate})`);
+  if (s.key === "active") L.push(s.nextDue ? `الدفعة القادمة: ${s.nextDue}` : "الدفعات منتظمة ✅");
+  if (s.key === "litigation") L.push("⚠️ الإشعارات الودية مجمّدة — تابع طلب التنفيذ في «ناجز».");
+  return L.filter(Boolean).join("\n");
+}
+
+/** أزرار بطاقة العقد حسب الحالة */
+function cardButtons(c: any): TgKeyboard {
+  const id = c.tenantId, k = c.state.key;
+  const rows: TgKeyboard = [];
+  if (k === "arrears") {
+    rows.push([{ text: "✅ سجّل دفعة", callback_data: `payt:${id}` }, { text: "🔴 مطالبة رسمية", callback_data: `claim:${id}` }]);
+  } else if (k === "due_soon") {
+    rows.push([{ text: "🔔 ذكّر ودّيًا", callback_data: `remind:status:${id}` }, { text: "✅ سجّل دفعة", callback_data: `payt:${id}` }]);
+  } else if (k === "expiring") {
+    rows.push([{ text: "🔄 جدّد سنة", callback_data: `renew:${id}` }, { text: "📄 إشعار عدم تجديد", callback_data: `nonrenew:${id}` }]);
+  }
+  // active / litigation: بلا أزرار فعل (منتظم = هدوء، التنفيذ = تجميد)
+  rows.push([{ text: "⬅️ رجوع", callback_data: "back:status" }]);
+  return rows;
+}
+
+/** قائمة عقود ضمن حالة */
+async function showState(db: DB, chatId: number, messageId: number, p: any, key: string) {
+  const cards = await contractsInState(db, p, key);
+  if (!cards.length) {
+    return tgEdit(chatId, messageId, `لا توجد عقود في حالة «${stateLabel(key as any)}» ✅`, [[{ text: "⬅️ رجوع", callback_data: "back:status" }]]);
+  }
+  const buttons: TgKeyboard = cards.slice(0, 15).map((c) => [
+    { text: `${c.state.dot} ${c.label} — ${c.tenant}`, callback_data: `card:${key}:${c.tenantId}` },
+  ]);
+  buttons.push([{ text: "⬅️ رجوع", callback_data: "back:status" }]);
+  return tgEdit(chatId, messageId, `عقود «${stateLabel(key as any)}»:`, buttons);
+}
+
+/** بطاقة عقد واحد */
+async function showCard(db: DB, chatId: number, messageId: number, p: any, tenantId: string) {
+  const c = await contractCard(db, p, tenantId);
+  if (!c) return tgEdit(chatId, messageId, "لم تُعثر على العقد.", statusButtons());
+  return tgEdit(chatId, messageId, cardText(c), cardButtons(c));
+}
+
+/** تسجيل دفعة (أقدم فاتورة متأخرة للمستأجر) ثم تحديث البطاقة */
+async function doPayTenant(db: DB, chatId: number, messageId: number, p: any, tenantId: string) {
+  const res = await payTenantOldest(db, p, tenantId);
+  const c = await contractCard(db, p, tenantId);
+  const banner = res.ok ? `✅ ${res.msg}` : `⚠️ ${res.msg}`;
+  if (!c) return tgEdit(chatId, messageId, banner, statusButtons());
+  return tgEdit(chatId, messageId, `${banner}\n\n${cardText(c)}`, cardButtons(c));
+}
+
+/** تأكيد تجديد العقد */
+async function confirmRenew(db: DB, chatId: number, messageId: number, p: any, tenantId: string) {
+  const c = await contractCard(db, p, tenantId);
+  if (!c) return tgEdit(chatId, messageId, "لم تُعثر على العقد.", statusButtons());
+  const buttons: TgKeyboard = [
+    [{ text: "✅ نعم، جدّد سنة", callback_data: `renewok:${tenantId}` }],
+    [{ text: "⬅️ رجوع", callback_data: "back:status" }],
+  ];
+  return tgEdit(chatId, messageId, `تأكيد تجديد عقد:\n\n<b>${escHtml(c.label)}</b> — ${escHtml(c.tenant)}\nسيُمدّد لسنة إضافية.`, buttons);
+}
+
+/** تنفيذ التجديد ثم تحديث البطاقة */
+async function doRenew(db: DB, chatId: number, messageId: number, p: any, tenantId: string) {
+  const res = await renewContract(db, p, tenantId);
+  const c = await contractCard(db, p, tenantId);
+  const banner = res.ok ? `✅ ${res.msg}` : `⚠️ ${res.msg}`;
+  if (!c) return tgEdit(chatId, messageId, banner, statusButtons());
+  return tgEdit(chatId, messageId, `${banner}\n\n${cardText(c)}`, cardButtons(c));
+}
+
+/** إشعار رسمي (مطالبة / عدم تجديد) عبر واتساب */
+async function doNotice(db: DB, chatId: number, messageId: number, p: any, tenantId: string, kind: "claim" | "nonrenewal") {
+  const r = await buildNotice(db, p, tenantId, kind);
+  if (!r.ok) return tgEdit(chatId, messageId, r.text, [[{ text: "⬅️ رجوع", callback_data: "back:status" }]]);
+  const buttons: TgKeyboard = [
+    [{ text: "📲 افتح واتساب", url: r.url! }],
+    [{ text: "⬅️ رجوع", callback_data: "back:status" }],
+  ];
+  return tgEdit(chatId, messageId, r.text, buttons);
 }
