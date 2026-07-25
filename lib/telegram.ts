@@ -70,6 +70,7 @@ export async function tgSetCommands() {
     commands: [
       { command: "today", description: "استحقاقات اليوم والقريبة" },
       { command: "late", description: "المتأخرات" },
+      { command: "status", description: "حالة العقود" },
       { command: "summary", description: "ملخّص شامل" },
       { command: "menu", description: "القائمة الرئيسية" },
       { command: "help", description: "المساعدة" },
