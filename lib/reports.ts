@@ -1,205 +1,31 @@
 /** ============================================================
- *  وثيق — طبقة بيانات البوت (تقارير + أفعال)
- *  تُستخدم من: (١) أوامر البوت التفاعلية  (٢) الملخّص اليومي (الكرون)
- *  كل شيء يلمس قاعدة البيانات هنا، فأسماء الجداول/الأعمدة في مكان واحد.
+ *  وثيق — طبقة بيانات البوت (تقارير + أفعال)  —  مبنية على المخطّط الفعلي
+ *  تدعم المسارين:  العقارات (properties/tenants/invoices)  و  الجمعيات (associations/owners)
+ *  وتكتشف نوع الحساب تلقائيًا لكل مستخدم.
  *  ============================================================ */
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-// ========================================================================
-// ⚠️  نقاط الربط بالمخطط — إن اختلفت أسماء الجداول/الأعمدة عندك، عدّلها هنا فقط.
-// ========================================================================
-const TABLE = {
-  units: "units",
-  contracts: "contracts",
-  payments: "payments",
-};
-const COL = {
-  unit_owner: "owner_id",      // عمود صاحب الوحدة في جدول units (قد يكون profile_id)
-  unit_label: "name",          // اسم/رقم الوحدة للعرض
-  contract_unit: "unit_id",
-  contract_tenant: "tenant_name",
-  contract_phone: "tenant_phone", // جوال المستأجر (للتذكير عبر واتساب)
-  contract_status: "status",   // 'active' وما شابه
-  payment_contract: "contract_id",
-  payment_due: "due_date",     // تاريخ الاستحقاق (YYYY-MM-DD)
-  payment_amount: "amount",
-  payment_paid: "paid",        // عمود boolean يكون false للدفعة غير المسدّدة
-};
-
-// لو كان تتبّع السداد بعمود تاريخ (paid_at) بدل boolean:
-//   - في unpaidPayments: بدّل .eq(paid,false)      بـ  .is("paid_at", null)
-//   - في markPaid:       بدّل { [paid]: true }      بـ  { paid_at: new Date().toISOString() }
-
 type DB = SupabaseClient<any, any, any>;
+type Track = "properties" | "associations";
 
 const iso = (d: Date) => d.toISOString().slice(0, 10);
 const todayISO = () => iso(new Date());
 const addDaysISO = (n: number) => { const d = new Date(); d.setDate(d.getDate() + n); return iso(d); };
 const monthStartISO = () => { const d = new Date(); return iso(new Date(d.getFullYear(), d.getMonth(), 1)); };
+const monthEndISO = () => { const d = new Date(); return iso(new Date(d.getFullYear(), d.getMonth() + 1, 0)); };
 export const sar = (n: number) => (Number(n) || 0).toLocaleString("en-US");
-const esc = (s: any) =>
-  String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+const esc = (s: any) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
-/** يجلب وحدات المالك + خريطة الاسم لكل وحدة */
-async function ownerUnits(db: DB, profileId: string) {
-  const { data, error } = await db.from(TABLE.units).select("*").eq(COL.unit_owner, profileId);
-  if (error) throw new Error("units: " + error.message);
-  const rows = data || [];
-  const label: Record<string, string> = {};
-  rows.forEach((u: any) => (label[u.id] = u[COL.unit_label] || "وحدة"));
-  return { ids: rows.map((u: any) => u.id), label, count: rows.length };
-}
-
-/** يجلب عقود هذه الوحدات + خريطة (عقد → بياناته) */
-async function ownerContracts(db: DB, unitIds: string[]) {
-  if (!unitIds.length) return { ids: [] as string[], byId: {} as Record<string, any> };
-  const { data, error } = await db.from(TABLE.contracts).select("*").in(COL.contract_unit, unitIds);
-  if (error) throw new Error("contracts: " + error.message);
-  const rows = data || [];
-  const byId: Record<string, any> = {};
-  rows.forEach((c: any) => (byId[c.id] = c));
-  return { ids: rows.map((c: any) => c.id), byId };
-}
-
-/** الدفعات غير المسدّدة ضمن نطاق تواريخ */
-async function unpaidPayments(db: DB, contractIds: string[], fromISO: string, toISO: string) {
-  if (!contractIds.length) return [] as any[];
-  const { data, error } = await db
-    .from(TABLE.payments).select("*")
-    .in(COL.payment_contract, contractIds)
-    .eq(COL.payment_paid, false)          // ⇄ paid_at: .is("paid_at", null)
-    .gte(COL.payment_due, fromISO)
-    .lte(COL.payment_due, toISO)
-    .order(COL.payment_due, { ascending: true });
-  if (error) throw new Error("payments: " + error.message);
-  return data || [];
-}
-
-function payLine(p: any, contracts: Record<string, any>, unitLabel: Record<string, string>) {
-  const c = contracts[p[COL.payment_contract]] || {};
-  const unit = unitLabel[c[COL.contract_unit]] || "—";
-  const tenant = c[COL.contract_tenant] || "—";
-  return `• <b>${esc(unit)}</b> — ${esc(tenant)} — <b>${sar(p[COL.payment_amount])}</b> ﷼ — ${esc(p[COL.payment_due])}`;
-}
-
-// ======================= التقارير (قراءة) =======================
-
-export async function todayReport(db: DB, profile: any): Promise<string> {
-  try {
-    const daysBefore = Number(profile.notify_days_before) || 5;
-    const { ids: unitIds, label } = await ownerUnits(db, profile.id);
-    const { ids: contractIds, byId } = await ownerContracts(db, unitIds);
-    const rows = await unpaidPayments(db, contractIds, todayISO(), addDaysISO(daysBefore));
-    if (!rows.length) return `📅 <b>استحقاقات اليوم والقريبة</b>\n\nلا توجد استحقاقات خلال ${daysBefore} أيام القادمة ✅`;
-    const total = rows.reduce((s: number, p: any) => s + (Number(p[COL.payment_amount]) || 0), 0);
-    const lines = rows.map((p) => payLine(p, byId, label)).join("\n");
-    return `📅 <b>استحقاقات اليوم والقريبة</b> (خلال ${daysBefore} أيام)\n\n${lines}\n\n— الإجمالي: <b>${sar(total)}</b> ﷼ · ${rows.length} دفعة`;
-  } catch (e: any) { return `تعذّر جلب استحقاقات اليوم.\n<code>${esc(e.message)}</code>`; }
-}
-
-export async function lateReport(db: DB, profile: any): Promise<string> {
-  try {
-    const { ids: unitIds, label } = await ownerUnits(db, profile.id);
-    const { ids: contractIds, byId } = await ownerContracts(db, unitIds);
-    const rows = await unpaidPayments(db, contractIds, "2000-01-01", addDaysISO(-1));
-    if (!rows.length) return `⚠️ <b>المتأخرات</b>\n\nلا توجد متأخرات — ممتاز 👏`;
-    const total = rows.reduce((s: number, p: any) => s + (Number(p[COL.payment_amount]) || 0), 0);
-    const lines = rows.map((p) => payLine(p, byId, label)).join("\n");
-    return `⚠️ <b>المتأخرات</b>\n\n${lines}\n\n— إجمالي المتأخر: <b>${sar(total)}</b> ﷼ · ${rows.length} دفعة`;
-  } catch (e: any) { return `تعذّر جلب المتأخرات.\n<code>${esc(e.message)}</code>`; }
-}
-
-export async function summaryReport(db: DB, profile: any): Promise<string> {
-  try {
-    const { ids: unitIds, count: unitCount } = await ownerUnits(db, profile.id);
-    const { ids: contractIds, byId } = await ownerContracts(db, unitIds);
-    const activeContracts = Object.values(byId).filter((c: any) => (c[COL.contract_status] || "active") === "active").length;
-    const overdue = await unpaidPayments(db, contractIds, "2000-01-01", addDaysISO(-1));
-    const dueThisMonth = await unpaidPayments(db, contractIds, monthStartISO(), addDaysISO(31));
-    const overdueTotal = overdue.reduce((s: number, p: any) => s + (Number(p[COL.payment_amount]) || 0), 0);
-    const dueTotal = dueThisMonth.reduce((s: number, p: any) => s + (Number(p[COL.payment_amount]) || 0), 0);
-    return [
-      `📊 <b>ملخّص وثيق</b>`, ``,
-      `• الوحدات: <b>${unitCount}</b>`,
-      `• العقود السارية: <b>${activeContracts}</b>`,
-      `• مستحق هذا الشهر (غير مسدّد): <b>${sar(dueTotal)}</b> ﷼`,
-      `• إجمالي المتأخرات: <b>${sar(overdueTotal)}</b> ﷼ (${overdue.length} دفعة)`,
-    ].join("\n");
-  } catch (e: any) { return `تعذّر بناء الملخّص.\n<code>${esc(e.message)}</code>`; }
-}
-
-export async function buildReport(db: DB, profile: any, which: string): Promise<string> {
-  if (which === "late") return lateReport(db, profile);
-  if (which === "summary") return summaryReport(db, profile);
-  return todayReport(db, profile);
-}
-
-// ======================= بيانات مُنظّمة للأزرار =======================
-
-export type UnpaidRow = {
-  id: string; amount: number; due: string;
-  unit: string; tenant: string; phone: string; contractId: string;
-};
-
-/** يرجّع الدفعات غير المسدّدة كصفوف منظّمة (لبناء أزرار الاختيار) */
-export async function getUnpaid(db: DB, profile: any, scope: string): Promise<UnpaidRow[]> {
-  const { ids: unitIds, label } = await ownerUnits(db, profile.id);
-  const { byId } = await ownerContracts(db, unitIds);
-  const contractIds = Object.keys(byId);
-  const rows = scope === "late"
-    ? await unpaidPayments(db, contractIds, "2000-01-01", addDaysISO(-1))
-    : await unpaidPayments(db, contractIds, todayISO(), addDaysISO(Number(profile.notify_days_before) || 5));
-  return rows.map((p: any) => {
-    const c = byId[p[COL.payment_contract]] || {};
-    return {
-      id: p.id,
-      amount: Number(p[COL.payment_amount]) || 0,
-      due: p[COL.payment_due],
-      unit: label[c[COL.contract_unit]] || "وحدة",
-      tenant: c[COL.contract_tenant] || "—",
-      phone: c[COL.contract_phone] || "",
-      contractId: p[COL.payment_contract],
-    };
-  });
-}
-
-/** مجموعة معرّفات العقود المملوكة (للتحقق من الصلاحية قبل أي تعديل) */
-async function ownedContractIds(db: DB, profile: any): Promise<Set<string>> {
-  const { ids: unitIds } = await ownerUnits(db, profile.id);
-  const { ids } = await ownerContracts(db, unitIds);
-  return new Set(ids);
-}
-
-/** معلومات عقد واحد (للتذكير) */
-async function contractInfo(db: DB, profile: any, contractId: string) {
-  const { ids: unitIds, label } = await ownerUnits(db, profile.id);
-  const { byId } = await ownerContracts(db, unitIds);
-  const c = byId[contractId];
-  if (!c) return null;
-  return {
-    unit: label[c[COL.contract_unit]] || "وحدة",
-    tenant: c[COL.contract_tenant] || "—",
-    phone: c[COL.contract_phone] || "",
-  };
-}
-
-// ======================= الأفعال (كتابة) =======================
-
-/** تسجيل دفعة كمدفوعة — مع تحقّق من ملكية المالك للدفعة */
-export async function markPaid(db: DB, profile: any, paymentId: string): Promise<{ ok: boolean; msg: string }> {
-  try {
-    const { data: pay } = await db.from(TABLE.payments).select("*").eq("id", paymentId).maybeSingle();
-    if (!pay) return { ok: false, msg: "الدفعة غير موجودة." };
-    const owned = await ownedContractIds(db, profile);
-    if (!owned.has(pay[COL.payment_contract])) return { ok: false, msg: "غير مصرّح لك بهذه الدفعة." };
-    if (pay[COL.payment_paid] === true) return { ok: true, msg: "الدفعة مسدّدة أصلًا." };
-    const { error } = await db.from(TABLE.payments)
-      .update({ [COL.payment_paid]: true })   // ⇄ paid_at: { paid_at: new Date().toISOString() }
-      .eq("id", paymentId);
-    if (error) return { ok: false, msg: "تعذّر الحفظ: " + error.message };
-    return { ok: true, msg: "سُجّلت الدفعة كمدفوعة." };
-  } catch (e: any) { return { ok: false, msg: e.message }; }
+/** حالات الفاتورة المعتبرة "مسدّدة" أو "متجاهَلة" — الباقي غير مسدّد */
+const PAID = new Set(["paid", "مدفوع", "مدفوعة", "collected", "محصل", "محصلة", "closed", "settled"]);
+const SKIP = new Set(["cancelled", "canceled", "ملغي", "ملغى", "ملغاة", "draft", "مسودة", "void"]);
+function invoiceUnpaid(status: any): boolean {
+  const s = String(status ?? "").trim().toLowerCase();
+  if (!s) return true;              // بلا حالة = نعتبرها غير مسدّدة
+  if (PAID.has(s)) return false;
+  if (SKIP.has(s)) return false;
+  return true;
 }
 
 /** تطبيع رقم سعودي إلى صيغة دولية بدون + (للـ wa.me) */
@@ -211,15 +37,271 @@ function normalizeSaudi(raw: string): string {
   return d;
 }
 
-/** يبني رابط واتساب جاهز برسالة تذكير للمستأجر */
+// ======================= اكتشاف نوع الحساب =======================
+
+async function detectTrack(db: DB, profile: any): Promise<Track> {
+  const hint = String(profile.account_type || profile.last_dashboard || profile.role || "").toLowerCase();
+  if (/(assoc|hoa|جمع|owner|ملاك|ملّاك)/.test(hint)) return "associations";
+  if (/(prop|real|عقار|ايجار|إيجار|مؤجر|مؤجّر)/.test(hint)) return "properties";
+  // استدلال بالبيانات
+  const { count: assocN } = await db.from("associations").select("*", { count: "exact", head: true }).eq("user_id", profile.id);
+  if (assocN && assocN > 0) {
+    const { count: propN } = await db.from("properties").select("*", { count: "exact", head: true }).eq("user_id", profile.id);
+    if (!propN) return "associations";
+  }
+  return "properties";
+}
+
+// ======================= مسار العقارات =======================
+
+async function propContext(db: DB, profile: any) {
+  const { data: props } = await db.from("properties").select("*").eq("user_id", profile.id);
+  const propName: Record<string, string> = {};
+  (props || []).forEach((p: any) => (propName[p.id] = p.name || "عقار"));
+  const propIds = (props || []).map((p: any) => p.id);
+
+  let tenants: any[] = [];
+  if (propIds.length) {
+    const { data } = await db.from("tenants").select("*").in("property_id", propIds);
+    tenants = data || [];
+  }
+  const tenantById: Record<string, any> = {};
+  tenants.forEach((t: any) => (tenantById[t.id] = t));
+
+  const { data: invoices } = await db.from("invoices").select("*").eq("user_id", profile.id);
+  return { props: props || [], propName, tenants, tenantById, invoices: invoices || [] };
+}
+
+function invWho(inv: any, tenantById: Record<string, any>, propName: Record<string, string>) {
+  const t = tenantById[inv.tenant_id];
+  const unit = t?.unit ? `وحدة ${t.unit}` : "";
+  const place = propName[inv.property_id] || "";
+  const label = [place, unit].filter(Boolean).join(" · ") || "فاتورة";
+  return { label, tenant: t?.name || "—", phone: t?.phone || "", tenantId: inv.tenant_id || "" };
+}
+
+/** الفواتير غير المسدّدة (اختياريًا ضمن نطاق تواريخ) */
+function unpaidInvoices(invoices: any[], fromISO?: string, toISO?: string) {
+  return invoices
+    .filter((inv) => invoiceUnpaid(inv.status))
+    .filter((inv) => {
+      if (!fromISO && !toISO) return true;
+      const d = String(inv.due_date || "");
+      if (!d) return false;
+      if (fromISO && d < fromISO) return false;
+      if (toISO && d > toISO) return false;
+      return true;
+    })
+    .sort((a, b) => String(a.due_date).localeCompare(String(b.due_date)));
+}
+
+// ======================= مسار الجمعيات =======================
+
+async function assocContext(db: DB, profile: any) {
+  const { data: assocs } = await db.from("associations").select("*").eq("user_id", profile.id);
+  const assocById: Record<string, any> = {};
+  (assocs || []).forEach((a: any) => (assocById[a.id] = a));
+  const assocIds = (assocs || []).map((a: any) => a.id);
+
+  let owners: any[] = [];
+  if (assocIds.length) {
+    const { data } = await db.from("owners").select("*").in("association_id", assocIds);
+    owners = data || [];
+  }
+  return { assocs: assocs || [], assocById, owners };
+}
+
+const ownerOwed = (o: any, assocById: Record<string, any>) =>
+  (Number(o.months_late) || 0) * (Number(assocById[o.association_id]?.fee) || 0);
+
+// ======================= التقارير (نص) =======================
+
+export async function todayReport(db: DB, profile: any): Promise<string> {
+  try {
+    const track = await detectTrack(db, profile);
+    const days = Number(profile.notify_days_before) || 5;
+
+    if (track === "properties") {
+      const { invoices, tenantById, propName } = await propContext(db, profile);
+      const rows = unpaidInvoices(invoices, todayISO(), addDaysISO(days));
+      if (!rows.length) return `📅 <b>استحقاقات اليوم والقريبة</b>\n\nلا توجد فواتير مستحقة خلال ${days} أيام القادمة ✅`;
+      const total = rows.reduce((s, r) => s + (Number(r.amount) || 0), 0);
+      const lines = rows.map((r) => {
+        const w = invWho(r, tenantById, propName);
+        return `• <b>${esc(w.label)}</b> — ${esc(w.tenant)} — <b>${sar(r.amount)}</b> ﷼ — ${esc(r.due_date)}`;
+      }).join("\n");
+      return `📅 <b>استحقاقات اليوم والقريبة</b> (خلال ${days} أيام)\n\n${lines}\n\n— الإجمالي: <b>${sar(total)}</b> ﷼ · ${rows.length} فاتورة`;
+    }
+
+    // جمعيات: تنبيه شهادات قاربت على الانتهاء + عدد المتأخرين
+    const { assocs, owners } = await assocContext(db, profile);
+    const soon = assocs.filter((a: any) => a.cert_expiry && a.cert_expiry >= todayISO() && a.cert_expiry <= addDaysISO(60));
+    const lateCount = owners.filter((o: any) => (Number(o.months_late) || 0) > 0).length;
+    const certLines = soon.length
+      ? soon.map((a: any) => `• <b>${esc(a.name)}</b> — شهادة تنتهي ${esc(a.cert_expiry)}`).join("\n")
+      : "لا توجد شهادات قاربت على الانتهاء ✅";
+    return `📅 <b>تنبيهات قريبة</b>\n\n🪪 الشهادات:\n${certLines}\n\n⚠️ ملّاك متأخرون: <b>${lateCount}</b>`;
+  } catch (e: any) { return `تعذّر جلب استحقاقات اليوم.\n<code>${esc(e.message)}</code>`; }
+}
+
+export async function lateReport(db: DB, profile: any): Promise<string> {
+  try {
+    const track = await detectTrack(db, profile);
+
+    if (track === "properties") {
+      const { invoices, tenantById, propName } = await propContext(db, profile);
+      const rows = unpaidInvoices(invoices, undefined, addDaysISO(-1));
+      if (!rows.length) return `⚠️ <b>المتأخرات</b>\n\nلا توجد فواتير متأخرة — ممتاز 👏`;
+      const total = rows.reduce((s, r) => s + (Number(r.amount) || 0), 0);
+      const lines = rows.map((r) => {
+        const w = invWho(r, tenantById, propName);
+        return `• <b>${esc(w.label)}</b> — ${esc(w.tenant)} — <b>${sar(r.amount)}</b> ﷼ — ${esc(r.due_date)}`;
+      }).join("\n");
+      return `⚠️ <b>المتأخرات</b>\n\n${lines}\n\n— إجمالي المتأخر: <b>${sar(total)}</b> ﷼ · ${rows.length} فاتورة`;
+    }
+
+    const { assocById, owners } = await assocContext(db, profile);
+    const late = owners.filter((o: any) => (Number(o.months_late) || 0) > 0)
+      .sort((a: any, b: any) => (Number(b.months_late) || 0) - (Number(a.months_late) || 0));
+    if (!late.length) return `⚠️ <b>المتأخرات</b>\n\nلا يوجد ملّاك متأخرون — ممتاز 👏`;
+    const total = late.reduce((s: number, o: any) => s + ownerOwed(o, assocById), 0);
+    const lines = late.map((o: any) =>
+      `• <b>${esc(o.name)}</b>${o.unit ? " — وحدة " + esc(o.unit) : ""} — متأخر <b>${o.months_late}</b> شهر — <b>${sar(ownerOwed(o, assocById))}</b> ﷼`
+    ).join("\n");
+    return `⚠️ <b>المتأخرات</b>\n\n${lines}\n\n— إجمالي المتأخر: <b>${sar(total)}</b> ﷼ · ${late.length} مالك`;
+  } catch (e: any) { return `تعذّر جلب المتأخرات.\n<code>${esc(e.message)}</code>`; }
+}
+
+export async function summaryReport(db: DB, profile: any): Promise<string> {
+  try {
+    const track = await detectTrack(db, profile);
+
+    if (track === "properties") {
+      const { props, tenants, invoices } = await propContext(db, profile);
+      const overdue = unpaidInvoices(invoices, undefined, addDaysISO(-1));
+      const dueMonth = unpaidInvoices(invoices, monthStartISO(), monthEndISO());
+      const collected = props.reduce((s: number, p: any) => s + (Number(p.collected) || 0), 0);
+      const overdueTotal = overdue.reduce((s, r) => s + (Number(r.amount) || 0), 0);
+      const dueTotal = dueMonth.reduce((s, r) => s + (Number(r.amount) || 0), 0);
+      return [
+        `📊 <b>ملخّص وثيق — العقارات</b>`, ``,
+        `• العقارات: <b>${props.length}</b>`,
+        `• المستأجرون: <b>${tenants.length}</b>`,
+        `• محصّل: <b>${sar(collected)}</b> ﷼`,
+        `• مستحق هذا الشهر (غير مسدّد): <b>${sar(dueTotal)}</b> ﷼`,
+        `• إجمالي المتأخرات: <b>${sar(overdueTotal)}</b> ﷼ (${overdue.length} فاتورة)`,
+      ].join("\n");
+    }
+
+    const { assocs, assocById, owners } = await assocContext(db, profile);
+    const late = owners.filter((o: any) => (Number(o.months_late) || 0) > 0);
+    const lateTotal = late.reduce((s: number, o: any) => s + ownerOwed(o, assocById), 0);
+    const fund = assocs.reduce((s: number, a: any) => s + (Number(a.fund_balance) || 0), 0);
+    return [
+      `📊 <b>ملخّص وثيق — الجمعيات</b>`, ``,
+      `• الجمعيات: <b>${assocs.length}</b>`,
+      `• الملّاك: <b>${owners.length}</b>`,
+      `• رصيد الصناديق: <b>${sar(fund)}</b> ﷼`,
+      `• متأخرون: <b>${late.length}</b> مالك`,
+      `• إجمالي المتأخر: <b>${sar(lateTotal)}</b> ﷼`,
+    ].join("\n");
+  } catch (e: any) { return `تعذّر بناء الملخّص.\n<code>${esc(e.message)}</code>`; }
+}
+
+export async function buildReport(db: DB, profile: any, which: string): Promise<string> {
+  if (which === "late") return lateReport(db, profile);
+  if (which === "summary") return summaryReport(db, profile);
+  return todayReport(db, profile);
+}
+
+// ======================= بيانات منظّمة للأزرار =======================
+
+export type UnpaidRow = {
+  id: string;          // العنصر القابل للتسجيل (فاتورة أو مالك)
+  amount: number;
+  due: string;
+  unit: string;
+  tenant: string;
+  phone: string;
+  contractId: string;  // للتذكير/التجميع (مستأجر أو مالك)
+};
+
+export async function getUnpaid(db: DB, profile: any, scope: string): Promise<UnpaidRow[]> {
+  const track = await detectTrack(db, profile);
+
+  if (track === "properties") {
+    const { invoices, tenantById, propName } = await propContext(db, profile);
+    const rows = scope === "late"
+      ? unpaidInvoices(invoices, undefined, addDaysISO(-1))
+      : unpaidInvoices(invoices, todayISO(), addDaysISO(Number(profile.notify_days_before) || 5));
+    return rows.map((r) => {
+      const w = invWho(r, tenantById, propName);
+      return { id: r.id, amount: Number(r.amount) || 0, due: r.due_date || "", unit: w.label, tenant: w.tenant, phone: w.phone, contractId: w.tenantId };
+    });
+  }
+
+  const { assocById, owners } = await assocContext(db, profile);
+  const late = owners.filter((o: any) => (Number(o.months_late) || 0) > 0);
+  return late.map((o: any) => ({
+    id: o.id, amount: ownerOwed(o, assocById), due: "", unit: o.unit ? `وحدة ${o.unit}` : (assocById[o.association_id]?.name || ""),
+    tenant: o.name || "—", phone: o.phone || "", contractId: o.id,
+  }));
+}
+
+// ======================= الأفعال (كتابة) =======================
+
+/** تسجيل دفعة كمدفوعة — مع تحقّق من الملكية */
+export async function markPaid(db: DB, profile: any, id: string): Promise<{ ok: boolean; msg: string }> {
+  try {
+    const track = await detectTrack(db, profile);
+
+    if (track === "properties") {
+      const { data: inv } = await db.from("invoices").select("*").eq("id", id).maybeSingle();
+      if (!inv) return { ok: false, msg: "الفاتورة غير موجودة." };
+      if (String(inv.user_id) !== String(profile.id)) return { ok: false, msg: "غير مصرّح لك بهذه الفاتورة." };
+      if (!invoiceUnpaid(inv.status)) return { ok: true, msg: "الفاتورة مسدّدة أصلًا." };
+      const { error } = await db.from("invoices").update({ status: "paid" }).eq("id", id);
+      if (error) return { ok: false, msg: "تعذّر الحفظ: " + error.message };
+      return { ok: true, msg: "سُجّلت الفاتورة كمدفوعة." };
+    }
+
+    // جمعيات: تصفير تأخّر المالك
+    const { data: owner } = await db.from("owners").select("*").eq("id", id).maybeSingle();
+    if (!owner) return { ok: false, msg: "المالك غير موجود." };
+    const { data: assoc } = await db.from("associations").select("id,user_id").eq("id", owner.association_id).maybeSingle();
+    if (!assoc || String(assoc.user_id) !== String(profile.id)) return { ok: false, msg: "غير مصرّح." };
+    const { error } = await db.from("owners").update({ months_late: 0, last_paid: todayISO() }).eq("id", id);
+    if (error) return { ok: false, msg: "تعذّر الحفظ: " + error.message };
+    return { ok: true, msg: "سُجّل سداد المالك." };
+  } catch (e: any) { return { ok: false, msg: e.message }; }
+}
+
+/** يبني رابط واتساب جاهز برسالة تذكير */
 export async function buildReminder(db: DB, profile: any, contractId: string): Promise<{ ok: boolean; text: string; url?: string }> {
   try {
-    const info = await contractInfo(db, profile, contractId);
-    if (!info) return { ok: false, text: "العقد غير موجود أو غير مصرّح." };
-    if (!info.phone) return { ok: false, text: `لا يوجد رقم جوال مسجّل للمستأجر (${esc(info.tenant)}).` };
-    const digits = normalizeSaudi(info.phone);
-    const msg = `السلام عليكم ${info.tenant}،\nتذكير ودّي بسداد إيجار «${info.unit}». شاكرين لكم تعاونكم.`;
+    const track = await detectTrack(db, profile);
+    let name = "", phone = "", unit = "";
+
+    if (track === "properties") {
+      const { data: t } = await db.from("tenants").select("*").eq("id", contractId).maybeSingle();
+      if (!t) return { ok: false, text: "المستأجر غير موجود أو غير مصرّح." };
+      // تحقّق الملكية عبر العقار
+      const { data: prop } = await db.from("properties").select("id,user_id").eq("id", t.property_id).maybeSingle();
+      if (!prop || String(prop.user_id) !== String(profile.id)) return { ok: false, text: "غير مصرّح." };
+      name = t.name || "المستأجر"; phone = t.phone || ""; unit = t.unit ? `وحدة ${t.unit}` : "";
+    } else {
+      const { data: o } = await db.from("owners").select("*").eq("id", contractId).maybeSingle();
+      if (!o) return { ok: false, text: "المالك غير موجود." };
+      const { data: assoc } = await db.from("associations").select("id,user_id").eq("id", o.association_id).maybeSingle();
+      if (!assoc || String(assoc.user_id) !== String(profile.id)) return { ok: false, text: "غير مصرّح." };
+      name = o.name || "المالك"; phone = o.phone || ""; unit = o.unit ? `وحدة ${o.unit}` : "";
+    }
+
+    if (!phone) return { ok: false, text: `لا يوجد رقم جوال مسجّل لـ ${esc(name)}.` };
+    const digits = normalizeSaudi(phone);
+    const label = track === "properties" ? "إيجار" : "رسوم";
+    const msg = `السلام عليكم ${name}،\nتذكير ودّي بسداد ${label}${unit ? " «" + unit + "»" : ""}. شاكرين لكم تعاونكم.`;
     const url = `https://wa.me/${digits}?text=${encodeURIComponent(msg)}`;
-    return { ok: true, text: `جاهز لتذكير <b>${esc(info.tenant)}</b> — ${esc(info.unit)} عبر واتساب:`, url };
+    return { ok: true, text: `جاهز لتذكير <b>${esc(name)}</b>${unit ? " — " + esc(unit) : ""} عبر واتساب:`, url };
   } catch (e: any) { return { ok: false, text: "تعذّر تجهيز التذكير: " + e.message }; }
 }
