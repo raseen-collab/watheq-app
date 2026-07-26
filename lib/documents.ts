@@ -15,6 +15,15 @@ type Property = {
   grace_days?: number | null;
   vat_enabled?: boolean | null; vat_rate?: number | null; vat_inclusive?: boolean | null;
 };
+export type PaymentRow = {
+  id?: string; paid_on: string; amount: number;
+  method?: string | null; periods_covered?: number | null; note?: string | null;
+};
+const METHOD_AR: Record<string, string> = {
+  transfer: "تحويل بنكي", cash: "نقدًا", pos: "شبكة", cheque: "شيك", other: "أخرى",
+};
+const methodAr = (m?: string | null) => METHOD_AR[String(m || "")] || "—";
+
 type Issuer = { billing_name?: string | null; vat_number?: string | null; cr_number?: string | null; billing_phone?: string | null };
 
 const SHELL = (title: string, inner: string) => `<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8">
@@ -89,7 +98,7 @@ const footer = () => `
 </div>`;
 
 /** كشف حساب مستأجر — كامل الدفعات والأرصدة */
-export function statementHTML(t: Tenant, p: Property, issuer: Issuer = {}) {
+export function statementHTML(t: Tenant, p: Property, issuer: Issuer = {}, payments: PaymentRow[] = []) {
   const st = contractState(t, graceOf(p));
   const rows = buildSchedule(t);
   const ul = unitLabel(p.property_type);
@@ -167,6 +176,30 @@ ${st.amountDue > 0 ? `<div class="due"><span class="l">الرصيد المستح
     </tr>`; }).join("")}
   </tbody>
 </table>
+
+${payments.length ? `
+<h1 style="font-size:1rem">المدفوعات المستلمة</h1>
+<table>
+  <thead><tr><th>#</th><th>تاريخ الاستلام</th><th>المبلغ (ريال)</th><th>طريقة السداد</th><th>ملاحظة</th></tr></thead>
+  <tbody>
+    ${payments.map((r, i) => `<tr>
+      <td>${i + 1}</td>
+      <td>${r.paid_on || "—"}</td>
+      <td>${sar(r.amount)}</td>
+      <td>${methodAr(r.method)}</td>
+      <td>${r.note ? String(r.note).replace(/</g, "&lt;") : "—"}</td>
+    </tr>`).join("")}
+    <tr style="background:#F3EEE2;font-weight:700">
+      <td colspan="2">إجمالي المستلم</td>
+      <td>${sar(payments.reduce((a, r) => a + (Number(r.amount) || 0), 0))}</td>
+      <td colspan="2">${payments.length} عملية</td>
+    </tr>
+  </tbody>
+</table>
+<div class="note" style="border-inline-start-color:#1E9E6A;background:#E6F4EC;color:#137a50">
+  هذا الجدول مستخرج من سجل المدفوعات الموثّق في المنصة بتواريخه وطرق سداده، ويصلح للمطابقة مع سجلاتكم.
+</div>` : `
+<div class="note">لا توجد مدفوعات موثّقة في سجل المنصة لهذا العقد حتى تاريخه. الأرصدة أعلاه مستنتجة من دورة العقد وعدد الدفعات المسجّلة.</div>`}
 
 <div class="note">كشف استرشادي صادر آليًّا من بيانات العقد المسجّلة. يُرجى مطابقته مع سجلاتكم، وإشعارنا بأي فرق.</div>
 
