@@ -1,5 +1,5 @@
 "use client";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase-client";
@@ -55,7 +55,15 @@ const URGENCY: Record<RowKey, number> = { late: 0, partial: 1, soon: 2, expiring
 export default function PropertyView({ initial, orgName, issuer }: { initial: Property[]; orgName: string; issuer?: any }) {
   const supabase = createClient();
   const router = useRouter();
-  const [items, setItems] = useState<Property[]>(initial);
+  /** يضمن أن كل عقار يحمل مصفوفتيه — يمنع انكسار العرض عند صفٍّ جديد */
+  const normalize = (list: Property[]): Property[] =>
+    (list || []).map((p) => ({
+      ...p,
+      tenants: Array.isArray(p?.tenants) ? p.tenants : [],
+      property_notes: Array.isArray(p?.property_notes) ? p.property_notes : [],
+    }));
+
+  const [items, setItems] = useState<Property[]>(() => normalize(initial));
   const [activeId, setActiveId] = useState<string | null>(initial[0]?.id || null);
   const [modal, setModal] = useState<null | { kind: "newProp" | "editProp" | "tenant"; id?: string }>(null);
   const [doc, setDoc] = useState<null | { title: string; body: string }>(null);
@@ -69,12 +77,46 @@ export default function PropertyView({ initial, orgName, issuer }: { initial: Pr
   const [filter, setFilter] = useState<"all" | RowKey>("all");
   const [sort, setSort] = useState<"urgent" | "due" | "amount" | "name">("urgent");
   const [toast, setToast] = useState<null | { k: "ok" | "err"; m: string }>(null);
+  // الحسابات تعتمد على تاريخ اليوم، وتوقيت السيرفر يختلف عن توقيت الجهاز.
+  // لذلك نرسم المحتوى المعتمد على التاريخ بعد الإماهة فقط — يمنع خطأ hydration.
+  const [hydrated, setHydrated] = useState(false);
+  useEffect(() => { setHydrated(true); }, []);
   function notify(k: "ok" | "err", m: string) {
     setToast({ k, m });
     setTimeout(() => setToast(null), 3600);
   }
 
   const active = useMemo(() => items.find((p) => p.id === activeId) || null, [items, activeId]);
+
+  // ── تُحسب قبل أي خروج مبكر حتى يبقى ترتيب الـhooks ثابتًا ──
+  const allRowsForFilter: Row[] = useMemo(() => {
+    const prop = active;
+    if (!prop) return [];
+    const g = { graceDays: Number(prop.grace_days) || 0 };
+    const list = Array.isArray(prop.tenants) ? prop.tenants : [];
+    return list.map((t) => { const st = contractState(t, g); return { t, st, key: rowKey(t, st) }; });
+  }, [active]);
+
+  // الصفوف المعروضة: بحث ← تصفية ← فرز
+  const rows = useMemo(() => {
+    const needle = q.trim().toLowerCase();
+    let out = allRowsForFilter.filter((r) => {
+      if (filter !== "all" && r.key !== filter) return false;
+      if (!needle) return true;
+      return [r.t.name, r.t.unit, r.t.phone].filter(Boolean)
+        .some((v) => String(v).toLowerCase().includes(needle));
+    });
+    out = [...out].sort((a, b) => {
+      if (sort === "amount") return b.st.amountDue - a.st.amountDue;
+      if (sort === "name") return String(a.t.name || "").localeCompare(String(b.t.name || ""), "ar");
+      if (sort === "due") return String(a.st.nextDueDate || "9999").localeCompare(String(b.st.nextDueDate || "9999"));
+      // urgent: الأهم أولًا، ثم الأكبر مبلغًا
+      const d = URGENCY[a.key] - URGENCY[b.key];
+      return d !== 0 ? d : b.st.amountDue - a.st.amountDue;
+    });
+    return out;
+  }, [allRowsForFilter, q, filter, sort]);
+
 
   /** هوية المستخدم الحالي — تشترطها سياسة الصلاحيات (RLS) عند الإدراج */
   async function currentUserId(): Promise<string | null> {
@@ -273,6 +315,10 @@ export default function PropertyView({ initial, orgName, issuer }: { initial: Pr
     setDoc({ title: `إشعار سداد — ${t.name}`, body });
   }
 
+  if (!hydrated) {
+    return <div className="text-center text-muted py-16 text-sm">جارٍ تحميل لوحتك…</div>;
+  }
+
   if (!items.length) {
     return (
       <div className="max-w-lg mx-auto bg-white border border-line rounded-2xl shadow-sm p-8 mt-8 text-center">
@@ -295,48 +341,28 @@ export default function PropertyView({ initial, orgName, issuer }: { initial: Pr
   // كل الصفوف مع حالتها (تُستخدم للإحصاءات)
   const grace = { graceDays: Number(p.grace_days) || 0 };
   const vat = { enabled: !!p.vat_enabled, rate: Number(p.vat_rate) || 15, inclusive: p.vat_inclusive !== false };
-  const allRows: Row[] = p.tenants.map((t) => {
-    const st = contractState(t, grace);
-    return { t, st, key: rowKey(t, st) };
-  });
+  const tenants = Array.isArray(p.tenants) ? p.tenants : [];
+  const notes = Array.isArray(p.property_notes) ? p.property_notes : [];
+  const allRows: Row[] = allRowsForFilter;
 
   const counts = allRows.reduce((acc, r) => { acc[r.key] = (acc[r.key] || 0) + 1; return acc; },
     {} as Record<RowKey, number>);
   const lateRows = allRows.filter((r) => r.key === "late" || r.key === "partial");
   const lateCount = lateRows.length;
-  const monthlyIncome = p.tenants.reduce((sum, t) =>
+  const monthlyIncome = tenants.reduce((sum, t) =>
     sum + (Number(t.rent_amount) || 0) * PERIODS_PER_MONTH[(t.payment_frequency || "monthly") as Frequency], 0);
   const overdue = lateRows.reduce((s, r) => s + r.st.amountDue, 0);
   const pct = allRows.length ? Math.round(((allRows.length - lateRows.length) / allRows.length) * 100) : 100;
 
-  // الصفوف المعروضة: بحث ← تصفية ← فرز
-  const rows = useMemo(() => {
-    const needle = q.trim().toLowerCase();
-    let out = allRows.filter((r) => {
-      if (filter !== "all" && r.key !== filter) return false;
-      if (!needle) return true;
-      return [r.t.name, r.t.unit, r.t.phone].filter(Boolean)
-        .some((v) => String(v).toLowerCase().includes(needle));
-    });
-    out = [...out].sort((a, b) => {
-      if (sort === "amount") return b.st.amountDue - a.st.amountDue;
-      if (sort === "name") return String(a.t.name || "").localeCompare(String(b.t.name || ""), "ar");
-      if (sort === "due") return String(a.st.nextDueDate || "9999").localeCompare(String(b.st.nextDueDate || "9999"));
-      // urgent: الأهم أولًا، ثم الأكبر مبلغًا
-      const d = URGENCY[a.key] - URGENCY[b.key];
-      return d !== 0 ? d : b.st.amountDue - a.st.amountDue;
-    });
-    return out;
-  }, [allRows, q, filter, sort]);
 
   const expiringSoon = allRows
     .filter((r) => r.st.daysToEnd !== null && r.st.daysToEnd <= 60 && r.st.daysToEnd >= 0 && !r.t.litigation)
     .sort((a, b) => (a.st.daysToEnd || 0) - (b.st.daysToEnd || 0))[0];
-  const editing = modal?.kind === "tenant" && modal.id ? p.tenants.find((t) => t.id === modal.id) : undefined;
+  const editing = modal?.kind === "tenant" && modal.id ? tenants.find((t) => t.id === modal.id) : undefined;
 
   // ملخّص المحفظة كاملة (كل العقارات)
   const portfolio = items.reduce((acc, prop) => {
-    prop.tenants.forEach((t) => {
+    (Array.isArray(prop.tenants) ? prop.tenants : []).forEach((t) => {
       const st = contractState(t, { graceDays: Number(prop.grace_days) || 0 });
       acc.units++;
       if (st.status === "late") { acc.late++; acc.overdue += st.amountDue; }
@@ -381,7 +407,7 @@ export default function PropertyView({ initial, orgName, issuer }: { initial: Pr
           <h1 className="font-display font-bold text-deep text-xl flex items-center gap-2">
             <span>{typeIcon(p.property_type)}</span> {p.name}
           </h1>
-          <div className="text-sm text-muted">{typeLabel(p.property_type)}{p.city ? ` · ${p.city}` : ""} · {p.tenants.length} {ul}</div>
+          <div className="text-sm text-muted">{typeLabel(p.property_type)}{p.city ? ` · ${p.city}` : ""} · {tenants.length} {ul}</div>
         </div>
         <select value={p.id} onChange={(e) => setActiveId(e.target.value)} className="fld max-w-[220px] font-semibold text-deep">
           {items.map((x) => <option key={x.id} value={x.id}>{typeIcon(x.property_type)} {x.name}</option>)}
@@ -418,7 +444,7 @@ export default function PropertyView({ initial, orgName, issuer }: { initial: Pr
           </div>
 
           {/* شريط التحكّم: بحث · تصفية · فرز */}
-          {p.tenants.length > 0 && (
+          {tenants.length > 0 && (
             <div className="border-b border-line px-4 py-3 flex flex-wrap gap-2 items-center bg-paper">
               <input className="fld flex-1 min-w-[150px]" value={q} onChange={(e) => setQ(e.target.value)}
                 placeholder={`ابحث باسم المستأجر أو رقم ${ul}…`} />
@@ -441,7 +467,7 @@ export default function PropertyView({ initial, orgName, issuer }: { initial: Pr
           )}
 
           <div className="p-4 flex flex-col gap-2">
-            {!p.tenants.length ? (
+            {!tenants.length ? (
               <div className="text-center text-muted py-8 text-sm">
                 لا توجد وحدات بعد.
                 <div className="mt-3 flex gap-2 justify-center">
@@ -517,7 +543,7 @@ export default function PropertyView({ initial, orgName, issuer }: { initial: Pr
               </div>
             ))}
 
-            {p.tenants.length > 0 && rows.length > 0 && (
+            {tenants.length > 0 && rows.length > 0 && (
               <div className="text-center text-xs text-muted pt-1">عرض {rows.length} من {allRows.length} {ul}</div>
             )}
           </div>
@@ -527,7 +553,7 @@ export default function PropertyView({ initial, orgName, issuer }: { initial: Pr
           <div className="border-b border-line px-5 py-4"><h2 className="font-semibold">سجل العقار</h2></div>
           <div className="p-4">
             <AddNote onAdd={addNote} />
-            {p.property_notes.length ? p.property_notes.map((n) => (
+            {notes.length ? notes.map((n) => (
               <div key={n.id} className="flex gap-2.5 py-2.5 border-b border-dashed border-line last:border-0 text-sm">
                 <span className="text-xs font-semibold text-[#8a5a11] w-16 shrink-0">{n.note_date}</span>
                 <span className="flex-1 text-[#33413d]">{n.text}</span>
@@ -573,9 +599,10 @@ function Stat({ v, l, kpi = "plain", icon, onClick, active }: {
   const base = `bg-white border rounded-xl p-4 shadow-sm text-right w-full transition ${active ? "border-gold ring-1 ring-goldSoft" : "border-line"}`;
   const inner = (
     <>
-      <div className="flex items-center gap-2 mb-1.5">
+      <div className="flex items-center gap-2 mb-1.5 min-w-0">
         {icon && <span className={`w-7 h-7 rounded-lg grid place-items-center text-sm font-bold shrink-0 ${k.ring}`}>{icon}</span>}
-        <div className={`font-display leading-none ${k.val} ${k.bold ? "font-extrabold text-2xl" : "font-bold text-2xl"}`}>{v}</div>
+        <div className={`font-display leading-none min-w-0 truncate ${k.val} ${k.bold ? "font-extrabold" : "font-bold"} ${String(v).length > 8 ? "text-lg" : String(v).length > 6 ? "text-xl" : "text-2xl"}`}
+          title={String(v)}>{v}</div>
       </div>
       <div className="text-sm text-muted">{l}</div>
     </>

@@ -1,5 +1,5 @@
 "use client";
-import { useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import { createClient } from "@/lib/supabase-client";
 import { sar, daysLeft, waLink, WATHEQ_WA, today } from "@/lib/utils";
 
@@ -27,7 +27,15 @@ const OWNER_URGENCY: Record<OwnerKey, number> = { critical: 0, late: 1, partial:
 
 export default function AssociationView({ initial }: { initial: Association[] }) {
   const supabase = createClient();
-  const [items, setItems] = useState<Association[]>(initial);
+  /** يضمن أن كل جمعية تحمل مصفوفتيها — يمنع انكسار العرض عند صفٍّ جديد */
+  const normalize = (list: Association[]): Association[] =>
+    (list || []).map((a) => ({
+      ...a,
+      owners: Array.isArray(a?.owners) ? a.owners : [],
+      association_notes: Array.isArray(a?.association_notes) ? a.association_notes : [],
+    }));
+
+  const [items, setItems] = useState<Association[]>(() => normalize(initial));
   const [activeId, setActiveId] = useState<string | null>(initial[0]?.id || null);
   const [modal, setModal] = useState<null | "new" | "edit">(null);
   const [busy, setBusy] = useTransition();
@@ -38,12 +46,42 @@ export default function AssociationView({ initial }: { initial: Association[] })
   const [sort, setSort] = useState<"urgent" | "amount" | "name" | "unit">("urgent");
   const [paying, setPaying] = useState<Owner | null>(null);
   const [toast, setToast] = useState<null | { k: "ok" | "err"; m: string }>(null);
+  // الحسابات تعتمد على تاريخ اليوم، وتوقيت السيرفر يختلف عن توقيت الجهاز.
+  const [hydrated, setHydrated] = useState(false);
+  useEffect(() => { setHydrated(true); }, []);
   function notify(k: "ok" | "err", m: string) {
     setToast({ k, m });
     setTimeout(() => setToast(null), 3600);
   }
 
   const active = useMemo(() => items.find((a) => a.id === activeId) || null, [items, activeId]);
+
+  // ── تُحسب قبل أي خروج مبكر حتى يبقى ترتيب الـhooks ثابتًا ──
+  const ownersForFilter: Owner[] = useMemo(() => {
+    const assoc = active;
+    if (!assoc) return [];
+    return Array.isArray(assoc.owners) ? assoc.owners : [];
+  }, [active]);
+
+  // الصفوف المعروضة: بحث ← تصفية ← فرز
+  const rows = useMemo(() => {
+    const needle = q.trim().toLowerCase();
+    let out = ownersForFilter.filter((o) => {
+      if (filter !== "all" && ownerKey(o) !== filter) return false;
+      if (!needle) return true;
+      return [o.name, o.unit, o.phone].filter(Boolean)
+        .some((v) => String(v).toLowerCase().includes(needle));
+    });
+    out = [...out].sort((x, y) => {
+      if (sort === "amount") return y.months_late - x.months_late;
+      if (sort === "name") return String(x.name || "").localeCompare(String(y.name || ""), "ar");
+      if (sort === "unit") return String(x.unit || "").localeCompare(String(y.unit || ""), "ar", { numeric: true });
+      const d = OWNER_URGENCY[ownerKey(x)] - OWNER_URGENCY[ownerKey(y)];
+      return d !== 0 ? d : y.months_late - x.months_late;
+    });
+    return out;
+  }, [ownersForFilter, q, filter, sort]);
+
 
   /** تسجيل مبلغ مستلم من مالك — يحوّل الجزئي إلى أشهر مسدّدة */
   async function recordOwnerPayment(o: Owner, fee: number, amount: number) {
@@ -80,7 +118,7 @@ export default function AssociationView({ initial }: { initial: Association[] })
       user_id: uid,
     }).select("*").single();
     if (error) { console.error("Watheq save error:", error); return notify("err", error.message); }
-    const next = { ...(row as any), owners: [], association_notes: [] };
+    const next = { ...(row as any), owners: [], association_notes: [] } as Association;
     setItems([next, ...items]); setActiveId(next.id); setModal(null);
   }
   async function updateAssociation(data: Partial<Association>) {
@@ -166,6 +204,10 @@ export default function AssociationView({ initial }: { initial: Association[] })
   }
 
   // ---------- عرض ----------
+  if (!hydrated) {
+    return <div className="text-center text-muted py-16 text-sm">جارٍ تحميل لوحتك…</div>;
+  }
+
   if (!items.length) {
     return (
       <div className="max-w-lg mx-auto bg-white border border-line rounded-2xl shadow-sm p-8 mt-10 text-center">
@@ -179,38 +221,22 @@ export default function AssociationView({ initial }: { initial: Association[] })
   }
 
   const a = active!;
-  const total = a.owners.length;
-  const late = a.owners.filter((o) => o.months_late > 0);
-  const critical = a.owners.filter((o) => o.months_late >= 3);
+  const owners = Array.isArray(a.owners) ? a.owners : [];
+  const notes = Array.isArray(a.association_notes) ? a.association_notes : [];
+  const total = owners.length;
+  const late = owners.filter((o) => o.months_late > 0);
+  const critical = owners.filter((o) => o.months_late >= 3);
   const pct = total ? Math.round(((total - late.length) / total) * 100) : 0;
   const dl = daysLeft(a.cert_expiry);
   const owedTotal = late.reduce((s, o) => s + Math.max(0, o.months_late * (a.fee || 0) - (Number(o.partial_amount) || 0)), 0);
   const expectedMonthly = total * (a.fee || 0);
 
-  // الصفوف المعروضة: بحث ← تصفية ← فرز
-  const rows = useMemo(() => {
-    const needle = q.trim().toLowerCase();
-    let out = a.owners.filter((o) => {
-      if (filter !== "all" && ownerKey(o) !== filter) return false;
-      if (!needle) return true;
-      return [o.name, o.unit, o.phone].filter(Boolean)
-        .some((v) => String(v).toLowerCase().includes(needle));
-    });
-    out = [...out].sort((x, y) => {
-      if (sort === "amount") return y.months_late - x.months_late;
-      if (sort === "name") return String(x.name || "").localeCompare(String(y.name || ""), "ar");
-      if (sort === "unit") return String(x.unit || "").localeCompare(String(y.unit || ""), "ar", { numeric: true });
-      const d = OWNER_URGENCY[ownerKey(x)] - OWNER_URGENCY[ownerKey(y)];
-      return d !== 0 ? d : y.months_late - x.months_late;
-    });
-    return out;
-  }, [a.owners, q, filter, sort]);
 
   const chips: { k: "all" | OwnerKey; label: string }[] = [
     { k: "all", label: `الكل ${total}` },
     { k: "critical", label: `حرج ${critical.length}` },
-    { k: "late", label: `متأخر ${a.owners.filter((o) => ownerKey(o) === "late").length}` },
-    { k: "partial", label: `سداد جزئي ${a.owners.filter((o) => ownerKey(o) === "partial").length}` },
+    { k: "late", label: `متأخر ${owners.filter((o) => ownerKey(o) === "late").length}` },
+    { k: "partial", label: `سداد جزئي ${owners.filter((o) => ownerKey(o) === "partial").length}` },
     { k: "ok", label: `مسدّد ${total - late.length}` },
   ];
 
@@ -253,10 +279,10 @@ export default function AssociationView({ initial }: { initial: Association[] })
 
       {/* إحصاءات — قابلة للنقر للتصفية */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
-        <Stat v={sar(expectedMonthly)} l="الدخل الشهري المتوقّع" kpi="income" icon="\u2191" onClick={() => setFilter("all")} active={filter === "all"} />
+        <Stat v={sar(expectedMonthly)} l="الدخل الشهري المتوقّع" kpi="income" icon="↑" onClick={() => setFilter("all")} active={filter === "all"} />
         <Stat v={sar(owedTotal)} l={`المتأخر (${late.length} مالك)`} kpi="overdue" icon="!" onClick={() => { setFilter("late"); setSort("amount"); }} active={filter === "late"} />
-        <Stat v={`${pct}%`} l="نسبة السداد" kpi="soon" icon="\u25CF" onClick={() => setFilter("ok")} active={filter === "ok"} />
-        <Stat v={dl === null ? "—" : String(dl)} l="يوم حتى انتهاء الشهادة" kpi={dl !== null && dl <= 30 ? "overdue" : "expiring"} icon="\u21BB" />
+        <Stat v={`${pct}%`} l="نسبة السداد" kpi="soon" icon="●" onClick={() => setFilter("ok")} active={filter === "ok"} />
+        <Stat v={dl === null ? "—" : String(dl)} l="يوم حتى انتهاء الشهادة" kpi={dl !== null && dl <= 30 ? "overdue" : "expiring"} icon="↻" />
       </div>
 
       <div className="grid md:grid-cols-[1.6fr_1fr] gap-5 items-start">
@@ -361,7 +387,7 @@ export default function AssociationView({ initial }: { initial: Association[] })
           <div className="border-b border-line px-5 py-4"><h2 className="font-semibold">سجل العمارة</h2></div>
           <div className="p-4">
             <AddNote onAdd={addNote} placeholder="أضف ملاحظة (صيانة، تغيّر مالك…)" />
-            {a.association_notes.length ? a.association_notes.map((n) => (
+            {notes.length ? notes.map((n) => (
               <div key={n.id} className="flex gap-2.5 py-2.5 border-b border-dashed border-line last:border-0 text-sm">
                 <span className="text-xs font-semibold text-[#8a5a11] w-16 shrink-0">{n.note_date}</span>
                 <span className="flex-1 text-[#33413d]">{n.text}</span>
@@ -399,9 +425,10 @@ function Stat({ v, l, kpi = "plain", icon, onClick, active }: {
   const base = `bg-white border rounded-xl p-4 shadow-sm text-right w-full transition ${active ? "border-gold ring-1 ring-goldSoft" : "border-line"}`;
   const inner = (
     <>
-      <div className="flex items-center gap-2 mb-1.5">
+      <div className="flex items-center gap-2 mb-1.5 min-w-0">
         {icon && <span className={`w-7 h-7 rounded-lg grid place-items-center text-sm font-bold shrink-0 ${k.ring}`}>{icon}</span>}
-        <div className={`font-display leading-none text-2xl ${k.val} ${k.bold ? "font-extrabold" : "font-bold"}`}>{v}</div>
+        <div className={`font-display leading-none min-w-0 truncate ${k.val} ${k.bold ? "font-extrabold" : "font-bold"} ${String(v).length > 8 ? "text-lg" : String(v).length > 6 ? "text-xl" : "text-2xl"}`}
+          title={String(v)}>{v}</div>
       </div>
       <div className="text-sm text-muted">{l}</div>
     </>
