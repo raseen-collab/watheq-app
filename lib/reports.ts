@@ -104,12 +104,12 @@ export async function todayReport(db: DB, profile: any): Promise<string> {
       const { rows } = await enrichedTenants(db, profile);
       const soon = rows.filter((r) => r.key === "due_soon")
         .sort((a, b) => (a.st.daysToNextDue || 0) - (b.st.daysToNextDue || 0));
-      if (!soon.length) return `📅 <b>استحقاقات قريبة</b>\n\nلا توجد دفعات مستحقة خلال ٧ أيام ✅`;
+      if (!soon.length) return `📅 <b>استحقاقات قريبة</b>\n\nلا توجد دفعات مستحقة خلال 7 أيام ✅`;
       const total = soon.reduce((s, r) => s + (Number(r.t.rent_amount) || 0), 0);
       const lines = soon.map((r) =>
         `• <b>${esc(rowLabel(r))}</b> — ${esc(r.t.name)} — <b>${sar(r.t.rent_amount)}</b> ﷼ — ${esc(r.st.nextDueDate)}`
       ).join("\n");
-      return `📅 <b>استحقاقات قريبة</b> (خلال ٧ أيام)\n\n${lines}\n\n— الإجمالي: <b>${sar(total)}</b> ﷼ · ${soon.length} دفعة`;
+      return `📅 <b>استحقاقات قريبة</b> (خلال 7 أيام)\n\n${lines}\n\n— الإجمالي: <b>${sar(total)}</b> ﷼ · ${soon.length} دفعة`;
     }
     const { assocs, owners } = await assocContext(db, profile);
     const soon = assocs.filter((a: any) => a.cert_expiry && a.cert_expiry >= todayISO());
@@ -159,7 +159,7 @@ export async function summaryReport(db: DB, profile: any): Promise<string> {
         `• نسبة الانتظام: <b>${pct}٪</b>`,
         `• محصّل: <b>${sar(collected)}</b> ﷼`,
         `• متأخرات: <b>${sar(overdue)}</b> ﷼ (${late.length} عقد)`,
-        `• تستحق خلال ٧ أيام: <b>${soon.length}</b>`,
+        `• تستحق خلال 7 أيام: <b>${soon.length}</b>`,
       ].join("\n");
     }
     const { assocs, assocById, owners } = await assocContext(db, profile);
