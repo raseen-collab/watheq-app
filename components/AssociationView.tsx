@@ -3,6 +3,8 @@ import { useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase-client";
 import { sar, daysLeft, waLink, WATHEQ_WA, today } from "@/lib/utils";
+import { ownerStatementHTML, associationStatementHTML, budgetHTML, foundingMinutesHTML,
+  DEFAULT_BUDGET_ITEMS, openDoc, type BudgetItem } from "@/lib/documents";
 
 type Owner = { id: string; name: string; unit: string | null; phone: string | null; months_late: number; last_paid: string | null; partial_amount?: number | null };
 type Note = { id: string; note_date: string; text: string };
@@ -49,6 +51,9 @@ export default function AssociationView({ initial }: { initial: Association[] })
   const [paying, setPaying] = useState<Owner | null>(null);
   const [doc, setDoc] = useState<null | { title: string; body: string }>(null);
   const [history, setHistory] = useState<null | { owner: Owner; rows: any[] }>(null);
+  const [ownerModal, setOwnerModal] = useState<null | { owner?: Owner }>(null);
+  const [budget, setBudget] = useState<null | { year: number; items: BudgetItem[]; reserve_pct: number; notes: string }>(null);
+  const [minutes, setMinutes] = useState(false);
   const [toast, setToast] = useState<null | { k: "ok" | "err"; m: string }>(null);
   // الحسابات تعتمد على تاريخ اليوم، وتوقيت السيرفر يختلف عن توقيت الجهاز.
   const [hydrated, setHydrated] = useState(false);
@@ -122,6 +127,66 @@ export default function AssociationView({ initial }: { initial: Association[] })
     notify("ok", months > 0
       ? `سُجّل ${sar(amt)} ريال — سُدّد ${months} شهر`
       : `سُجّل ${sar(amt)} ريال كسداد جزئي`);
+  }
+
+  /** حفظ بيانات مالك (تعديل) — لم يكن ممكنًا قبل الآن */
+  async function saveOwner(id: string, d: any) {
+    const patch = {
+      name: (d.name || "").trim(),
+      unit: (d.unit || "").trim() || null,
+      phone: (d.phone || "").trim() || null,
+      months_late: Math.max(0, Number(d.months_late) || 0),
+    };
+    if (!patch.name) return notify("err", "اسم المالك مطلوب.");
+    await ownerPatch(id, patch);
+    setOwnerModal(null);
+    notify("ok", "حُدّثت بيانات المالك.");
+  }
+
+  /** كشف حساب مالك — مع سجل مدفوعاته الموثّق */
+  async function openOwnerStatement(o: Owner) {
+    if (!active) return;
+    const { data, error } = await supabase.from("payments")
+      .select("id,paid_on,amount,method,periods_covered,note")
+      .eq("owner_id", o.id).order("paid_on", { ascending: true }).limit(500);
+    if (error) console.error("Watheq statement payments error:", error);
+    openDoc(ownerStatementHTML(o as any, active as any, {}, (data || []) as any));
+  }
+
+  /** يفتح الموازنة: يجلب المحفوظة أو يبدأ بالبنود النموذجية */
+  async function openBudget() {
+    if (!active) return;
+    const year = new Date().getFullYear();
+    const { data, error } = await supabase.from("association_budgets")
+      .select("*").eq("association_id", active.id).eq("year", year).maybeSingle();
+    if (error) console.error("Watheq budget load error:", error);
+    setBudget({
+      year,
+      items: (data?.items as BudgetItem[]) || DEFAULT_BUDGET_ITEMS.map((i) => ({ ...i })),
+      reserve_pct: Number(data?.reserve_pct ?? 10),
+      notes: data?.notes || "",
+    });
+  }
+
+  /** حفظ الموازنة (إنشاء أو تحديث للسنة نفسها) */
+  async function saveBudget(b: { year: number; items: BudgetItem[]; reserve_pct: number; notes: string }) {
+    if (!active) return;
+    const uid = await currentUserId();
+    if (!uid) return notify("err", "انتهت الجلسة — أعد تسجيل الدخول.");
+    const { error } = await supabase.from("association_budgets").upsert({
+      user_id: uid, association_id: active.id, year: b.year,
+      items: b.items.filter((i) => i.label?.trim()),
+      reserve_pct: b.reserve_pct, notes: b.notes || null,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: "association_id,year" });
+    if (error) { console.error("Watheq budget save error:", error); return notify("err", error.message); }
+    notify("ok", `حُفظت موازنة ${b.year}.`);
+  }
+
+  /** كشف حساب الجمعية كاملة */
+  function openAssocStatement() {
+    if (!active) return;
+    openDoc(associationStatementHTML(active as any, {}));
   }
 
   /** يفتح سجل مدفوعات مالك معيّن */
@@ -343,10 +408,41 @@ export default function AssociationView({ initial }: { initial: Association[] })
         </div>
       )}
 
+      {/* ملخّص كل الجمعيات */}
+      {items.length > 1 && (() => {
+        const p = items.reduce((acc, x) => {
+          const ow = Array.isArray(x.owners) ? x.owners : [];
+          const f = Number(x.fee) || 0;
+          ow.forEach((o) => {
+            acc.owners++;
+            const d = Math.max(0, (Number(o.months_late) || 0) * f - (Number(o.partial_amount) || 0));
+            if ((Number(o.months_late) || 0) > 0) { acc.late++; acc.owed += d; }
+          });
+          acc.expected += ow.length * f;
+          acc.fund += Number(x.fund_balance) || 0;
+          const dd = daysLeft(x.cert_expiry);
+          if (dd !== null && dd <= 60) acc.certs++;
+          return acc;
+        }, { owners: 0, late: 0, owed: 0, expected: 0, fund: 0, certs: 0 });
+        return (
+          <div className="bg-deep text-[#EAF1EE] rounded-2xl p-4 mb-5 flex flex-wrap items-center gap-x-6 gap-y-3">
+            <div className="font-display font-bold text-sm text-goldSoft">محفظتك · {items.length} جمعيات</div>
+            <PortfolioStat v={String(p.owners)} l="مالك" />
+            <PortfolioStat v={String(p.late)} l="متأخر" tone={p.late ? "warn" : undefined} />
+            <PortfolioStat v={sar(p.owed)} l="ريال متأخر" tone={p.owed ? "warn" : undefined} />
+            <PortfolioStat v={sar(p.expected)} l="إيراد الفترة المتوقّع" />
+            <PortfolioStat v={sar(p.fund)} l="رصيد الصناديق" />
+            <PortfolioStat v={String(p.certs)} l="شهادات تنتهي قريبًا" tone={p.certs ? "warn" : undefined} />
+          </div>
+        );
+      })()}
+
       {/* شريط اختيار الجمعية */}
       <div className="flex flex-wrap items-center gap-2 mb-5">
         <div className="flex-1 min-w-0">
-          <h1 className="font-display font-bold text-deep text-xl">{a.name}</h1>
+          <h1 className="font-display font-bold text-deep text-xl flex items-center gap-2">
+            <span>🏗️</span> {a.name}
+          </h1>
           <div className="text-sm text-muted">إدارة جمعية الملاك · {total} من {a.units || total} وحدة</div>
         </div>
         <select value={a.id} onChange={(e) => setActiveId(e.target.value)} className="fld max-w-[220px] font-semibold text-deep">
@@ -384,9 +480,14 @@ export default function AssociationView({ initial }: { initial: Association[] })
       <div className="grid md:grid-cols-[1.6fr_1fr] gap-5 items-start">
         {/* الملّاك */}
         <div className="bg-white border border-line rounded-2xl shadow-sm">
-          <div className="flex items-center justify-between border-b border-line px-5 py-4">
+          <div className="flex items-center justify-between border-b border-line px-5 py-4 gap-2 flex-wrap">
             <h2 className="font-semibold">الملّاك وحالة السداد</h2>
-            {a.fee > 0 && <span className="text-xs text-muted">الاشتراك {sar(a.fee)} ريال/شهر</span>}
+            <div className="flex gap-2 items-center">
+              {a.fee > 0 && <span className="text-xs text-muted">الاشتراك {sar(a.fee)} ريال/شهر</span>}
+              <button type="button" className="btn btn-ghost text-xs" onClick={openAssocStatement}>كشف حساب</button>
+              <button type="button" className="btn btn-ghost text-xs" onClick={openBudget}>📊 الموازنة</button>
+              <button type="button" className="btn btn-gold text-xs" onClick={() => setMinutes(true)}>📄 محضر تأسيسي</button>
+            </div>
           </div>
 
           <div className="p-4">
@@ -460,7 +561,9 @@ export default function AssociationView({ initial }: { initial: Association[] })
                       {o.months_late >= 2 && <button type="button" className="btn btn-gold text-xs" onClick={() => makeOwnerNotice(o)}>نموذج إشعار</button>}
                       <RowMenu
                         items={[
+                          { label: "🧾 كشف حساب", run: () => openOwnerStatement(o) },
                           { label: "🧮 سجل المدفوعات", run: () => openHistory(o) },
+                          { label: "✎ تعديل البيانات", run: () => setOwnerModal({ owner: o }) },
                           { label: "➕ إضافة استحقاق", run: () => ownerPatch(o.id, { months_late: o.months_late + 1 }) },
                           ...(o.months_late === 0 ? [{ label: "💬 رسالة للمالك", run: () => window.open(ownerRemindLink(o), "_blank") }] : []),
                           ...(o.months_late > 0 ? [{ label: "✅ سدّد الكل", run: () => ownerPatch(o.id, { months_late: 0, last_paid: today() }, o.months_late * (a.fee || 0)) }] : []),
@@ -495,6 +598,13 @@ export default function AssociationView({ initial }: { initial: Association[] })
         </div>
       </div>
 
+      {budget && <BudgetModal assoc={a} budget={budget} onClose={() => setBudget(null)}
+        onSave={(b) => { saveBudget(b); setBudget(b); }}
+        onPrint={(b) => openDoc(budgetHTML(a as any, b as any, {}))} />}
+      {minutes && <MinutesModal assoc={a} onClose={() => setMinutes(false)}
+        onPrint={(d) => openDoc(foundingMinutesHTML(a as any, d as any, {}))} />}
+      {ownerModal?.owner && <OwnerModal owner={ownerModal.owner} onClose={() => setOwnerModal(null)}
+        onSubmit={(d) => saveOwner(ownerModal.owner!.id, d)} />}
       {history && <HistoryModal data={history} onClose={() => setHistory(null)} />}
       {doc && <DocModal doc={doc} onClose={() => setDoc(null)} />}
       {paying && <OwnerPaymentModal owner={paying} fee={a.fee || 0} onClose={() => setPaying(null)}
@@ -722,6 +832,260 @@ function FormModal({ open, title, initial, onClose, onSubmit, onDelete }: {
             onClick={() => onSubmit(d)}>حفظ</button>
         </div>
         {onDelete && <div className="text-center mt-3"><button className="text-late text-sm font-semibold underline" onClick={onDelete}>حذف الجمعية نهائيًّا</button></div>}
+      </div>
+    </div>
+  );
+}
+
+/** الموازنة التقديرية — بنود قابلة للتعديل مع حساب الاشتراك المقترح */
+function BudgetModal({ assoc, budget, onClose, onSave, onPrint }: {
+  assoc: Association;
+  budget: { year: number; items: BudgetItem[]; reserve_pct: number; notes: string };
+  onClose: () => void;
+  onSave: (b: any) => void;
+  onPrint: (b: any) => void;
+}) {
+  const [items, setItems] = useState<BudgetItem[]>(budget.items);
+  const [reserve, setReserve] = useState<string>(String(budget.reserve_pct));
+  const [notes, setNotes] = useState(budget.notes || "");
+
+  const monthly = items.reduce((s, i) => s + (Number(i.monthly) || 0), 0);
+  const annualOps = monthly * 12;
+  const rp = Math.max(0, Math.min(50, Number(reserve) || 0));
+  const reserveAmt = Math.round(annualOps * (rp / 100));
+  const total = annualOps + reserveAmt;
+  const units = Number(assoc.units) || (Array.isArray(assoc.owners) ? assoc.owners.length : 0);
+  const perMonth = units ? Math.round(total / units / 12) : 0;
+  const currentFee = Number(assoc.fee) || 0;
+  const gap = total - currentFee * 12 * units;
+
+  const payload = { year: budget.year, items, reserve_pct: rp, notes };
+  const setItem = (n: number, patch: Partial<BudgetItem>) =>
+    setItems(items.map((it, i) => (i === n ? { ...it, ...patch } : it)));
+
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4" onClick={onClose}>
+      <div className="w-full max-w-2xl bg-white rounded-2xl shadow-xl p-6 max-h-[92vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
+        <h3 className="font-display font-bold text-deep text-xl mb-1">الموازنة التقديرية {budget.year}</h3>
+        <p className="text-sm text-muted mb-4">{assoc.name}{units ? ` · ${units} وحدة` : ""} — أدخل المصروف الشهري لكل بند، ويُحسب الاشتراك المقترح تلقائيًّا.</p>
+
+        <div className="border border-line rounded-xl overflow-hidden mb-3">
+          <table className="w-full text-sm">
+            <thead className="bg-paper2"><tr>
+              <th className="p-2 text-right font-semibold">البند</th>
+              <th className="p-2 text-right font-semibold w-28">شهريًّا</th>
+              <th className="p-2 text-right font-semibold w-24">سنويًّا</th>
+              <th className="w-8"></th>
+            </tr></thead>
+            <tbody>
+              {items.map((it, n) => (
+                <tr key={n} className="border-t border-line">
+                  <td className="p-1.5">
+                    <input className="fld text-xs" value={it.label}
+                      onChange={(e) => setItem(n, { label: e.target.value })} placeholder="اسم البند" />
+                  </td>
+                  <td className="p-1.5">
+                    <input className="fld text-xs" type="number" min={0} value={it.monthly || ""}
+                      onChange={(e) => setItem(n, { monthly: Number(e.target.value) || 0 })} placeholder="0" />
+                  </td>
+                  <td className="p-1.5 tabular-nums text-muted text-xs">{sar((Number(it.monthly) || 0) * 12)}</td>
+                  <td className="p-1.5">
+                    <button type="button" className="text-late text-xs px-1" title="حذف البند"
+                      onClick={() => setItems(items.filter((_, i) => i !== n))}>✕</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="flex gap-2 flex-wrap mb-4">
+          <button type="button" className="btn btn-ghost text-xs"
+            onClick={() => setItems([...items, { label: "", monthly: 0 }])}>+ بند جديد</button>
+          <div className="flex items-center gap-2 text-xs">
+            <span className="text-muted">احتياطي الصيانة الرأسمالية</span>
+            <input className="fld max-w-[70px] text-xs" type="number" min={0} max={50}
+              value={reserve} onChange={(e) => setReserve(e.target.value)} />
+            <span className="text-muted">%</span>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-4 text-center">
+          <div className="bg-paper2 rounded-lg p-2.5">
+            <div className="font-display font-bold text-deep tabular-nums">{sar(annualOps)}</div>
+            <div className="text-[.7rem] text-muted mt-0.5">تشغيلي سنويًّا</div>
+          </div>
+          <div className="bg-paper2 rounded-lg p-2.5">
+            <div className="font-display font-bold text-deep tabular-nums">{sar(reserveAmt)}</div>
+            <div className="text-[.7rem] text-muted mt-0.5">احتياطي {rp}%</div>
+          </div>
+          <div className="bg-[#E6F4EC] rounded-lg p-2.5">
+            <div className="font-display font-bold text-[#137a50] tabular-nums">{sar(total)}</div>
+            <div className="text-[.7rem] text-muted mt-0.5">إجمالي الموازنة</div>
+          </div>
+          <div className={`rounded-lg p-2.5 ${gap > 0 ? "bg-[#FBE9E7]" : "bg-[#E6F4EC]"}`}>
+            <div className={`font-display font-bold tabular-nums ${gap > 0 ? "text-late" : "text-[#137a50]"}`}>{sar(Math.abs(gap))}</div>
+            <div className="text-[.7rem] text-muted mt-0.5">{gap > 0 ? "عجز متوقّع" : "فائض متوقّع"}</div>
+          </div>
+        </div>
+
+        {units > 0 && (
+          <div className="bg-[#FBF1DF] border border-[#EBD9AA] rounded-xl p-3 mb-4 text-sm text-[#8a5a11] leading-relaxed">
+            الاشتراك المقترح: <b>{sar(perMonth)} ريال</b> شهريًّا لكل وحدة ({sar(units ? Math.round(total / units) : 0)} ريال سنويًّا).
+            {currentFee > 0 && <> والاشتراك الحالي المعتمد <b>{sar(currentFee)}</b> ريال.</>}
+            <div className="text-xs mt-1.5">يُحدَّد الاشتراك بقرار الجمعية العامة — هذا حساب استرشادي.</div>
+          </div>
+        )}
+
+        <Field label="ملاحظات على الموازنة (اختياري)">
+          <input className="fld" value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="مثال: لا تشمل تجديد المصاعد" />
+        </Field>
+
+        <div className="flex gap-2 mt-5 flex-wrap">
+          <button type="button" className="btn btn-ghost flex-1 justify-center" onClick={onClose}>إغلاق</button>
+          <button type="button" className="btn btn-primary flex-1 justify-center" onClick={() => onSave(payload)}>حفظ</button>
+          <button type="button" className="btn btn-gold flex-1 justify-center" onClick={() => onPrint(payload)}>طباعة الموازنة</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** محضر الجمعية العمومية التأسيسية */
+function MinutesModal({ assoc, onClose, onPrint }: {
+  assoc: Association; onClose: () => void; onPrint: (d: any) => void;
+}) {
+  const units = Number(assoc.units) || (Array.isArray(assoc.owners) ? assoc.owners.length : 0);
+  const [d, setD] = useState<any>({
+    meeting_date: today(), mode: "حضوري", place: "", attendees: units || "",
+    total_units: units || "", president: "", manager: "", fee: assoc.fee || "",
+    due_day: "في الخامس من كل شهر", bank: "", year: new Date().getFullYear(), annual_budget: "",
+  });
+  const set = (k: string, v: any) => setD({ ...d, [k]: v });
+
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4" onClick={onClose}>
+      <div className="w-full max-w-2xl bg-white rounded-2xl shadow-xl p-6 max-h-[92vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
+        <h3 className="font-display font-bold text-deep text-xl mb-1">محضر الجمعية العمومية التأسيسية</h3>
+        <p className="text-sm text-muted mb-4">{assoc.name} — املأ ما تعرفه، واترك الباقي فراغات تُملأ بخطّ اليد.</p>
+
+        <div className="space-y-3">
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="تاريخ الاجتماع">
+              <input className="fld" type="date" value={d.meeting_date} onChange={(e) => set("meeting_date", e.target.value)} />
+            </Field>
+            <Field label="طريقة الانعقاد">
+              <select className="fld" value={d.mode} onChange={(e) => set("mode", e.target.value)}>
+                <option value="حضوري">حضوري</option>
+                <option value="إلكتروني">إلكتروني</option>
+                <option value="حضوري وإلكتروني">حضوري وإلكتروني</option>
+              </select>
+            </Field>
+          </div>
+          <Field label="مكان الاجتماع">
+            <input className="fld" value={d.place} onChange={(e) => set("place", e.target.value)} placeholder="مثال: مقر العقار — الدور الأرضي" />
+          </Field>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="عدد الحاضرين">
+              <input className="fld" type="number" min={0} value={d.attendees} onChange={(e) => set("attendees", e.target.value)} />
+            </Field>
+            <Field label="إجمالي الوحدات">
+              <input className="fld" type="number" min={0} value={d.total_units} onChange={(e) => set("total_units", e.target.value)} />
+            </Field>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="رئيس الجمعية">
+              <input className="fld" value={d.president} onChange={(e) => set("president", e.target.value)} placeholder="الاسم" />
+            </Field>
+            <Field label="مدير العقار">
+              <input className="fld" value={d.manager} onChange={(e) => set("manager", e.target.value)} placeholder="الاسم أو المكتب" />
+            </Field>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="اشتراك الوحدة (ريال)">
+              <input className="fld" type="number" min={0} value={d.fee} onChange={(e) => set("fee", e.target.value)} />
+            </Field>
+            <Field label="موعد السداد">
+              <input className="fld" value={d.due_day} onChange={(e) => set("due_day", e.target.value)} />
+            </Field>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="إجمالي الموازنة المعتمدة (ريال)">
+              <input className="fld" type="number" min={0} value={d.annual_budget} onChange={(e) => set("annual_budget", e.target.value)} placeholder="من نافذة الموازنة" />
+            </Field>
+            <Field label="البنك">
+              <input className="fld" value={d.bank} onChange={(e) => set("bank", e.target.value)} placeholder="اسم البنك" />
+            </Field>
+          </div>
+        </div>
+
+        <p className="text-xs text-[#8a5a11] mt-4 bg-[#FBF1DF] border border-[#EBD9AA] rounded-lg p-2.5 leading-relaxed">
+          يُدرج المحضر جدول توقيعات بأسماء الملّاك المسجّلين عندك تلقائيًّا. وثيق لا يقدّم خدمات قانونية —
+          راجع المحضر مع مختص مرخّص وطابقه مع النظام الأساسي قبل تقديمه رسميًّا.
+        </p>
+
+        <div className="flex gap-2 mt-5">
+          <button type="button" className="btn btn-ghost flex-1 justify-center" onClick={onClose}>إلغاء</button>
+          <button type="button" className="btn btn-gold flex-1 justify-center" onClick={() => onPrint(d)}>إنشاء المحضر</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** إحصاء داخل شريط المحفظة الداكن */
+function PortfolioStat({ v, l, tone }: { v: string; l: string; tone?: "warn" }) {
+  return (
+    <div>
+      <div className={`font-display font-bold text-lg leading-none ${tone === "warn" ? "text-[#F5A9A4]" : "text-[#EAF1EE]"}`}>{v}</div>
+      <div className="text-[.7rem] text-[#9FB8B3] mt-1">{l}</div>
+    </div>
+  );
+}
+
+/** تعديل بيانات مالك — لم يكن ممكنًا قبل الآن */
+function OwnerModal({ owner, onClose, onSubmit }: {
+  owner: Owner; onClose: () => void; onSubmit: (d: any) => void;
+}) {
+  const [d, setD] = useState<any>({
+    name: owner.name || "", unit: owner.unit || "",
+    phone: owner.phone || "", months_late: owner.months_late || 0,
+  });
+  const ready = String(d.name || "").trim().length > 0;
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4" onClick={onClose}>
+      <div className="w-full max-w-md bg-white rounded-2xl shadow-xl p-6 max-h-[90vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
+        <h3 className="font-display font-bold text-deep text-xl mb-1">تعديل بيانات المالك</h3>
+        <p className="text-sm text-muted mb-4">{owner.unit ? `وحدة ${owner.unit}` : "—"}</p>
+
+        <div className="space-y-3">
+          <Field label="اسم المالك">
+            <input className="fld" value={d.name} onChange={(e) => setD({ ...d, name: e.target.value })} />
+          </Field>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="رقم الوحدة">
+              <input className="fld" value={d.unit} onChange={(e) => setD({ ...d, unit: e.target.value })} placeholder="101" />
+            </Field>
+            <Field label="الجوال">
+              <input className="fld" value={d.phone} onChange={(e) => setD({ ...d, phone: e.target.value })} placeholder="05xxxxxxxx" />
+            </Field>
+          </div>
+          <Field label="الفترات المتأخرة">
+            <input className="fld" type="number" min={0} value={d.months_late}
+              onChange={(e) => setD({ ...d, months_late: e.target.value })} />
+          </Field>
+          <p className="text-xs text-muted leading-relaxed">
+            تعديل الفترات المتأخرة يدويًّا للتصحيح فقط؛ الأفضل تسجيل السداد من زرّ ✔ أو ½ ليُحفظ في سجل المدفوعات.
+          </p>
+        </div>
+
+        <div className="flex gap-2 mt-6">
+          <button type="button" className="btn btn-ghost flex-1 justify-center" onClick={onClose}>إلغاء</button>
+          <button type="button" className="btn btn-gold flex-1 justify-center" disabled={!ready}
+            style={!ready ? { opacity: .5, cursor: "not-allowed" } : undefined}
+            onClick={() => onSubmit(d)}>حفظ</button>
+        </div>
+        {!ready && <p className="text-xs text-late mt-3 text-center">اسم المالك مطلوب لتفعيل الحفظ.</p>}
       </div>
     </div>
   );
