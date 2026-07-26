@@ -4,9 +4,10 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase-client";
 import { sar, waLink, today } from "@/lib/utils";
-import { contractState, buildSchedule, FREQUENCIES, freqLabel, freqShort, derivedEndDate, renewContract, needsRenewal, applyPayment, splitVat, isCommercial, type Frequency } from "@/lib/contracts";
+import { contractState, buildSchedule, FREQUENCIES, freqLabel, freqShort, derivedEndDate, renewContract, needsRenewal, applyPayment, splitVat, isCommercial, isVacant, settleDeposit,
+  vacancyDays, TURNOVER_CHECKLIST, type Frequency } from "@/lib/contracts";
 import { PROPERTY_TYPES, typeLabel, unitLabel, typeIcon } from "@/lib/domain";
-import { statementHTML, invoiceHTML, propertyStatementHTML, openDoc } from "@/lib/documents";
+import { statementHTML, invoiceHTML, propertyStatementHTML, moveOutSettlementHTML, openDoc } from "@/lib/documents";
 
 /** تحويل كل دورة إلى مكافئ شهري لحساب الدخل التقريبي */
 const PERIODS_PER_MONTH: Record<Frequency, number> = {
@@ -19,6 +20,12 @@ type Tenant = {
   payment_frequency: string | null; paid_periods: number | null; contract_periods: number | null;
   partial_amount?: number | null;
   litigation?: boolean | null; enforcement_no?: string | null; enforcement_order?: string | null;
+  billing_anchor_day?: number | null;
+  status?: string | null; notice_date?: string | null; move_out_date?: string | null;
+  deposit_amount?: number | null; deposit_deductions?: number | null; deposit_notes?: string | null;
+  meter_elec_in?: string | null; meter_elec_out?: string | null;
+  meter_water_in?: string | null; meter_water_out?: string | null;
+  turnover_checklist?: { label: string; done?: boolean; note?: string | null }[] | null;
 };
 type Note = { id: string; note_date: string; text: string };
 type Property = {
@@ -30,10 +37,11 @@ type Property = {
 };
 
 /** حالة الصف المعروضة (تشمل «في التنفيذ») */
-type RowKey = "litigation" | "late" | "partial" | "soon" | "expiring" | "ok";
+type RowKey = "vacant" | "litigation" | "late" | "partial" | "soon" | "expiring" | "ok";
 type Row = { t: Tenant; st: ReturnType<typeof contractState>; key: RowKey };
 
 const ROW_META: Record<RowKey, { label: string; dot: string; cls: string }> = {
+  vacant:     { label: "شاغرة",        dot: "bg-[#94A3B8]", cls: "bg-[#F1F5F9] text-[#475569]" },
   litigation: { label: "في التنفيذ",  dot: "bg-[#64748B]", cls: "bg-[#EEF1F4] text-[#475569]" },
   late:       { label: "متأخر",        dot: "bg-late",      cls: "bg-[#FBE9E7] text-[#a5322c]" },
   partial:    { label: "سداد جزئي",    dot: "bg-[#EA8C00]", cls: "bg-[#FDF0DC] text-[#9A5B00]" },
@@ -43,6 +51,7 @@ const ROW_META: Record<RowKey, { label: string; dot: string; cls: string }> = {
 };
 
 function rowKey(t: Tenant, st: ReturnType<typeof contractState>): RowKey {
+  if (isVacant(t)) return "vacant";
   if (t.litigation) return "litigation";
   if (st.status === "late") return st.hasPartial ? "partial" : "late";
   if (st.status === "soon") return "soon";
@@ -50,7 +59,7 @@ function rowKey(t: Tenant, st: ReturnType<typeof contractState>): RowKey {
   return "ok";
 }
 
-const URGENCY: Record<RowKey, number> = { late: 0, partial: 1, soon: 2, expiring: 3, litigation: 4, ok: 5 };
+const URGENCY: Record<RowKey, number> = { late: 0, partial: 1, soon: 2, expiring: 3, litigation: 4, vacant: 5, ok: 6 };
 
 export default function PropertyView({ initial, orgName, issuer }: { initial: Property[]; orgName: string; issuer?: any }) {
   const supabase = createClient();
@@ -72,6 +81,7 @@ export default function PropertyView({ initial, orgName, issuer }: { initial: Pr
   const [renewing, setRenewing] = useState<Tenant | null>(null);
   const [enforcing, setEnforcing] = useState<Tenant | null>(null);
   const [paying, setPaying] = useState<Tenant | null>(null);
+  const [turnover, setTurnover] = useState<Tenant | null>(null);
 
   // ---------- أدوات العرض: بحث / تصفية / فرز / إشعار ----------
   const [q, setQ] = useState("");
@@ -157,6 +167,45 @@ export default function PropertyView({ initial, orgName, issuer }: { initial: Pr
       : `سُجّل ${sar(amt)} ريال كسداد جزئي`);
   }
 
+  /** تسجيل الإخلاء: تتحوّل الوحدة إلى «شاغرة» ويُوثَّق التسليم */
+  async function saveTurnover(t: Tenant, d: any) {
+    if (!active) return;
+    const patch = {
+      status: "vacated",
+      notice_date: d.notice_date || null,
+      move_out_date: d.move_out_date || today(),
+      deposit_amount: Number(d.deposit_amount) || 0,
+      deposit_deductions: Number(d.deposit_deductions) || 0,
+      deposit_notes: (d.deposit_notes || "").trim() || null,
+      meter_elec_out: (d.meter_elec_out || "").trim() || null,
+      meter_water_out: (d.meter_water_out || "").trim() || null,
+      turnover_checklist: d.checklist || [],
+    };
+    await patchTenant(t.id, patch);
+    // توثيق في سجل العقار حتى لا يضيع تاريخ المستأجر السابق
+    await supabase.from("property_notes").insert({
+      property_id: active.id, note_date: today(),
+      text: `إخلاء ${unitLabel(active.property_type)} ${t.unit || "—"} — ${t.name} بتاريخ ${patch.move_out_date}` +
+            (patch.deposit_amount ? ` · تأمين ${sar(patch.deposit_amount)} ريال` : "") +
+            (patch.deposit_deductions ? ` · خصومات ${sar(patch.deposit_deductions)} ريال` : ""),
+    });
+    setTurnover(null);
+    notify("ok", "سُجّل الإخلاء — الوحدة صارت شاغرة.");
+    router.refresh();
+  }
+
+  /** إعادة التأجير: تُفتح نافذة الوحدة ببيانات جديدة */
+  function reLet(t: Tenant) {
+    setModal({ kind: "tenant", id: t.id });
+    notify("ok", "أدخل بيانات المستأجر الجديد — ستعود الوحدة مؤجّرة عند الحفظ.");
+  }
+
+  /** مخالصة الإخلاء (مستند) */
+  function openSettlement(t: Tenant) {
+    if (!active) return;
+    openDoc(moveOutSettlementHTML(t as any, active as any, issuer || {}));
+  }
+
   /** يفتح سجل دفعات مستأجر معيّن */
   async function openHistory(t: Tenant) {
     const { data, error } = await supabase.from("payments")
@@ -208,12 +257,21 @@ export default function PropertyView({ initial, orgName, issuer }: { initial: Pr
       payment_frequency: freq,
       contract_periods: periods,
       contract_end: d.contract_start ? derivedEndDate(d.contract_start, freq, periods) : null,
+      billing_anchor_day: d.contract_start ? new Date(d.contract_start).getDate() : null,
     };
     if (id) {
-      const { error } = await supabase.from("tenants").update(payload).eq("id", id);
+      // إن كانت الوحدة شاغرة فهذا تأجير جديد: تُصفَّر عدّادات المدة السابقة
+      const prev = active.tenants.find((x) => x.id === id);
+      const reletting = prev && isVacant(prev);
+      const full: any = reletting
+        ? { ...payload, status: "active", paid_periods: 0, partial_amount: 0,
+            notice_date: null, move_out_date: null, deposit_deductions: 0,
+            meter_elec_out: null, meter_water_out: null, turnover_checklist: [] }
+        : payload;
+      const { error } = await supabase.from("tenants").update(full).eq("id", id);
       if (error) { console.error("Watheq save error:", error); return notify("err", error.message); }
       setItems(items.map((p) => p.id === active.id
-        ? { ...p, tenants: p.tenants.map((t) => (t.id === id ? { ...t, ...payload } as Tenant : t)) } : p));
+        ? { ...p, tenants: p.tenants.map((t) => (t.id === id ? { ...t, ...full } as Tenant : t)) } : p));
     } else {
       const { data, error } = await supabase.from("tenants").insert({ ...payload, paid_periods: 0 }).select("*").single();
       if (error) { console.error("Watheq save error:", error); return notify("err", error.message); }
@@ -456,6 +514,7 @@ export default function PropertyView({ initial, orgName, issuer }: { initial: Pr
     { k: "soon", label: `قريب ${counts.soon || 0}` },
     { k: "expiring", label: `تجديد ${counts.expiring || 0}` },
     { k: "litigation", label: `تنفيذ ${counts.litigation || 0}` },
+    { k: "vacant", label: `شاغرة ${counts.vacant || 0}` },
   ];
 
   return (
@@ -582,7 +641,10 @@ export default function PropertyView({ initial, orgName, issuer }: { initial: Pr
                   <div className="text-right sm:text-left shrink-0">
                     <StatusPill k={key} />
                     <div className="text-xs mt-1 tabular-nums">
-                      {st.inGrace ? <span className="text-[#8a5a11] font-semibold">فترة سماح — {st.graceDaysLeft} يوم</span>
+                      {key === "vacant" ? (() => { const v = vacancyDays(t.move_out_date); return (
+                          <span className="text-[#475569] font-semibold">شاغرة{v !== null ? ` منذ ${v} يوم` : ""}</span>
+                        ); })()
+                        : st.inGrace ? <span className="text-[#8a5a11] font-semibold">فترة سماح — {st.graceDaysLeft} يوم</span>
                         : key === "partial" ? <span className="text-[#9A5B00] font-semibold">دُفع {sar(st.partial)} · متبقٍ {sar(st.amountDue)}</span>
                         : key === "late" ? <span className="text-late font-bold">متأخر {sar(st.amountDue)}</span>
                         : key === "expiring" && st.daysToEnd !== null ? <span className="text-[#5B21B6] font-semibold">ينتهي بعد {st.daysToEnd} يوم</span>
@@ -594,7 +656,13 @@ export default function PropertyView({ initial, orgName, issuer }: { initial: Pr
 
                 {/* إجراء رئيسي + قائمة المزيد */}
                 <div className="flex flex-wrap gap-1.5 justify-stretch sm:justify-end mt-2.5 items-center [&>*]:flex-1 sm:[&>*]:flex-none [&>*]:justify-center">
-                  {key === "litigation" ? (
+                  {key === "vacant" ? (
+                    <>
+                      <button type="button" className="btn btn-primary text-xs" onClick={() => reLet(t)}>🔑 تأجير جديد</button>
+                      <button type="button" className="btn btn-ghost text-xs" onClick={() => openSettlement(t)}>📄 مخالصة الإخلاء</button>
+                      <button type="button" className="btn btn-ghost text-xs" onClick={() => setTurnover(t)}>تعديل بيانات الإخلاء</button>
+                    </>
+                  ) : key === "litigation" ? (
                     <>
                       <button className="btn btn-ghost text-xs" onClick={() => setEnforcing(t)}>متابعة التنفيذ</button>
                       <button className="btn btn-ghost text-xs" onClick={() => { if (confirm("إلغاء رفع العقد للتنفيذ؟ ستعود الإشعارات الودية.")) patchTenant(t.id, { litigation: false }); }}>إلغاء الرفع</button>
@@ -617,6 +685,7 @@ export default function PropertyView({ initial, orgName, issuer }: { initial: Pr
                       { label: "🧾 كشف حساب", run: () => openStatement(t) },
                       ...((t.paid_periods || 0) > 0 ? [{ label: "↩︎ تراجع عن دفعة", run: () => patchTenant(t.id, { paid_periods: Math.max(0, (t.paid_periods || 0) - 1) }) }] : []),
                       ...(!t.litigation && st.unpaid > 0 ? [{ label: "⚖️ رفع للتنفيذ", run: () => setEnforcing(t) }] : []),
+                      ...(!isVacant(t) ? [{ label: "🔑 إنهاء العقد وإخلاء", run: () => setTurnover(t) }] : []),
                       { label: "✎ تعديل البيانات", run: () => setModal({ kind: "tenant", id: t.id }) },
                       { label: "🗑 حذف", run: () => deleteTenant(t.id), danger: true },
                     ]}
@@ -659,6 +728,8 @@ export default function PropertyView({ initial, orgName, issuer }: { initial: Pr
         onSubmit={(no, order) => { patchTenant(enforcing.id, { litigation: true, enforcement_no: no || null, enforcement_order: order || null }); setEnforcing(null); }} />}
       {paying && <PaymentModal tenant={paying} unitWord={ul} onClose={() => setPaying(null)}
         onSubmit={(amt, method, note) => { recordPayment(paying, amt, method, note); setPaying(null); }} />}
+      {turnover && <TurnoverModal tenant={turnover} unitWord={ul} onClose={() => setTurnover(null)}
+        onSubmit={(d) => saveTurnover(turnover, d)} />}
       {history && <HistoryModal data={history} unitWord={ul} onClose={() => setHistory(null)} />}
       {doc && <DocModal doc={doc} onClose={() => setDoc(null)} />}
     </div>
@@ -770,6 +841,115 @@ function PaymentModal({ tenant, unitWord, onClose, onSubmit }: {
       <div className="flex gap-2 mt-5">
         <button type="button" className="btn btn-ghost flex-1 justify-center" onClick={onClose}>إلغاء</button>
         <button type="button" className="btn btn-gold flex-1 justify-center" disabled={!amt} onClick={() => onSubmit(amt, method, note.trim() || undefined)}>تسجيل</button>
+      </div>
+    </Shell>
+  );
+}
+
+/** إنهاء العقد والإخلاء — قائمة تحقّق وتسوية تأمين وقراءات عدادات */
+function TurnoverModal({ tenant, unitWord, onClose, onSubmit }: {
+  tenant: Tenant; unitWord: string; onClose: () => void; onSubmit: (d: any) => void;
+}) {
+  const [d, setD] = useState<any>({
+    notice_date: tenant.notice_date || "",
+    move_out_date: tenant.move_out_date || today(),
+    deposit_amount: tenant.deposit_amount ?? "",
+    deposit_deductions: tenant.deposit_deductions ?? "",
+    deposit_notes: tenant.deposit_notes || "",
+    meter_elec_out: tenant.meter_elec_out || "",
+    meter_water_out: tenant.meter_water_out || "",
+  });
+  const [list, setList] = useState(
+    Array.isArray(tenant.turnover_checklist) && tenant.turnover_checklist.length
+      ? tenant.turnover_checklist.map((x) => ({ label: x.label, done: !!x.done, note: x.note || "" }))
+      : TURNOVER_CHECKLIST.map((x) => ({ ...x, note: "" }))
+  );
+  const set = (k: string, v: any) => setD({ ...d, [k]: v });
+  const st = contractState(tenant as any, {});
+  const s = settleDeposit(
+    { deposit_amount: Number(d.deposit_amount) || 0, deposit_deductions: Number(d.deposit_deductions) || 0 },
+    st.amountDue
+  );
+  const doneCount = list.filter((x) => x.done).length;
+
+  return (
+    <Shell onClose={onClose} wide>
+      <h3 className="font-display font-bold text-deep text-xl mb-1">إنهاء العقد وإخلاء {unitWord}</h3>
+      <p className="text-sm text-muted mb-4">{tenant.name} · {unitWord} {tenant.unit || "—"}</p>
+
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="تاريخ الإشعار" hint="اختياري">
+          <input className="fld" type="date" value={d.notice_date} onChange={(e) => set("notice_date", e.target.value)} />
+        </Field>
+        <Field label="تاريخ الإخلاء الفعلي">
+          <input className="fld" type="date" value={d.move_out_date} onChange={(e) => set("move_out_date", e.target.value)} />
+        </Field>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3 mt-3">
+        <Field label="قراءة عدّاد الكهرباء">
+          <input className="fld" value={d.meter_elec_out} onChange={(e) => set("meter_elec_out", e.target.value)} placeholder="الرقم عند الإخلاء" />
+        </Field>
+        <Field label="قراءة عدّاد المياه">
+          <input className="fld" value={d.meter_water_out} onChange={(e) => set("meter_water_out", e.target.value)} placeholder="الرقم عند الإخلاء" />
+        </Field>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3 mt-3">
+        <Field label="مبلغ التأمين المستلم (ريال)">
+          <input className="fld" type="number" min={0} value={d.deposit_amount} onChange={(e) => set("deposit_amount", e.target.value)} />
+        </Field>
+        <Field label="خصم التلفيات (ريال)">
+          <input className="fld" type="number" min={0} value={d.deposit_deductions} onChange={(e) => set("deposit_deductions", e.target.value)} />
+        </Field>
+      </div>
+      <div className="mt-3">
+        <Field label="تفصيل الخصومات" hint="اختياري">
+          <input className="fld" value={d.deposit_notes} onChange={(e) => set("deposit_notes", e.target.value)} placeholder="مثال: إصلاح باب + دهان غرفة" />
+        </Field>
+      </div>
+
+      {/* التسوية المحسوبة */}
+      <div className={`rounded-xl p-3 mt-4 text-sm border ${s.refund > 0 ? "bg-[#E6F4EC] border-[#B7DFC7] text-[#137a50]" : "bg-[#FBE9E7] border-[#F5C6C2] text-[#a5322c]"}`}>
+        <div className="font-semibold mb-1.5">تسوية التأمين</div>
+        <div className="text-xs leading-relaxed space-y-0.5">
+          <div>التأمين: <b className="tabular-nums">{sar(s.deposit)}</b> ريال</div>
+          <div>يُخصم إيجار متأخر: <b className="tabular-nums">{sar(s.outstanding)}</b> ريال</div>
+          <div>يُخصم تلفيات: <b className="tabular-nums">{sar(s.deductions)}</b> ريال</div>
+          <div className="pt-1 font-semibold">
+            {s.refund > 0
+              ? <>يُردّ للمستأجر: <b className="tabular-nums">{sar(s.refund)}</b> ريال</>
+              : <>يبقى على المستأجر: <b className="tabular-nums">{sar(s.dueFromTenant)}</b> ريال</>}
+          </div>
+        </div>
+      </div>
+
+      {/* قائمة التحقّق */}
+      <div className="mt-4">
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-sm font-semibold">قائمة تحقّق التسليم</span>
+          <span className="text-xs text-muted">{doneCount} من {list.length}</span>
+        </div>
+        <div className="border border-line rounded-xl divide-y divide-line max-h-[34vh] overflow-y-auto">
+          {list.map((x, i) => (
+            <label key={i} className="flex items-center gap-2.5 p-2.5 cursor-pointer hover:bg-paper">
+              <input type="checkbox" className="w-4 h-4 accent-[#1E9E6A] shrink-0" checked={x.done}
+                onChange={(e) => setList(list.map((y, n) => (n === i ? { ...y, done: e.target.checked } : y)))} />
+              <span className={`text-sm flex-1 ${x.done ? "text-muted line-through" : ""}`}>{x.label}</span>
+            </label>
+          ))}
+        </div>
+      </div>
+
+      <p className="text-xs text-muted mt-3 leading-relaxed">
+        عند الحفظ تتحوّل الوحدة إلى <b>شاغرة</b>، وتتوقّف عن تراكم المتأخرات من تاريخ الإخلاء،
+        ويُسجَّل ملخّص العملية في سجل العقار.
+      </p>
+
+      <div className="flex gap-2 mt-5">
+        <button type="button" className="btn btn-ghost flex-1 justify-center" onClick={onClose}>إلغاء</button>
+        <button type="button" className="btn btn-gold flex-1 justify-center"
+          onClick={() => onSubmit({ ...d, checklist: list })}>تسجيل الإخلاء</button>
       </div>
     </Shell>
   );
