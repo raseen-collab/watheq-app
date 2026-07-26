@@ -5,7 +5,7 @@
  *  ============================================================ */
 
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { contractState, renewContract as renewFields, freqShort, type Frequency } from "@/lib/contracts";
+import { contractState, renewContract as renewFields, freqShort, applyPayment, type Frequency } from "@/lib/contracts";
 import { deriveState, STATE_ORDER, stateMeta, stateLabel, type StateKey } from "./contract-state";
 
 type DB = SupabaseClient<any, any, any>;
@@ -251,17 +251,63 @@ export async function contractCard(db: DB, profile: any, tenantId: string): Prom
 
 // ======================= الأفعال (كتابة) =======================
 
-/** تسجيل دفعة = رفع paid_periods (نفس زرّ «سجّل دفعة» في اللوحة) + تحديث المحصّل */
-async function recordPayment(db: DB, profile: any, tenantId: string): Promise<{ ok: boolean; msg: string }> {
+/** يسجّل الدفعة في جدول payments (نفس سجل اللوحة) — الفشل هنا لا يعطّل السداد */
+async function logPayment(db: DB, profile: any, row: Record<string, any>) {
+  const { error } = await db.from("payments").insert({
+    user_id: profile.id, paid_on: todayISO(), method: "other", note: "سُجّلت عبر بوت تليجرام", ...row,
+  });
+  if (error) console.error("Watheq bot payment log error:", error);
+}
+
+/** تسجيل دفعة كاملة لمستأجر — يحترم السداد الجزئي تمامًا كاللوحة */
+async function payTenant(db: DB, profile: any, tenantId: string): Promise<{ ok: boolean; msg: string }> {
   const { data: t } = await db.from("tenants").select("*").eq("id", tenantId).maybeSingle();
   if (!t) return { ok: false, msg: "العقد غير موجود." };
   const { data: prop } = await db.from("properties").select("id,user_id,collected").eq("id", t.property_id).maybeSingle();
   if (!prop || String(prop.user_id) !== String(profile.id)) return { ok: false, msg: "غير مصرّح." };
+
   const rent = Number(t.rent_amount) || 0;
-  const { error } = await db.from("tenants").update({ paid_periods: (Number(t.paid_periods) || 0) + 1 }).eq("id", tenantId);
+  if (rent <= 0) return { ok: false, msg: "قيمة الدفعة غير محدّدة لهذا العقد." };
+
+  // نفس منطق اللوحة: يضمّ المدفوع جزئيًّا إلى المبلغ الجديد
+  const r = applyPayment(t, rent);
+  const { error } = await db.from("tenants")
+    .update({ paid_periods: r.paid_periods, partial_amount: r.partial_amount }).eq("id", tenantId);
   if (error) return { ok: false, msg: "تعذّر الحفظ: " + error.message };
+
   await db.from("properties").update({ collected: (Number(prop.collected) || 0) + rent }).eq("id", prop.id);
-  return { ok: true, msg: `سُجّلت دفعة (${sar(rent)} ﷼).` };
+  await logPayment(db, profile, { tenant_id: tenantId, property_id: prop.id, amount: rent, periods_covered: r.completed });
+  return { ok: true, msg: `سُجّلت دفعة (${sar(rent)} ﷼)${r.completed > 1 ? ` — اكتملت ${r.completed} دفعات` : ""}.` };
+}
+
+/** تسجيل اشتراك شهر واحد لمالك في جمعية — يحترم السداد الجزئي */
+async function payOwner(db: DB, profile: any, ownerId: string): Promise<{ ok: boolean; msg: string }> {
+  const { data: o } = await db.from("owners").select("*").eq("id", ownerId).maybeSingle();
+  if (!o) return { ok: false, msg: "المالك غير موجود." };
+  const { data: assoc } = await db.from("associations").select("id,user_id,fee").eq("id", o.association_id).maybeSingle();
+  if (!assoc || String(assoc.user_id) !== String(profile.id)) return { ok: false, msg: "غير مصرّح." };
+
+  const fee = Number(assoc.fee) || 0;
+  if (fee <= 0) return { ok: false, msg: "قيمة الاشتراك غير محدّدة لهذه الجمعية." };
+
+  const pool = (Number(o.partial_amount) || 0) + fee;
+  const months = Math.floor(pool / fee);
+  const rest = +(pool - months * fee).toFixed(2);
+  const newLate = Math.max(0, (Number(o.months_late) || 0) - months);
+
+  const { error } = await db.from("owners")
+    .update({ months_late: newLate, partial_amount: rest, ...(months > 0 ? { last_paid: todayISO() } : {}) })
+    .eq("id", ownerId);
+  if (error) return { ok: false, msg: "تعذّر الحفظ: " + error.message };
+
+  await logPayment(db, profile, { owner_id: ownerId, association_id: assoc.id, amount: fee, periods_covered: months });
+  return { ok: true, msg: `سُجّل اشتراك (${sar(fee)} ﷼) — سُدّد ${months} شهر.` };
+}
+
+/** موجّه واحد: يختار المسار الصحيح تلقائيًّا (كان يفشل للجمعيات) */
+async function recordPayment(db: DB, profile: any, id: string): Promise<{ ok: boolean; msg: string }> {
+  const track = await detectTrack(db, profile);
+  return track === "properties" ? payTenant(db, profile, id) : payOwner(db, profile, id);
 }
 export const markPaid = (db: DB, profile: any, id: string) => recordPayment(db, profile, id);
 export const payTenantOldest = (db: DB, profile: any, tenantId: string) => recordPayment(db, profile, tenantId);
@@ -289,50 +335,112 @@ export async function buildNotice(db: DB, profile: any, tenantId: string, kind: 
   try {
     const { data: t } = await db.from("tenants").select("*").eq("id", tenantId).maybeSingle();
     if (!t) return { ok: false, text: "العقد غير موجود." };
-    const { data: prop } = await db.from("properties").select("id,user_id").eq("id", t.property_id).maybeSingle();
+    const { data: prop } = await db.from("properties")
+      .select("id,user_id,name,manager,grace_days").eq("id", t.property_id).maybeSingle();
     if (!prop || String(prop.user_id) !== String(profile.id)) return { ok: false, text: "غير مصرّح." };
     if (!t.phone) return { ok: false, text: `لا يوجد رقم جوال مسجّل لـ ${esc(t.name || "المستأجر")}.` };
-    const st = contractState(t);
-    const unit = t.unit ? `وحدة ${t.unit}` : "العقار";
+
+    const st = contractState(t, { graceDays: Number(prop.grace_days) || 0 });
+    const unit = t.unit ? `الوحدة (${t.unit})` : "الوحدة";
+    const who = prop.manager || profile.org_name || "إدارة الأملاك";
     const digits = normalizeSaudi(t.phone);
     let msg: string, title: string;
+
     if (kind === "claim") {
-      title = "مطالبة رسمية";
-      msg = `السلام عليكم ${t.name || ""}،\nنفيدكم بوجود مبلغ متأخر${st.amountDue ? ` قدره ${sar(st.amountDue)} ﷼` : ""} (${st.unpaid} دفعة) عن إيجار «${unit}». نأمل سرعة السداد تفاديًا للإجراءات النظامية.\nإدارة وثيق`;
+      title = "مطالبة بالسداد";
+      const L = [
+        `السلام عليكم ورحمة الله، ${t.name || ""}`,
+        "",
+        `نفيدكم بوجود مستحقّات غير مسدَّدة عن ${unit} بعقار ${prop.name || ""}:`,
+        `• عدد الدفعات المتأخرة: ${st.unpaid}`,
+        st.hasPartial ? `• المسدَّد جزئيًّا: ${sar(st.partial)} ﷼` : "",
+        `• المبلغ المتبقّي: ${sar(st.amountDue)} ﷼`,
+        "",
+        "نأمل المبادرة بالسداد خلال (5) أيام بالوسيلة المتفق عليها في العقد.",
+        "وفي حال عدم السداد، سيتّخذ المؤجّر الإجراءات النظامية، ومنها إنذار رسمي عبر منصة «إيجار» ثم طلب تنفيذ عبر «ناجز».",
+        "",
+        "شاكرين لكم تعاونكم،",
+        who,
+      ].filter(Boolean);
+      msg = L.join("\n");
     } else {
       title = "إشعار عدم تجديد";
-      msg = `السلام عليكم ${t.name || ""}،\nنفيدكم برغبتنا بعدم تجديد عقد إيجار «${unit}»${st.endDate ? ` المنتهي بتاريخ ${st.endDate}` : ""}. شاكرين لكم حسن التعامل.\nإدارة وثيق`;
+      msg = [
+        `السلام عليكم ورحمة الله، ${t.name || ""}`,
+        "",
+        `نفيدكم برغبتنا بعدم تجديد عقد إيجار ${unit} بعقار ${prop.name || ""}${st.endDate ? `، المنتهي بتاريخ ${st.endDate}` : ""}.`,
+        "ونأمل ترتيب الإخلاء وتسوية أي مستحقّات قبل ذلك التاريخ.",
+        "",
+        "شاكرين لكم حسن التعامل،",
+        who,
+      ].join("\n");
     }
+
     const url = `https://wa.me/${digits}?text=${encodeURIComponent(msg)}`;
-    return { ok: true, text: `جاهز لإرسال <b>${title}</b> إلى <b>${esc(t.name || "المستأجر")}</b> — ${esc(unit)}:`, url };
+    return { ok: true, text: `جاهز لإرسال <b>${title}</b> إلى <b>${esc(t.name || "المستأجر")}</b> — ${esc(unit)}:\n<i>خطاب إداري ودّي؛ الإنذار النظامي يُرسل عبر «إيجار».</i>`, url };
   } catch (e: any) { return { ok: false, text: "تعذّر تجهيز الإشعار: " + e.message }; }
 }
 
-/** تذكير ودّي عبر واتساب */
+/** تذكير ودّي عبر واتساب — يوضّح تفاصيل المطالبة وتاريخها */
 export async function buildReminder(db: DB, profile: any, contractId: string): Promise<{ ok: boolean; text: string; url?: string }> {
   try {
     const track = await detectTrack(db, profile);
-    let name = "", phone = "", unit = "", extra = "";
+    let name = "", phone = "", unit = "", who = "", lines: string[] = [];
+
     if (track === "properties") {
       const { data: t } = await db.from("tenants").select("*").eq("id", contractId).maybeSingle();
       if (!t) return { ok: false, text: "المستأجر غير موجود." };
-      const { data: prop } = await db.from("properties").select("id,user_id").eq("id", t.property_id).maybeSingle();
+      const { data: prop } = await db.from("properties")
+        .select("id,user_id,name,manager,grace_days").eq("id", t.property_id).maybeSingle();
       if (!prop || String(prop.user_id) !== String(profile.id)) return { ok: false, text: "غير مصرّح." };
-      const st = contractState(t);
-      name = t.name || "المستأجر"; phone = t.phone || ""; unit = t.unit ? `وحدة ${t.unit}` : "";
-      extra = st.amountDue ? ` بمبلغ ${sar(st.amountDue)} ﷼` : (st.nextDueDate ? ` بتاريخ ${st.nextDueDate}` : "");
+      const st = contractState(t, { graceDays: Number(prop.grace_days) || 0 });
+      name = t.name || "المستأجر"; phone = t.phone || "";
+      unit = t.unit ? `الوحدة (${t.unit})` : "الوحدة";
+      who = prop.manager || profile.org_name || "إدارة الأملاك";
+      if (st.unpaid === 0) {
+        lines = [`تذكير ودّي بأن الدفعة القادمة عن ${unit} بعقار ${prop.name || ""} تستحق بتاريخ ${st.nextDueDate}.`];
+      } else {
+        lines = [
+          `نودّ تذكيركم بوجود مستحقّات عن ${unit} بعقار ${prop.name || ""}:`,
+          `• الدفعات المتأخرة: ${st.unpaid}`,
+          st.hasPartial ? `• المسدَّد جزئيًّا: ${sar(st.partial)} ﷼` : "",
+          `• المبلغ المتبقّي: ${sar(st.amountDue)} ﷼`,
+        ].filter(Boolean);
+      }
     } else {
       const { data: o } = await db.from("owners").select("*").eq("id", contractId).maybeSingle();
       if (!o) return { ok: false, text: "المالك غير موجود." };
-      const { data: assoc } = await db.from("associations").select("id,user_id").eq("id", o.association_id).maybeSingle();
+      const { data: assoc } = await db.from("associations")
+        .select("id,user_id,name,fee").eq("id", o.association_id).maybeSingle();
       if (!assoc || String(assoc.user_id) !== String(profile.id)) return { ok: false, text: "غير مصرّح." };
-      name = o.name || "المالك"; phone = o.phone || ""; unit = o.unit ? `وحدة ${o.unit}` : "";
+      const fee = Number(assoc.fee) || 0;
+      const partial = Number(o.partial_amount) || 0;
+      const due = Math.max(0, (Number(o.months_late) || 0) * fee - partial);
+      name = o.name || "المالك"; phone = o.phone || "";
+      unit = o.unit ? `الوحدة (${o.unit})` : "وحدتكم";
+      who = `إدارة ${assoc.name || "الجمعية"}`;
+      lines = (Number(o.months_late) || 0) > 0
+        ? [
+            `نودّ تذكيركم بأن اشتراك الصيانة عن ${unit} لا يزال غير مسدَّد:`,
+            `• الفترات المتأخرة: ${o.months_late}`,
+            partial > 0 ? `• المسدَّد جزئيًّا: ${sar(partial)} ﷼` : "",
+            `• المبلغ المتبقّي: ${sar(due)} ﷼`,
+            "",
+            "ويُسدَّد المبلغ في الحساب البنكي للجمعية.",
+          ].filter(Boolean)
+        : [`تذكير ودّي بأن اشتراك الصيانة عن ${unit}${fee ? ` وقدره ${sar(fee)} ﷼` : ""} أصبح مستحقًّا.`];
     }
+
     if (!phone) return { ok: false, text: `لا يوجد رقم جوال مسجّل لـ ${esc(name)}.` };
     const digits = normalizeSaudi(phone);
-    const msg = `السلام عليكم ${name}،\nتذكير ودّي بسداد المستحق${unit ? " «" + unit + "»" : ""}${extra}. شاكرين لكم تعاونكم.`;
+    const msg = [
+      `السلام عليكم ورحمة الله، ${name}`, "",
+      ...lines, "",
+      "فإن كان السداد قد تم فنعتذر عن التذكير، ونرجو تزويدنا بما يفيد.",
+      "", "شاكرين لكم حسن تعاونكم،", who,
+    ].join("\n");
     const url = `https://wa.me/${digits}?text=${encodeURIComponent(msg)}`;
-    return { ok: true, text: `جاهز لتذكير <b>${esc(name)}</b>${unit ? " — " + esc(unit) : ""} عبر واتساب:`, url };
+    return { ok: true, text: `جاهز لتذكير <b>${esc(name)}</b> — ${esc(unit)} عبر واتساب:`, url };
   } catch (e: any) { return { ok: false, text: "تعذّر تجهيز التذكير: " + e.message }; }
 }
 
