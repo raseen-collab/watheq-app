@@ -67,6 +67,7 @@ export default function PropertyView({ initial, orgName, issuer }: { initial: Pr
   const [activeId, setActiveId] = useState<string | null>(initial[0]?.id || null);
   const [modal, setModal] = useState<null | { kind: "newProp" | "editProp" | "tenant"; id?: string }>(null);
   const [doc, setDoc] = useState<null | { title: string; body: string }>(null);
+  const [history, setHistory] = useState<null | { tenant: Tenant; rows: any[] }>(null);
   const [schedule, setSchedule] = useState<Tenant | null>(null);
   const [renewing, setRenewing] = useState<Tenant | null>(null);
   const [enforcing, setEnforcing] = useState<Tenant | null>(null);
@@ -126,14 +127,34 @@ export default function PropertyView({ initial, orgName, issuer }: { initial: Pr
   }
 
   /** تسجيل مبلغ مستلم — يحوّل الجزئي إلى دفعات كاملة تلقائيًّا */
-  async function recordPayment(t: Tenant, amount: number) {
+  async function recordPayment(t: Tenant, amount: number, method = "transfer", note?: string) {
     const amt = Math.max(0, Number(amount) || 0);
-    if (!amt) return;
+    if (!amt || !active) return;
     const r = applyPayment(t, amt);
     await patchTenant(t.id, { paid_periods: r.paid_periods, partial_amount: r.partial_amount }, amt);
+
+    // سجل الدفعة — يحفظ التاريخ والمبلغ والطريقة للإثبات لاحقًا
+    const uid = await currentUserId();
+    if (uid) {
+      const { error } = await supabase.from("payments").insert({
+        user_id: uid, tenant_id: t.id, property_id: active.id,
+        paid_on: today(), amount: amt, method,
+        periods_covered: r.completed, note: note || null,
+      });
+      if (error) console.error("Watheq payment log error:", error);
+    }
+
     notify("ok", r.completed > 0
       ? `سُجّل ${sar(amt)} ريال — اكتملت ${r.completed} دفعة`
       : `سُجّل ${sar(amt)} ريال كسداد جزئي`);
+  }
+
+  /** يفتح سجل دفعات مستأجر معيّن */
+  async function openHistory(t: Tenant) {
+    const { data, error } = await supabase.from("payments")
+      .select("*").eq("tenant_id", t.id).order("paid_on", { ascending: false }).limit(200);
+    if (error) { console.error("Watheq history error:", error); return notify("err", error.message); }
+    setHistory({ tenant: t, rows: data || [] });
   }
   async function saveProperty(d: any, id?: string) {
     const payload = {
@@ -277,39 +298,82 @@ export default function PropertyView({ initial, orgName, issuer }: { initial: Pr
     openDoc(invoiceHTML(t as any, active as any, { invoice_no: invoiceNo, amount, due_date: dueDate, period_label: period }, issuer || {}));
   }
 
+  /** تذكير ودّي — يوضّح تفاصيل المطالبة وتاريخ استحقاقها */
   function remindLink(t: Tenant) {
     if (!active) return "#";
     const st = contractState(t, { graceDays: Number(active?.grace_days) || 0 });
     const who = active.manager || orgName || "إدارة الأملاك";
     const ul = unitLabel(active.property_type);
-    const msg = st.unpaid === 0
-      ? `مساء الخير ${t.name}\nتذكير ودّي: تستحق دفعة إيجار ${ul} (${t.unit || "—"}) بعقار ${active.name}${t.rent_amount ? ` وقدرها ${sar(t.rent_amount)} ريال` : ""} بتاريخ ${st.nextDueDate}. شكرًا لتعاونكم.\n— ${who}`
-      : `تحية طيبة ${t.name}،\nنفيدكم بوجود ${st.unpaid} دفعة متأخرة${st.amountDue ? ` بمبلغ ${sar(st.amountDue)} ريال` : ""} عن ${ul} (${t.unit || "—"}) بعقار ${active.name}. نأمل المبادرة بالسداد.\n— ${who}`;
-    return waLink(t.phone, msg);
+    const unit = `${ul} (${t.unit || "—"})`;
+    const v = { enabled: !!active.vat_enabled, rate: Number(active.vat_rate) || 15, inclusive: active.vat_inclusive !== false };
+    const one = splitVat(Number(t.rent_amount) || 0, v);
+
+    const L: string[] = [`السلام عليكم ورحمة الله، ${t.name} 🌿`, ""];
+
+    if (st.unpaid === 0) {
+      L.push(`تذكير ودّي بأن الدفعة القادمة عن ${unit} بعقار ${active.name} تستحق بتاريخ ${st.nextDueDate}.`);
+      if (one.total) L.push(`• قيمة الدفعة: ${sar(one.total)} ريال${v.enabled ? ` (منها ${sar(one.vat)} ريال ضريبة قيمة مضافة)` : ""}`);
+    } else {
+      L.push(`نودّ تذكيركم بوجود مستحقّات غير مسدَّدة عن ${unit} بعقار ${active.name}، وبيانها:`);
+      L.push(`• عدد الدفعات المتأخرة: ${st.unpaid}`);
+      if (one.total) L.push(`• قيمة الدفعة: ${sar(one.total)} ريال`);
+      if (st.hasPartial) L.push(`• المسدَّد جزئيًّا: ${sar(st.partial)} ريال`);
+      L.push(`• المبلغ المتبقّي: ${sar(st.amountDue)} ريال`);
+      if (st.nextDueDate) L.push(`• تاريخ أقرب دفعة مستحقة: ${st.nextDueDate}`);
+    }
+
+    L.push("");
+    L.push("ويكون السداد بالوسيلة المتفق عليها في العقد.");
+    L.push("");
+    L.push("فإن كان السداد قد تم فنعتذر عن التذكير، ونرجو تزويدنا بما يفيد لتحديث السجل.");
+    L.push("");
+    L.push("شاكرين لكم حسن تعاونكم،");
+    L.push(who);
+    return waLink(t.phone, L.join("\n"));
   }
 
+  /** إشعار مكتوب — يوضّح المطالبة والمسار النظامي عبر «إيجار» و«ناجز» */
   function makeNotice(t: Tenant) {
     if (!active) return;
     const st = contractState(t, { graceDays: Number(active?.grace_days) || 0 });
     const who = active.manager || orgName || "إدارة الأملاك";
     const ul = unitLabel(active.property_type);
+    const v = { enabled: !!active.vat_enabled, rate: Number(active.vat_rate) || 15, inclusive: active.vat_inclusive !== false };
+    const one = splitVat(Number(t.rent_amount) || 0, v);
+    const totalDue = splitVat(st.amountDue, v);
+
+    // نطاق الفترة المتأخرة: من أول دفعة غير مسدَّدة إلى أحدث دفعة استحقّت
+    const sch = buildSchedule(t);
+    const lateRows = sch.filter((r) => r.status === "late" || r.status === "partial");
+    const fromDate = lateRows[0]?.date || st.nextDueDate || "—";
+    const toDate = lateRows[lateRows.length - 1]?.date || fromDate;
+
     const body = [
-      "إشعار بسداد مستحقات متأخرة",
+      "إشعار بسداد أجرة متأخرة",
       `التاريخ: ${today()}`,
       "",
       `من: ${who}`,
-      `إلى: ${t.name}${t.national_id ? ` — هوية/سجل رقم (${t.national_id})` : ""}، شاغل ${ul} رقم (${t.unit || "—"}) بعقار ${active.name}${active.address ? ` — ${active.address}` : ""}.`,
+      `إلى: المكرَّم ${t.name}${t.national_id ? `، هوية/سجل رقم (${t.national_id})` : ""}، شاغل ${ul} رقم (${t.unit || "—"}) بعقار ${active.name}${active.address ? ` — ${active.address}` : ""}${active.city ? `، ${active.city}` : ""}.`,
       "",
-      "الموضوع: إشعار بسداد الأجرة المتأخرة.",
+      "الموضوع: مطالبة بسداد الأجرة المتأخرة.",
       "",
-      `نفيدكم بأنه بموجب عقد الإيجار المبرم بيننا (بداية العقد: ${t.contract_start || "—"}، دورة السداد: ${freqLabel(t.payment_frequency)})، قد ترصّد بذمّتكم مبلغ ${sar(st.amountDue)} ريال، قيمة (${st.unpaid}) دفعة متأخرة، ولم تُسدَّد حتى تاريخه.`,
+      "السلام عليكم ورحمة الله وبركاته،",
       "",
-      "نأمل المبادرة بسداد المبلغ المذكور خلال (5) أيام من تاريخ استلامكم هذا الإشعار، حفاظًا على العلاقة التعاقدية بين الطرفين.",
+      `بالإشارة إلى عقد الإيجار المبرم بيننا (بداية العقد: ${t.contract_start || "—"}، نهايته: ${st.endDate || "—"}، دورة السداد: ${freqLabel(t.payment_frequency)}${one.total ? `، وقيمة الدفعة ${sar(one.total)} ريال` : ""})؛`,
       "",
-      "وفي حال عدم السداد، سيتخذ المؤجر ما يحفظ حقوقه وفق ما تقتضيه الأنظمة المعمول بها والعقد المبرم بين الطرفين.",
+      `نفيدكم بأنه قد ترصَّد بذمّتكم مبلغ (${sar(st.amountDue)}) ريال، قيمة (${st.unpaid}) دفعة مستحقة عن الفترة من (${fromDate}) إلى (${toDate})${st.hasPartial ? `، بعد خصم مبلغ (${sar(st.partial)}) ريال مسدَّد جزئيًّا` : ""}، ولم يُسدَّد حتى تاريخ هذا الإشعار.`,
+      ...(v.enabled && totalDue.vat > 0 ? ["", `ويشمل المبلغ المذكور ضريبة قيمة مضافة قدرها (${sar(totalDue.vat)}) ريال بنسبة (${v.rate}%).`] : []),
       "",
-      "وتقبلوا تحياتنا،",
+      "لذا نأمل المبادرة بسداد المبلغ خلال (5) أيام من تاريخ استلامكم هذا الإشعار، بالوسيلة المتفق عليها في العقد، وتزويدنا بما يفيد السداد.",
+      "",
+      "وفي حال عدم السداد خلال المدة المذكورة، فسيتّخذ المؤجّر ما يحفظ حقوقه من إجراءات نظامية، ومنها إرسال إنذار رسمي عبر منصة «إيجار»، ثم تقديم طلب تنفيذ عبر بوابة «ناجز» استنادًا إلى عقد الإيجار الموثّق بوصفه سندًا تنفيذيًّا.",
+      "",
+      "ونؤكّد رغبتنا في استمرار العلاقة التعاقدية وحلّ الأمر ودّيًا.",
+      "",
+      "وتقبّلوا تحياتنا،",
       who,
+      "",
+      "الاسم: ____________________     الصفة: ____________________",
       `التوقيع: ____________________     التاريخ: ${today()}`,
     ].join("\n");
     setDoc({ title: `إشعار سداد — ${t.name}`, body });
@@ -532,6 +596,7 @@ export default function PropertyView({ initial, orgName, issuer }: { initial: Pr
                   <RowMenu
                     items={[
                       { label: "📅 جدول الدفعات", run: () => setSchedule(t) },
+                      { label: "🧮 سجل المدفوعات", run: () => openHistory(t) },
                       { label: "🧾 كشف حساب", run: () => openStatement(t) },
                       ...((t.paid_periods || 0) > 0 ? [{ label: "↩︎ تراجع عن دفعة", run: () => patchTenant(t.id, { paid_periods: Math.max(0, (t.paid_periods || 0) - 1) }) }] : []),
                       ...(!t.litigation && st.unpaid > 0 ? [{ label: "⚖️ رفع للتنفيذ", run: () => setEnforcing(t) }] : []),
@@ -576,7 +641,8 @@ export default function PropertyView({ initial, orgName, issuer }: { initial: Pr
         onClose={() => setEnforcing(null)}
         onSubmit={(no, order) => { patchTenant(enforcing.id, { litigation: true, enforcement_no: no || null, enforcement_order: order || null }); setEnforcing(null); }} />}
       {paying && <PaymentModal tenant={paying} unitWord={ul} onClose={() => setPaying(null)}
-        onSubmit={(amt) => { recordPayment(paying, amt); setPaying(null); }} />}
+        onSubmit={(amt, method, note) => { recordPayment(paying, amt, method, note); setPaying(null); }} />}
+      {history && <HistoryModal data={history} unitWord={ul} onClose={() => setHistory(null)} />}
       {doc && <DocModal doc={doc} onClose={() => setDoc(null)} />}
     </div>
   );
@@ -620,13 +686,22 @@ function QuickBtn({ children, title, cls, onClick }: { children: React.ReactNode
 }
 
 /** نافذة تسجيل مبلغ مستلم — كامل أو جزئي */
+const METHODS: { v: string; l: string }[] = [
+  { v: "transfer", l: "تحويل بنكي" }, { v: "cash", l: "نقدًا" },
+  { v: "pos", l: "شبكة" }, { v: "cheque", l: "شيك" }, { v: "other", l: "أخرى" },
+];
+export const methodLabel = (v?: string | null) => METHODS.find((m) => m.v === v)?.l || "أخرى";
+
 function PaymentModal({ tenant, unitWord, onClose, onSubmit }: {
-  tenant: Tenant; unitWord: string; onClose: () => void; onSubmit: (amount: number) => void;
+  tenant: Tenant; unitWord: string; onClose: () => void;
+  onSubmit: (amount: number, method: string, note?: string) => void;
 }) {
   const rent = Number(tenant.rent_amount) || 0;
   const already = Number(tenant.partial_amount) || 0;
   const remaining = Math.max(0, rent - already);
   const [amount, setAmount] = useState<string>(String(remaining || rent));
+  const [method, setMethod] = useState("transfer");
+  const [note, setNote] = useState("");
   const amt = Number(amount) || 0;
   const pool = already + amt;
   const completed = rent > 0 ? Math.floor(pool / rent) : 0;
@@ -656,6 +731,17 @@ function PaymentModal({ tenant, unitWord, onClose, onSubmit }: {
         <button className="btn btn-ghost text-xs" onClick={() => setAmount(String(Math.round(rent / 2)))}>نصف الدفعة</button>
       </div>
 
+      <div className="grid grid-cols-2 gap-3 mt-3">
+        <Field label="طريقة السداد">
+          <select className="fld" value={method} onChange={(e) => setMethod(e.target.value)}>
+            {METHODS.map((m) => <option key={m.v} value={m.v}>{m.l}</option>)}
+          </select>
+        </Field>
+        <Field label="ملاحظة" hint="اختياري">
+          <input className="fld" value={note} onChange={(e) => setNote(e.target.value)} placeholder="رقم الحوالة…" />
+        </Field>
+      </div>
+
       {amt > 0 && (
         <div className="bg-[#E6F4EC] border border-[#B7DFC7] rounded-xl p-3 mt-4 text-xs text-[#137a50] leading-relaxed">
           {completed > 0 && <div>ستكتمل <b>{completed}</b> دفعة.</div>}
@@ -666,8 +752,53 @@ function PaymentModal({ tenant, unitWord, onClose, onSubmit }: {
 
       <div className="flex gap-2 mt-5">
         <button type="button" className="btn btn-ghost flex-1 justify-center" onClick={onClose}>إلغاء</button>
-        <button className="btn btn-gold flex-1 justify-center" disabled={!amt} onClick={() => onSubmit(amt)}>تسجيل</button>
+        <button type="button" className="btn btn-gold flex-1 justify-center" disabled={!amt} onClick={() => onSubmit(amt, method, note.trim() || undefined)}>تسجيل</button>
       </div>
+    </Shell>
+  );
+}
+
+/** سجل المدفوعات — التاريخ والمبلغ والطريقة، أساس الإثبات عند الخلاف */
+function HistoryModal({ data, unitWord, onClose }: {
+  data: { tenant: Tenant; rows: any[] }; unitWord: string; onClose: () => void;
+}) {
+  const { tenant, rows } = data;
+  const total = rows.reduce((s, r) => s + (Number(r.amount) || 0), 0);
+  return (
+    <Shell onClose={onClose} wide>
+      <h3 className="font-display font-bold text-deep text-lg mb-1">سجل المدفوعات — {tenant.name}</h3>
+      <p className="text-sm text-muted mb-4">{unitWord} {tenant.unit || "—"} · {rows.length} عملية · الإجمالي {sar(total)} ريال</p>
+
+      {!rows.length ? (
+        <div className="text-center text-muted py-10 text-sm">
+          لا مدفوعات مسجّلة بعد.
+          <div className="text-xs mt-2">الدفعات التي تُسجّلها من الآن ستُحفظ هنا بتاريخها وطريقتها.</div>
+        </div>
+      ) : (
+        <div className="border border-line rounded-xl overflow-hidden max-h-[50vh] overflow-y-auto">
+          <table className="w-full text-sm">
+            <thead className="bg-paper2 sticky top-0"><tr>
+              <th className="p-2 text-right font-semibold">التاريخ</th>
+              <th className="p-2 text-right font-semibold">المبلغ</th>
+              <th className="p-2 text-right font-semibold">الطريقة</th>
+              <th className="p-2 text-right font-semibold">اكتملت</th>
+              <th className="p-2 text-right font-semibold">ملاحظة</th>
+            </tr></thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.id} className="border-t border-line">
+                  <td className="p-2 tabular-nums">{r.paid_on}</td>
+                  <td className="p-2 tabular-nums font-semibold">{sar(r.amount)}</td>
+                  <td className="p-2">{methodLabel(r.method)}</td>
+                  <td className="p-2 text-muted">{r.periods_covered || "—"}</td>
+                  <td className="p-2 text-muted text-xs">{r.note || "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <button type="button" className="btn btn-ghost w-full justify-center mt-4" onClick={onClose}>إغلاق</button>
     </Shell>
   );
 }
@@ -930,8 +1061,9 @@ function DocModal({ doc, onClose }: { doc: { title: string; body: string }; onCl
     <Shell onClose={onClose} wide>
       <h3 className="font-display font-bold text-deep text-lg mb-1">{doc.title}</h3>
       <p className="text-xs text-[#8a5a11] mb-4 bg-[#FBF1DF] border border-[#EBD9AA] rounded-lg p-2.5 leading-relaxed">
-        هذا <b>نموذج خطاب تذكير</b> تستخدمه بنفسك. وثيق لا يقدّم خدمات قانونية، ولا يرفع دعاوى، ولا يستلم أو يحوّل أي مبالغ.
-        راجع النص مع مختص مرخّص قبل أي استخدام رسمي.
+        هذا <b>خطاب تذكير إداري</b> تستخدمه بنفسك، وليس إنذارًا نظاميًّا ذا حجية.
+        الإنذار الرسمي يُرسل عبر منصة «إيجار» فيُسلَّم إلكترونيًّا، ثم يكون طلب التنفيذ عبر «ناجز» استنادًا إلى العقد الموثّق.
+        وثيق لا يقدّم خدمات قانونية، ولا يرفع دعاوى، ولا يستلم أو يحوّل أي مبالغ — راجع النص مع مختص مرخّص قبل أي استخدام رسمي.
       </p>
       <pre className="whitespace-pre-wrap bg-paper border border-line rounded-xl p-4 text-sm leading-8 text-ink" style={{ fontFamily: "inherit" }}>{doc.body}</pre>
       <div className="flex gap-2 mt-4">

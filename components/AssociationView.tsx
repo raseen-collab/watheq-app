@@ -45,6 +45,8 @@ export default function AssociationView({ initial }: { initial: Association[] })
   const [filter, setFilter] = useState<"all" | OwnerKey>("all");
   const [sort, setSort] = useState<"urgent" | "amount" | "name" | "unit">("urgent");
   const [paying, setPaying] = useState<Owner | null>(null);
+  const [doc, setDoc] = useState<null | { title: string; body: string }>(null);
+  const [history, setHistory] = useState<null | { owner: Owner; rows: any[] }>(null);
   const [toast, setToast] = useState<null | { k: "ok" | "err"; m: string }>(null);
   // الحسابات تعتمد على تاريخ اليوم، وتوقيت السيرفر يختلف عن توقيت الجهاز.
   const [hydrated, setHydrated] = useState(false);
@@ -84,9 +86,9 @@ export default function AssociationView({ initial }: { initial: Association[] })
 
 
   /** تسجيل مبلغ مستلم من مالك — يحوّل الجزئي إلى أشهر مسدّدة */
-  async function recordOwnerPayment(o: Owner, fee: number, amount: number) {
+  async function recordOwnerPayment(o: Owner, fee: number, amount: number, method = "transfer", note?: string) {
     const amt = Math.max(0, Number(amount) || 0);
-    if (!amt || fee <= 0) return;
+    if (!amt || fee <= 0 || !active) return;
     const pool = (Number(o.partial_amount) || 0) + amt;
     const months = Math.floor(pool / fee);
     const rest = +(pool - months * fee).toFixed(2);
@@ -96,9 +98,28 @@ export default function AssociationView({ initial }: { initial: Association[] })
       partial_amount: rest,
       ...(months > 0 ? { last_paid: today() } : {}),
     }, amt);
+    // سجل الدفعة — التاريخ والمبلغ والطريقة
+    const uid = await currentUserId();
+    if (uid) {
+      const { error } = await supabase.from("payments").insert({
+        user_id: uid, owner_id: o.id, association_id: active.id,
+        paid_on: today(), amount: amt, method,
+        periods_covered: months, note: note || null,
+      });
+      if (error) console.error("Watheq payment log error:", error);
+    }
+
     notify("ok", months > 0
       ? `سُجّل ${sar(amt)} ريال — سُدّد ${months} شهر`
       : `سُجّل ${sar(amt)} ريال كسداد جزئي`);
+  }
+
+  /** يفتح سجل مدفوعات مالك معيّن */
+  async function openHistory(o: Owner) {
+    const { data, error } = await supabase.from("payments")
+      .select("*").eq("owner_id", o.id).order("paid_on", { ascending: false }).limit(200);
+    if (error) { console.error("Watheq history error:", error); return notify("err", error.message); }
+    setHistory({ owner: o, rows: data || [] });
   }
   // ---------- جمعية ----------
   /** هوية المستخدم الحالي — تشترطها سياسة الصلاحيات (RLS) عند الإدراج */
@@ -184,14 +205,77 @@ export default function AssociationView({ initial }: { initial: Association[] })
   }
 
   // ---------- إجراءات واتساب ----------
+  /** تذكير ودّي — يحفظ حسن الجوار ويوضّح تفاصيل المطالبة */
   function ownerRemindLink(o: Owner) {
     if (!active) return "#";
-    const fee = active.fee || 0, total = o.months_late * fee;
-    const msg = o.months_late <= 1
-      ? `مساء الخير ${o.name} 🌿\nتذكير ودّي بأن اشتراك الصيانة${fee ? ` بمبلغ ${sar(fee)} ريال` : ""} أصبح مستحقًا. نقدّر لك المبادرة بالسداد.\n— إدارة الجمعية`
-      : `تحية طيبة ${o.name}،\nاشتراكاتكم المتأخرة (${o.months_late} أشهر)${total ? ` بمبلغ ${sar(total)} ريال` : ""} لا تزال غير مسدّدة. نأمل السداد حرصًا على حقوق بقية الملاك.\n— إدارة الجمعية`;
-    return waLink(o.phone, msg);
+    const fee = active.fee || 0;
+    const partial = Number(o.partial_amount) || 0;
+    const gross = o.months_late * fee;
+    const due = Math.max(0, gross - partial);
+    const unit = o.unit ? `الوحدة (${o.unit})` : "وحدتكم";
+    const assoc = active.name;
+
+    const lines: string[] = [`السلام عليكم ورحمة الله، ${o.name} 🌿`, ""];
+
+    if (o.months_late <= 0) {
+      lines.push(`تذكير ودّي بأن اشتراك الصيانة عن ${unit} في ${assoc}${fee ? ` وقدره ${sar(fee)} ريال` : ""} أصبح مستحقًّا.`);
+    } else {
+      lines.push(`نودّ تذكيركم بأن اشتراك الصيانة عن ${unit} في ${assoc} لا يزال غير مسدَّد، وبيانه:`);
+      lines.push(`• عدد الفترات المتأخرة: ${o.months_late}`);
+      if (fee) lines.push(`• قيمة الاشتراك للفترة: ${sar(fee)} ريال`);
+      if (partial > 0) lines.push(`• المسدَّد جزئيًّا: ${sar(partial)} ريال`);
+      if (due) lines.push(`• المبلغ المتبقّي: ${sar(due)} ريال`);
+    }
+
+    lines.push("");
+    lines.push("وتُصرف هذه الاشتراكات على صيانة الأجزاء المشتركة وخدماتها بما يحفظ قيمة العقار للجميع، ويُسدَّد المبلغ في الحساب البنكي للجمعية.");
+    lines.push("");
+    lines.push("فإن كان السداد قد تم فنعتذر عن التذكير، ونرجو تزويدنا بما يفيد لتحديث السجل.");
+    lines.push("");
+    lines.push("شاكرين لكم حسن تعاونكم،");
+    lines.push(`إدارة ${assoc}`);
+    return waLink(o.phone, lines.join("\n"));
   }
+
+  /** إشعار مكتوب — مستند إلى الأساس النظامي والمسار الصحيح للتحصيل */
+  function makeOwnerNotice(o: Owner) {
+    if (!active) return;
+    const fee = active.fee || 0;
+    const partial = Number(o.partial_amount) || 0;
+    const due = Math.max(0, o.months_late * fee - partial);
+    const unit = o.unit || "—";
+    const body = [
+      "إشعار بسداد اشتراكات الصيانة المتأخرة",
+      `التاريخ: ${today()}`,
+      "",
+      `من: إدارة ${active.name} (جمعية الملاك)`,
+      `إلى: المكرَّم ${o.name}، مالك الوحدة العقارية رقم (${unit}).`,
+      "",
+      "الموضوع: مطالبة بسداد اشتراكات الصيانة المستحقة.",
+      "",
+      "السلام عليكم ورحمة الله وبركاته،",
+      "",
+      "بالإشارة إلى نظام ملكية الوحدات العقارية وفرزها وإدارتها، الصادر بالمرسوم الملكي رقم (م/85) وتاريخ 02/07/1441هـ، وإلى النظام الأساسي للجمعية وقرار الجمعية العامة المعتمد بتحديد مبلغ الاشتراك؛",
+      "",
+      `نفيدكم بأنه قد ترصَّد بذمّتكم مبلغ (${sar(due)}) ريال، قيمة (${o.months_late}) فترة اشتراك مستحقة عن الوحدة رقم (${unit})${fee ? `، بواقع (${sar(fee)}) ريال للفترة` : ""}${partial > 0 ? `، بعد خصم مبلغ (${sar(partial)}) ريال مسدَّد جزئيًّا` : ""}، ولم يُسدَّد حتى تاريخ هذا الإشعار.`,
+      "",
+      "وتُخصَّص هذه الاشتراكات لصيانة الأجزاء المشتركة وتشغيلها وفق الموازنة المعتمدة، ويؤثّر التأخّر في سدادها على حقوق بقية الملاك وعلى استدامة خدمات العقار.",
+      "",
+      "لذا نأمل المبادرة بسداد المبلغ المذكور خلال (10) أيام من تاريخ استلامكم هذا الإشعار، إيداعًا في الحساب البنكي للجمعية، وتزويد إدارة الجمعية بما يفيد السداد.",
+      "",
+      "وفي حال عدم السداد خلال المدة المذكورة، فسيتخذ مدير العقار الإجراءات النظامية المتاحة، ومنها رفع بيانات المتعثّرين عن السداد عبر منصة «ملاك»، والتوجّه إلى محكمة التنفيذ أو الجهة المختصة وفق الإجراءات المعتمدة.",
+      "",
+      "ونؤكّد أن غايتنا حفظ حقوق الجميع وحسن الجوار، ونتطلّع إلى تسوية الأمر ودّيًا.",
+      "",
+      "وتقبّلوا تحياتنا،",
+      `إدارة ${active.name}`,
+      "",
+      "الاسم: ____________________     الصفة: ____________________",
+      `التوقيع: ____________________     التاريخ: ${today()}`,
+    ].join("\n");
+    setDoc({ title: `إشعار سداد اشتراكات — ${o.name}`, body });
+  }
+
   function ownerNoticeLink(o: Owner) {
     if (!active) return "#";
     const total = o.months_late * (active.fee || 0);
@@ -361,9 +445,10 @@ export default function AssociationView({ initial }: { initial: Association[] })
                       {o.months_late > 0 && <QuickBtn title="سداد جزئي" cls="btn-ghost" onClick={() => setPaying(o)}>&#189;</QuickBtn>}
                       {o.months_late > 0 && <a href={ownerRemindLink(o)} target="_blank" rel="noreferrer" className="btn btn-wa text-xs px-2.5" title="إرسال تذكير واتساب">&#128172;</a>}
                       {o.phone && <a href={`tel:${String(o.phone).replace(/[^0-9+]/g, "")}`} className="btn btn-ghost text-xs px-2.5 sm:hidden" title="اتصال مباشر">&#128222;</a>}
-                      {o.months_late >= 2 && <a href={ownerNoticeLink(o)} target="_blank" rel="noreferrer" className="btn btn-gold text-xs">نموذج خطاب</a>}
+                      {o.months_late >= 2 && <button type="button" className="btn btn-gold text-xs" onClick={() => makeOwnerNotice(o)}>نموذج إشعار</button>}
                       <RowMenu
                         items={[
+                          { label: "🧮 سجل المدفوعات", run: () => openHistory(o) },
                           { label: "➕ إضافة استحقاق", run: () => ownerPatch(o.id, { months_late: o.months_late + 1 }) },
                           ...(o.months_late === 0 ? [{ label: "💬 رسالة للمالك", run: () => window.open(ownerRemindLink(o), "_blank") }] : []),
                           ...(o.months_late > 0 ? [{ label: "✅ سدّد الكل", run: () => ownerPatch(o.id, { months_late: 0, last_paid: today() }, o.months_late * (a.fee || 0)) }] : []),
@@ -398,8 +483,10 @@ export default function AssociationView({ initial }: { initial: Association[] })
         </div>
       </div>
 
+      {history && <HistoryModal data={history} onClose={() => setHistory(null)} />}
+      {doc && <DocModal doc={doc} onClose={() => setDoc(null)} />}
       {paying && <OwnerPaymentModal owner={paying} fee={a.fee || 0} onClose={() => setPaying(null)}
-        onSubmit={(amt) => { recordOwnerPayment(paying, a.fee || 0, amt); setPaying(null); }} />}
+        onSubmit={(amt, method, note) => { recordOwnerPayment(paying, a.fee || 0, amt, method, note); setPaying(null); }} />}
       <FormModal open={modal === "new"} title="جمعية جديدة" onClose={() => setModal(null)} onSubmit={createAssociation} />
       <FormModal open={modal === "edit"} title="إعدادات الجمعية" initial={active || undefined} onClose={() => setModal(null)} onSubmit={updateAssociation} onDelete={deleteAssociation} />
     </div>
@@ -446,12 +533,21 @@ function QuickBtn({ children, title, cls, onClick }: { children: React.ReactNode
 }
 
 /** نافذة تسجيل مبلغ مستلم من مالك — كامل أو جزئي */
+const METHODS: { v: string; l: string }[] = [
+  { v: "transfer", l: "تحويل بنكي" }, { v: "cash", l: "نقدًا" },
+  { v: "pos", l: "شبكة" }, { v: "cheque", l: "شيك" }, { v: "other", l: "أخرى" },
+];
+const methodLabel = (v?: string | null) => METHODS.find((m) => m.v === v)?.l || "أخرى";
+
 function OwnerPaymentModal({ owner, fee, onClose, onSubmit }: {
-  owner: Owner; fee: number; onClose: () => void; onSubmit: (amount: number) => void;
+  owner: Owner; fee: number; onClose: () => void;
+  onSubmit: (amount: number, method: string, note?: string) => void;
 }) {
   const already = Number(owner.partial_amount) || 0;
   const remaining = Math.max(0, fee - already);
   const [amount, setAmount] = useState<string>(String(remaining || fee));
+  const [method, setMethod] = useState("transfer");
+  const [note, setNote] = useState("");
   const amt = Number(amount) || 0;
   const pool = already + amt;
   const months = fee > 0 ? Math.floor(pool / fee) : 0;
@@ -485,6 +581,17 @@ function OwnerPaymentModal({ owner, fee, onClose, onSubmit }: {
         )}
       </div>
 
+      <div className="grid grid-cols-2 gap-3 mt-3">
+        <Field label="طريقة السداد">
+          <select className="fld" value={method} onChange={(e) => setMethod(e.target.value)}>
+            {METHODS.map((m) => <option key={m.v} value={m.v}>{m.l}</option>)}
+          </select>
+        </Field>
+        <Field label="ملاحظة (اختياري)">
+          <input className="fld" value={note} onChange={(e) => setNote(e.target.value)} placeholder="رقم الحوالة…" />
+        </Field>
+      </div>
+
       {amt > 0 && (
         <div className="bg-[#E6F4EC] border border-[#B7DFC7] rounded-xl p-3 mt-4 text-xs text-[#137a50] leading-relaxed">
           {months > 0 && <div>سيُسدَّد <b>{Math.min(months, owner.months_late)}</b> شهر.</div>}
@@ -495,7 +602,7 @@ function OwnerPaymentModal({ owner, fee, onClose, onSubmit }: {
 
       <div className="flex gap-2 mt-5">
         <button className="btn btn-ghost flex-1 justify-center" onClick={onClose}>إلغاء</button>
-        <button className="btn btn-gold flex-1 justify-center" disabled={!amt} onClick={() => onSubmit(amt)}>تسجيل</button>
+        <button type="button" className="btn btn-gold flex-1 justify-center" disabled={!amt} onClick={() => onSubmit(amt, method, note.trim() || undefined)}>تسجيل</button>
       </div>
       </div>
     </div>
@@ -603,6 +710,72 @@ function FormModal({ open, title, initial, onClose, onSubmit, onDelete }: {
             onClick={() => onSubmit(d)}>حفظ</button>
         </div>
         {onDelete && <div className="text-center mt-3"><button className="text-late text-sm font-semibold underline" onClick={onDelete}>حذف الجمعية نهائيًّا</button></div>}
+      </div>
+    </div>
+  );
+}
+
+/** سجل المدفوعات — التاريخ والمبلغ والطريقة */
+function HistoryModal({ data, onClose }: { data: { owner: Owner; rows: any[] }; onClose: () => void }) {
+  const { owner, rows } = data;
+  const total = rows.reduce((s, r) => s + (Number(r.amount) || 0), 0);
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4" onClick={onClose}>
+      <div className="w-full max-w-2xl bg-white rounded-2xl shadow-xl p-6 max-h-[90vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
+        <h3 className="font-display font-bold text-deep text-lg mb-1">سجل المدفوعات — {owner.name}</h3>
+        <p className="text-sm text-muted mb-4">{owner.unit ? `وحدة ${owner.unit}` : "—"} · {rows.length} عملية · الإجمالي {sar(total)} ريال</p>
+        {!rows.length ? (
+          <div className="text-center text-muted py-10 text-sm">
+            لا مدفوعات مسجّلة بعد.
+            <div className="text-xs mt-2">الدفعات التي تُسجّلها من الآن ستُحفظ هنا بتاريخها وطريقتها.</div>
+          </div>
+        ) : (
+          <div className="border border-line rounded-xl overflow-hidden max-h-[50vh] overflow-y-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-paper2 sticky top-0"><tr>
+                <th className="p-2 text-right font-semibold">التاريخ</th>
+                <th className="p-2 text-right font-semibold">المبلغ</th>
+                <th className="p-2 text-right font-semibold">الطريقة</th>
+                <th className="p-2 text-right font-semibold">أشهر</th>
+                <th className="p-2 text-right font-semibold">ملاحظة</th>
+              </tr></thead>
+              <tbody>
+                {rows.map((r) => (
+                  <tr key={r.id} className="border-t border-line">
+                    <td className="p-2 tabular-nums">{r.paid_on}</td>
+                    <td className="p-2 tabular-nums font-semibold">{sar(r.amount)}</td>
+                    <td className="p-2">{methodLabel(r.method)}</td>
+                    <td className="p-2 text-muted">{r.periods_covered || "—"}</td>
+                    <td className="p-2 text-muted text-xs">{r.note || "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        <button type="button" className="btn btn-ghost w-full justify-center mt-4" onClick={onClose}>إغلاق</button>
+      </div>
+    </div>
+  );
+}
+
+/** عرض الخطاب مع النسخ والطباعة */
+function DocModal({ doc, onClose }: { doc: { title: string; body: string }; onClose: () => void }) {
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4" onClick={onClose}>
+      <div className="w-full max-w-2xl bg-white rounded-2xl shadow-xl p-6 max-h-[90vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
+        <h3 className="font-display font-bold text-deep text-lg mb-1">{doc.title}</h3>
+        <p className="text-xs text-[#8a5a11] mb-4 bg-[#FBF1DF] border border-[#EBD9AA] rounded-lg p-2.5 leading-relaxed">
+          هذا <b>خطاب تذكير إداري</b> تستخدمه إدارة الجمعية، وليس إنذارًا نظاميًّا ذا حجية.
+          المسار النظامي للتحصيل يمرّ عبر منصة «ملاك» ثم محكمة التنفيذ أو الجهة المختصة.
+          وثيق لا يقدّم خدمات قانونية ولا يستلم أي مبالغ — راجع النص مع مختص مرخّص قبل أي استخدام رسمي.
+        </p>
+        <pre className="whitespace-pre-wrap bg-paper border border-line rounded-xl p-4 text-sm leading-8 text-ink" style={{ fontFamily: "inherit" }}>{doc.body}</pre>
+        <div className="flex gap-2 mt-4">
+          <button type="button" onClick={() => navigator.clipboard?.writeText(doc.body)} className="btn btn-primary flex-1 justify-center">نسخ النص</button>
+          <button type="button" onClick={() => { const w = window.open("", "_blank"); if (w) { w.document.write('<pre dir="rtl" style="font-family:sans-serif;white-space:pre-wrap;padding:24px;line-height:1.9">' + doc.body.replace(/</g, "&lt;") + "</pre>"); w.document.close(); w.print(); } }} className="btn btn-ghost flex-1 justify-center">طباعة</button>
+          <button type="button" onClick={onClose} className="btn text-muted">إغلاق</button>
+        </div>
       </div>
     </div>
   );
