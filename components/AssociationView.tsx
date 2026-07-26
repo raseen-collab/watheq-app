@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useMemo, useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase-client";
 import { sar, daysLeft, waLink, WATHEQ_WA, today } from "@/lib/utils";
 
@@ -27,6 +28,7 @@ const OWNER_URGENCY: Record<OwnerKey, number> = { critical: 0, late: 1, partial:
 
 export default function AssociationView({ initial }: { initial: Association[] }) {
   const supabase = createClient();
+  const router = useRouter();
   /** يضمن أن كل جمعية تحمل مصفوفتيها — يمنع انكسار العرض عند صفٍّ جديد */
   const normalize = (list: Association[]): Association[] =>
     (list || []).map((a) => ({
@@ -51,6 +53,14 @@ export default function AssociationView({ initial }: { initial: Association[] })
   // الحسابات تعتمد على تاريخ اليوم، وتوقيت السيرفر يختلف عن توقيت الجهاز.
   const [hydrated, setHydrated] = useState(false);
   useEffect(() => { setHydrated(true); }, []);
+  // يزامن اللوحة مع أحدث بيانات السيرفر — يمنع اختلاف الأرقام بعد تسجيل دفعة من البوت
+  useEffect(() => { setItems(normalize(initial)); }, [initial]);
+  const [refreshing, setRefreshing] = useState(false);
+  function refreshNow() {
+    setRefreshing(true);
+    router.refresh();
+    setTimeout(() => setRefreshing(false), 1200);
+  }
   function notify(k: "ok" | "err", m: string) {
     setToast({ k, m });
     setTimeout(() => setToast(null), 3600);
@@ -342,7 +352,9 @@ export default function AssociationView({ initial }: { initial: Association[] })
         <select value={a.id} onChange={(e) => setActiveId(e.target.value)} className="fld max-w-[220px] font-semibold text-deep">
           {items.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
         </select>
-        <button className="btn btn-ghost text-sm" onClick={() => setModal("edit")}>⚙︎ إعدادات</button>
+        <button type="button" className="btn btn-ghost text-sm" onClick={refreshNow} disabled={refreshing}
+          title="تحديث البيانات من السيرفر">{refreshing ? "…" : "↻ تحديث"}</button>
+        <button type="button" className="btn btn-ghost text-sm" onClick={() => setModal("edit")}>⚙︎ إعدادات</button>
         <button className="btn btn-gold text-sm" onClick={() => setModal("new")}>+ جمعية</button>
       </div>
 

@@ -82,6 +82,14 @@ export default function PropertyView({ initial, orgName, issuer }: { initial: Pr
   // لذلك نرسم المحتوى المعتمد على التاريخ بعد الإماهة فقط — يمنع خطأ hydration.
   const [hydrated, setHydrated] = useState(false);
   useEffect(() => { setHydrated(true); }, []);
+  // يزامن اللوحة مع أحدث بيانات السيرفر — يمنع اختلاف الأرقام بعد تسجيل دفعة من البوت
+  useEffect(() => { setItems(normalize(initial)); }, [initial]);
+  const [refreshing, setRefreshing] = useState(false);
+  function refreshNow() {
+    setRefreshing(true);
+    router.refresh();
+    setTimeout(() => setRefreshing(false), 1200);
+  }
   function notify(k: "ok" | "err", m: string) {
     setToast({ k, m });
     setTimeout(() => setToast(null), 3600);
@@ -265,9 +273,14 @@ export default function PropertyView({ initial, orgName, issuer }: { initial: Pr
     router.refresh();
   }
 
-  function openStatement(t: Tenant) {
+  async function openStatement(t: Tenant) {
     if (!active) return;
-    openDoc(statementHTML(t as any, active as any, issuer || {}));
+    // نجلب سجل المدفوعات الموثّق ليظهر في الكشف بتواريخه وطرقه
+    const { data, error } = await supabase.from("payments")
+      .select("id,paid_on,amount,method,periods_covered,note")
+      .eq("tenant_id", t.id).order("paid_on", { ascending: true }).limit(500);
+    if (error) console.error("Watheq statement payments error:", error);
+    openDoc(statementHTML(t as any, active as any, issuer || {}, (data || []) as any));
   }
 
   function openPropertyStatement() {
@@ -476,7 +489,11 @@ export default function PropertyView({ initial, orgName, issuer }: { initial: Pr
         <select value={p.id} onChange={(e) => setActiveId(e.target.value)} className="fld max-w-[220px] font-semibold text-deep">
           {items.map((x) => <option key={x.id} value={x.id}>{typeIcon(x.property_type)} {x.name}</option>)}
         </select>
-        <button className="btn btn-ghost text-sm" onClick={() => setModal({ kind: "editProp" })}>الإعدادات</button>
+        <button type="button" className="btn btn-ghost text-sm" onClick={refreshNow} disabled={refreshing}
+          title="تحديث البيانات من السيرفر (بعد تسجيل دفعة من البوت مثلًا)">
+          {refreshing ? "…" : "↻ تحديث"}
+        </button>
+        <button type="button" className="btn btn-ghost text-sm" onClick={() => setModal({ kind: "editProp" })}>الإعدادات</button>
         <button className="btn btn-gold text-sm" onClick={() => setModal({ kind: "newProp" })}>+ عقار</button>
       </div>
 
