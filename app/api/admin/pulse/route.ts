@@ -23,9 +23,21 @@ function serviceDb() {
 const sar = (n: number) => (Number(n) || 0).toLocaleString("en-US");
 const esc = (s: any) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
-export async function GET(req: Request) {
-  const key = new URL(req.url).searchParams.get("key");
-  if (!process.env.CRON_SECRET || key !== process.env.CRON_SECRET) {
+/**
+ * يقبل طريقتين للتحقّق:
+ *  1) ترويسة Authorization: Bearer <CRON_SECRET> — وهي ما يرسله Vercel Cron تلقائيًّا
+ *  2) ?key=<CRON_SECRET> — للتشغيل اليدوي من المتصفّح
+ */
+function authorized(req: Request): boolean {
+  const secret = process.env.CRON_SECRET;
+  if (!secret) return false;
+  const header = req.headers.get("authorization");
+  if (header === `Bearer ${secret}`) return true;
+  return new URL(req.url).searchParams.get("key") === secret;
+}
+
+async function handle(req: Request) {
+  if (!authorized(req)) {
     return NextResponse.json({ ok: false, error: "غير مصرّح" }, { status: 401 });
   }
 
@@ -82,3 +94,6 @@ export async function GET(req: Request) {
   const res = await tgSend(chatId, L.join("\n"));
   return NextResponse.json({ ok: !!res.ok, sent: res.ok, newSignups: fresh.length });
 }
+
+export const GET = handle;
+export const POST = handle;
