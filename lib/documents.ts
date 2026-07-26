@@ -344,3 +344,371 @@ export function openDoc(html: string) {
   w.document.write(html);
   w.document.close();
 }
+
+// ============================================================
+// كشوف حساب جمعيات الملاك — بنفس هوية مستندات الأملاك
+// ============================================================
+
+type OwnerRow = {
+  id?: string; name: string; unit: string | null; phone: string | null;
+  months_late: number; last_paid: string | null; partial_amount?: number | null;
+};
+type AssociationDoc = {
+  name: string; units?: number; fee: number;
+  cert_expiry?: string | null; fund_balance?: number | null;
+  owners?: OwnerRow[];
+};
+
+const owed = (o: OwnerRow, fee: number) =>
+  Math.max(0, (Number(o.months_late) || 0) * fee - (Number(o.partial_amount) || 0));
+
+/** كشف حساب مالك واحد في جمعية */
+export function ownerStatementHTML(
+  o: OwnerRow, a: AssociationDoc, issuer: Issuer = {}, payments: PaymentRow[] = []
+) {
+  const fee = Number(a.fee) || 0;
+  const who = issuer.billing_name || `إدارة ${a.name}`;
+  const due = owed(o, fee);
+  const partial = Number(o.partial_amount) || 0;
+  const received = payments.reduce((x, r) => x + (Number(r.amount) || 0), 0);
+
+  const body = `
+${header("كشف حساب مالك", o.name)}
+<h1>كشف حساب الوحدة رقم (${o.unit || "—"})</h1>
+<div class="sub">${a.name} · جمعية ملاك${a.units ? ` · ${a.units} وحدة` : ""}</div>
+
+<div class="grid">
+  <div class="box">
+    <h3>بيانات الجمعية</h3>
+    <div class="r"><span>الاسم</span><span>${a.name}</span></div>
+    <div class="r"><span>اشتراك الفترة</span><span>${sar(fee)} ريال</span></div>
+    ${a.cert_expiry ? `<div class="r"><span>انتهاء الشهادة</span><span>${a.cert_expiry}</span></div>` : ""}
+    ${issuer.billing_phone ? `<div class="r"><span>للتواصل</span><span>${issuer.billing_phone}</span></div>` : ""}
+  </div>
+  <div class="box">
+    <h3>بيانات المالك</h3>
+    <div class="r"><span>الاسم</span><span>${o.name}</span></div>
+    <div class="r"><span>الوحدة</span><span>${o.unit || "—"}</span></div>
+    ${o.phone ? `<div class="r"><span>الجوال</span><span>${o.phone}</span></div>` : ""}
+    <div class="r"><span>آخر سداد</span><span>${o.last_paid || "—"}</span></div>
+  </div>
+</div>
+
+<div class="tot">
+  <div><div class="v r">${o.months_late || 0}</div><div class="l">فترات متأخرة</div></div>
+  <div><div class="v">${sar(fee)}</div><div class="l">اشتراك الفترة (ريال)</div></div>
+  <div><div class="v g">${sar(partial)}</div><div class="l">مدفوع جزئيًّا (ريال)</div></div>
+  <div><div class="v g">${sar(received)}</div><div class="l">إجمالي المستلم (ريال)</div></div>
+</div>
+
+${due > 0 ? `<div class="due"><span class="l">الرصيد المستحق حتى تاريخه</span><span class="v">${sar(due)} ريال</span></div>` : ""}
+
+${payments.length ? `
+<h1 style="font-size:1rem">المدفوعات المستلمة</h1>
+<table>
+  <thead><tr><th>#</th><th>تاريخ الاستلام</th><th>المبلغ (ريال)</th><th>طريقة السداد</th><th>ملاحظة</th></tr></thead>
+  <tbody>
+    ${payments.map((r, i) => `<tr>
+      <td>${i + 1}</td><td>${r.paid_on || "—"}</td><td>${sar(r.amount)}</td>
+      <td>${methodAr(r.method)}</td><td>${r.note ? String(r.note).replace(/</g, "&lt;") : "—"}</td>
+    </tr>`).join("")}
+    <tr style="background:#F3EEE2;font-weight:700">
+      <td colspan="2">إجمالي المستلم</td><td>${sar(received)}</td><td colspan="2">${payments.length} عملية</td>
+    </tr>
+  </tbody>
+</table>` : `<div class="note">لا توجد مدفوعات موثّقة في سجل المنصة لهذه الوحدة حتى تاريخه.</div>`}
+
+<div class="note">
+  تُخصَّص اشتراكات الصيانة لتشغيل الأجزاء المشتركة وصيانتها وفق الموازنة المعتمدة، ويكون السداد في الحساب البنكي للجمعية.
+  هذا كشف استرشادي صادر آليًّا — يُرجى مطابقته مع سجلاتكم وإشعارنا بأي فرق.
+</div>
+
+<div class="sign">
+  <div>إدارة الجمعية: ${who}<br><br>التوقيع: ________________</div>
+  <div>المالك: ${o.name}<br><br>التوقيع: ________________</div>
+</div>
+${footer()}`;
+  return SHELL(`كشف حساب — ${o.name}`, body);
+}
+
+/** كشف حساب الجمعية كاملة — كل الملّاك */
+export function associationStatementHTML(a: AssociationDoc, issuer: Issuer = {}) {
+  const fee = Number(a.fee) || 0;
+  const who = issuer.billing_name || `إدارة ${a.name}`;
+  const rows = a.owners || [];
+  const late = rows.filter((o) => (Number(o.months_late) || 0) > 0);
+  const totalDue = rows.reduce((s, o) => s + owed(o, fee), 0);
+  const expected = rows.length * fee;
+  const pct = rows.length ? Math.round(((rows.length - late.length) / rows.length) * 100) : 0;
+
+  const body = `
+${header("كشف حساب جمعية", a.name)}
+<h1>كشف حساب ${a.name}</h1>
+<div class="sub">جمعية ملاك · ${rows.length} مالك${a.units ? ` من ${a.units} وحدة` : ""} · اشتراك الفترة ${sar(fee)} ريال</div>
+
+<div class="tot">
+  <div><div class="v">${rows.length}</div><div class="l">إجمالي الملّاك</div></div>
+  <div><div class="v g">${rows.length - late.length}</div><div class="l">منتظم</div></div>
+  <div><div class="v r">${late.length}</div><div class="l">متأخر</div></div>
+  <div><div class="v">${pct}%</div><div class="l">نسبة السداد</div></div>
+</div>
+
+<div class="grid">
+  <div class="box">
+    <h3>الوضع المالي</h3>
+    <div class="r"><span>الإيرادات المتوقّعة للفترة</span><span>${sar(expected)} ريال</span></div>
+    <div class="r"><span>إجمالي المتأخر</span><span>${sar(totalDue)} ريال</span></div>
+    ${a.fund_balance != null ? `<div class="r"><span>رصيد الصندوق</span><span>${sar(a.fund_balance)} ريال</span></div>` : ""}
+  </div>
+  <div class="box">
+    <h3>الوضع النظامي</h3>
+    <div class="r"><span>انتهاء الشهادة</span><span>${a.cert_expiry || "—"}</span></div>
+    ${issuer.cr_number ? `<div class="r"><span>السجل التجاري</span><span>${issuer.cr_number}</span></div>` : ""}
+    ${issuer.billing_phone ? `<div class="r"><span>للتواصل</span><span>${issuer.billing_phone}</span></div>` : ""}
+  </div>
+</div>
+
+${totalDue > 0 ? `<div class="due"><span class="l">إجمالي المستحق على الملّاك</span><span class="v">${sar(totalDue)} ريال</span></div>` : ""}
+
+<table>
+  <thead><tr><th>الوحدة</th><th>المالك</th><th>فترات متأخرة</th><th>المتأخر (ريال)</th><th>آخر سداد</th><th>الحالة</th></tr></thead>
+  <tbody>
+    ${rows.map((o) => {
+      const d = owed(o, fee); const m = Number(o.months_late) || 0;
+      return `<tr>
+        <td>${o.unit || "—"}</td>
+        <td>${o.name}</td>
+        <td>${m || "—"}</td>
+        <td>${d ? sar(d) : "—"}</td>
+        <td>${o.last_paid || "—"}</td>
+        <td>${m >= 3 ? '<span class="pill l">حرج</span>'
+            : (Number(o.partial_amount) || 0) > 0 && m > 0 ? '<span class="pill u">سداد جزئي</span>'
+            : m > 0 ? '<span class="pill l">متأخر</span>'
+            : '<span class="pill p">مسدّد</span>'}</td>
+      </tr>`;
+    }).join("")}
+  </tbody>
+</table>
+
+<div class="note">كشف استرشادي صادر آليًّا من بيانات الجمعية المسجّلة بتاريخ ${today()}. يُصرف من الاشتراكات وفق الموازنة المعتمدة من الجمعية العامة.</div>
+<div class="sign"><div>إدارة الجمعية: ${who}<br><br>التوقيع: ________________</div><div>تاريخ الإصدار: ${today()}</div></div>
+${footer()}`;
+  return SHELL(`كشف حساب — ${a.name}`, body);
+}
+
+// ============================================================
+// الموازنة التقديرية ومحضر الجمعية العمومية التأسيسية
+// ============================================================
+
+export type BudgetItem = { label: string; monthly: number; note?: string | null };
+
+/** بنود مصروفات نموذجية لعقار سكني مشترك — نقطة بداية يعدّلها المستخدم */
+export const DEFAULT_BUDGET_ITEMS: BudgetItem[] = [
+  { label: "النظافة العامة للأجزاء المشتركة", monthly: 0 },
+  { label: "الأمن والحراسة", monthly: 0 },
+  { label: "صيانة المصاعد (عقد دوري)", monthly: 0 },
+  { label: "صيانة التكييف والتهوية", monthly: 0 },
+  { label: "كهرباء ومياه الأجزاء المشتركة", monthly: 0 },
+  { label: "صيانة المضخات والخزانات", monthly: 0 },
+  { label: "مكافحة الحشرات", monthly: 0 },
+  { label: "أعمال سباكة وكهرباء طارئة", monthly: 0 },
+  { label: "أجرة مدير العقار", monthly: 0 },
+  { label: "مصروفات إدارية وبنكية", monthly: 0 },
+];
+
+/** الموازنة التقديرية السنوية — أساس اعتماد الاشتراك من الجمعية العامة */
+export function budgetHTML(
+  a: AssociationDoc & { units?: number },
+  budget: { year: number; items: BudgetItem[]; reserve_pct?: number; notes?: string | null },
+  issuer: Issuer = {}
+) {
+  const who = issuer.billing_name || `إدارة ${a.name}`;
+  const items = (budget.items || []).filter((i) => i && i.label);
+  const monthlyTotal = items.reduce((s, i) => s + (Number(i.monthly) || 0), 0);
+  const annualOps = monthlyTotal * 12;
+  const reservePct = Number(budget.reserve_pct ?? 10) || 0;
+  const reserve = Math.round(annualOps * (reservePct / 100));
+  const annualTotal = annualOps + reserve;
+
+  const units = Number(a.units) || (a.owners || []).length || 0;
+  const perUnitYear = units ? Math.round(annualTotal / units) : 0;
+  const perUnitMonth = units ? Math.round(annualTotal / units / 12) : 0;
+  const currentFee = Number(a.fee) || 0;
+  const currentAnnual = currentFee * 12 * units;
+  const gap = annualTotal - currentAnnual;
+
+  const body = `
+${header("موازنة تقديرية", String(budget.year))}
+<h1>الموازنة التقديرية لعام ${budget.year}</h1>
+<div class="sub">${a.name} · جمعية ملاك${units ? ` · ${units} وحدة` : ""}</div>
+
+<div class="note">
+  هذه موازنة تقديرية تُعرض على الجمعية العامة لاعتمادها، وعلى أساسها يُحدَّد اشتراك الصيانة.
+  الأرقام أدناه مدخلة من إدارة الجمعية وقابلة للتعديل قبل التصويت.
+</div>
+
+<h1 style="font-size:1rem">أولًا: المصروفات التشغيلية</h1>
+<table>
+  <thead><tr><th>#</th><th>البند</th><th>شهريًّا (ريال)</th><th>سنويًّا (ريال)</th><th>ملاحظة</th></tr></thead>
+  <tbody>
+    ${items.map((i, n) => `<tr>
+      <td>${n + 1}</td>
+      <td>${String(i.label).replace(/</g, "&lt;")}</td>
+      <td>${sar(i.monthly)}</td>
+      <td>${sar((Number(i.monthly) || 0) * 12)}</td>
+      <td>${i.note ? String(i.note).replace(/</g, "&lt;") : "—"}</td>
+    </tr>`).join("")}
+    <tr style="background:#F3EEE2;font-weight:700">
+      <td colspan="2">إجمالي المصروفات التشغيلية</td>
+      <td>${sar(monthlyTotal)}</td>
+      <td>${sar(annualOps)}</td>
+      <td>—</td>
+    </tr>
+  </tbody>
+</table>
+
+<h1 style="font-size:1rem">ثانيًا: احتياطي الصيانة الرأسمالية</h1>
+<table>
+  <tbody>
+    <tr><td>نسبة الاحتياطي من المصروفات التشغيلية</td><td style="text-align:left;font-weight:600">${reservePct}%</td></tr>
+    <tr><td>مبلغ الاحتياطي السنوي</td><td style="text-align:left;font-weight:600">${sar(reserve)} ريال</td></tr>
+  </tbody>
+</table>
+<div class="note">
+  يُخصَّص الاحتياطي للأعمال الكبيرة غير الدورية (تجديد المصاعد، العزل، الأصباغ الخارجية، استبدال المضخات)،
+  ويقي الملّاك من مطالبات مالية مفاجئة.
+</div>
+
+<div class="due">
+  <span class="l">إجمالي الموازنة التقديرية لعام ${budget.year}</span>
+  <span class="v">${sar(annualTotal)} ريال</span>
+</div>
+
+<h1 style="font-size:1rem">ثالثًا: الاشتراك المقترح لكل وحدة</h1>
+<div class="tot">
+  <div><div class="v">${units || "—"}</div><div class="l">عدد الوحدات</div></div>
+  <div><div class="v">${sar(perUnitYear)}</div><div class="l">سنويًّا لكل وحدة (ريال)</div></div>
+  <div><div class="v">${sar(perUnitMonth)}</div><div class="l">شهريًّا لكل وحدة (ريال)</div></div>
+  <div><div class="v ${gap > 0 ? "r" : "g"}">${sar(Math.abs(gap))}</div><div class="l">${gap > 0 ? "عجز متوقّع (ريال)" : "فائض متوقّع (ريال)"}</div></div>
+</div>
+
+${currentFee > 0 ? `<table>
+  <tbody>
+    <tr><td>الاشتراك الحالي المعتمد</td><td style="text-align:left;font-weight:600">${sar(currentFee)} ريال / شهر لكل وحدة</td></tr>
+    <tr><td>إيرادات الاشتراك الحالي سنويًّا</td><td style="text-align:left;font-weight:600">${sar(currentAnnual)} ريال</td></tr>
+    <tr style="background:${gap > 0 ? "#FBE9E7" : "#E6F4EC"};font-weight:700">
+      <td>${gap > 0 ? "الفرق المطلوب تغطيته" : "الفائض المرحّل"}</td>
+      <td style="text-align:left">${sar(Math.abs(gap))} ريال</td>
+    </tr>
+  </tbody>
+</table>` : ""}
+
+${budget.notes ? `<div class="note">${String(budget.notes).replace(/</g, "&lt;")}</div>` : ""}
+
+<div class="note">
+  يُحدَّد مبلغ الاشتراك السنوي بقرار من الجمعية العامة وفق النظام الأساسي للجمعية،
+  ويُودَع في الحساب البنكي للجمعية ويُصرف منه وفق هذه الموازنة المعتمدة.
+</div>
+
+<div class="sign">
+  <div>أعدّها: ${who}<br><br>التوقيع: ________________</div>
+  <div>اعتماد رئيس الجمعية<br><br>التوقيع: ________________</div>
+</div>
+${footer()}`;
+  return SHELL(`الموازنة التقديرية ${budget.year} — ${a.name}`, body);
+}
+
+/** محضر الجمعية العمومية التأسيسية */
+export function foundingMinutesHTML(
+  a: AssociationDoc & { units?: number },
+  d: {
+    meeting_date?: string; place?: string; mode?: string;
+    attendees?: number; total_units?: number;
+    president?: string; manager?: string;
+    fee?: number; due_day?: string; bank?: string;
+    year?: number; annual_budget?: number;
+  },
+  issuer: Issuer = {}
+) {
+  const who = issuer.billing_name || `إدارة ${a.name}`;
+  const date = d.meeting_date || today();
+  const units = Number(d.total_units) || Number(a.units) || (a.owners || []).length || 0;
+  const att = Number(d.attendees) || 0;
+  const quorum = units ? Math.round((att / units) * 100) : 0;
+  const fee = Number(d.fee) || Number(a.fee) || 0;
+
+  const body = `
+${header("محضر اجتماع", "الجمعية العمومية التأسيسية")}
+<h1>محضر الجمعية العمومية التأسيسية</h1>
+<div class="sub">${a.name}${units ? ` · ${units} وحدة عقارية` : ""}</div>
+
+<div class="grid">
+  <div class="box">
+    <h3>بيانات الاجتماع</h3>
+    <div class="r"><span>التاريخ</span><span>${date}</span></div>
+    <div class="r"><span>طريقة الانعقاد</span><span>${d.mode || "حضوري"}</span></div>
+    ${d.place ? `<div class="r"><span>المكان</span><span>${d.place}</span></div>` : ""}
+    <div class="r"><span>عدد الحاضرين</span><span>${att || "—"} من ${units || "—"}</span></div>
+    <div class="r"><span>نسبة الحضور</span><span>${units ? quorum + "%" : "—"}</span></div>
+  </div>
+  <div class="box">
+    <h3>الأساس النظامي</h3>
+    <div class="r"><span>النظام</span><span>ملكية الوحدات العقارية وفرزها وإدارتها</span></div>
+    <div class="r"><span>المرسوم الملكي</span><span>م/85 وتاريخ 02/07/1441هـ</span></div>
+    <div class="r"><span>الجهة المشرفة</span><span>الهيئة العامة للعقار</span></div>
+  </div>
+</div>
+
+<div class="note">
+  عُقد هذا الاجتماع لتأسيس جمعية ملاك العقار المشترك المذكور أعلاه، وفقًا لنظام ملكية الوحدات العقارية
+  وفرزها وإدارتها ولائحته التنفيذية، وبما أن عدد ملّاك الوحدات المفرزة ثلاثة أو أكثر.
+</div>
+
+<h1 style="font-size:1rem">جدول الأعمال والقرارات</h1>
+<table>
+  <thead><tr><th>#</th><th>البند</th><th>القرار</th></tr></thead>
+  <tbody>
+    <tr><td>1</td><td>تأسيس جمعية الملاك واعتماد نظامها الأساسي</td>
+        <td>الموافقة على التأسيس واعتماد النظام الأساسي (الاسترشادي الصادر من الهيئة).</td></tr>
+    <tr><td>2</td><td>انتخاب رئيس الجمعية</td>
+        <td>${d.president ? `انتخاب المكرَّم <b>${String(d.president).replace(/</g, "&lt;")}</b> رئيسًا للجمعية.` : "________________________________"}</td></tr>
+    <tr><td>3</td><td>تعيين مدير العقار</td>
+        <td>${d.manager ? `تعيين <b>${String(d.manager).replace(/</g, "&lt;")}</b> مديرًا للعقار.` : "________________________________"}</td></tr>
+    <tr><td>4</td><td>اعتماد الموازنة التقديرية${d.year ? ` لعام ${d.year}` : ""}</td>
+        <td>${d.annual_budget ? `اعتماد موازنة بإجمالي <b>${sar(d.annual_budget)}</b> ريال.` : "________________________________"}</td></tr>
+    <tr><td>5</td><td>تحديد اشتراك الصيانة وموعد سداده</td>
+        <td>${fee ? `تحديد الاشتراك بمبلغ <b>${sar(fee)}</b> ريال لكل وحدة${d.due_day ? `، يُسدَّد ${d.due_day}` : ""}.` : "________________________________"}</td></tr>
+    <tr><td>6</td><td>فتح الحساب البنكي للجمعية</td>
+        <td>${d.bank ? `تفويض إدارة الجمعية بفتح حساب لدى <b>${String(d.bank).replace(/</g, "&lt;")}</b> باسم الجمعية.` : "تفويض إدارة الجمعية بفتح حساب بنكي باسم الجمعية."}</td></tr>
+    <tr><td>7</td><td>تسجيل الجمعية لدى الهيئة العامة للعقار</td>
+        <td>تفويض رئيس الجمعية بإتمام التسجيل عبر منصة «ملاك» واستكمال المتطلبات النظامية.</td></tr>
+  </tbody>
+</table>
+
+<div class="note">
+  تُودَع الاشتراكات في الحساب البنكي للجمعية، ولا يجوز الصرف منها إلا وفق الموازنة المعتمدة.
+  ولا يملك مدير العقار صلاحية تعديل النظام الأساسي أو فرض رسوم جديدة.
+</div>
+
+<h1 style="font-size:1rem">توقيعات الحاضرين</h1>
+<table>
+  <thead><tr><th>#</th><th>اسم المالك</th><th>الوحدة</th><th>التوقيع</th></tr></thead>
+  <tbody>
+    ${(a.owners && a.owners.length
+      ? a.owners.map((o, i) => `<tr><td>${i + 1}</td><td>${String(o.name).replace(/</g, "&lt;")}</td><td>${o.unit || "—"}</td><td>________________</td></tr>`).join("")
+      : Array.from({ length: 8 }, (_, i) => `<tr><td>${i + 1}</td><td>________________</td><td>____</td><td>________________</td></tr>`).join(""))}
+  </tbody>
+</table>
+
+<div class="sign">
+  <div>رئيس الجمعية: ${d.president || "________________"}<br><br>التوقيع: ________________</div>
+  <div>مدير العقار: ${d.manager || "________________"}<br><br>التوقيع: ________________</div>
+</div>
+<div class="note" style="border-inline-start-color:#D0453F;background:#FBE9E7;color:#a5322c">
+  <b>تنويه:</b> هذا نموذج محضر استرشادي أعدّته إدارة الجمعية للاستخدام الإداري.
+  وثيق لا يقدّم خدمات قانونية ولا يمثّل الجمعية أمام أي جهة — راجع النموذج مع مختص مرخّص
+  وطابقه مع النظام الأساسي المعتمد قبل تقديمه رسميًّا.
+</div>
+${footer()}`;
+  return SHELL(`محضر تأسيسي — ${a.name}`, body);
+}
