@@ -63,11 +63,21 @@ export default function AssociationView({ initial }: { initial: Association[] })
       : `سُجّل ${sar(amt)} ريال كسداد جزئي`);
   }
   // ---------- جمعية ----------
+  /** هوية المستخدم الحالي — تشترطها سياسة الصلاحيات (RLS) عند الإدراج */
+  async function currentUserId(): Promise<string | null> {
+    const { data, error } = await supabase.auth.getUser();
+    if (error || !data?.user) return null;
+    return data.user.id;
+  }
+
   async function createAssociation(data: Partial<Association>) {
+    const uid = await currentUserId();
+    if (!uid) return notify("err", "انتهت الجلسة — أعد تسجيل الدخول ثم حاول مرة أخرى.");
     const { data: row, error } = await supabase.from("associations").insert({
       name: data.name, units: data.units || 0, fee: data.fee || 0,
       cert_expiry: data.cert_expiry || null, fund_balance: data.fund_balance || 0,
       grace_days: Math.max(0, Math.min(30, Number(data.grace_days) || 0)),
+      user_id: uid,
     }).select("*").single();
     if (error) { console.error("Watheq save error:", error); return notify("err", error.message); }
     const next = { ...(row as any), owners: [], association_notes: [] };

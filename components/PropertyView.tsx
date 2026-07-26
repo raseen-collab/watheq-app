@@ -76,6 +76,13 @@ export default function PropertyView({ initial, orgName, issuer }: { initial: Pr
 
   const active = useMemo(() => items.find((p) => p.id === activeId) || null, [items, activeId]);
 
+  /** هوية المستخدم الحالي — تشترطها سياسة الصلاحيات (RLS) عند الإدراج */
+  async function currentUserId(): Promise<string | null> {
+    const { data, error } = await supabase.auth.getUser();
+    if (error || !data?.user) return null;
+    return data.user.id;
+  }
+
   /** تسجيل مبلغ مستلم — يحوّل الجزئي إلى دفعات كاملة تلقائيًّا */
   async function recordPayment(t: Tenant, amount: number) {
     const amt = Math.max(0, Number(amount) || 0);
@@ -100,7 +107,10 @@ export default function PropertyView({ initial, orgName, issuer }: { initial: Pr
       if (error) { console.error("Watheq save error:", error); return notify("err", error.message); }
       setItems(items.map((p) => (p.id === id ? { ...p, ...payload } as Property : p)));
     } else {
-      const { data, error } = await supabase.from("properties").insert({ ...payload, collected: 0 }).select("*").single();
+      const uid = await currentUserId();
+      if (!uid) return notify("err", "انتهت الجلسة — أعد تسجيل الدخول ثم حاول مرة أخرى.");
+      const { data, error } = await supabase.from("properties")
+        .insert({ ...payload, collected: 0, user_id: uid }).select("*").single();
       if (error) { console.error("Watheq save error:", error); return notify("err", error.message); }
       const next = { ...(data as any), tenants: [], property_notes: [] };
       setItems([next, ...items]); setActiveId(next.id);
