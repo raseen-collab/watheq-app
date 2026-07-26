@@ -27,14 +27,17 @@ const PERIODS_PER_YEAR: Record<Frequency, number> = {
 const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
 
 /** إضافة (n) فترة إلى تاريخ — يراعي اختلاف أطوال الأشهر */
-export function addPeriods(date: Date, freq: Frequency, n: number): Date {
+export function addPeriods(date: Date, freq: Frequency, n: number, anchorDay?: number | null): Date {
   const d = new Date(date.getTime());
   switch (freq) {
     case "daily":  d.setDate(d.getDate() + n); break;
     case "weekly": d.setDate(d.getDate() + n * 7); break;
     default: {
       const months = freq === "monthly" ? 1 : freq === "quarterly" ? 3 : freq === "semiannual" ? 6 : 12;
-      const targetDay = d.getDate();
+      // المرساة تمنع «زحف التواريخ»: عقد يبدأ 31 يناير يُقصّ إلى 28 فبراير،
+      // فلولا المرساة لبقي يوم السداد 28 في كل الفترات التالية وعند كل تجديد.
+      const anchor = Number(anchorDay) || 0;
+      const targetDay = anchor >= 1 && anchor <= 31 ? anchor : d.getDate();
       d.setDate(1);
       d.setMonth(d.getMonth() + months * n);
       // تثبيت اليوم مع مراعاة الأشهر القصيرة (31 → 30/28)
@@ -46,14 +49,16 @@ export function addPeriods(date: Date, freq: Frequency, n: number): Date {
 }
 
 /** كم فترة حان استحقاقها منذ بداية العقد حتى اليوم */
-export function periodsElapsed(startISO: string | null | undefined, freq: Frequency, asOf?: Date): number {
+export function periodsElapsed(
+  startISO: string | null | undefined, freq: Frequency, asOf?: Date, anchorDay?: number | null
+): number {
   if (!startISO) return 0;
   const start = startOfDay(new Date(startISO));
   const today = startOfDay(asOf || new Date());
   if (today < start) return 0;
   let n = 0;
   // الدفعة الأولى مستحقة عند البداية
-  while (addPeriods(start, freq, n) <= today && n < 5000) n++;
+  while (addPeriods(start, freq, n, anchorDay) <= today && n < 5000) n++;
   return n;
 }
 
@@ -61,10 +66,19 @@ export function periodsElapsed(startISO: string | null | undefined, freq: Freque
 export const defaultTermPeriods = (freq: Frequency) => PERIODS_PER_YEAR[freq];
 
 /** تاريخ نهاية العقد المستنتج (إن لم يُدخل يدويًّا) */
-export function derivedEndDate(startISO: string, freq: Frequency, periods?: number | null): string {
+export function derivedEndDate(
+  startISO: string, freq: Frequency, periods?: number | null, anchorDay?: number | null
+): string {
   const n = periods && periods > 0 ? periods : defaultTermPeriods(freq);
-  return addPeriods(startOfDay(new Date(startISO)), freq, n).toISOString().slice(0, 10);
+  return addPeriods(startOfDay(new Date(startISO)), freq, n, anchorDay).toISOString().slice(0, 10);
 }
+
+/** يوم المرساة: المحفوظ، وإلا يوم بداية العقد */
+export const anchorOf = (t: { billing_anchor_day?: number | null; contract_start?: string | null }) =>
+  Number(t?.billing_anchor_day) || (t?.contract_start ? new Date(t.contract_start).getDate() : null);
+
+/** هل الوحدة شاغرة (أُخليت)؟ */
+export const isVacant = (t: { status?: string | null }) => String(t?.status || "active") === "vacated";
 
 export type ContractState = {
   due: number;            // فترات حان استحقاقها
@@ -101,7 +115,13 @@ export function contractState(t: {
   paid_periods?: number | null;
   contract_periods?: number | null;
   partial_amount?: number | null;
+  billing_anchor_day?: number | null;
+  status?: string | null;
+  move_out_date?: string | null;
 }, opts: { graceDays?: number | null } = {}): ContractState {
+  const anchor = anchorOf(t);
+  // الوحدة المُخلاة تتوقّف عن تراكم المتأخرات من تاريخ الإخلاء — لا تبقى "متأخرة" للأبد
+  const vacated = isVacant(t) && !!t.move_out_date;
   const grace = Math.max(0, Math.min(30, Number(opts.graceDays) || 0));
   const freq = (t.payment_frequency || "monthly") as Frequency;
   const rent = Number(t.rent_amount) || 0;
@@ -123,10 +143,13 @@ export function contractState(t: {
   }
 
   const start = startOfDay(new Date(t.contract_start));
+  // مرجع الاحتساب: اليوم، أو تاريخ الإخلاء إن كانت الوحدة مُخلاة (أيّهما أسبق)
+  const now = new Date();
+  const cutoff = vacated ? new Date(Math.min(Date.parse(String(t.move_out_date)), now.getTime())) : now;
   // فترة السماح: تُحتسب الدفعة مستحقّة رسميًّا بعد مرور أيام السماح
-  const graceRef = new Date(); graceRef.setDate(graceRef.getDate() - grace);
-  const due = periodsElapsed(t.contract_start, freq, graceRef);
-  const dueStrict = grace > 0 ? periodsElapsed(t.contract_start, freq) : due;
+  const graceRef = new Date(cutoff); graceRef.setDate(graceRef.getDate() - grace);
+  const due = periodsElapsed(t.contract_start, freq, graceRef, anchor);
+  const dueStrict = grace > 0 ? periodsElapsed(t.contract_start, freq, cutoff, anchor) : due;
   const unpaid = Math.max(0, due - paid);
   const grossDue = unpaid * rent;
   const amountDue = Math.max(0, grossDue - partial);
@@ -134,18 +157,18 @@ export function contractState(t: {
   const partialPct = rent ? Math.round((partial / rent) * 100) : 0;
 
   // تاريخ الدفعة القادمة = بداية العقد + عدد الفترات المسدّدة
-  const nextDue = addPeriods(start, freq, paid);
+  const nextDue = addPeriods(start, freq, paid, anchor);
   const nextDueDate = nextDue.toISOString().slice(0, 10);
   const daysToNextDue = daysBetween(nextDue, today);
 
   // نهاية العقد: يدوية أو مستنتجة
-  const endDate = t.contract_end || derivedEndDate(t.contract_start, freq, t.contract_periods);
+  const endDate = t.contract_end || derivedEndDate(t.contract_start, freq, t.contract_periods, anchor);
   const daysToEnd = daysBetween(new Date(endDate), today);
 
   // استُحقّت دفعة فعليًّا لكنها لم تُحتسب متأخرة بعد بفضل السماح
   const inGrace = grace > 0 && dueStrict > due && dueStrict > paid;
   const graceDaysLeft = inGrace
-    ? Math.max(0, grace + daysBetween(addPeriods(start, freq, dueStrict - 1), today))
+    ? Math.max(0, grace + daysBetween(addPeriods(start, freq, dueStrict - 1, anchor), today))
     : 0;
 
   const totalPeriods = t.contract_periods && t.contract_periods > 0 ? t.contract_periods : defaultTermPeriods(freq);
@@ -181,8 +204,10 @@ export function buildSchedule(t: {
   paid_periods?: number | null;
   contract_periods?: number | null;
   partial_amount?: number | null;
+  billing_anchor_day?: number | null;
 }) {
   if (!t.contract_start) return [];
+  const anchor = anchorOf(t);
   const freq = (t.payment_frequency || "monthly") as Frequency;
   const start = startOfDay(new Date(t.contract_start));
   const total = t.contract_periods && t.contract_periods > 0 ? t.contract_periods : defaultTermPeriods(freq);
@@ -192,7 +217,7 @@ export function buildSchedule(t: {
   const today = startOfDay(new Date());
 
   return Array.from({ length: Math.min(total, 400) }, (_, i) => {
-    const date = addPeriods(start, freq, i);
+    const date = addPeriods(start, freq, i, anchor);
     const isPaid = i < paid;
     const isDue = date <= today;
     // أول دفعة غير مسدّدة هي التي يقع عليها السداد الجزئي
@@ -220,7 +245,9 @@ export function renewContract(t: {
   payment_frequency?: string | null;
   contract_periods?: number | null;
   rent_amount?: number | null;
+  billing_anchor_day?: number | null;
 }, opts: { periods?: number | null; newAmount?: number | null; newFrequency?: Frequency | null } = {}) {
+  const anchor = anchorOf(t);
   const oldFreq = (t.payment_frequency || "monthly") as Frequency;
   const freq = (opts.newFrequency || oldFreq) as Frequency;
   const st = contractState(t);
@@ -230,12 +257,13 @@ export function renewContract(t: {
   const amount = opts.newAmount && opts.newAmount > 0 ? opts.newAmount : (Number(t.rent_amount) || 0);
   return {
     contract_start: startISO,
-    contract_end: derivedEndDate(startISO, freq, periods),
+    contract_end: derivedEndDate(startISO, freq, periods, anchor),
     payment_frequency: freq,
     contract_periods: periods,
     rent_amount: amount,
     paid_periods: 0,   // مدة جديدة تبدأ بصفر دفعات مسدّدة
     partial_amount: 0, // ولا سداد جزئي معلّق
+    billing_anchor_day: anchor, // ← تثبيت يوم السداد عبر كل التجديدات
   };
 }
 
@@ -315,3 +343,55 @@ export function splitVat(amount: number, v?: VatSettings | null): VatSplit {
 export const COMMERCIAL_TYPES = ["commercial", "office", "warehouse", "shop", "showroom"];
 export const isCommercial = (propertyType?: string | null) =>
   COMMERCIAL_TYPES.includes(String(propertyType || "").toLowerCase());
+
+// ============================================================
+// دورة الإخلاء: مخالصة مبلغ التأمين
+// ============================================================
+
+export type Settlement = {
+  deposit: number;       // مبلغ التأمين المستلم
+  deductions: number;    // خصومات التلفيات
+  outstanding: number;   // إيجار متأخر عند الإخلاء
+  refund: number;        // المستحق للمستأجر (لا يقلّ عن صفر)
+  dueFromTenant: number; // ما يبقى على المستأجر بعد استنفاد التأمين
+};
+
+/**
+ * تسوية مبلغ التأمين عند الإخلاء.
+ * التأمين يغطّي أولًا الإيجار المتأخر ثم التلفيات، والباقي يُردّ للمستأجر.
+ */
+export function settleDeposit(t: {
+  deposit_amount?: number | null;
+  deposit_deductions?: number | null;
+}, outstanding = 0): Settlement {
+  const deposit = Math.max(0, Number(t?.deposit_amount) || 0);
+  const deductions = Math.max(0, Number(t?.deposit_deductions) || 0);
+  const owed = Math.max(0, Number(outstanding) || 0);
+  const claims = owed + deductions;
+  const refund = Math.max(0, +(deposit - claims).toFixed(2));
+  const dueFromTenant = Math.max(0, +(claims - deposit).toFixed(2));
+  return { deposit, deductions, outstanding: owed, refund, dueFromTenant };
+}
+
+/** بنود قائمة تحقق الإخلاء — نقطة بداية يعدّلها المستخدم */
+export const TURNOVER_CHECKLIST: { label: string; done: boolean }[] = [
+  { label: "استلام المفاتيح وأجهزة التحكّم", done: false },
+  { label: "قراءة عدّاد الكهرباء وتوثيقها", done: false },
+  { label: "قراءة عدّاد المياه وتوثيقها", done: false },
+  { label: "نقل/فصل خدمات الكهرباء والمياه", done: false },
+  { label: "فحص السباكة والتمديدات", done: false },
+  { label: "فحص التكييف والأجهزة المثبّتة", done: false },
+  { label: "معاينة الدهانات والأرضيات", done: false },
+  { label: "تنظيف الوحدة وتجهيزها للعرض", done: false },
+  { label: "تصوير الوحدة بعد التجهيز", done: false },
+  { label: "إخلاء طرف من إدارة العقار", done: false },
+];
+
+/** عدد أيام الشغور حتى اليوم */
+export function vacancyDays(moveOutISO?: string | null): number | null {
+  if (!moveOutISO) return null;
+  const out = new Date(moveOutISO);
+  if (isNaN(out.getTime())) return null;
+  const ms = new Date().setHours(0, 0, 0, 0) - out.setHours(0, 0, 0, 0);
+  return Math.max(0, Math.round(ms / 86400000));
+}

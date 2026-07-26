@@ -1,4 +1,4 @@
-import { contractState, buildSchedule, freqLabel, splitVat } from "./contracts";
+import { contractState, buildSchedule, freqLabel, splitVat, settleDeposit, vacancyDays } from "./contracts";
 import { unitLabel, typeLabel } from "./domain";
 
 const sar = (n: number) => (Number(n) || 0).toLocaleString("en-US");
@@ -711,4 +711,109 @@ ${header("محضر اجتماع", "الجمعية العمومية التأسي�
 </div>
 ${footer()}`;
   return SHELL(`محضر تأسيسي — ${a.name}`, body);
+}
+
+// ============================================================
+// مخالصة إخلاء وحدة — تسوية التأمين وقراءات العدادات
+// ============================================================
+
+export function moveOutSettlementHTML(
+  t: Tenant & {
+    status?: string | null; move_out_date?: string | null; notice_date?: string | null;
+    deposit_amount?: number | null; deposit_deductions?: number | null; deposit_notes?: string | null;
+    meter_elec_in?: string | null; meter_elec_out?: string | null;
+    meter_water_in?: string | null; meter_water_out?: string | null;
+    turnover_checklist?: { label: string; done?: boolean; note?: string | null }[] | null;
+  },
+  p: Property, issuer: Issuer = {}
+) {
+  const st = contractState(t as any, { graceDays: Number(p.grace_days) || 0 });
+  const ul = unitLabel(p.property_type);
+  const who = issuer.billing_name || p.manager || "إدارة الأملاك";
+  const s = settleDeposit(t as any, st.amountDue);
+  const list = Array.isArray(t.turnover_checklist) ? t.turnover_checklist : [];
+  const doneCount = list.filter((x) => x?.done).length;
+  const vac = vacancyDays(t.move_out_date);
+
+  const body = `
+${header("مخالصة إخلاء", t.name)}
+<h1>مخالصة إخلاء ${ul} رقم (${t.unit || "—"})</h1>
+<div class="sub">${p.name}${p.address ? ` — ${p.address}` : ""}${p.city ? `، ${p.city}` : ""} · ${typeLabel(p.property_type)}</div>
+
+<div class="grid">
+  <div class="box">
+    <h3>بيانات الطرفين</h3>
+    <div class="r"><span>المؤجّر / الوكيل</span><span>${who}</span></div>
+    <div class="r"><span>المستأجر</span><span>${t.name}</span></div>
+    ${t.national_id ? `<div class="r"><span>الهوية / السجل</span><span>${t.national_id}</span></div>` : ""}
+    ${t.phone ? `<div class="r"><span>الجوال</span><span>${t.phone}</span></div>` : ""}
+  </div>
+  <div class="box">
+    <h3>بيانات الإخلاء</h3>
+    <div class="r"><span>بداية العقد</span><span>${t.contract_start || "—"}</span></div>
+    <div class="r"><span>نهاية العقد</span><span>${st.endDate || "—"}</span></div>
+    ${t.notice_date ? `<div class="r"><span>تاريخ الإشعار</span><span>${t.notice_date}</span></div>` : ""}
+    <div class="r"><span>تاريخ الإخلاء الفعلي</span><span>${t.move_out_date || "—"}</span></div>
+    ${vac !== null ? `<div class="r"><span>أيام الشغور حتى تاريخه</span><span>${vac}</span></div>` : ""}
+  </div>
+</div>
+
+<h1 style="font-size:1rem">أولًا: قراءات العدادات</h1>
+<table>
+  <thead><tr><th>العدّاد</th><th>عند التسليم</th><th>عند الإخلاء</th><th>الفرق</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>الكهرباء</td><td>${t.meter_elec_in || "—"}</td><td>${t.meter_elec_out || "—"}</td>
+      <td>${(Number(t.meter_elec_out) && Number(t.meter_elec_in)) ? sar(Number(t.meter_elec_out) - Number(t.meter_elec_in)) : "—"}</td>
+    </tr>
+    <tr>
+      <td>المياه</td><td>${t.meter_water_in || "—"}</td><td>${t.meter_water_out || "—"}</td>
+      <td>${(Number(t.meter_water_out) && Number(t.meter_water_in)) ? sar(Number(t.meter_water_out) - Number(t.meter_water_in)) : "—"}</td>
+    </tr>
+  </tbody>
+</table>
+<div class="note">يتحمّل المستأجر استهلاك الخدمات حتى تاريخ الإخلاء، ويلتزم بنقل أو فصل الاشتراكات باسمه.</div>
+
+<h1 style="font-size:1rem">ثانيًا: تسوية مبلغ التأمين</h1>
+<table>
+  <tbody>
+    <tr><td>مبلغ التأمين المستلم</td><td style="text-align:left;font-weight:600">${sar(s.deposit)} ريال</td></tr>
+    <tr><td>يُخصم: إيجار متأخر حتى تاريخ الإخلاء</td><td style="text-align:left;font-weight:600">${sar(s.outstanding)} ريال</td></tr>
+    <tr><td>يُخصم: تلفيات وأعمال إصلاح</td><td style="text-align:left;font-weight:600">${sar(s.deductions)} ريال</td></tr>
+    ${s.refund > 0
+      ? `<tr style="background:#E6F4EC;font-weight:700"><td>المستحق ردّه للمستأجر</td><td style="text-align:left">${sar(s.refund)} ريال</td></tr>`
+      : `<tr style="background:#FBE9E7;font-weight:700"><td>المستحق على المستأجر بعد استنفاد التأمين</td><td style="text-align:left">${sar(s.dueFromTenant)} ريال</td></tr>`}
+  </tbody>
+</table>
+${t.deposit_notes ? `<div class="note">تفصيل الخصومات: ${String(t.deposit_notes).replace(/</g, "&lt;")}</div>` : ""}
+
+${list.length ? `
+<h1 style="font-size:1rem">ثالثًا: قائمة تحقّق التسليم (${doneCount} من ${list.length})</h1>
+<table>
+  <thead><tr><th>#</th><th>البند</th><th>الحالة</th><th>ملاحظة</th></tr></thead>
+  <tbody>
+    ${list.map((x, i) => `<tr>
+      <td>${i + 1}</td>
+      <td>${String(x.label || "").replace(/</g, "&lt;")}</td>
+      <td>${x.done ? '<span class="pill p">تم</span>' : '<span class="pill u">لم يتم</span>'}</td>
+      <td>${x.note ? String(x.note).replace(/</g, "&lt;") : "—"}</td>
+    </tr>`).join("")}
+  </tbody>
+</table>` : ""}
+
+<div class="note">
+  بتوقيع الطرفين على هذه المخالصة، تُعدّ العلاقة الإيجارية منتهية عن ${ul} رقم (${t.unit || "—"})،
+  ويُقرّ كل طرف باستلام مستحقّاته الموضّحة أعلاه، مع بقاء أي التزام لم يُذكر صراحةً خاضعًا لأحكام العقد والأنظمة المعمول بها.
+</div>
+
+<div class="sign">
+  <div>المؤجّر / الوكيل: ${who}<br><br>التوقيع: ________________</div>
+  <div>المستأجر: ${t.name}<br><br>التوقيع: ________________</div>
+</div>
+<div class="note" style="border-inline-start-color:#B8791F;background:#FBF1DF;color:#8a5a11">
+  مستند إداري صادر عن إدارة الأملاك لتوثيق التسليم بين الطرفين. وثيق لا يقدّم خدمات قانونية ولا يستلم أي مبالغ —
+  راجعه مع مختص مرخّص قبل الاعتماد الرسمي.
+</div>
+${footer()}`;
+  return SHELL(`مخالصة إخلاء — ${t.name}`, body);
 }
