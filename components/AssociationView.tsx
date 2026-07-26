@@ -69,7 +69,7 @@ export default function AssociationView({ initial }: { initial: Association[] })
       cert_expiry: data.cert_expiry || null, fund_balance: data.fund_balance || 0,
       grace_days: Math.max(0, Math.min(30, Number(data.grace_days) || 0)),
     }).select("*").single();
-    if (error) return notify("err", error.message);
+    if (error) { console.error("Watheq save error:", error); return notify("err", error.message); }
     const next = { ...(row as any), owners: [], association_notes: [] };
     setItems([next, ...items]); setActiveId(next.id); setModal(null);
   }
@@ -80,14 +80,14 @@ export default function AssociationView({ initial }: { initial: Association[] })
       cert_expiry: data.cert_expiry || null, fund_balance: data.fund_balance || 0,
       grace_days: Math.max(0, Math.min(30, Number(data.grace_days) || 0)),
     }).eq("id", active.id);
-    if (error) return notify("err", error.message);
+    if (error) { console.error("Watheq save error:", error); return notify("err", error.message); }
     setItems(items.map((a) => a.id === active.id ? { ...a, ...data } as any : a));
     setModal(null);
   }
   async function deleteAssociation() {
     if (!active || !confirm("حذف الجمعية وكل بياناتها؟")) return;
     const { error } = await supabase.from("associations").delete().eq("id", active.id);
-    if (error) return notify("err", error.message);
+    if (error) { console.error("Watheq save error:", error); return notify("err", error.message); }
     const rest = items.filter((a) => a.id !== active.id);
     setItems(rest); setActiveId(rest[0]?.id || null); setModal(null);
   }
@@ -98,13 +98,13 @@ export default function AssociationView({ initial }: { initial: Association[] })
     const { data, error } = await supabase.from("owners").insert({
       association_id: active.id, name: name.trim(), unit: unit || null, phone: phone || null, months_late: 0,
     }).select("*").single();
-    if (error) return notify("err", error.message);
+    if (error) { console.error("Watheq save error:", error); return notify("err", error.message); }
     setItems(items.map((a) => a.id === active.id ? { ...a, owners: [...a.owners, data as Owner] } : a));
   }
   async function ownerPatch(id: string, patch: Partial<Owner>, fundDelta = 0) {
     if (!active) return;
     const { error } = await supabase.from("owners").update(patch).eq("id", id);
-    if (error) return notify("err", error.message);
+    if (error) { console.error("Watheq save error:", error); return notify("err", error.message); }
     if (fundDelta) await supabase.from("associations").update({ fund_balance: (active.fund_balance || 0) + fundDelta }).eq("id", active.id);
     setItems(items.map((a) => a.id === active.id ? {
       ...a,
@@ -115,7 +115,7 @@ export default function AssociationView({ initial }: { initial: Association[] })
   async function deleteOwner(id: string) {
     if (!active || !confirm("حذف المالك؟")) return;
     const { error } = await supabase.from("owners").delete().eq("id", id);
-    if (error) return notify("err", error.message);
+    if (error) { console.error("Watheq save error:", error); return notify("err", error.message); }
     setItems(items.map((a) => a.id === active.id ? { ...a, owners: a.owners.filter((o) => o.id !== id) } : a));
   }
 
@@ -125,13 +125,13 @@ export default function AssociationView({ initial }: { initial: Association[] })
     const { data, error } = await supabase.from("association_notes").insert({
       association_id: active.id, text: text.trim(), note_date: today(),
     }).select("*").single();
-    if (error) return notify("err", error.message);
+    if (error) { console.error("Watheq save error:", error); return notify("err", error.message); }
     setItems(items.map((a) => a.id === active.id ? { ...a, association_notes: [data as Note, ...a.association_notes] } : a));
   }
   async function deleteNote(id: string) {
     if (!active) return;
     const { error } = await supabase.from("association_notes").delete().eq("id", id);
-    if (error) return notify("err", error.message);
+    if (error) { console.error("Watheq save error:", error); return notify("err", error.message); }
     setItems(items.map((a) => a.id === active.id ? { ...a, association_notes: a.association_notes.filter((n) => n.id !== id) } : a));
   }
 
@@ -207,7 +207,7 @@ export default function AssociationView({ initial }: { initial: Association[] })
   return (
     <div>
       {toast && (
-        <div className={`fixed bottom-5 left-1/2 -translate-x-1/2 z-[60] rounded-xl px-4 py-3 text-sm font-semibold shadow-lg border ${
+        <div className={`fixed top-5 left-1/2 -translate-x-1/2 z-[70] rounded-xl px-4 py-3 text-sm font-semibold shadow-lg border ${
           toast.k === "ok" ? "bg-[#E6F4EC] text-[#137a50] border-[#B7DFC7]" : "bg-[#FBE9E7] text-[#a5322c] border-[#F5C6C2]"}`}>
           {toast.m}
         </div>
@@ -541,7 +541,8 @@ function FormModal({ open, title, initial, onClose, onSubmit, onDelete }: {
           <div className="grid grid-cols-2 gap-3">
             <Field label="انتهاء الشهادة"><input className="fld" type="date" value={d.cert_expiry || ""} onChange={(e) => setD({ ...d, cert_expiry: e.target.value })} /></Field>
             <Field label="رصيد الصندوق (ريال)"><input className="fld" type="number" value={d.fund_balance ?? ""} onChange={(e) => setD({ ...d, fund_balance: +e.target.value })} /></Field>
-            <Field label="فترة السماح (أيام)">
+            <div className="block">
+              <span className="block text-sm font-semibold mb-1">فترة السماح (أيام)</span>
               <div className="flex gap-2 flex-wrap">
                 {[0, 3, 5, 7].map((g) => (
                   <button key={g} type="button" onClick={() => setD({ ...d, grace_days: g })}
@@ -551,12 +552,18 @@ function FormModal({ open, title, initial, onClose, onSubmit, onDelete }: {
                   </button>
                 ))}
               </div>
-            </Field>
+            </div>
           </div>
         </div>
+        {!(d.name || "").trim() && (
+          <p className="text-xs text-late mt-3">اسم الجمعية مطلوب لتفعيل الحفظ.</p>
+        )}
         <div className="flex gap-2 mt-6">
-          <button className="btn btn-ghost flex-1 justify-center" onClick={onClose}>إلغاء</button>
-          <button className="btn btn-gold flex-1 justify-center" onClick={() => { if ((d.name || "").trim()) onSubmit(d); }}>حفظ</button>
+          <button type="button" className="btn btn-ghost flex-1 justify-center" onClick={onClose}>إلغاء</button>
+          <button type="button" className="btn btn-gold flex-1 justify-center" disabled={!(d.name || "").trim()}
+            title={!(d.name || "").trim() ? "أدخل اسم الجمعية أولًا" : "حفظ"}
+            style={!(d.name || "").trim() ? { opacity: .5, cursor: "not-allowed" } : undefined}
+            onClick={() => onSubmit(d)}>حفظ</button>
         </div>
         {onDelete && <div className="text-center mt-3"><button className="text-late text-sm font-semibold underline" onClick={onDelete}>حذف الجمعية نهائيًّا</button></div>}
       </div>

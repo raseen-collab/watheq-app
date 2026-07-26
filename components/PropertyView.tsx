@@ -97,11 +97,11 @@ export default function PropertyView({ initial, orgName, issuer }: { initial: Pr
     };
     if (id) {
       const { error } = await supabase.from("properties").update(payload).eq("id", id);
-      if (error) return notify("err", error.message);
+      if (error) { console.error("Watheq save error:", error); return notify("err", error.message); }
       setItems(items.map((p) => (p.id === id ? { ...p, ...payload } as Property : p)));
     } else {
       const { data, error } = await supabase.from("properties").insert({ ...payload, collected: 0 }).select("*").single();
-      if (error) return notify("err", error.message);
+      if (error) { console.error("Watheq save error:", error); return notify("err", error.message); }
       const next = { ...(data as any), tenants: [], property_notes: [] };
       setItems([next, ...items]); setActiveId(next.id);
     }
@@ -111,7 +111,7 @@ export default function PropertyView({ initial, orgName, issuer }: { initial: Pr
   async function deleteProperty() {
     if (!active || !confirm("حذف العقار وكل وحداته؟")) return;
     const { error } = await supabase.from("properties").delete().eq("id", active.id);
-    if (error) return notify("err", error.message);
+    if (error) { console.error("Watheq save error:", error); return notify("err", error.message); }
     const rest = items.filter((p) => p.id !== active.id);
     setItems(rest); setActiveId(rest[0]?.id || null); setModal(null);
   }
@@ -130,12 +130,12 @@ export default function PropertyView({ initial, orgName, issuer }: { initial: Pr
     };
     if (id) {
       const { error } = await supabase.from("tenants").update(payload).eq("id", id);
-      if (error) return notify("err", error.message);
+      if (error) { console.error("Watheq save error:", error); return notify("err", error.message); }
       setItems(items.map((p) => p.id === active.id
         ? { ...p, tenants: p.tenants.map((t) => (t.id === id ? { ...t, ...payload } as Tenant : t)) } : p));
     } else {
       const { data, error } = await supabase.from("tenants").insert({ ...payload, paid_periods: 0 }).select("*").single();
-      if (error) return notify("err", error.message);
+      if (error) { console.error("Watheq save error:", error); return notify("err", error.message); }
       setItems(items.map((p) => (p.id === active.id ? { ...p, tenants: [...p.tenants, data as Tenant] } : p)));
     }
     setModal(null);
@@ -144,7 +144,7 @@ export default function PropertyView({ initial, orgName, issuer }: { initial: Pr
   async function patchTenant(id: string, patch: any, collectedDelta = 0) {
     if (!active) return;
     const { error } = await supabase.from("tenants").update(patch).eq("id", id);
-    if (error) return notify("err", error.message);
+    if (error) { console.error("Watheq save error:", error); return notify("err", error.message); }
     if (collectedDelta) await supabase.from("properties").update({ collected: (active.collected || 0) + collectedDelta }).eq("id", active.id);
     setItems(items.map((p) => p.id === active.id ? {
       ...p,
@@ -156,7 +156,7 @@ export default function PropertyView({ initial, orgName, issuer }: { initial: Pr
   async function deleteTenant(id: string) {
     if (!active || !confirm("حذف هذه الوحدة؟")) return;
     const { error } = await supabase.from("tenants").delete().eq("id", id);
-    if (error) return notify("err", error.message);
+    if (error) { console.error("Watheq save error:", error); return notify("err", error.message); }
     setItems(items.map((p) => (p.id === active.id ? { ...p, tenants: p.tenants.filter((t) => t.id !== id) } : p)));
   }
 
@@ -164,7 +164,7 @@ export default function PropertyView({ initial, orgName, issuer }: { initial: Pr
     if (!active || !text.trim()) return;
     const { data, error } = await supabase.from("property_notes")
       .insert({ property_id: active.id, text: text.trim(), note_date: today() }).select("*").single();
-    if (error) return notify("err", error.message);
+    if (error) { console.error("Watheq save error:", error); return notify("err", error.message); }
     setItems(items.map((p) => (p.id === active.id ? { ...p, property_notes: [data as Note, ...p.property_notes] } : p)));
   }
 
@@ -178,7 +178,7 @@ export default function PropertyView({ initial, orgName, issuer }: { initial: Pr
     if (!active) return;
     const fields = renewContract(t, { periods: opts.periods, newAmount: opts.newAmount, newFrequency: opts.newFrequency });
     const { error } = await supabase.from("tenants").update(fields).eq("id", t.id);
-    if (error) return notify("err", error.message);
+    if (error) { console.error("Watheq save error:", error); return notify("err", error.message); }
     // توثيق التجديد في سجل العقار
     await supabase.from("property_notes").insert({
       property_id: active.id, note_date: today(),
@@ -348,7 +348,7 @@ export default function PropertyView({ initial, orgName, issuer }: { initial: Pr
   return (
     <div>
       {toast && (
-        <div className={`fixed bottom-5 left-1/2 -translate-x-1/2 z-[60] rounded-xl px-4 py-3 text-sm font-semibold shadow-lg border ${
+        <div className={`fixed top-5 left-1/2 -translate-x-1/2 z-[70] rounded-xl px-4 py-3 text-sm font-semibold shadow-lg border ${
           toast.k === "ok" ? "bg-[#E6F4EC] text-[#137a50] border-[#B7DFC7]" : "bg-[#FBE9E7] text-[#a5322c] border-[#F5C6C2]"}`}>
           {toast.m}
         </div>
@@ -628,7 +628,7 @@ function PaymentModal({ tenant, unitWord, onClose, onSubmit }: {
       )}
 
       <div className="flex gap-2 mt-5">
-        <button className="btn btn-ghost flex-1 justify-center" onClick={onClose}>إلغاء</button>
+        <button type="button" className="btn btn-ghost flex-1 justify-center" onClick={onClose}>إلغاء</button>
         <button className="btn btn-gold flex-1 justify-center" disabled={!amt} onClick={() => onSubmit(amt)}>تسجيل</button>
       </div>
     </Shell>
@@ -716,7 +716,7 @@ function PropertyModal({ open, initial, orgName, onClose, onSubmit, onDelete }: 
         <Field label="نوع العقار">
           <div className="grid grid-cols-3 gap-2">
             {PROPERTY_TYPES.map((pt) => (
-              <button key={pt.value} onClick={() => setD({ ...d, property_type: pt.value })}
+              <button key={pt.value} type="button" onClick={() => setD({ ...d, property_type: pt.value })}
                 className={`border-2 rounded-xl p-2.5 text-center text-xs font-semibold transition ${
                   d.property_type === pt.value ? "border-gold bg-[#FBF1DF]" : "border-line hover:border-goldSoft"}`}>
                 <div className="text-lg mb-0.5">{pt.icon}</div>{pt.label}
@@ -731,10 +731,11 @@ function PropertyModal({ open, initial, orgName, onClose, onSubmit, onDelete }: 
         </div>
         <Field label="اسم المالك أو المكتب" hint="يظهر في الخطابات"><input className="fld" value={d.manager || ""} onChange={(e) => setD({ ...d, manager: e.target.value })} placeholder={orgName || "مكتب اليمامة"} /></Field>
 
-        <Field label="فترة السماح (أيام)" hint="لا تُحتسب الدفعة متأخرة خلالها">
+        <div className="block">
+          <span className="block text-sm font-semibold mb-1">فترة السماح (أيام) <span className="text-muted font-normal text-xs">— لا تُحتسب الدفعة متأخرة خلالها</span></span>
           <div className="flex gap-2 flex-wrap">
             {[0, 3, 5, 7].map((g) => (
-              <button key={g} onClick={() => setD({ ...d, grace_days: g })}
+              <button key={g} type="button" onClick={() => setD({ ...d, grace_days: g })}
                 className={`border-2 rounded-lg px-3.5 py-2 text-xs font-semibold transition ${
                   (Number(d.grace_days) || 0) === g ? "border-gold bg-[#FBF1DF]" : "border-line hover:border-goldSoft"}`}>
                 {g === 0 ? "بدون" : `${g} أيام`}
@@ -744,7 +745,7 @@ function PropertyModal({ open, initial, orgName, onClose, onSubmit, onDelete }: 
               value={[0, 3, 5, 7].includes(Number(d.grace_days) || 0) ? "" : (d.grace_days ?? "")}
               onChange={(e) => setD({ ...d, grace_days: e.target.value })} />
           </div>
-        </Field>
+        </div>
 
         <div className="border border-line rounded-xl p-3 bg-paper">
           <label className="flex items-center gap-2.5 cursor-pointer">
@@ -773,10 +774,14 @@ function PropertyModal({ open, initial, orgName, onClose, onSubmit, onDelete }: 
         </div>
       </div>
       <div className="flex gap-2 mt-6">
-        <button className="btn btn-ghost flex-1 justify-center" onClick={onClose}>إلغاء</button>
-        <button className="btn btn-gold flex-1 justify-center" onClick={() => (d.name || "").trim() && onSubmit(d)}>حفظ</button>
+        <button type="button" className="btn btn-ghost flex-1 justify-center" onClick={onClose}>إلغاء</button>
+        <button type="button" className="btn btn-gold flex-1 justify-center" disabled={!(d.name || "").trim()}
+          title={!(d.name || "").trim() ? "أدخل اسم العقار أولًا" : "حفظ"}
+          style={!(d.name || "").trim() ? { opacity: .5, cursor: "not-allowed" } : undefined}
+          onClick={() => onSubmit(d)}>حفظ</button>
       </div>
-      {onDelete && <div className="text-center mt-3"><button className="text-late text-sm font-semibold underline" onClick={onDelete}>حذف العقار</button></div>}
+      {!(d.name || "").trim() && <p className="text-xs text-late mt-3 text-center">اسم العقار مطلوب لتفعيل الحفظ.</p>}
+      {onDelete && <div className="text-center mt-3"><button type="button" className="text-late text-sm font-semibold underline" onClick={onDelete}>حذف العقار</button></div>}
     </Shell>
   );
 }
@@ -804,7 +809,7 @@ function TenantModal({ open, initial, unitWord, onClose, onSubmit }: {
         <Field label="دورة السداد">
           <div className="grid grid-cols-3 gap-2">
             {FREQUENCIES.map((f) => (
-              <button key={f.value} onClick={() => setD({ ...d, payment_frequency: f.value })}
+              <button key={f.value} type="button" onClick={() => setD({ ...d, payment_frequency: f.value })}
                 className={`border-2 rounded-lg py-2 text-xs font-semibold transition ${
                   d.payment_frequency === f.value ? "border-gold bg-[#FBF1DF]" : "border-line hover:border-goldSoft"}`}>
                 {f.label}
@@ -831,9 +836,13 @@ function TenantModal({ open, initial, unitWord, onClose, onSubmit }: {
         )}
       </div>
       <div className="flex gap-2 mt-6">
-        <button className="btn btn-ghost flex-1 justify-center" onClick={onClose}>إلغاء</button>
-        <button className="btn btn-gold flex-1 justify-center" onClick={() => (d.name || "").trim() && onSubmit(d)}>حفظ</button>
+        <button type="button" className="btn btn-ghost flex-1 justify-center" onClick={onClose}>إلغاء</button>
+        <button type="button" className="btn btn-gold flex-1 justify-center" disabled={!(d.name || "").trim()}
+          title={!(d.name || "").trim() ? "أدخل اسم المستأجر أولًا" : "حفظ"}
+          style={!(d.name || "").trim() ? { opacity: .5, cursor: "not-allowed" } : undefined}
+          onClick={() => onSubmit(d)}>حفظ</button>
       </div>
+      {!(d.name || "").trim() && <p className="text-xs text-late mt-3 text-center">اسم المستأجر مطلوب لتفعيل الحفظ.</p>}
     </Shell>
   );
 }
@@ -874,7 +883,7 @@ function ScheduleModal({ tenant, unitWord, onClose }: { tenant: Tenant; unitWord
           </tbody>
         </table>
       </div>
-      <button className="btn btn-ghost w-full justify-center mt-4" onClick={onClose}>إغلاق</button>
+      <button type="button" className="btn btn-ghost w-full justify-center mt-4" onClick={onClose}>إغلاق</button>
     </Shell>
   );
 }
@@ -891,7 +900,7 @@ function DocModal({ doc, onClose }: { doc: { title: string; body: string }; onCl
       <div className="flex gap-2 mt-4">
         <button onClick={() => navigator.clipboard?.writeText(doc.body)} className="btn btn-primary flex-1 justify-center">نسخ النص</button>
         <button onClick={() => { const w = window.open("", "_blank"); if (w) { w.document.write('<pre dir="rtl" style="font-family:sans-serif;white-space:pre-wrap;padding:24px;line-height:1.9">' + doc.body.replace(/</g, "&lt;") + "</pre>"); w.document.close(); w.print(); } }} className="btn btn-ghost flex-1 justify-center">طباعة</button>
-        <button onClick={onClose} className="btn text-muted">إغلاق</button>
+        <button type="button" onClick={onClose} className="btn text-muted">إغلاق</button>
       </div>
     </Shell>
   );
@@ -944,7 +953,7 @@ function RenewModal({ tenant, unitWord, onClose, onRenew }: {
         <Field label="دورة السداد للمدة الجديدة">
           <div className="grid grid-cols-3 gap-2">
             {FREQUENCIES.map((f) => (
-              <button key={f.value} onClick={() => setFreq(f.value)}
+              <button key={f.value} type="button" onClick={() => setFreq(f.value)}
                 className={`border-2 rounded-lg py-2 text-xs font-semibold transition ${
                   freq === f.value ? "border-gold bg-[#FBF1DF]" : "border-line hover:border-goldSoft"}`}>
                 {f.label}
@@ -976,7 +985,7 @@ function RenewModal({ tenant, unitWord, onClose, onRenew }: {
       </p>
 
       <div className="flex gap-2 mt-5">
-        <button className="btn btn-ghost flex-1 justify-center" onClick={onClose}>إلغاء</button>
+        <button type="button" className="btn btn-ghost flex-1 justify-center" onClick={onClose}>إلغاء</button>
         <button className="btn btn-gold flex-1 justify-center" disabled={busy || !Number(periods)}
           onClick={() => { setBusy(true); onRenew({ periods: Number(periods), newAmount: Number(amount) || null, newFrequency: freq }); }}>
           {busy ? "..." : "تأكيد التجديد"}
@@ -1004,7 +1013,7 @@ function EnforcementModal({ tenant, unitWord, onClose, onSubmit }: {
         <Field label="سند الأمر" hint="اختياري"><input className="fld" value={order} onChange={(e) => setOrder(e.target.value)} placeholder="رقم/وصف سند الأمر" /></Field>
       </div>
       <div className="flex gap-2 mt-6">
-        <button className="btn btn-ghost flex-1 justify-center" onClick={onClose}>إلغاء</button>
+        <button type="button" className="btn btn-ghost flex-1 justify-center" onClick={onClose}>إلغاء</button>
         <button className="btn flex-1 justify-center" style={{ background: "#475569", color: "#fff" }} onClick={() => onSubmit(no.trim(), order.trim())}>
           {already ? "حفظ" : "رفع للتنفيذ"}
         </button>
