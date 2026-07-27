@@ -57,7 +57,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       </head>
       <body>
         {children}
-        {/* @ts-expect-error — مكوّن سيرفر غير متزامن داخل التخطيط */}
         <AdminLink />
       </body>
     </html>
