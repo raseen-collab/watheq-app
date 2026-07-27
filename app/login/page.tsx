@@ -1,7 +1,20 @@
 "use client";
-import { Suspense, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase-client";
+
+/** مصادر التسجيل — يختارها المستخدم بنفسه، بلا كوكيز ولا تتبّع */
+const SOURCES: { v: string; l: string }[] = [
+  { v: "haraj", l: "حراج" },
+  { v: "group", l: "قروب واتساب أو تليجرام" },
+  { v: "twitter", l: "تويتر / X" },
+  { v: "search", l: "بحث في جوجل" },
+  { v: "referral", l: "توصية من شخص" },
+  { v: "direct", l: "تواصل مباشر معكم" },
+  { v: "other", l: "مصدر آخر" },
+  { v: "skip", l: "أفضّل عدم الذكر" },
+];
+const sourceLabel = (v?: string | null) => SOURCES.find((s) => s.v === v)?.l || "—";
 
 export default function LoginPage() {
   return (
@@ -19,9 +32,38 @@ function LoginInner() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
+  const [source, setSource] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [info, setInfo] = useState<string | null>(null);
+
+  // يقبل ?src=twitter من روابط الحملات فيملأ الحقل تلقائيًّا
+  useEffect(() => {
+    const s = searchParams.get("src");
+    if (s && SOURCES.some((x) => x.v === s)) setSource(s);
+    if (searchParams.get("mode") === "signup") setMode("signup");
+  }, [searchParams]);
+
+  /**
+   * ينقل مصدر التسجيل من بيانات الحساب إلى الملف الشخصي عند أول دخول.
+   * سبب التأجيل: عند إنشاء الحساب لا توجد جلسة بعد (يلزم تفعيل البريد)،
+   * فلا يمكن الكتابة في profiles إلا بعد أول تسجيل دخول ناجح.
+   * ويُكتب مرة واحدة فقط — لا يُستبدل إن كان محفوظًا.
+   */
+  async function syncSource(supabase: ReturnType<typeof createClient>) {
+    try {
+      const { data } = await supabase.auth.getUser();
+      const u = data?.user;
+      const src = (u?.user_metadata as any)?.signup_source;
+      if (!u || !src) return;
+      await supabase.from("profiles")
+        .update({ signup_source: src })
+        .eq("id", u.id)
+        .is("signup_source", null);
+    } catch {
+      /* لا يُعطّل الدخول إن فشل */
+    }
+  }
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -31,7 +73,7 @@ function LoginInner() {
       if (mode === "signup") {
         const { error } = await supabase.auth.signUp({
           email, password,
-          options: { data: { name } },
+          options: { data: { name, signup_source: source || "skip" } },
         });
         if (error) throw error;
         setInfo("تم إنشاء الحساب. تحقق من بريدك لتفعيله ثم سجّل الدخول.");
@@ -39,6 +81,7 @@ function LoginInner() {
       } else {
         const { error } = await supabase.auth.signInWithPassword({ email, password });
         if (error) throw error;
+        await syncSource(supabase);
         router.push(next);
         router.refresh();
       }
@@ -82,6 +125,18 @@ function LoginInner() {
             <label className="block text-sm font-semibold mb-1">كلمة المرور</label>
             <input className="fld" type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="٦ أحرف على الأقل" required minLength={6} />
           </div>
+
+          {mode === "signup" && (
+            <div>
+              <label className="block text-sm font-semibold mb-1">
+                كيف عرفت عن وثيق؟ <span className="text-muted font-normal text-xs">— يساعدنا نعرف أين نكون</span>
+              </label>
+              <select className="fld" value={source} onChange={(e) => setSource(e.target.value)} required>
+                <option value="" disabled>اختر…</option>
+                {SOURCES.map((s) => <option key={s.v} value={s.v}>{s.l}</option>)}
+              </select>
+            </div>
+          )}
 
           {error && <div className="text-sm text-late bg-[#FBE9E7] border border-[#F5C6C2] rounded-lg p-2.5">{error}</div>}
           {info && <div className="text-sm text-[#137a50] bg-[#E6F4EC] border border-[#B7DFC7] rounded-lg p-2.5">{info}</div>}
