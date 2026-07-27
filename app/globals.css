@@ -24,3 +24,108 @@ body {
 .btn-wa:hover { background:#18944a; }
 .fld { background:#FBF8F1; border:1px solid #E4DDCD; border-radius:.5rem; padding:.55rem .7rem; font-size:.9rem; width:100%; color:#0B211F; }
 .fld:focus { outline:2px solid #E7C877; outline-offset:1px; }
+/* ══════════════════════════════════════════════════════════
+   وثيق — الوضع الليلي للوحات التحكّم
+   الصقه في نهاية app/globals.css
+   لا يحتاج تعديل أي مكوّن: يعيد تعريف أصناف Tailwind
+   المستخدمة فعلًا عند تفعيل data-theme="dark" على <html>.
+   ══════════════════════════════════════════════════════════ */
+
+html[data-theme="dark"] {
+  color-scheme: dark;
+  --d-page:      #081513;  /* خلفية الصفحة */
+  --d-card:      #0F221F;  /* البطاقات */
+  --d-soft:      #102421;  /* أسطح خفيفة */
+  --d-deep:      #12332F;  /* الأشرطة الداكنة */
+  --d-line:      #22423C;  /* الحدود */
+  --d-text:      #DCE8E4;  /* المتن */
+  --d-head:      #F2F7F5;  /* العناوين */
+  --d-muted:     #A3B8B2;  /* الثانوي */
+  --d-gold:      #E7C877;
+  --d-gold-soft: #F2DCA4;
+  --d-paid:      #4BD9A2;
+  --d-late:      #F79A94;
+}
+
+/* ── الأساس ── */
+html[data-theme="dark"] body { background: var(--d-page); color: var(--d-text); }
+
+/* ── الخلفيات ── */
+html[data-theme="dark"] .bg-white   { background-color: var(--d-card) !important; }
+html[data-theme="dark"] .bg-paper   { background-color: var(--d-page) !important; }
+html[data-theme="dark"] .bg-paper2  { background-color: var(--d-soft) !important; }
+html[data-theme="dark"] .bg-deep    { background-color: var(--d-deep) !important; }
+html[data-theme="dark"] .bg-gold    { background-color: var(--d-gold) !important; color: #0B1A18 !important; }
+html[data-theme="dark"] .bg-muted   { background-color: var(--d-muted) !important; }
+
+/* ── النصوص ── */
+html[data-theme="dark"] .text-deep     { color: var(--d-head) !important; }
+html[data-theme="dark"] .text-ink      { color: var(--d-text) !important; }
+html[data-theme="dark"] .text-muted    { color: var(--d-muted) !important; }
+html[data-theme="dark"] .text-gold     { color: var(--d-gold) !important; }
+html[data-theme="dark"] .text-goldSoft { color: var(--d-gold-soft) !important; }
+html[data-theme="dark"] .text-paid     { color: var(--d-paid) !important; }
+html[data-theme="dark"] .text-late     { color: var(--d-late) !important; }
+
+/* ── الحدود ── */
+html[data-theme="dark"] .border-line  { border-color: var(--d-line) !important; }
+html[data-theme="dark"] .divide-line > * + * { border-color: var(--d-line) !important; }
+html[data-theme="dark"] .border-gold  { border-color: var(--d-gold) !important; }
+
+/* ── الحقول والأزرار ── */
+html[data-theme="dark"] .fld {
+  background: var(--d-soft) !important;
+  border-color: var(--d-line) !important;
+  color: var(--d-text) !important;
+}
+html[data-theme="dark"] .fld::placeholder { color: var(--d-muted) !important; }
+html[data-theme="dark"] .fld option { background: var(--d-card); color: var(--d-text); }
+html[data-theme="dark"] .btn-ghost {
+  background: var(--d-card) !important;
+  border-color: var(--d-line) !important;
+  color: var(--d-head) !important;
+}
+html[data-theme="dark"] .btn-primary { color: #EAF1EE !important; }
+
+/* ── الجداول ── */
+html[data-theme="dark"] table thead tr { background: var(--d-soft) !important; }
+html[data-theme="dark"] table th,
+html[data-theme="dark"] table td { border-color: var(--d-line) !important; }
+
+/* ── الأسطح الملوّنة الثابتة (تُستبدل بنسخ داكنة) ── */
+html[data-theme="dark"] [class*="bg-[#FBE9E7]"] { background-color: #361B1C !important; }
+html[data-theme="dark"] [class*="bg-[#E6F4EC]"] { background-color: #0E3226 !important; }
+html[data-theme="dark"] [class*="bg-[#FBF1DF]"] { background-color: #312615 !important; }
+html[data-theme="dark"] [class*="bg-[#FDF0DC]"] { background-color: #2E2416 !important; }
+html[data-theme="dark"] [class*="bg-[#F1F5F9]"] { background-color: #16211F !important; }
+html[data-theme="dark"] [class*="bg-[#EEF1F4]"] { background-color: #16211F !important; }
+html[data-theme="dark"] [class*="bg-[#F1EBFC]"] { background-color: #221B33 !important; }
+html[data-theme="dark"] [class*="bg-[#FBF8F1]"] { background-color: var(--d-soft) !important; }
+html[data-theme="dark"] [class*="bg-[#0A2C2A]"] { background-color: #0B1F1C !important; }
+
+html[data-theme="dark"] [class*="text-[#a5322c]"] { color: var(--d-late) !important; }
+html[data-theme="dark"] [class*="text-[#137a50]"] { color: var(--d-paid) !important; }
+html[data-theme="dark"] [class*="text-[#8a5a11]"] { color: #E9C87E !important; }
+html[data-theme="dark"] [class*="text-[#9A5B00]"] { color: #F0B45E !important; }
+html[data-theme="dark"] [class*="text-[#6b4a12]"] { color: #E9C87E !important; }
+html[data-theme="dark"] [class*="text-[#475569]"] { color: #A9BAC4 !important; }
+html[data-theme="dark"] [class*="text-[#5B21B6]"] { color: #C4A9F5 !important; }
+html[data-theme="dark"] [class*="text-[#9FB8B3]"] { color: var(--d-muted) !important; }
+
+html[data-theme="dark"] [class*="border-[#F5C6C2]"] { border-color: #5B2C2C !important; }
+html[data-theme="dark"] [class*="border-[#B7DFC7]"] { border-color: #1E5641 !important; }
+html[data-theme="dark"] [class*="border-[#EBD9AA]"] { border-color: #55441F !important; }
+
+/* ── زرّ تبديل الوضع ── */
+.wq-theme-btn {
+  display: inline-flex; align-items: center; gap: 7px;
+  border-radius: 999px; padding: 9px 15px;
+  font-size: .78rem; font-weight: 600; cursor: pointer;
+  border: 1px solid rgba(255,255,255,.22);
+  background: #0E3A37; color: #E7C877;
+  box-shadow: 0 6px 18px -8px rgba(0,0,0,.5);
+  font-family: inherit; line-height: 1; white-space: nowrap;
+}
+html[data-theme="dark"] .wq-theme-btn {
+  background: var(--d-card); color: var(--d-gold); border-color: var(--d-line);
+}
