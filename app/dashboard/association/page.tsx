@@ -12,7 +12,7 @@ export default async function AssociationPage() {
 
   // حماية: هل يملك هذا الحساب صلاحية لوحة الجمعيات؟
   const { data: profile } = await supabase
-    .from("profiles").select("account_type, role").eq("id", user.id).maybeSingle();
+    .from("profiles").select("account_type, role, plan, trial_ends_at").eq("id", user.id).maybeSingle();
   const type = normalizeAccountType(profile || {});
   if (!type) redirect("/onboarding");
   if (!canAccess(type, "association")) redirect("/dashboard/property");
@@ -27,5 +27,8 @@ export default async function AssociationPage() {
     .select("*, owners(*), association_notes(*)")
     .order("created_at", { ascending: false });
 
-  return <AssociationView initial={associations || []} />;
+  // المستندات تخرج بعلامة «نسخة تجريبية» ما دام لا يوجد اشتراك مفعّل
+  const trial = !["basic", "pro", "full"].includes(String(profile?.plan || ""));
+
+  return <AssociationView initial={associations || []} issuer={{ trial }} />;
 }

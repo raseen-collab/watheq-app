@@ -27,7 +27,7 @@ export default async function PropertyPage() {
 
   const { data: { user } } = await supabase.auth.getUser();
   const { data: profile } = await supabase
-    .from("profiles").select("org_name, billing_name, vat_number, cr_number, billing_phone").eq("id", user!.id).maybeSingle();
+    .from("profiles").select("org_name, billing_name, vat_number, cr_number, billing_phone, plan").eq("id", user!.id).maybeSingle();
 
-  return <PropertyView initial={properties || []} orgName={profile?.org_name || ""} issuer={profile || {}} />;
+  return <PropertyView initial={properties || []} orgName={profile?.org_name || ""} issuer={{ ...(profile || {}), trial: !["basic", "pro", "full"].includes(String(profile?.plan || "")) }} />;
 }
