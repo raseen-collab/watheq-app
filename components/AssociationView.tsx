@@ -28,7 +28,7 @@ const ownerKey = (o: Owner): OwnerKey =>
     : "ok";
 const OWNER_URGENCY: Record<OwnerKey, number> = { critical: 0, late: 1, partial: 2, ok: 3 };
 
-export default function AssociationView({ initial }: { initial: Association[] }) {
+export default function AssociationView({ initial, issuer }: { initial: Association[]; issuer?: any }) {
   const supabase = createClient();
   const router = useRouter();
   /** يضمن أن كل جمعية تحمل مصفوفتيها — يمنع انكسار العرض عند صفٍّ جديد */
@@ -154,7 +154,7 @@ export default function AssociationView({ initial }: { initial: Association[] })
       .select("id,paid_on,amount,method,periods_covered,note")
       .eq("owner_id", o.id).order("paid_on", { ascending: true }).limit(500);
     if (error) console.error("Watheq statement payments error:", error);
-    openDoc(ownerStatementHTML(o as any, active as any, {}, (data || []) as any));
+    openDoc(ownerStatementHTML(o as any, active as any, issuer || {}, (data || []) as any));
   }
 
   /** يفتح الموازنة: يجلب المحفوظة أو يبدأ بالبنود النموذجية */
@@ -217,7 +217,7 @@ export default function AssociationView({ initial }: { initial: Association[] })
         return openDoc(budgetHTML(active as any, {
           year: y, items: (data.items as BudgetItem[]) || [],
           reserve_pct: Number(data.reserve_pct ?? 10), notes: data.notes || "",
-        } as any, {}));
+        } as any, issuer || {}));
       }
     }
     notify("err", "لا توجد موازنة محفوظة بعد — أنشئها من زر «الموازنة» أولًا.");
@@ -257,7 +257,7 @@ export default function AssociationView({ initial }: { initial: Association[] })
   /** كشف حساب الجمعية كاملة */
   function openAssocStatement() {
     if (!active) return;
-    openDoc(associationStatementHTML(active as any, {}));
+    openDoc(associationStatementHTML(active as any, issuer || {}));
   }
 
   /** يفتح سجل مدفوعات مالك معيّن */
@@ -688,14 +688,14 @@ export default function AssociationView({ initial }: { initial: Association[] })
 
       {budget && <BudgetModal assoc={a} budget={budget} onClose={() => setBudget(null)}
         onSave={(b) => { saveBudget(b); setBudget(b); }}
-        onPrint={(b) => openDoc(budgetHTML(a as any, b as any, {}))} />}
+        onPrint={(b) => openDoc(budgetHTML(a as any, b as any, issuer || {}))} />}
       {minutes && <MinutesModal assoc={a} onClose={() => setMinutes(false)}
-        onPrint={(d) => openDoc(foundingMinutesHTML(a as any, d as any, {}))} />}
+        onPrint={(d) => openDoc(foundingMinutesHTML(a as any, d as any, issuer || {}))} />}
       {renewal && <RenewalModal assoc={a} annualBudget={renewal.annualBudget}
         onClose={() => setRenewal(null)}
         onEditBudget={() => { setRenewal(null); openBudget(); }}
         onPrintBudget={printSavedBudget}
-        onPrintMinutes={(d) => openDoc(renewalMinutesHTML(a as any, d as any, {}))} />}
+        onPrintMinutes={(d) => openDoc(renewalMinutesHTML(a as any, d as any, issuer || {}))} />}
       {bulk && <BulkOwnersModal onClose={() => setBulk(false)} onSubmit={addOwnersBulk} />}
       {remindAll && <RemindAllOwnersModal owners={late} fee={a.fee || 0} linkOf={ownerRemindLink}
         onClose={() => setRemindAll(false)} />}
@@ -965,6 +965,14 @@ function BudgetModal({ assoc, budget, onClose, onSave, onPrint }: {
         <h3 className="font-display font-bold text-deep text-xl mb-1">الموازنة التقديرية {budget.year}</h3>
         <p className="text-sm text-muted mb-4">{assoc.name}{units ? ` · ${units} وحدة` : ""} — أدخل المصروف الشهري لكل بند، ويُحسب الاشتراك المقترح تلقائيًّا.</p>
 
+        {units === 0 && (
+          <div className="bg-[#FBE9E7] border border-[#F5C6C2] text-[#8f2b26] rounded-xl p-3.5 mb-4 text-sm leading-relaxed">
+            <b>لم يُحدَّد عدد الوحدات لهذه الجمعية.</b> بدونه لا يُحتسب اشتراك الوحدة — وهو الرقم الأهم في الموازنة.
+            أغلق هذه النافذة، افتح <b>⚙︎ إعدادات</b>، واكتب عدد الوحدات، ثم عُد.
+            <div className="text-xs mt-1.5">الطباعة معطّلة حتى يُضبط العدد، منعًا لإصدار مستند ناقص.</div>
+          </div>
+        )}
+
         <div className="border border-line rounded-xl overflow-hidden mb-3">
           <table className="w-full text-sm">
             <thead className="bg-paper2"><tr>
@@ -1040,7 +1048,9 @@ function BudgetModal({ assoc, budget, onClose, onSave, onPrint }: {
         <div className="flex gap-2 mt-5 flex-wrap">
           <button type="button" className="btn btn-ghost flex-1 justify-center" onClick={onClose}>إغلاق</button>
           <button type="button" className="btn btn-primary flex-1 justify-center" onClick={() => onSave(payload)}>حفظ</button>
-          <button type="button" className="btn btn-gold flex-1 justify-center" onClick={() => onPrint(payload)}>طباعة الموازنة</button>
+          <button type="button" className="btn btn-gold flex-1 justify-center" disabled={units === 0}
+            title={units === 0 ? "أدخل عدد الوحدات في إعدادات الجمعية أولًا" : undefined}
+            onClick={() => onPrint(payload)}>طباعة الموازنة</button>
         </div>
       </div>
     </div>
@@ -1053,7 +1063,7 @@ function MinutesModal({ assoc, onClose, onPrint }: {
 }) {
   const units = Number(assoc.units) || (Array.isArray(assoc.owners) ? assoc.owners.length : 0);
   const [d, setD] = useState<any>({
-    meeting_date: today(), mode: "حضوري", place: "", attendees: units || "",
+    meeting_date: today(), mode: "حضوري", place: "", attendees: "",
     total_units: units || "", president: "", manager: "", fee: assoc.fee || "",
     due_day: "في الخامس من كل شهر", bank: "", year: new Date().getFullYear(), annual_budget: "",
   });
@@ -1082,8 +1092,14 @@ function MinutesModal({ assoc, onClose, onPrint }: {
             <input className="fld" value={d.place} onChange={(e) => set("place", e.target.value)} placeholder="مثال: مقر العقار — الدور الأرضي" />
           </Field>
           <div className="grid grid-cols-2 gap-3">
-            <Field label="عدد الحاضرين">
-              <input className="fld" type="number" min={0} value={d.attendees} onChange={(e) => set("attendees", e.target.value)} />
+            <Field label="عدد الحاضرين" hint="بعد انعقاد الاجتماع فقط">
+              <input className="fld" type="number" min={0} max={Number(d.total_units) || undefined}
+                value={d.attendees} placeholder="اتركه فارغًا قبل الاجتماع"
+                onChange={(e) => {
+                  const cap = Number(d.total_units) || 0;
+                  const v = e.target.value === "" ? "" : String(Math.max(0, Math.min(Number(e.target.value) || 0, cap || Infinity)));
+                  set("attendees", v);
+                }} />
             </Field>
             <Field label="إجمالي الوحدات">
               <input className="fld" type="number" min={0} value={d.total_units} onChange={(e) => set("total_units", e.target.value)} />
@@ -1116,7 +1132,10 @@ function MinutesModal({ assoc, onClose, onPrint }: {
         </div>
 
         <p className="text-xs text-[#8a5a11] mt-4 bg-[#FBF1DF] border border-[#EBD9AA] rounded-lg p-2.5 leading-relaxed">
-          يُدرج المحضر جدول توقيعات بأسماء الملّاك المسجّلين عندك تلقائيًّا. وثيق لا يقدّم خدمات قانونية —
+          <b>لا تُثبت وقائع لم تقع.</b> اترك عدد الحاضرين واسمي الرئيس ومدير العقار فراغات إن لم يُعقد الاجتماع بعد —
+          تُملأ بخطّ اليد أثناء الاجتماع أو تُدخل بعده. المحضر مستند يُرفع لجهة رسمية، وإثبات حضور لم يحصل يُعرّض مُصدِره للمساءلة.
+          <br />
+          ويُدرج جدول توقيعات بأسماء الملّاك المسجّلين عندك تلقائيًّا. وثيق لا يقدّم خدمات قانونية —
           راجع المحضر مع مختص مرخّص وطابقه مع النظام الأساسي قبل تقديمه رسميًّا.
         </p>
 
@@ -1253,8 +1272,9 @@ function DocModal({ doc, onClose }: { doc: { title: string; body: string }; onCl
   );
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return <label className="block"><span className="block text-sm font-semibold mb-1">{label}</span>{children}</label>;
+function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
+  return <label className="block"><span className="block text-sm font-semibold mb-1">{label}
+    {hint && <span className="font-normal text-muted text-xs"> — {hint}</span>}</span>{children}</label>;
 }
 
 /** ════════════════════════════════════════════════════════════
@@ -1270,7 +1290,7 @@ function RenewalModal({ assoc, annualBudget, onClose, onEditBudget, onPrintBudge
   const nextYear = new Date().getFullYear() + 1;
   const [d, setD] = useState<any>({
     meeting_date: new Date().toISOString().slice(0, 10), mode: "حضوري", place: "",
-    attendees: units || "", total_units: units || "",
+    attendees: "", total_units: units || "",
     president: "", manager: "", fee: assoc.fee || "",
     year: nextYear, annual_budget: annualBudget ?? "",
     collected: "", spent: "", fund_balance: assoc.fund_balance ?? "", notes: "",
