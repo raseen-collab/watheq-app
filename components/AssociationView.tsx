@@ -49,7 +49,7 @@ export default function AssociationView({ initial, issuer }: { initial: Associat
   const [filter, setFilter] = useState<"all" | OwnerKey>("all");
   const [sort, setSort] = useState<"urgent" | "amount" | "name" | "unit">("urgent");
   const [paying, setPaying] = useState<Owner | null>(null);
-  const [doc, setDoc] = useState<null | { title: string; body: string }>(null);
+  const [doc, setDoc] = useState<null | { title: string; body: string; kind?: "notice" | "final" | "file" }>(null);
   const [history, setHistory] = useState<null | { owner: Owner; rows: any[] }>(null);
   const [ownerModal, setOwnerModal] = useState<null | { owner?: Owner }>(null);
   const [budget, setBudget] = useState<null | { year: number; items: BudgetItem[]; reserve_pct: number; notes: string }>(null);
@@ -58,6 +58,8 @@ export default function AssociationView({ initial, issuer }: { initial: Associat
   const [renewal, setRenewal] = useState<null | { annualBudget: number | null }>(null);
   const [bulk, setBulk] = useState(false);
   const [remindAll, setRemindAll] = useState(false);
+  /** ملف التحصيل — سلّم التصعيد وصولًا إلى مستندات السند التنفيذي */
+  const [collect, setCollect] = useState<null | { owner?: Owner }>(null);
   const [toast, setToast] = useState<null | { k: "ok" | "err"; m: string }>(null);
   // الحسابات تعتمد على تاريخ اليوم، وتوقيت السيرفر يختلف عن توقيت الجهاز.
   const [hydrated, setHydrated] = useState(false);
@@ -419,7 +421,176 @@ export default function AssociationView({ initial, issuer }: { initial: Associat
       "الاسم: ____________________     الصفة: ____________________",
       `التوقيع: ____________________     التاريخ: ${today()}`,
     ].join("\n");
-    setDoc({ title: `إشعار سداد اشتراكات — ${o.name}`, body });
+    setDoc({ title: `إشعار سداد اشتراكات — ${o.name}`, body, kind: "notice" });
+    logNotice(o, "خطاب مطالبة");
+  }
+
+  // ════════════════════════════════════════════════════════════
+  //  ملف التحصيل — سلّم تصعيد موثّق ينتهي بمستندات السند التنفيذي.
+  //  الحدّ النظامي: وثيق يُجهّز المستندات فقط؛ ورفع طلب السند التنفيذي
+  //  في منصة «ملاك» واستكماله عبر «ناجز» يتم من مدير العقار نفسه.
+  // ════════════════════════════════════════════════════════════
+
+  /** المبلغ الصافي المتأخر على مالك */
+  const ownerDue = (o: Owner) =>
+    Math.max(0, o.months_late * (active?.fee || 0) - (Number(o.partial_amount) || 0));
+
+  /** وسم يميّز خطابات التحصيل داخل سجل العمارة */
+  const NOTICE_TAG = "[تحصيل]";
+  const ownerRef = (o: Owner) => (o.unit ? `الوحدة (${o.unit})` : o.name);
+
+  /** سجل المطالبات السابقة لمالك — يُقرأ من سجل العمارة نفسه، بلا جدول جديد */
+  const noticeLog = (o: Owner): Note[] =>
+    (active?.association_notes || [])
+      .filter((n) => String(n.text || "").startsWith(NOTICE_TAG) && String(n.text).includes(ownerRef(o)))
+      .sort((x, y) => String(x.note_date).localeCompare(String(y.note_date)));
+
+  /** درجة التصعيد: 0 لم تُوثَّق مطالبة · 1 أُرسلت مطالبة · 2 صدر إنذار نهائي */
+  const escalation = (o: Owner): 0 | 1 | 2 => {
+    const log = noticeLog(o);
+    if (log.some((n) => String(n.text).includes("إنذار نهائي"))) return 2;
+    return log.length ? 1 : 0;
+  };
+
+  /** توثيق خطوة تصعيد في سجل العمارة — هذا التوثيق هو «سجل المطالبات» في الملف */
+  async function logNotice(o: Owner, label: string) {
+    if (!active) return;
+    const text = `${NOTICE_TAG} ${label} — ${ownerRef(o)} · ${o.name} · ${o.months_late} فترة متأخرة بمبلغ ${sar(ownerDue(o))} ريال`;
+    const { data, error } = await supabase.from("association_notes").insert({
+      association_id: active.id, text, note_date: today(),
+    }).select("*").single();
+    if (error) { console.error("Watheq notice log error:", error); return; }
+    setItems((prev) => prev.map((x) => x.id === active.id
+      ? { ...x, association_notes: [data as Note, ...(x.association_notes || [])] } : x));
+  }
+
+  /** سطر العلامة التجريبية — يظهر في كل مستند ما دام لا يوجد اشتراك مفعّل */
+  const trialBanner = () => issuer?.trial
+    ? ["《 نسخة تجريبية — غير معتمدة 》", "هذه النسخة للمراجعة الداخلية فقط ولا تصلح للرفع الرسمي. فعّل اشتراكك لإصدار النسخة النهائية.", "", "──────────────────────────────", ""]
+    : [];
+
+  /** إنذار نهائي — آخر خطوة ودّية قبل تجهيز ملف السند التنفيذي */
+  function makeFinalNotice(o: Owner, feeApprovedOn?: string) {
+    if (!active) return;
+    const fee = active.fee || 0;
+    const partial = Number(o.partial_amount) || 0;
+    const due = ownerDue(o);
+    const unit = o.unit || "—";
+    const prev = noticeLog(o);
+    const body = [
+      ...trialBanner(),
+      "إنذار نهائي بسداد اشتراكات الصيانة المتأخرة",
+      `التاريخ: ${today()}`,
+      "",
+      `من: إدارة ${active.name} (جمعية الملاك)`,
+      `إلى: المكرَّم ${o.name}، مالك الوحدة العقارية رقم (${unit}).`,
+      "",
+      "الموضوع: إنذار نهائي قبل اتخاذ الإجراءات النظامية.",
+      "",
+      "السلام عليكم ورحمة الله وبركاته،",
+      "",
+      `إلحاقًا بمطالباتنا السابقة${prev.length ? ` (${prev.map((n) => n.note_date).join("، ")})` : ""}، وبالإشارة إلى نظام ملكية الوحدات العقارية وفرزها وإدارتها الصادر بالمرسوم الملكي رقم (م/85) وتاريخ 02/07/1441هـ، وإلى النظام الأساسي للجمعية${feeApprovedOn ? ` وقرار الجمعية العامة باعتماد رسوم الاشتراك بتاريخ ${feeApprovedOn}` : ""}؛`,
+      "",
+      `نُنذركم إنذارًا نهائيًّا بسداد مبلغ (${sar(due)}) ريال، قيمة (${o.months_late}) فترة اشتراك مستحقة عن الوحدة رقم (${unit})${fee ? `، بواقع (${sar(fee)}) ريال للفترة` : ""}${partial > 0 ? `، بعد خصم مبلغ (${sar(partial)}) ريال مسدَّد جزئيًّا` : ""}.`,
+      "",
+      "وذلك خلال (15) يومًا من تاريخ استلامكم هذا الإنذار، إيداعًا في الحساب البنكي للجمعية.",
+      "",
+      "وفي حال عدم السداد خلال المدة المذكورة، سيقوم مدير العقار برفع بياناتكم ضمن المتعثّرين عن السداد عبر منصة «ملاك» تمهيدًا لاستصدار سند تنفيذي بحقكم وفق الإجراءات المعتمدة، مع تحمّلكم ما يترتّب على ذلك من آثار.",
+      "",
+      "ونؤكّد رغبتنا في تسوية الأمر ودّيًا قبل بلوغ هذه المرحلة، وباب التواصل مفتوح لأي ترتيب للسداد.",
+      "",
+      "وتقبّلوا تحياتنا،",
+      `إدارة ${active.name}`,
+      "",
+      "الاسم: ____________________     الصفة: ____________________",
+      `التوقيع: ____________________     التاريخ: ${today()}`,
+    ].join("\n");
+    setDoc({ title: `إنذار نهائي — ${o.name}`, body, kind: "final" });
+    logNotice(o, "إنذار نهائي");
+  }
+
+  /** ملف السند التنفيذي — حزمة المستندات التي يرفعها مدير العقار في «ملاك» */
+  async function makeExecFile(o: Owner, opts: { feeApprovedOn: string; managerName: string; managerLicense: string; bankRef?: string }) {
+    if (!active) return;
+    const fee = active.fee || 0;
+    // حرّاس: ملف ناقص البيانات لا يصلح للرفع، وإخراجه أسوأ من عدم إخراجه
+    if (fee <= 0) return notify("err", "حدّد قيمة الاشتراك في «إعدادات الجمعية» أولًا — الملف لا يُبنى بلا قيمة اشتراك.");
+    if (!o.unit) return notify("err", "أضف رقم الوحدة لهذا المالك — لا يصح الملف بدون تحديد الوحدة.");
+    if (o.months_late <= 0) return notify("err", "لا توجد متأخرات على هذا المالك.");
+    if (!opts.feeApprovedOn) return notify("err", "أدخل تاريخ قرار الجمعية العامة باعتماد الرسوم — هو الأساس النظامي للمطالبة.");
+
+    const { data: pays, error } = await supabase.from("payments")
+      .select("paid_on,amount,method,periods_covered")
+      .eq("owner_id", o.id).order("paid_on", { ascending: true }).limit(200);
+    if (error) console.error("Watheq exec-file payments error:", error);
+
+    const partial = Number(o.partial_amount) || 0;
+    const gross = o.months_late * fee;
+    const due = Math.max(0, gross - partial);
+    const log = noticeLog(o);
+
+    const body = [
+      ...trialBanner(),
+      "ملف مطالبة بالاشتراكات المتأخرة — تمهيدًا لطلب سند تنفيذي",
+      `تاريخ إعداد الملف: ${today()}`,
+      "",
+      "① بيانات الجمعية",
+      `الجمعية: ${active.name}`,
+      `عدد الوحدات: ${active.units || (active.owners || []).length || "—"}`,
+      `قيمة الاشتراك المعتمدة: ${sar(fee)} ريال للفترة`,
+      `تاريخ قرار الجمعية العامة باعتماد الرسوم: ${opts.feeApprovedOn}`,
+      "",
+      "② بيانات المالك والوحدة",
+      `اسم المالك: ${o.name}`,
+      `رقم الوحدة: ${o.unit}`,
+      `جوال التواصل: ${o.phone || "—"}`,
+      `آخر سداد مسجَّل: ${o.last_paid || "لا يوجد"}`,
+      "",
+      "③ بيان المديونية",
+      `عدد الفترات المتأخرة: ${o.months_late}`,
+      `إجمالي المستحق قبل الخصم: ${sar(gross)} ريال`,
+      `المسدَّد جزئيًّا: ${sar(partial)} ريال`,
+      `صافي المبلغ المطالَب به: ${sar(due)} ريال`,
+      "",
+      "④ الأساس النظامي للمطالبة",
+      "• نظام ملكية الوحدات العقارية وفرزها وإدارتها، الصادر بالمرسوم الملكي رقم (م/85) وتاريخ 02/07/1441هـ.",
+      "• النظام الأساسي للجمعية المعتمد لدى الهيئة العامة للعقار.",
+      `• قرار الجمعية العامة باعتماد رسوم الاشتراك بتاريخ ${opts.feeApprovedOn}.`,
+      "",
+      "⑤ سجل المطالبات الموجّهة للمالك",
+      ...(log.length
+        ? log.map((n, i) => `${i + 1}. ${n.note_date} — ${String(n.text).replace(NOTICE_TAG, "").trim()}`)
+        : ["لم تُوثَّق مطالبات سابقة في النظام. يُنصح بإرسال خطاب مطالبة ثم إنذار نهائي وتوثيقهما قبل الرفع."]),
+      "",
+      "⑥ سجل المدفوعات المسجَّلة",
+      ...((pays && pays.length)
+        ? pays.map((p: any, i: number) => `${i + 1}. ${p.paid_on} — ${sar(Number(p.amount) || 0)} ريال (${methodLabel(p.method)})${p.periods_covered ? ` · ${p.periods_covered} فترة` : ""}`)
+        : ["لا توجد مدفوعات مسجَّلة لهذا المالك."]),
+      "",
+      "⑦ إقرار مدير العقار",
+      `اسم مدير العقار: ${opts.managerName || "____________________"}`,
+      `رقم رخصة «فال» لإدارة الأملاك: ${opts.managerLicense || "____________________"}`,
+      opts.bankRef ? `الحساب البنكي للجمعية: ${opts.bankRef}` : "الحساب البنكي للجمعية: ____________________",
+      "أُقرّ بأن البيانات الواردة أعلاه مطابقة لسجلات الجمعية، وأن المبلغ المذكور لم يُسدَّد حتى تاريخه.",
+      "التوقيع: ____________________     التاريخ: ____________________",
+      "",
+      "⑧ قائمة تحقّق قبل الرفع في منصة «ملاك»",
+      "☐ شهادة تسجيل الجمعية سارية المفعول",
+      "☐ محضر الجمعية العامة المتضمّن اعتماد رسوم الاشتراك",
+      "☐ الموازنة السنوية المعتمدة",
+      "☐ كشف حساب المالك موقّعًا من إدارة الجمعية",
+      "☐ صور خطاب المطالبة والإنذار النهائي مع ما يفيد التبليغ",
+      "☐ تسجيل مدير العقار في المنصة ورخصة «فال» سارية",
+      "",
+      "──────────────────────────────",
+      "تنبيه: هذا الملف مستند إداري يُجهّزه وثيق من بيانات لوحتكم.",
+      "رفع طلب السند التنفيذي في منصة «ملاك»، واعتماده من الهيئة العامة للعقار،",
+      "ثم استكماله عبر «ناجز» — كلّها إجراءات يقوم بها مدير العقار نفسه.",
+      "وثيق لا يرفع نيابةً عنكم، ولا يمثّلكم أمام أي جهة، ولا يستلم أي مبالغ.",
+    ].join("\n");
+
+    setDoc({ title: `ملف السند التنفيذي — الوحدة (${o.unit})`, body, kind: "file" });
+    logNotice(o, "تجهيز ملف السند التنفيذي");
   }
 
   function ownerNoticeLink(o: Owner) {
@@ -563,6 +734,10 @@ export default function AssociationView({ initial, issuer }: { initial: Associat
               {a.fee > 0 && <span className="text-xs text-muted">الاشتراك {sar(a.fee)} ريال/شهر</span>}
               <button type="button" className="btn btn-ghost text-xs" onClick={openAssocStatement}>كشف حساب</button>
               <button type="button" className="btn btn-ghost text-xs" onClick={exportOwnersCSV} title="تنزيل ملف Excel/CSV بكل الملّاك وحالتهم">⬇️ CSV</button>
+              {late.length > 0 && (
+                <button type="button" className="btn btn-ghost text-xs" onClick={() => setCollect({})}
+                  title="سلّم التحصيل: خطاب مطالبة ← إنذار نهائي ← ملف السند التنفيذي">⚖️ ملف التحصيل ({late.length})</button>
+              )}
               <button type="button" className="btn btn-ghost text-xs" onClick={openBudget}>📊 الموازنة</button>
               <button type="button" className="btn btn-ghost text-xs" onClick={() => setMinutes(true)}>📄 محضر تأسيسي</button>
               <button type="button" className="btn btn-gold text-xs" onClick={openRenewal} title="محضر الاجتماع السنوي + الموازنة — مستندا تجديد الشهادة في منصة ملاك">🗂 حزمة التجديد</button>
@@ -654,6 +829,7 @@ export default function AssociationView({ initial, issuer }: { initial: Associat
                           { label: "✎ تعديل البيانات", run: () => setOwnerModal({ owner: o }) },
                           { label: "➕ إضافة استحقاق", run: () => ownerPatch(o.id, { months_late: o.months_late + 1 }) },
                           ...(o.months_late === 0 ? [{ label: "💬 رسالة للمالك", run: () => window.open(ownerRemindLink(o), "_blank") }] : []),
+                          ...(o.months_late > 0 ? [{ label: "⚖️ ملف التحصيل والتصعيد", run: () => setCollect({ owner: o }) }] : []),
                           ...(o.months_late > 0 ? [{ label: "✅ سدّد الكل", run: () => ownerPatch(o.id, { months_late: 0, last_paid: today() }, o.months_late * (a.fee || 0)) }] : []),
                           { label: "🗑 حذف المالك", run: () => deleteOwner(o.id), danger: true },
                         ]}
@@ -699,6 +875,13 @@ export default function AssociationView({ initial, issuer }: { initial: Associat
       {bulk && <BulkOwnersModal onClose={() => setBulk(false)} onSubmit={addOwnersBulk} />}
       {remindAll && <RemindAllOwnersModal owners={late} fee={a.fee || 0} linkOf={ownerRemindLink}
         onClose={() => setRemindAll(false)} />}
+      {collect && <CollectionsModal assoc={a} owners={late} only={collect.owner}
+        fee={a.fee || 0} stageOf={escalation} logOf={noticeLog} dueOf={ownerDue}
+        onClose={() => setCollect(null)}
+        onRemind={(o) => window.open(ownerRemindLink(o), "_blank")}
+        onNotice={(o) => makeOwnerNotice(o)}
+        onFinal={(o, d) => makeFinalNotice(o, d)}
+        onFile={(o, opts) => makeExecFile(o, opts)} />}
       {ownerModal?.owner && <OwnerModal owner={ownerModal.owner} onClose={() => setOwnerModal(null)}
         onSubmit={(d) => saveOwner(ownerModal.owner!.id, d)} />}
       {history && <HistoryModal data={history} onClose={() => setHistory(null)} />}
@@ -1251,15 +1434,141 @@ function HistoryModal({ data, onClose }: { data: { owner: Owner; rows: any[] }; 
 }
 
 /** عرض الخطاب مع النسخ والطباعة */
-function DocModal({ doc, onClose }: { doc: { title: string; body: string }; onClose: () => void }) {
+/** ════════════════════════════════════════════════════════════
+ *  ملف التحصيل — سلّم تصعيد موثّق:
+ *  ① تذكير واتساب  ② خطاب مطالبة  ③ إنذار نهائي  ④ ملف السند التنفيذي
+ *  كل خطوة تُوثَّق تلقائيًّا في سجل العمارة، وهذا التوثيق هو ما يبني
+ *  «سجل المطالبات» داخل الملف — وهو أهم ما يُطلب عند الرفع.
+ *  ════════════════════════════════════════════════════════════ */
+const STAGE_META = [
+  { label: "لم تُوثَّق مطالبة", cls: "bg-paper2 text-deep" },
+  { label: "أُرسلت مطالبة", cls: "bg-[#FDF0DC] text-[#9A5B00]" },
+  { label: "أُنذر نهائيًّا", cls: "bg-[#F7DAD7] text-[#8f2b26]" },
+];
+
+function CollectionsModal({ assoc, owners, only, fee, stageOf, logOf, dueOf, onClose, onRemind, onNotice, onFinal, onFile }: {
+  assoc: Association;
+  owners: Owner[];
+  only?: Owner;
+  fee: number;
+  stageOf: (o: Owner) => 0 | 1 | 2;
+  logOf: (o: Owner) => Note[];
+  dueOf: (o: Owner) => number;
+  onClose: () => void;
+  onRemind: (o: Owner) => void;
+  onNotice: (o: Owner) => void;
+  onFinal: (o: Owner, feeApprovedOn?: string) => void;
+  onFile: (o: Owner, opts: { feeApprovedOn: string; managerName: string; managerLicense: string; bankRef?: string }) => void;
+}) {
+  const [feeApprovedOn, setFeeApprovedOn] = useState("");
+  const [managerName, setManagerName] = useState("");
+  const [managerLicense, setManagerLicense] = useState("");
+  const [bankRef, setBankRef] = useState("");
+  const list = only ? [only] : owners;
+  const missingFee = !(Number(fee) > 0);
+
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4" onClick={onClose}>
+      <div className="w-full max-w-3xl bg-white rounded-2xl shadow-xl p-6 max-h-[90vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
+        <h3 className="font-display font-bold text-deep text-lg mb-1">ملف التحصيل — {assoc.name}</h3>
+        <p className="text-sm text-muted mb-4">
+          تصعيد متدرّج وموثّق: تذكير ← مطالبة ← إنذار نهائي ← ملف السند التنفيذي. كل خطوة تُسجَّل بتاريخها في سجل العمارة.
+        </p>
+
+        {missingFee && (
+          <div className="text-xs bg-[#FBE9E7] border border-[#F5C6C2] text-[#8f2b26] rounded-lg p-2.5 mb-4 leading-relaxed">
+            قيمة الاشتراك غير محدَّدة في إعدادات الجمعية — المبالغ ستظهر صفرًا ولن يُبنى ملف السند التنفيذي. حدّدها أولًا من «⚙︎ إعدادات».
+          </div>
+        )}
+
+        {/* بيانات الملف — مطلوبة لبناء ملف السند التنفيذي */}
+        <div className="bg-paper border border-line rounded-xl p-4 mb-4">
+          <div className="text-sm font-semibold mb-2.5">بيانات الملف <span className="font-normal text-muted text-xs">— تُستخدم في ملف السند التنفيذي</span></div>
+          <div className="grid sm:grid-cols-2 gap-3">
+            <Field label="تاريخ قرار الجمعية العامة باعتماد الرسوم" hint="الأساس النظامي للمطالبة">
+              <input type="date" className="fld w-full" value={feeApprovedOn} onChange={(e) => setFeeApprovedOn(e.target.value)} />
+            </Field>
+            <Field label="اسم مدير العقار">
+              <input className="fld w-full" value={managerName} onChange={(e) => setManagerName(e.target.value)} placeholder="الاسم كما في المنصة" />
+            </Field>
+            <Field label="رقم رخصة «فال» لإدارة الأملاك">
+              <input className="fld w-full" value={managerLicense} onChange={(e) => setManagerLicense(e.target.value)} placeholder="اختياري — يُترك فارغًا للتعبئة يدويًّا" />
+            </Field>
+            <Field label="الحساب البنكي للجمعية" hint="اختياري">
+              <input className="fld w-full" value={bankRef} onChange={(e) => setBankRef(e.target.value)} placeholder="IBAN أو اسم البنك" />
+            </Field>
+          </div>
+        </div>
+
+        {/* الملّاك المتأخرون */}
+        <div className="space-y-3">
+          {list.map((o) => {
+            const stage = stageOf(o);
+            const log = logOf(o);
+            const meta = STAGE_META[stage];
+            return (
+              <div key={o.id} className="border border-line rounded-xl p-4">
+                <div className="flex flex-wrap items-center gap-2 mb-2">
+                  <span className="font-semibold">{o.name}</span>
+                  <span className="text-xs text-muted">الوحدة {o.unit || "—"}</span>
+                  <span className={`text-xs font-semibold rounded-lg px-2 py-0.5 ${meta.cls}`}>{meta.label}</span>
+                  <span className="text-sm font-bold text-late mr-auto">{sar(dueOf(o))} ريال · {o.months_late} فترة</span>
+                </div>
+
+                {log.length > 0 && (
+                  <div className="text-xs text-muted mb-2.5 leading-relaxed">
+                    المطالبات الموثّقة: {log.map((n) => n.note_date).join(" · ")}
+                  </div>
+                )}
+
+                <div className="flex flex-wrap gap-1.5">
+                  <button type="button" className="btn btn-wa text-xs" onClick={() => onRemind(o)}>💬 تذكير واتساب</button>
+                  <button type="button" className={`btn text-xs ${stage === 0 ? "btn-gold" : "btn-ghost"}`} onClick={() => onNotice(o)}>📄 خطاب مطالبة</button>
+                  <button type="button" className={`btn text-xs ${stage === 1 ? "btn-gold" : "btn-ghost"}`} onClick={() => onFinal(o, feeApprovedOn)}>⚠️ إنذار نهائي</button>
+                  <button type="button" className={`btn text-xs ${stage === 2 ? "btn-gold" : "btn-ghost"}`}
+                    onClick={() => onFile(o, { feeApprovedOn, managerName, managerLicense, bankRef })}>⚖️ ملف السند التنفيذي</button>
+                </div>
+
+                {stage < 2 && (
+                  <div className="text-xs text-muted mt-2 leading-relaxed">
+                    يُنصح بتوثيق خطاب مطالبة ثم إنذار نهائي قبل تجهيز الملف — سجل المطالبات من أهم ما يُطلب عند الرفع.
+                  </div>
+                )}
+                {!o.unit && (
+                  <div className="text-xs text-[#8f2b26] mt-2">لا يمكن بناء ملف السند التنفيذي بدون رقم الوحدة — أضفه من «تعديل البيانات».</div>
+                )}
+              </div>
+            );
+          })}
+          {!list.length && <div className="text-center text-muted py-8 text-sm">لا يوجد ملّاك متأخرون.</div>}
+        </div>
+
+        <p className="text-xs text-[#8a5a11] mt-4 bg-[#FBF1DF] border border-[#EBD9AA] rounded-lg p-2.5 leading-relaxed">
+          <b>حدّ دورنا:</b> وثيق يُجهّز المستندات فقط. رفع طلب السند التنفيذي في منصة «ملاك»، واعتماده من الهيئة العامة للعقار،
+          ثم استكماله عبر «ناجز» — إجراءات يقوم بها <b>مدير العقار</b> المرخّص نفسه.
+        </p>
+
+        <div className="flex gap-2 mt-4">
+          <button type="button" onClick={onClose} className="btn btn-ghost flex-1 justify-center">إغلاق</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DocModal({ doc, onClose }: { doc: { title: string; body: string; kind?: "notice" | "final" | "file" }; onClose: () => void }) {
+  const kind = doc.kind || "notice";
+  const banner = kind === "file"
+    ? <>هذا <b>ملف إداري مُجهَّز من بيانات لوحتك</b> ليستخدمه مدير العقار. رفع طلب السند التنفيذي في منصة «ملاك» واعتماده من الهيئة العامة للعقار ثم استكماله عبر «ناجز» — إجراءات يقوم بها <b>مدير العقار</b> نفسه. وثيق لا يرفع نيابةً عنك ولا يمثّلك أمام أي جهة ولا يستلم أي مبالغ.</>
+    : kind === "final"
+      ? <>هذا <b>إنذار إداري</b> تصدره إدارة الجمعية، وليس إنذارًا قضائيًّا ذا حجية تنفيذية. المسار النظامي يمرّ عبر منصة «ملاك» ثم محكمة التنفيذ أو الجهة المختصة. راجع النص مع مختص مرخّص قبل أي استخدام رسمي.</>
+      : <>هذا <b>خطاب تذكير إداري</b> تستخدمه إدارة الجمعية، وليس إنذارًا نظاميًّا ذا حجية. المسار النظامي للتحصيل يمرّ عبر منصة «ملاك» ثم محكمة التنفيذ أو الجهة المختصة. وثيق لا يقدّم خدمات قانونية ولا يستلم أي مبالغ — راجع النص مع مختص مرخّص قبل أي استخدام رسمي.</>;
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4" onClick={onClose}>
       <div className="w-full max-w-2xl bg-white rounded-2xl shadow-xl p-6 max-h-[90vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
         <h3 className="font-display font-bold text-deep text-lg mb-1">{doc.title}</h3>
         <p className="text-xs text-[#8a5a11] mb-4 bg-[#FBF1DF] border border-[#EBD9AA] rounded-lg p-2.5 leading-relaxed">
-          هذا <b>خطاب تذكير إداري</b> تستخدمه إدارة الجمعية، وليس إنذارًا نظاميًّا ذا حجية.
-          المسار النظامي للتحصيل يمرّ عبر منصة «ملاك» ثم محكمة التنفيذ أو الجهة المختصة.
-          وثيق لا يقدّم خدمات قانونية ولا يستلم أي مبالغ — راجع النص مع مختص مرخّص قبل أي استخدام رسمي.
+          {banner}
         </p>
         <pre className="whitespace-pre-wrap bg-paper border border-line rounded-xl p-4 text-sm leading-8 text-ink" style={{ fontFamily: "inherit" }}>{doc.body}</pre>
         <div className="flex gap-2 mt-4">
