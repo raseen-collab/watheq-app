@@ -3,14 +3,11 @@ import { createClient } from "@/lib/supabase-server";
 import { createClient as createServiceClient } from "@supabase/supabase-js";
 import {
   buildSystemPrompt, classify, DISCLAIMER,
-  HIGH_RISK_REPLY, OUT_OF_SCOPE_REPLY,
+  HIGH_RISK_REPLY, OUT_OF_SCOPE_REPLY, advisorLimit,
 } from "@/lib/advisor";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
-
-/** حصّة يومية حسب الباقة — تمنع تكلفة غير محسوبة */
-const QUOTA: Record<string, number> = { basic: 5, pro: 40, full: 100, default: 5 };
 
 function serviceDb() {
   return createServiceClient(
@@ -43,7 +40,7 @@ export async function POST(req: Request) {
 
   // ---------- 2) الإقرار بإخلاء المسؤولية (مرة واحدة) ----------
   const { data: profile } = await db
-    .from("profiles").select("advisor_ack_at, account_type").eq("id", user.id).maybeSingle();
+    .from("profiles").select("advisor_ack_at, plan, trial_ends_at").eq("id", user.id).maybeSingle();
   if (!profile?.advisor_ack_at) {
     return NextResponse.json({
       ok: false, needsAck: true, disclaimer: DISCLAIMER,
@@ -56,11 +53,11 @@ export async function POST(req: Request) {
     .from("advisor_log")
     .select("id", { count: "exact", head: true })
     .eq("user_id", user.id).eq("asked_on", today);
-  const limit = QUOTA[String(profile?.account_type || "")] ?? QUOTA.default;
+  const limit = advisorLimit(profile);
   if ((count || 0) >= limit) {
     return NextResponse.json({
       ok: false, quota: true,
-      error: `بلغت حدّك اليومي (${limit} أسئلة). يتجدّد غدًا.`,
+      error: `بلغت حدّك اليومي (${limit} أسئلة). يتجدّد غدًا — وبإمكانك رفع الحد بالترقية لباقة أعلى.`,
     }, { status: 429 });
   }
 

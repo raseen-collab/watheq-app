@@ -180,3 +180,23 @@ export const HIGH_RISK_REPLY =
 export const OUT_OF_SCOPE_REPLY =
   "هذا السؤال خارج نطاق وثيق — نحن متخصّصون في إدارة الأملاك وجمعيات الملاك فقط.\n\n" +
   "أنصحك بمراجعة الجهة المختصة بموضوع سؤالك.";
+
+/** ============================================================
+ *  حصص المستشار الذكي حسب الباقة — مصدر الحقيقة الوحيد
+ *
+ *  تُقرأ الباقة من profiles.plan (تُضبط يدويًا عند تفعيل الاشتراك):
+ *    basic → باقة المالك (عقاري) / الأساسية (جمعيات)
+ *    pro   → الاحترافية (جمعيات)
+ *    full  → باقة المكتب (عقاري) / الشاملة (جمعيات)
+ *  بلا باقة: التجربة النشطة تأخذ حصة التجربة، وبعد انتهائها حصة تذوّق.
+ *  ============================================================ */
+export const ADVISOR_QUOTAS = { trial: 10, basic: 5, pro: 15, full: 30, expired: 3 } as const;
+
+/** الحد اليومي للمستخدم: الباقة المدفوعة أولًا، ثم التجربة، ثم حد ما بعد التجربة */
+export function advisorLimit(profile?: { plan?: string | null; trial_ends_at?: string | null } | null): number {
+  const plan = String(profile?.plan || "").toLowerCase();
+  if (plan === "basic" || plan === "pro" || plan === "full") return ADVISOR_QUOTAS[plan];
+  const ends = profile?.trial_ends_at ? new Date(profile.trial_ends_at) : null;
+  if (ends && !isNaN(ends.getTime()) && ends.getTime() >= Date.now()) return ADVISOR_QUOTAS.trial;
+  return ADVISOR_QUOTAS.expired;
+}

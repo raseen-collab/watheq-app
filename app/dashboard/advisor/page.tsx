@@ -2,11 +2,9 @@ import { createClient } from "@/lib/supabase-server";
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import AdvisorChat from "@/components/AdvisorChat";
+import { advisorLimit } from "@/lib/advisor";
 
 export const dynamic = "force-dynamic";
-
-/** حصّة يومية حسب الباقة — مطابقة لما في app/api/advisor/route.ts */
-const QUOTA: Record<string, number> = { basic: 5, pro: 40, full: 100, default: 5 };
 
 export default async function AdvisorPage() {
   const supabase = createClient();
@@ -15,7 +13,7 @@ export default async function AdvisorPage() {
   if (!user) redirect("/login");
 
   const { data: profile } = await supabase
-    .from("profiles").select("advisor_ack_at, account_type").eq("id", user.id).maybeSingle();
+    .from("profiles").select("advisor_ack_at, plan, trial_ends_at").eq("id", user.id).maybeSingle();
 
   const today = new Date().toISOString().slice(0, 10);
   const { count } = await supabase
@@ -23,7 +21,7 @@ export default async function AdvisorPage() {
     .select("id", { count: "exact", head: true })
     .eq("user_id", user.id).eq("asked_on", today);
 
-  const limit = QUOTA[String(profile?.account_type || "")] ?? QUOTA.default;
+  const limit = advisorLimit(profile);
   const remaining = Math.max(0, limit - (count || 0));
 
   return (
