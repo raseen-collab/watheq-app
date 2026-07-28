@@ -29,7 +29,7 @@ export default async function AdvisorPage() {
   return (
     <div className="p-5">
       <div className="max-w-2xl mx-auto mb-4">
-        <Link href="/dashboard/property" className="btn btn-ghost text-sm">← رجوع للوحة</Link>
+        <Link href="/dashboard" className="btn btn-ghost text-sm">← رجوع للوحة</Link>
       </div>
       <AdvisorChat
         acknowledged={!!profile?.advisor_ack_at}

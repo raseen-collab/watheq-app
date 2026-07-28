@@ -82,6 +82,7 @@ export default function PropertyView({ initial, orgName, issuer }: { initial: Pr
   const [enforcing, setEnforcing] = useState<Tenant | null>(null);
   const [paying, setPaying] = useState<Tenant | null>(null);
   const [turnover, setTurnover] = useState<Tenant | null>(null);
+  const [remindAll, setRemindAll] = useState(false);
 
   // ---------- أدوات العرض: بحث / تصفية / فرز / إشعار ----------
   const [q, setQ] = useState("");
@@ -346,6 +347,29 @@ export default function PropertyView({ initial, orgName, issuer }: { initial: Pr
     openDoc(propertyStatementHTML(active as any, issuer || {}));
   }
 
+  /** تصدير وحدات العقار CSV — يفتح مباشرة في Excel بترميز عربي سليم */
+  function exportCSV() {
+    if (!active) return;
+    const ul = unitLabel(active.property_type);
+    const g = { graceDays: Number(active.grace_days) || 0 };
+    const head = ["الاسم", ul, "الجوال", "الهوية/السجل", "الإيجار", "الدورة",
+      "بداية العقد", "نهاية العقد", "الحالة", "المتأخر (ريال)", "الدفعة القادمة"];
+    const lines = (active.tenants || []).map((t) => {
+      const st = contractState(t, g);
+      const key = rowKey(t, st);
+      return [t.name, t.unit || "", t.phone || "", t.national_id || "",
+        Number(t.rent_amount) || 0, freqShort(t.payment_frequency),
+        t.contract_start || "", st.endDate || "", ROW_META[key].label,
+        key === "late" || key === "partial" ? st.amountDue : 0, st.nextDueDate || ""]
+        .map((v) => `"${String(v ?? "").replace(/"/g, '""')}"`).join(",");
+    });
+    const csv = "\uFEFF" + [head.join(","), ...lines].join("\r\n");
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+    const aEl = document.createElement("a");
+    aEl.href = url; aEl.download = `${active.name}-${today()}.csv`;
+    aEl.click(); URL.revokeObjectURL(url);
+  }
+
   async function openInvoice(t: Tenant) {
     if (!active) return;
     const st = contractState(t, { graceDays: Number(active?.grace_days) || 0 });
@@ -503,10 +527,13 @@ export default function PropertyView({ initial, orgName, issuer }: { initial: Pr
       if (st.status === "late") { acc.late++; acc.overdue += st.amountDue; }
       if (st.status === "soon") acc.soon++;
       if (st.daysToEnd !== null && st.daysToEnd <= 60 && st.daysToEnd >= 0) acc.expiring++;
+      if (isVacant(t)) acc.vacant++;
       acc.monthly += (Number(t.rent_amount) || 0) * PERIODS_PER_MONTH[(t.payment_frequency || "monthly") as Frequency];
     });
     return acc;
-  }, { units: 0, late: 0, soon: 0, overdue: 0, expiring: 0, monthly: 0 });
+  }, { units: 0, late: 0, soon: 0, overdue: 0, expiring: 0, monthly: 0, vacant: 0 });
+  const occupancyPct = portfolio.units
+    ? Math.round(((portfolio.units - portfolio.vacant) / portfolio.units) * 100) : 100;
 
   const chips: { k: "all" | RowKey; label: string }[] = [
     { k: "all", label: `الكل ${allRows.length}` },
@@ -534,6 +561,7 @@ export default function PropertyView({ initial, orgName, issuer }: { initial: Pr
           <PortfolioStat v={sar(portfolio.overdue)} l="ريال متأخر" tone={portfolio.overdue ? "warn" : undefined} />
           <PortfolioStat v={String(portfolio.soon)} l="تستحق خلال 7 أيام" />
           <PortfolioStat v={String(portfolio.expiring)} l="عقود تنتهي قريبًا" />
+          <PortfolioStat v={`${occupancyPct}%`} l={`إشغال (${portfolio.vacant} شاغرة)`} tone={portfolio.vacant ? "warn" : undefined} />
           <PortfolioStat v={sar(Math.round(portfolio.monthly))} l="دخل شهري تقريبي" />
         </div>
       )}
@@ -576,8 +604,13 @@ export default function PropertyView({ initial, orgName, issuer }: { initial: Pr
         <div className="bg-white border border-line rounded-2xl shadow-sm">
           <div className="flex items-center justify-between border-b border-line px-5 py-4 gap-2 flex-wrap">
             <h2 className="font-semibold">الوحدات والمستأجرون</h2>
-            <div className="flex gap-2">
+            <div className="flex gap-2 flex-wrap">
               <button className="btn btn-ghost text-xs" onClick={openPropertyStatement}>كشف حساب العقار</button>
+              <button className="btn btn-ghost text-xs" onClick={exportCSV} title="تنزيل ملف Excel/CSV بكل الوحدات وحالتها">⬇️ CSV</button>
+              {lateCount > 0 && (
+                <button className="btn btn-wa text-xs" onClick={() => setRemindAll(true)}
+                  title="إرسال تذكير واتساب لكل المتأخرين واحدًا تلو الآخر">💬 تذكير جماعي ({lateCount})</button>
+              )}
               <Link href="/dashboard/property/import" className="btn btn-ghost text-xs">رفع Excel</Link>
               <button className="btn btn-gold text-xs" onClick={() => setModal({ kind: "tenant" })}>+ {ul}</button>
             </div>
@@ -731,6 +764,8 @@ export default function PropertyView({ initial, orgName, issuer }: { initial: Pr
       {turnover && <TurnoverModal tenant={turnover} unitWord={ul} onClose={() => setTurnover(null)}
         onSubmit={(d) => saveTurnover(turnover, d)} />}
       {history && <HistoryModal data={history} unitWord={ul} onClose={() => setHistory(null)} />}
+      {remindAll && <RemindAllModal rows={lateRows} unitWord={ul} linkOf={remindLink}
+        onClose={() => setRemindAll(false)} />}
       {doc && <DocModal doc={doc} onClose={() => setDoc(null)} />}
     </div>
   );
@@ -1385,5 +1420,50 @@ function EnforcementModal({ tenant, unitWord, onClose, onSubmit }: {
         </button>
       </div>
     </Shell>
+  );
+}
+
+/** تذكير جماعي — يفتح واتساب لكل متأخر واحدًا تلو الآخر مع تتبّع من أُرسل له */
+function RemindAllModal({ rows, unitWord, linkOf, onClose }: {
+  rows: Row[]; unitWord: string; linkOf: (t: Tenant) => string; onClose: () => void;
+}) {
+  const [sent, setSent] = useState<Record<string, boolean>>({});
+  const withPhone = rows.filter((r) => r.t.phone);
+  const noPhone = rows.length - withPhone.length;
+  const sentCount = Object.values(sent).filter(Boolean).length;
+
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4" onClick={onClose}>
+      <div className="w-full max-w-lg bg-white rounded-2xl shadow-xl p-6 max-h-[92vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
+        <h3 className="font-display font-bold text-deep text-xl mb-1">💬 تذكير جماعي بالسداد</h3>
+        <p className="text-sm text-muted mb-4">
+          واتساب لا يسمح بالإرسال الجماعي الآلي — لكن كل زر هنا يفتح محادثة برسالة جاهزة بتفاصيل ذلك المستأجر.
+          أرسلها بضغطة، وارجع للتالي. أُرسل {sentCount} من {withPhone.length}.
+        </p>
+
+        <div className="flex flex-col gap-2">
+          {withPhone.map(({ t, st }) => (
+            <div key={t.id} className={`flex items-center gap-3 rounded-xl border p-3 ${sent[t.id] ? "border-[#B7DFC7] bg-[#F2FAF5]" : "border-line bg-paper"}`}>
+              <div className="min-w-0 flex-1">
+                <div className="font-semibold truncate text-sm">{t.name}</div>
+                <div className="text-xs text-muted">{unitWord} {t.unit || "—"} · {st.unpaid} دفعة · {sar(st.amountDue)} ريال</div>
+              </div>
+              {sent[t.id] && <span className="text-xs font-bold text-paid">✓ أُرسل</span>}
+              <a href={linkOf(t)} target="_blank" rel="noreferrer" className="btn btn-wa text-xs"
+                onClick={() => setSent((s) => ({ ...s, [t.id]: true }))}>فتح واتساب</a>
+            </div>
+          ))}
+          {!withPhone.length && <div className="text-center text-muted text-sm py-6">لا يوجد متأخرون لديهم أرقام جوال مسجّلة.</div>}
+        </div>
+
+        {noPhone > 0 && (
+          <p className="text-xs text-[#8a5a11] mt-3 bg-[#FBF1DF] border border-[#EBD9AA] rounded-lg p-2.5">
+            {noPhone} متأخر بلا رقم جوال — أضف أرقامهم من تعديل الوحدة ليظهروا هنا.
+          </p>
+        )}
+
+        <button type="button" className="btn btn-ghost w-full justify-center mt-4" onClick={onClose}>إغلاق</button>
+      </div>
+    </div>
   );
 }

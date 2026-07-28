@@ -824,3 +824,116 @@ ${list.length ? `
 ${footer()}`;
   return SHELL(`مخالصة إخلاء — ${t.name}`, body);
 }
+
+// ============================================================
+// محضر الاجتماع السنوي — تجديد شهادة الجمعية
+// (الشهادة صالحة 12 شهرًا، وتجديدها يتطلّب: محضر الاجتماع + موازنة العام القادم)
+// ============================================================
+
+export function renewalMinutesHTML(
+  a: AssociationDoc & { units?: number },
+  d: {
+    meeting_date?: string; place?: string; mode?: string;
+    attendees?: number; total_units?: number;
+    president?: string; manager?: string;
+    fee?: number; year?: number; annual_budget?: number;
+    collected?: number; spent?: number; fund_balance?: number;
+    notes?: string;
+  },
+  issuer: Issuer = {}
+) {
+  const esc = (s: any) => String(s ?? "").replace(/</g, "&lt;");
+  const date = d.meeting_date || today();
+  const units = Number(d.total_units) || Number(a.units) || (a.owners || []).length || 0;
+  const att = Number(d.attendees) || 0;
+  const quorum = units ? Math.round((att / units) * 100) : 0;
+  const fee = Number(d.fee) || Number(a.fee) || 0;
+  const nextYear = Number(d.year) || new Date().getFullYear() + 1;
+  const collected = Number(d.collected) || 0;
+  const spent = Number(d.spent) || 0;
+  const fund = d.fund_balance !== undefined ? Number(d.fund_balance) || 0 : Number(a.fund_balance) || 0;
+
+  const body = `
+${header("محضر اجتماع", "الجمعية العمومية السنوية — تجديد الشهادة")}
+<h1>محضر اجتماع الجمعية العمومية السنوي</h1>
+<div class="sub">${a.name}${units ? ` · ${units} وحدة عقارية` : ""} · تجديد شهادة تسجيل الجمعية لعام ${nextYear}</div>
+
+<div class="grid">
+  <div class="box">
+    <h3>بيانات الاجتماع</h3>
+    <div class="r"><span>التاريخ</span><span>${date}</span></div>
+    <div class="r"><span>طريقة الانعقاد</span><span>${d.mode || "حضوري"}</span></div>
+    ${d.place ? `<div class="r"><span>المكان</span><span>${esc(d.place)}</span></div>` : ""}
+    <div class="r"><span>عدد الحاضرين</span><span>${att || "—"} من ${units || "—"}</span></div>
+    <div class="r"><span>نسبة الحضور</span><span>${units ? quorum + "%" : "—"}</span></div>
+  </div>
+  <div class="box">
+    <h3>الأساس النظامي</h3>
+    <div class="r"><span>النظام</span><span>ملكية الوحدات العقارية وفرزها وإدارتها</span></div>
+    <div class="r"><span>المرسوم الملكي</span><span>م/85 وتاريخ 02/07/1441هـ</span></div>
+    <div class="r"><span>الجهة المشرفة</span><span>الهيئة العامة للعقار — منصة ملاك</span></div>
+  </div>
+</div>
+
+<div class="note">
+  عُقد هذا الاجتماع السنوي لاستعراض أعمال الجمعية عن العام المنقضي، واعتماد الموازنة التقديرية
+  لعام ${nextYear}، تمهيدًا لتجديد شهادة تسجيل الجمعية عبر منصة «ملاك» قبل انتهاء صلاحيتها${a.cert_expiry ? ` (${a.cert_expiry})` : ""}.
+</div>
+
+<h1 style="font-size:1rem">أولًا: الموقف المالي للعام المنقضي</h1>
+<table>
+  <tbody>
+    <tr><td>إجمالي الاشتراكات المحصَّلة</td><td style="text-align:left;font-weight:600">${collected ? sar(collected) + " ريال" : "________________"}</td></tr>
+    <tr><td>إجمالي المصروفات (تشغيل وصيانة)</td><td style="text-align:left;font-weight:600">${spent ? sar(spent) + " ريال" : "________________"}</td></tr>
+    <tr style="background:#F3EEE2;font-weight:700"><td>رصيد صندوق الجمعية</td><td style="text-align:left">${sar(fund)} ريال</td></tr>
+  </tbody>
+</table>
+
+<h1 style="font-size:1rem">ثانيًا: جدول الأعمال والقرارات</h1>
+<table>
+  <thead><tr><th>#</th><th>البند</th><th>القرار</th></tr></thead>
+  <tbody>
+    <tr><td>1</td><td>تقرير أعمال الجمعية عن العام المنقضي</td>
+        <td>استُعرض التقرير وصودق عليه.</td></tr>
+    <tr><td>2</td><td>المصادقة على الحساب الختامي والموقف المالي</td>
+        <td>صودق على الموقف المالي الموضّح أعلاه.</td></tr>
+    <tr><td>3</td><td>اعتماد الموازنة التقديرية لعام ${nextYear}</td>
+        <td>${d.annual_budget ? `اعتماد موازنة بإجمالي <b>${sar(d.annual_budget)}</b> ريال (مرفقة بهذا المحضر).` : "اعتماد الموازنة التقديرية المرفقة بهذا المحضر."}</td></tr>
+    <tr><td>4</td><td>اشتراك الصيانة لعام ${nextYear}</td>
+        <td>${fee ? `إقرار الاشتراك بمبلغ <b>${sar(fee)}</b> ريال لكل وحدة.` : "________________________________"}</td></tr>
+    <tr><td>5</td><td>مدير العقار</td>
+        <td>${d.manager ? `تجديد تعيين <b>${esc(d.manager)}</b> مديرًا للعقار.` : "________________________________"}</td></tr>
+    <tr><td>6</td><td>تجديد شهادة تسجيل الجمعية</td>
+        <td>تفويض ${d.president ? `رئيس الجمعية <b>${esc(d.president)}</b>` : "رئيس الجمعية"} ومدير العقار برفع هذا المحضر
+            وموازنة عام ${nextYear} عبر منصة «ملاك» لإتمام تجديد الشهادة.</td></tr>
+    ${d.notes ? `<tr><td>7</td><td>بنود إضافية</td><td>${esc(d.notes)}</td></tr>` : ""}
+  </tbody>
+</table>
+
+<div class="note">
+  تُودَع الاشتراكات في الحساب البنكي للجمعية، ولا يُصرف منها إلا وفق الموازنة المعتمدة.
+  ويُرفق بهذا المحضر: الموازنة التقديرية لعام ${nextYear}.
+</div>
+
+<h1 style="font-size:1rem">توقيعات الحاضرين</h1>
+<table>
+  <thead><tr><th>#</th><th>اسم المالك</th><th>الوحدة</th><th>التوقيع</th></tr></thead>
+  <tbody>
+    ${(a.owners && a.owners.length
+      ? a.owners.map((o, i) => `<tr><td>${i + 1}</td><td>${esc(o.name)}</td><td>${o.unit || "—"}</td><td>________________</td></tr>`).join("")
+      : Array.from({ length: 8 }, (_, i) => `<tr><td>${i + 1}</td><td>________________</td><td>____</td><td>________________</td></tr>`).join(""))}
+  </tbody>
+</table>
+
+<div class="sign">
+  <div>رئيس الجمعية: ${d.president ? esc(d.president) : "________________"}<br><br>التوقيع: ________________</div>
+  <div>مدير العقار: ${d.manager ? esc(d.manager) : "________________"}<br><br>التوقيع: ________________</div>
+</div>
+<div class="note" style="border-inline-start-color:#D0453F;background:#FBE9E7;color:#a5322c">
+  <b>تنويه:</b> هذا نموذج محضر استرشادي أعدّته إدارة الجمعية للاستخدام الإداري.
+  وثيق لا يقدّم خدمات قانونية ولا يمثّل الجمعية أمام أي جهة — طابق النموذج مع النظام الأساسي
+  المعتمد ومتطلبات منصة «ملاك» قبل رفعه رسميًّا.
+</div>
+${footer()}`;
+  return SHELL(`محضر التجديد السنوي — ${a.name}`, body);
+}

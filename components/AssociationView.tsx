@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase-client";
 import { sar, daysLeft, waLink, WATHEQ_WA, today } from "@/lib/utils";
 import { ownerStatementHTML, associationStatementHTML, budgetHTML, foundingMinutesHTML,
-  DEFAULT_BUDGET_ITEMS, openDoc, type BudgetItem } from "@/lib/documents";
+  renewalMinutesHTML, DEFAULT_BUDGET_ITEMS, openDoc, type BudgetItem } from "@/lib/documents";
 
 type Owner = { id: string; name: string; unit: string | null; phone: string | null; months_late: number; last_paid: string | null; partial_amount?: number | null };
 type Note = { id: string; note_date: string; text: string };
@@ -54,6 +54,10 @@ export default function AssociationView({ initial }: { initial: Association[] })
   const [ownerModal, setOwnerModal] = useState<null | { owner?: Owner }>(null);
   const [budget, setBudget] = useState<null | { year: number; items: BudgetItem[]; reserve_pct: number; notes: string }>(null);
   const [minutes, setMinutes] = useState(false);
+  /** حزمة تجديد الشهادة — المستندان المطلوبان في منصة ملاك: المحضر + الموازنة */
+  const [renewal, setRenewal] = useState<null | { annualBudget: number | null }>(null);
+  const [bulk, setBulk] = useState(false);
+  const [remindAll, setRemindAll] = useState(false);
   const [toast, setToast] = useState<null | { k: "ok" | "err"; m: string }>(null);
   // الحسابات تعتمد على تاريخ اليوم، وتوقيت السيرفر يختلف عن توقيت الجهاز.
   const [hydrated, setHydrated] = useState(false);
@@ -181,6 +185,73 @@ export default function AssociationView({ initial }: { initial: Association[] })
     }, { onConflict: "association_id,year" });
     if (error) { console.error("Watheq budget save error:", error); return notify("err", error.message); }
     notify("ok", `حُفظت موازنة ${b.year}.`);
+  }
+
+  /** إجمالي الموازنة السنوية المحفوظة (تشغيل + احتياطي) لسنة معيّنة — أو null إن لم تُحفظ */
+  async function savedAnnualBudget(year: number): Promise<number | null> {
+    if (!active) return null;
+    const { data } = await supabase.from("association_budgets")
+      .select("items,reserve_pct").eq("association_id", active.id).eq("year", year).maybeSingle();
+    if (!data) return null;
+    const monthly = ((data.items as BudgetItem[]) || []).reduce((s, i) => s + (Number(i.monthly) || 0), 0);
+    const ops = monthly * 12;
+    return Math.round(ops + ops * ((Number(data.reserve_pct) || 0) / 100));
+  }
+
+  /** يفتح حزمة تجديد الشهادة — يجلب موازنة العام القادم (أو الحالي) لتعبئة المحضر تلقائيًّا */
+  async function openRenewal() {
+    if (!active) return;
+    const nextYear = new Date().getFullYear() + 1;
+    const annualBudget = (await savedAnnualBudget(nextYear)) ?? (await savedAnnualBudget(nextYear - 1));
+    setRenewal({ annualBudget });
+  }
+
+  /** طباعة الموازنة المحفوظة مباشرة — يفضّل موازنة العام القادم ثم الحالي */
+  async function printSavedBudget() {
+    if (!active) return;
+    const nextYear = new Date().getFullYear() + 1;
+    for (const y of [nextYear, nextYear - 1]) {
+      const { data } = await supabase.from("association_budgets")
+        .select("*").eq("association_id", active.id).eq("year", y).maybeSingle();
+      if (data) {
+        return openDoc(budgetHTML(active as any, {
+          year: y, items: (data.items as BudgetItem[]) || [],
+          reserve_pct: Number(data.reserve_pct ?? 10), notes: data.notes || "",
+        } as any, {}));
+      }
+    }
+    notify("err", "لا توجد موازنة محفوظة بعد — أنشئها من زر «الموازنة» أولًا.");
+  }
+
+  /** إضافة ملّاك دفعة واحدة — سطر لكل مالك: الاسم، الوحدة، الجوال */
+  async function addOwnersBulk(rows: { name: string; unit: string | null; phone: string | null }[]) {
+    if (!active || !rows.length) return;
+    const { data, error } = await supabase.from("owners").insert(
+      rows.map((r) => ({ association_id: active.id, name: r.name, unit: r.unit, phone: r.phone, months_late: 0 }))
+    ).select("*");
+    if (error) { console.error("Watheq bulk owners error:", error); return notify("err", error.message); }
+    setItems(items.map((a) => a.id === active.id ? { ...a, owners: [...a.owners, ...((data || []) as Owner[])] } : a));
+    setBulk(false);
+    notify("ok", `أُضيف ${rows.length} مالكًا دفعة واحدة.`);
+  }
+
+  /** تصدير الملّاك CSV — يفتح مباشرة في Excel بترميز عربي سليم */
+  function exportOwnersCSV() {
+    if (!active) return;
+    const fee = active.fee || 0;
+    const head = ["الاسم", "الوحدة", "الجوال", "أشهر متأخرة", "المتأخر (ريال)", "مسدَّد جزئيًّا", "آخر سداد", "الحالة"];
+    const lines = (active.owners || []).map((o) => {
+      const k = ownerKey(o);
+      return [o.name, o.unit || "", o.phone || "", o.months_late,
+        Math.max(0, o.months_late * fee - (Number(o.partial_amount) || 0)),
+        Number(o.partial_amount) || 0, o.last_paid || "", OWNER_META[k].label]
+        .map((v) => `"${String(v ?? "").replace(/"/g, '""')}"`).join(",");
+    });
+    const csv = "\uFEFF" + [head.join(","), ...lines].join("\r\n");
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+    const aEl = document.createElement("a");
+    aEl.href = url; aEl.download = `ملاك-${active.name}-${today()}.csv`;
+    aEl.click(); URL.revokeObjectURL(url);
   }
 
   /** كشف حساب الجمعية كاملة */
@@ -457,15 +528,21 @@ export default function AssociationView({ initial }: { initial: Association[] })
       {/* تنبيه الشهادة */}
       {dl !== null && dl < 0 && (
         <div className="flex flex-wrap items-center gap-3 rounded-xl p-3.5 mb-4 bg-[#FBE9E7] border border-[#F5C6C2] text-[#8f2b26]">
-          <span>🔴</span><span><b>انتهت شهادة الجمعية.</b> بادر بالتجديد.</span>
-          <a href={renewLink()} target="_blank" rel="noreferrer" className="btn btn-gold text-sm mr-auto">جهّز مستندات التجديد</a>
+          <span>🔴</span><span><b>انتهت شهادة الجمعية.</b> بادر بالتجديد — المطلوب في منصة ملاك: محضر الاجتماع + الموازنة.</span>
+          <div className="flex gap-2 mr-auto">
+            <button type="button" className="btn btn-gold text-sm" onClick={openRenewal}>🗂 جهّز حزمة التجديد</button>
+            <a href={renewLink()} target="_blank" rel="noreferrer" className="btn btn-ghost text-sm">اطلبها جاهزة</a>
+          </div>
         </div>
       )}
       {dl !== null && dl >= 0 && dl <= 60 && (
         <div className={`flex flex-wrap items-center gap-3 rounded-xl p-3.5 mb-4 border ${dl <= 30 ? "bg-[#FBE9E7] border-[#F5C6C2] text-[#8f2b26]" : "bg-[#FBF1DF] border-[#EBD9AA] text-[#8a5a11]"}`}>
           <span>{dl <= 30 ? "🔴" : "⚠️"}</span>
-          <span><b>تنتهي شهادة الجمعية خلال {dl} يومًا</b> ({a.cert_expiry}). جهّز محضر التجديد والموازنة.</span>
-          <a href={renewLink()} target="_blank" rel="noreferrer" className="btn btn-gold text-sm mr-auto">جهّز مستندات التجديد</a>
+          <span><b>تنتهي شهادة الجمعية خلال {dl} يومًا</b> ({a.cert_expiry}). المطلوب للتجديد: محضر الاجتماع + الموازنة.</span>
+          <div className="flex gap-2 mr-auto">
+            <button type="button" className="btn btn-gold text-sm" onClick={openRenewal}>🗂 جهّز حزمة التجديد</button>
+            <a href={renewLink()} target="_blank" rel="noreferrer" className="btn btn-ghost text-sm">اطلبها جاهزة</a>
+          </div>
         </div>
       )}
 
@@ -485,18 +562,29 @@ export default function AssociationView({ initial }: { initial: Association[] })
             <div className="flex gap-2 items-center">
               {a.fee > 0 && <span className="text-xs text-muted">الاشتراك {sar(a.fee)} ريال/شهر</span>}
               <button type="button" className="btn btn-ghost text-xs" onClick={openAssocStatement}>كشف حساب</button>
+              <button type="button" className="btn btn-ghost text-xs" onClick={exportOwnersCSV} title="تنزيل ملف Excel/CSV بكل الملّاك وحالتهم">⬇️ CSV</button>
               <button type="button" className="btn btn-ghost text-xs" onClick={openBudget}>📊 الموازنة</button>
-              <button type="button" className="btn btn-gold text-xs" onClick={() => setMinutes(true)}>📄 محضر تأسيسي</button>
+              <button type="button" className="btn btn-ghost text-xs" onClick={() => setMinutes(true)}>📄 محضر تأسيسي</button>
+              <button type="button" className="btn btn-gold text-xs" onClick={openRenewal} title="محضر الاجتماع السنوي + الموازنة — مستندا تجديد الشهادة في منصة ملاك">🗂 حزمة التجديد</button>
             </div>
           </div>
 
           <div className="p-4">
             <AddOwner onAdd={addOwner} />
+            <div className="flex justify-end -mt-1 mb-3">
+              <button type="button" className="text-xs font-semibold text-gold hover:underline" onClick={() => setBulk(true)}>
+                📋 عندك قائمة جاهزة؟ الصقها وأضف كل الملّاك دفعة واحدة
+              </button>
+            </div>
 
             {/* شريط التحكّم: بحث · تصفية · فرز */}
             {total > 0 && (
               <div className="flex flex-wrap gap-2 items-center mb-3">
                 <input className="fld flex-1 min-w-[150px]" value={q} onChange={(e) => setQ(e.target.value)} placeholder="ابحث باسم المالك أو رقم الوحدة…" />
+                {late.length > 0 && (
+                  <button type="button" className="btn btn-wa text-xs" onClick={() => setRemindAll(true)}
+                    title="إرسال تذكير واتساب لكل المتأخرين واحدًا تلو الآخر">💬 تذكير جماعي ({late.length})</button>
+                )}
                 <select className="fld max-w-[165px]" value={sort} onChange={(e) => setSort(e.target.value as any)}>
                   <option value="urgent">الأهم أولًا</option>
                   <option value="amount">الأكثر تأخّرًا</option>
@@ -603,6 +691,14 @@ export default function AssociationView({ initial }: { initial: Association[] })
         onPrint={(b) => openDoc(budgetHTML(a as any, b as any, {}))} />}
       {minutes && <MinutesModal assoc={a} onClose={() => setMinutes(false)}
         onPrint={(d) => openDoc(foundingMinutesHTML(a as any, d as any, {}))} />}
+      {renewal && <RenewalModal assoc={a} annualBudget={renewal.annualBudget}
+        onClose={() => setRenewal(null)}
+        onEditBudget={() => { setRenewal(null); openBudget(); }}
+        onPrintBudget={printSavedBudget}
+        onPrintMinutes={(d) => openDoc(renewalMinutesHTML(a as any, d as any, {}))} />}
+      {bulk && <BulkOwnersModal onClose={() => setBulk(false)} onSubmit={addOwnersBulk} />}
+      {remindAll && <RemindAllOwnersModal owners={late} fee={a.fee || 0} linkOf={ownerRemindLink}
+        onClose={() => setRemindAll(false)} />}
       {ownerModal?.owner && <OwnerModal owner={ownerModal.owner} onClose={() => setOwnerModal(null)}
         onSubmit={(d) => saveOwner(ownerModal.owner!.id, d)} />}
       {history && <HistoryModal data={history} onClose={() => setHistory(null)} />}
@@ -1159,4 +1255,242 @@ function DocModal({ doc, onClose }: { doc: { title: string; body: string }; onCl
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return <label className="block"><span className="block text-sm font-semibold mb-1">{label}</span>{children}</label>;
+}
+
+/** ════════════════════════════════════════════════════════════
+ *  حزمة تجديد الشهادة — المستندان المطلوبان في منصة ملاك:
+ *  ① موازنة العام القادم  ② محضر الاجتماع السنوي
+ *  الشهادة صالحة 12 شهرًا فقط، فهذه حاجة متكرّرة لكل جمعية مسجّلة.
+ *  ════════════════════════════════════════════════════════════ */
+function RenewalModal({ assoc, annualBudget, onClose, onEditBudget, onPrintBudget, onPrintMinutes }: {
+  assoc: Association; annualBudget: number | null; onClose: () => void;
+  onEditBudget: () => void; onPrintBudget: () => void; onPrintMinutes: (d: any) => void;
+}) {
+  const units = Number(assoc.units) || (Array.isArray(assoc.owners) ? assoc.owners.length : 0);
+  const nextYear = new Date().getFullYear() + 1;
+  const [d, setD] = useState<any>({
+    meeting_date: new Date().toISOString().slice(0, 10), mode: "حضوري", place: "",
+    attendees: units || "", total_units: units || "",
+    president: "", manager: "", fee: assoc.fee || "",
+    year: nextYear, annual_budget: annualBudget ?? "",
+    collected: "", spent: "", fund_balance: assoc.fund_balance ?? "", notes: "",
+  });
+  const set = (k: string, v: any) => setD({ ...d, [k]: v });
+
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4" onClick={onClose}>
+      <div className="w-full max-w-2xl bg-white rounded-2xl shadow-xl p-6 max-h-[92vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
+        <h3 className="font-display font-bold text-deep text-xl mb-1">🗂 حزمة تجديد شهادة الجمعية</h3>
+        <p className="text-sm text-muted mb-4">
+          {assoc.name} — تجديد الشهادة في منصة «ملاك» يتطلّب مستندين اثنين فقط. جهّزهما من هنا.
+        </p>
+
+        {/* الخطوة ١ — الموازنة */}
+        <div className="border border-line rounded-xl p-4 mb-3 bg-paper">
+          <div className="flex items-center gap-2 mb-2">
+            <span className="w-6 h-6 rounded-full bg-deep text-goldSoft grid place-items-center text-xs font-bold shrink-0">١</span>
+            <b className="text-deep">موازنة عام {nextYear}</b>
+            {annualBudget !== null
+              ? <span className="text-xs font-semibold text-paid bg-[#E6F4EC] border border-[#B7DFC7] rounded-full px-2 py-0.5 mr-auto">محفوظة · {sar(annualBudget)} ريال</span>
+              : <span className="text-xs font-semibold text-[#8a5a11] bg-[#FBF1DF] border border-[#EBD9AA] rounded-full px-2 py-0.5 mr-auto">لم تُنشأ بعد</span>}
+          </div>
+          <p className="text-xs text-muted mb-2.5">الموازنة التقديرية للتشغيل والصيانة مع احتياطي رأس المال — تُرفَق مع المحضر.</p>
+          <div className="flex gap-2 flex-wrap">
+            <button type="button" className="btn btn-ghost text-xs" onClick={onEditBudget}>✎ {annualBudget !== null ? "تعديل الموازنة" : "إنشاء الموازنة"}</button>
+            {annualBudget !== null && <button type="button" className="btn btn-primary text-xs" onClick={onPrintBudget}>🖨 طباعة الموازنة</button>}
+          </div>
+        </div>
+
+        {/* الخطوة ٢ — محضر الاجتماع السنوي */}
+        <div className="border border-line rounded-xl p-4 mb-3 bg-paper">
+          <div className="flex items-center gap-2 mb-2">
+            <span className="w-6 h-6 rounded-full bg-deep text-goldSoft grid place-items-center text-xs font-bold shrink-0">٢</span>
+            <b className="text-deep">محضر الاجتماع العمومي السنوي</b>
+          </div>
+          <p className="text-xs text-muted mb-3">املأ ما تعرفه، واترك الباقي فراغات تُملأ بخطّ اليد. يُدرج جدول توقيعات الملّاك المسجّلين تلقائيًّا.</p>
+
+          <div className="space-y-3">
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="تاريخ الاجتماع">
+                <input className="fld" type="date" value={d.meeting_date} onChange={(e) => set("meeting_date", e.target.value)} />
+              </Field>
+              <Field label="طريقة الانعقاد">
+                <select className="fld" value={d.mode} onChange={(e) => set("mode", e.target.value)}>
+                  <option value="حضوري">حضوري</option>
+                  <option value="إلكتروني">إلكتروني</option>
+                  <option value="حضوري وإلكتروني">حضوري وإلكتروني</option>
+                </select>
+              </Field>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="عدد الحاضرين">
+                <input className="fld" type="number" min={0} value={d.attendees} onChange={(e) => set("attendees", e.target.value)} />
+              </Field>
+              <Field label="إجمالي الوحدات">
+                <input className="fld" type="number" min={0} value={d.total_units} onChange={(e) => set("total_units", e.target.value)} />
+              </Field>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="رئيس الجمعية">
+                <input className="fld" value={d.president} onChange={(e) => set("president", e.target.value)} placeholder="الاسم" />
+              </Field>
+              <Field label="مدير العقار">
+                <input className="fld" value={d.manager} onChange={(e) => set("manager", e.target.value)} placeholder="الاسم أو المكتب" />
+              </Field>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label={`اشتراك الوحدة لعام ${nextYear} (ريال)`}>
+                <input className="fld" type="number" min={0} value={d.fee} onChange={(e) => set("fee", e.target.value)} />
+              </Field>
+              <Field label="إجمالي الموازنة المعتمدة (ريال)">
+                <input className="fld" type="number" min={0} value={d.annual_budget} onChange={(e) => set("annual_budget", e.target.value)} placeholder="يتعبّأ من الموازنة المحفوظة" />
+              </Field>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="المحصَّل خلال العام (ريال)">
+                <input className="fld" type="number" min={0} value={d.collected} onChange={(e) => set("collected", e.target.value)} placeholder="اختياري" />
+              </Field>
+              <Field label="المصروف خلال العام (ريال)">
+                <input className="fld" type="number" min={0} value={d.spent} onChange={(e) => set("spent", e.target.value)} placeholder="اختياري" />
+              </Field>
+            </div>
+            <Field label="بنود إضافية أُقرّت في الاجتماع">
+              <input className="fld" value={d.notes} onChange={(e) => set("notes", e.target.value)} placeholder="اختياري" />
+            </Field>
+          </div>
+
+          <button type="button" className="btn btn-gold text-sm w-full justify-center mt-3" onClick={() => onPrintMinutes(d)}>
+            🖨 إنشاء محضر التجديد
+          </button>
+        </div>
+
+        {/* الخطوة ٣ — الرفع في منصة ملاك */}
+        <div className="border border-line rounded-xl p-4 bg-paper">
+          <div className="flex items-center gap-2 mb-2">
+            <span className="w-6 h-6 rounded-full bg-deep text-goldSoft grid place-items-center text-xs font-bold shrink-0">٣</span>
+            <b className="text-deep">الرفع في منصة ملاك</b>
+          </div>
+          <ol className="text-xs text-[#33413d] leading-relaxed pr-4 list-decimal space-y-1">
+            <li>ادخل على منصة «ملاك» عبر النفاذ الوطني بحساب رئيس الجمعية أو مدير العقار.</li>
+            <li>من صفحة الجمعية اختر خدمة <b>تجديد الشهادة</b>.</li>
+            <li>ارفع المستندين: <b>محضر الاجتماع</b> + <b>موازنة عام {nextYear}</b> (اطبعهما PDF من نافذة الطباعة).</li>
+            <li>تابع حالة الطلب حتى صدور الشهادة الجديدة، ثم حدّث تاريخ الانتهاء في إعدادات الجمعية هنا.</li>
+          </ol>
+        </div>
+
+        <p className="text-xs text-[#8a5a11] mt-3 bg-[#FBF1DF] border border-[#EBD9AA] rounded-lg p-2.5 leading-relaxed">
+          المستندان استرشاديان — طابقهما مع النظام الأساسي المعتمد ومتطلبات المنصة قبل الرفع الرسمي.
+          وثيق لا يقدّم خدمات قانونية ولا يمثّل الجمعية أمام أي جهة.
+        </p>
+
+        <div className="flex gap-2 mt-4">
+          <button type="button" className="btn btn-ghost flex-1 justify-center" onClick={onClose}>إغلاق</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** لصق قائمة ملّاك — سطر لكل مالك: «الاسم، الوحدة، الجوال» بأي فاصل شائع */
+function BulkOwnersModal({ onClose, onSubmit }: {
+  onClose: () => void; onSubmit: (rows: { name: string; unit: string | null; phone: string | null }[]) => void;
+}) {
+  const [text, setText] = useState("");
+
+  /** يحلّل كل سطر: يقبل الفاصلة العربية/الإنجليزية أو Tab أو الشرطة */
+  const rows = text.split(/\n+/).map((line) => {
+    const parts = line.split(/[،,\t]| - /).map((s) => s.trim()).filter(Boolean);
+    if (!parts.length) return null;
+    // يلتقط الجوال (أرقام 9+) والوحدة (رقم/رمز قصير) أينما وُضعا
+    let name = "", unit: string | null = null, phone: string | null = null;
+    for (const p of parts) {
+      const digits = p.replace(/[^0-9+]/g, "");
+      if (!phone && digits.length >= 9 && digits.length >= p.length - 3) phone = p;
+      else if (!unit && p.length <= 6 && /[0-9]/.test(p)) unit = p;
+      else name = name ? `${name} ${p}` : p;
+    }
+    return name ? { name, unit, phone } : null;
+  }).filter(Boolean) as { name: string; unit: string | null; phone: string | null }[];
+
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4" onClick={onClose}>
+      <div className="w-full max-w-xl bg-white rounded-2xl shadow-xl p-6 max-h-[92vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
+        <h3 className="font-display font-bold text-deep text-xl mb-1">📋 إضافة ملّاك دفعة واحدة</h3>
+        <p className="text-sm text-muted mb-3">
+          الصق قائمتك — سطر لكل مالك بصيغة: <b>الاسم، الوحدة، الجوال</b> (الوحدة والجوال اختياريان).
+        </p>
+        <textarea className="fld min-h-[180px] font-mono text-sm leading-relaxed" dir="rtl"
+          value={text} onChange={(e) => setText(e.target.value)}
+          placeholder={"محمد العتيبي، 101، 05XXXXXXXX\nسارة القحطاني، 102\nخالد الشمري"} />
+
+        {rows.length > 0 && (
+          <div className="bg-paper2 border border-line rounded-xl p-3 mt-3 text-xs max-h-[160px] overflow-auto">
+            <div className="font-semibold text-deep mb-1.5">معاينة — سيُضاف {rows.length} مالكًا:</div>
+            {rows.slice(0, 30).map((r, i) => (
+              <div key={i} className="flex gap-2 py-0.5 border-b border-dashed border-line last:border-0">
+                <span className="flex-1 truncate">{r.name}</span>
+                <span className="text-muted">{r.unit ? `وحدة ${r.unit}` : "—"}</span>
+                <span className="text-muted tabular-nums">{r.phone || "—"}</span>
+              </div>
+            ))}
+            {rows.length > 30 && <div className="text-muted pt-1">… و{rows.length - 30} آخرون</div>}
+          </div>
+        )}
+
+        <div className="flex gap-2 mt-4">
+          <button type="button" className="btn btn-ghost flex-1 justify-center" onClick={onClose}>إلغاء</button>
+          <button type="button" className="btn btn-gold flex-1 justify-center" disabled={!rows.length}
+            onClick={() => onSubmit(rows)}>إضافة {rows.length || ""} مالك</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** تذكير جماعي — يفتح واتساب لكل متأخر واحدًا تلو الآخر مع تتبّع من أُرسل له */
+function RemindAllOwnersModal({ owners, fee, linkOf, onClose }: {
+  owners: Owner[]; fee: number; linkOf: (o: Owner) => string; onClose: () => void;
+}) {
+  const [sent, setSent] = useState<Record<string, boolean>>({});
+  const sentCount = Object.values(sent).filter(Boolean).length;
+  const withPhone = owners.filter((o) => o.phone);
+  const noPhone = owners.length - withPhone.length;
+
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4" onClick={onClose}>
+      <div className="w-full max-w-lg bg-white rounded-2xl shadow-xl p-6 max-h-[92vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
+        <h3 className="font-display font-bold text-deep text-xl mb-1">💬 تذكير جماعي بالسداد</h3>
+        <p className="text-sm text-muted mb-4">
+          واتساب لا يسمح بالإرسال الجماعي الآلي — لكن كل زر هنا يفتح محادثة برسالة جاهزة بتفاصيل ذلك المالك.
+          أرسلها بضغطة، وارجع للتالي. أُرسل {sentCount} من {withPhone.length}.
+        </p>
+
+        <div className="flex flex-col gap-2">
+          {withPhone.map((o) => {
+            const owed = Math.max(0, o.months_late * fee - (Number(o.partial_amount) || 0));
+            return (
+              <div key={o.id} className={`flex items-center gap-3 rounded-xl border p-3 ${sent[o.id] ? "border-[#B7DFC7] bg-[#F2FAF5]" : "border-line bg-paper"}`}>
+                <div className="min-w-0 flex-1">
+                  <div className="font-semibold truncate text-sm">{o.name}</div>
+                  <div className="text-xs text-muted">{o.unit ? `وحدة ${o.unit} · ` : ""}{o.months_late} شهر · {sar(owed)} ريال</div>
+                </div>
+                {sent[o.id] && <span className="text-xs font-bold text-paid">✓ أُرسل</span>}
+                <a href={linkOf(o)} target="_blank" rel="noreferrer" className="btn btn-wa text-xs"
+                  onClick={() => setSent((s) => ({ ...s, [o.id]: true }))}>فتح واتساب</a>
+              </div>
+            );
+          })}
+          {!withPhone.length && <div className="text-center text-muted text-sm py-6">لا يوجد متأخرون لديهم أرقام جوال مسجّلة.</div>}
+        </div>
+
+        {noPhone > 0 && (
+          <p className="text-xs text-[#8a5a11] mt-3 bg-[#FBF1DF] border border-[#EBD9AA] rounded-lg p-2.5">
+            {noPhone} مالك متأخر بلا رقم جوال — أضف أرقامهم من «تعديل البيانات» ليظهروا هنا.
+          </p>
+        )}
+
+        <button type="button" className="btn btn-ghost w-full justify-center mt-4" onClick={onClose}>إغلاق</button>
+      </div>
+    </div>
+  );
 }
