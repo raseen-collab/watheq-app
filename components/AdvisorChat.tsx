@@ -9,9 +9,10 @@ type Msg = {
 };
 
 /** أسئلة مقترحة — تحلّ «مشكلة الصندوق الفارغ» وتُظهر نطاق الخدمة فورًا */
-const SUGGESTIONS: { group: string; items: string[] }[] = [
+const SUGGESTIONS: { group: string; scope: "hoa" | "property"; items: string[] }[] = [
   {
     group: "جمعيات الملاك",
+    scope: "hoa",
     items: [
       "متى يجب تأسيس جمعية الملاك؟",
       "كيف يُحدَّد اشتراك الصيانة؟",
@@ -21,6 +22,7 @@ const SUGGESTIONS: { group: string; items: string[] }[] = [
   },
   {
     group: "الإيجار والتحصيل",
+    scope: "property",
     items: [
       "هل عقد الإيجار المسجّل سند تنفيذي؟",
       "ما خطوات التحصيل من مستأجر متأخر؟",
@@ -29,9 +31,11 @@ const SUGGESTIONS: { group: string; items: string[] }[] = [
   },
 ];
 
+export type AdvisorScope = "hoa" | "property";
+
 export default function AdvisorChat({
-  acknowledged, remaining, limit,
-}: { acknowledged: boolean; remaining: number; limit: number }) {
+  acknowledged, remaining, limit, scope = "hoa",
+}: { acknowledged: boolean; remaining: number; limit: number; scope?: AdvisorScope }) {
   const [ack, setAck] = useState(acknowledged);
   const [ackBusy, setAckBusy] = useState(false);
   const [msgs, setMsgs] = useState<Msg[]>([]);
@@ -114,7 +118,8 @@ export default function AdvisorChat({
           {err && <p className="text-sm text-late mt-3">{err}</p>}
 
           <div className="flex gap-2 mt-5">
-            <Link href="/dashboard/property" className="btn btn-ghost flex-1 justify-center">رجوع</Link>
+            <Link href={scope === "property" ? "/dashboard/property" : "/dashboard/association"}
+              className="btn btn-ghost flex-1 justify-center">رجوع</Link>
             <button type="button" className="btn btn-gold flex-1 justify-center" disabled={ackBusy} onClick={confirmAck}>
               {ackBusy ? "…" : "أقرّ وأبدأ"}
             </button>
@@ -131,7 +136,11 @@ export default function AdvisorChat({
       <div className="flex items-center gap-2 mb-4">
         <div className="flex-1">
           <h1 className="font-display font-bold text-deep text-xl">المستشار الذكي</h1>
-          <p className="text-sm text-muted">إجابات استرشادية عن إدارة الأملاك وجمعيات الملاك</p>
+          <p className="text-sm text-muted">
+            {scope === "property"
+              ? "إجابات استرشادية عن الإيجار والتحصيل وإدارة الأملاك"
+              : "إجابات استرشادية عن جمعيات الملاك وإدارة العقار المشترك"}
+          </p>
         </div>
         <span className={`text-xs font-semibold rounded-lg px-2.5 py-1.5 border ${
           left > 0 ? "bg-paper2 text-deep border-line" : "bg-[#FBE9E7] text-late border-[#F5C6C2]"}`}>
@@ -142,7 +151,7 @@ export default function AdvisorChat({
       {empty && (
         <div className="mb-4">
           <p className="text-sm text-muted mb-3">جرّب سؤالًا من هذي، أو اكتب سؤالك:</p>
-          {SUGGESTIONS.map((g) => (
+          {[...SUGGESTIONS].sort((a, b) => (a.scope === scope ? -1 : b.scope === scope ? 1 : 0)).map((g) => (
             <div key={g.group} className="mb-3">
               <div className="text-xs font-semibold text-gold mb-1.5">{g.group}</div>
               <div className="flex flex-wrap gap-1.5">

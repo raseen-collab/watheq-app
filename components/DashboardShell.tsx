@@ -17,9 +17,8 @@ export default function DashboardShell({
   const pathname = usePathname();
   const router = useRouter();
   const days = trialDaysLeft(trialEndsAt);
-  // صفحة المستشار مشتركة بين اللوحتين — تُنسب للوحة المناسبة حسب نوع الحساب
-  const onAdvisor = pathname.includes("/advisor");
-  const onProperty = pathname.includes("/property") || (onAdvisor && accountType === "landlord");
+  // كل لوحة لها مستشارها الخاص، فالمسار نفسه يحدّد اللوحة — بلا استثناءات
+  const onProperty = pathname.includes("/property");
   const current = onProperty ? "property" : "association";
 
   async function signOut() {
@@ -34,11 +33,11 @@ export default function DashboardShell({
     ? [
         { href: "/dashboard/property", label: "عقاراتي" },
         { href: "/dashboard/property/import", label: "رفع Excel" },
-        { href: "/dashboard/advisor", label: "🧠 المستشار" },
+        { href: "/dashboard/property/advisor", label: "🧠 المستشار" },
       ]
     : [
         { href: "/dashboard/association", label: "جمعيتي" },
-        { href: "/dashboard/advisor", label: "🧠 المستشار" },
+        { href: "/dashboard/association/advisor", label: "🧠 المستشار" },
       ];
 
   return (
