@@ -24,9 +24,11 @@ const METHOD_AR: Record<string, string> = {
 };
 const methodAr = (m?: string | null) => METHOD_AR[String(m || "")] || "—";
 
-type Issuer = { billing_name?: string | null; vat_number?: string | null; cr_number?: string | null; billing_phone?: string | null };
+type Issuer = { billing_name?: string | null; vat_number?: string | null; cr_number?: string | null; billing_phone?: string | null;
+  /** true أثناء التجربة المجانية — تخرج المستندات بعلامة «نسخة تجريبية» */
+  trial?: boolean | null };
 
-const SHELL = (title: string, inner: string) => `<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8">
+const SHELL = (title: string, inner: string, trial = false) => `<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8">
 <title>${title}</title>
 <style>
   @page{size:A4;margin:14mm}
@@ -78,9 +80,24 @@ const SHELL = (title: string, inner: string) => `<!DOCTYPE html><html lang="ar" 
   .noprint .a{background:#0E3A37;color:#F6F1E4}
   .noprint .b{background:#fff;color:#0E3A37;border:1px solid #E4DDCD}
   @media print{.noprint{display:none}}
+  /* ── علامة النسخة التجريبية ── */
+  .wm{position:fixed;top:0;right:0;bottom:0;left:0;z-index:9999;pointer-events:none;
+      display:flex;align-items:center;justify-content:center}
+  .wm span{transform:rotate(-32deg);font-size:3.6rem;font-weight:800;letter-spacing:2px;
+      color:rgba(208,69,63,.14);border:6px solid rgba(208,69,63,.14);
+      padding:16px 46px;border-radius:18px;white-space:nowrap}
+  .trialbar{background:#FBE9E7;border:1px solid #F5C6C2;color:#8f2b26;border-radius:10px;
+      padding:11px 15px;margin:14px 0 0;font-size:.82rem;font-weight:600;line-height:1.75}
 </style></head><body>
 <div class="noprint"><button class="a" onclick="window.print()">🖨️ طباعة / حفظ PDF</button><button class="b" onclick="window.close()">إغلاق</button></div>
+${trial ? `<div class="wm"><span>نسخة تجريبية — غير معتمدة</span></div>` : ""}
 ${inner}
+${trial ? `<div class="trialbar">
+  هذه <b>نسخة تجريبية</b> صادرة خلال فترة التجربة المجانية، وهي للاطّلاع والمراجعة الداخلية فقط —
+  ولا تصلح للتقديم الرسمي أو الرفع في المنصات الحكومية.
+  للحصول على النسخة النهائية بلا علامة: فعّل اشتراكك أو اطلب حزمة المستندات لمرة واحدة عبر
+  watheqdocs@gmail.com
+</div>` : ""}
 </body></html>`;
 
 /** إعدادات الضريبة الخاصة بالعقار */
@@ -215,7 +232,7 @@ ${payments.length ? `
   <div>المستأجر: ${t.name}<br><br>التوقيع: ________________</div>
 </div>
 ${footer()}`;
-  return SHELL(`كشف حساب — ${t.name}`, body);
+  return SHELL(`كشف حساب — ${t.name}`, body, !!issuer.trial);
 }
 
 /** فاتورة دفعة واحدة */
@@ -291,7 +308,7 @@ ${v.enabled ? `<div class="note" style="border-inline-start-color:#D0453F;backgr
   <div>تاريخ الإصدار: ${today()}<br><br>رقم الفاتورة: ${inv.invoice_no}</div>
 </div>
 ${footer()}`;
-  return SHELL(`فاتورة ${inv.invoice_no} — ${t.name}`, body);
+  return SHELL(`فاتورة ${inv.invoice_no} — ${t.name}`, body, !!issuer.trial);
 }
 
 /** كشف حساب عقار كامل — كل الوحدات */
@@ -341,7 +358,7 @@ ${totalDue > 0 ? `<div class="due"><span class="l">إجمالي المستحق �
 <div class="note">كشف استرشادي صادر آليًّا من بيانات العقود المسجّلة بتاريخ ${today()}.</div>
 <div class="sign"><div>المؤجّر / الوكيل: ${who}<br><br>التوقيع: ________________</div><div>تاريخ الإصدار: ${today()}</div></div>
 ${footer()}`;
-  return SHELL(`كشف حساب — ${p.name}`, body);
+  return SHELL(`كشف حساب — ${p.name}`, body, !!issuer.trial);
 }
 
 /** فتح المستند في نافذة جديدة للطباعة */
@@ -435,7 +452,7 @@ ${payments.length ? `
   <div>المالك: ${o.name}<br><br>التوقيع: ________________</div>
 </div>
 ${footer()}`;
-  return SHELL(`كشف حساب — ${o.name}`, body);
+  return SHELL(`كشف حساب — ${o.name}`, body, !!issuer.trial);
 }
 
 /** كشف حساب الجمعية كاملة — كل الملّاك */
@@ -500,7 +517,7 @@ ${totalDue > 0 ? `<div class="due"><span class="l">إجمالي المستحق �
 <div class="note">كشف استرشادي صادر آليًّا من بيانات الجمعية المسجّلة بتاريخ ${today()}. يُصرف من الاشتراكات وفق الموازنة المعتمدة من الجمعية العامة.</div>
 <div class="sign"><div>إدارة الجمعية: ${who}<br><br>التوقيع: ________________</div><div>تاريخ الإصدار: ${today()}</div></div>
 ${footer()}`;
-  return SHELL(`كشف حساب — ${a.name}`, body);
+  return SHELL(`كشف حساب — ${a.name}`, body, !!issuer.trial);
 }
 
 // ============================================================
@@ -592,12 +609,17 @@ ${header("موازنة تقديرية", String(budget.year))}
 </div>
 
 <h1 style="font-size:1rem">ثالثًا: الاشتراك المقترح لكل وحدة</h1>
-<div class="tot">
-  <div><div class="v">${units || "—"}</div><div class="l">عدد الوحدات</div></div>
+${units > 0 ? `<div class="tot">
+  <div><div class="v">${units}</div><div class="l">عدد الوحدات</div></div>
   <div><div class="v">${sar(perUnitYear)}</div><div class="l">سنويًّا لكل وحدة (ريال)</div></div>
   <div><div class="v">${sar(perUnitMonth)}</div><div class="l">شهريًّا لكل وحدة (ريال)</div></div>
-  <div><div class="v ${gap > 0 ? "r" : "g"}">${sar(Math.abs(gap))}</div><div class="l">${gap > 0 ? "عجز متوقّع (ريال)" : "فائض متوقّع (ريال)"}</div></div>
-</div>
+  ${currentFee > 0
+    ? `<div><div class="v ${gap > 0 ? "r" : "g"}">${sar(Math.abs(gap))}</div><div class="l">${gap > 0 ? "عجز متوقّع (ريال)" : "فائض متوقّع (ريال)"}</div></div>`
+    : `<div><div class="v">—</div><div class="l">لم يُعتمد اشتراك بعد</div></div>`}
+</div>` : `<div class="note" style="border-inline-start-color:#D0453F;background:#FBE9E7;color:#a5322c">
+  <b>لم يُحدَّد عدد الوحدات.</b> أدخل عدد وحدات العقار في إعدادات الجمعية ليُحتسب الاشتراك المقترح لكل وحدة —
+  وهو الرقم الذي تُبنى عليه الموازنة.
+</div>`}
 
 ${currentFee > 0 ? `<table>
   <tbody>
@@ -622,7 +644,7 @@ ${budget.notes ? `<div class="note">${String(budget.notes).replace(/</g, "&lt;")
   <div>اعتماد رئيس الجمعية<br><br>التوقيع: ________________</div>
 </div>
 ${footer()}`;
-  return SHELL(`الموازنة التقديرية ${budget.year} — ${a.name}`, body);
+  return SHELL(`الموازنة التقديرية ${budget.year} — ${a.name}`, body, !!issuer.trial);
 }
 
 /** محضر الجمعية العمومية التأسيسية */
@@ -717,7 +739,7 @@ ${header("محضر اجتماع", "الجمعية العمومية التأسي�
   وطابقه مع النظام الأساسي المعتمد قبل تقديمه رسميًّا.
 </div>
 ${footer()}`;
-  return SHELL(`محضر تأسيسي — ${a.name}`, body);
+  return SHELL(`محضر تأسيسي — ${a.name}`, body, !!issuer.trial);
 }
 
 // ============================================================
@@ -822,7 +844,7 @@ ${list.length ? `
   راجعه مع مختص مرخّص قبل الاعتماد الرسمي.
 </div>
 ${footer()}`;
-  return SHELL(`مخالصة إخلاء — ${t.name}`, body);
+  return SHELL(`مخالصة إخلاء — ${t.name}`, body, !!issuer.trial);
 }
 
 // ============================================================
@@ -935,5 +957,5 @@ ${header("محضر اجتماع", "الجمعية العمومية السنوي�
   المعتمد ومتطلبات منصة «ملاك» قبل رفعه رسميًّا.
 </div>
 ${footer()}`;
-  return SHELL(`محضر التجديد السنوي — ${a.name}`, body);
+  return SHELL(`محضر التجديد السنوي — ${a.name}`, body, !!issuer.trial);
 }
