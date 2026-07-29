@@ -469,7 +469,7 @@ export default function AssociationView({ initial, issuer }: { initial: Associat
     ? ["《 نسخة تجريبية — غير معتمدة 》", "هذه النسخة للمراجعة الداخلية فقط ولا تصلح للرفع الرسمي. فعّل اشتراكك لإصدار النسخة النهائية.", "", "──────────────────────────────", ""]
     : [];
 
-  /** إنذار نهائي — آخر خطوة ودّية قبل تجهيز ملف السند التنفيذي */
+  /** إنذار نهائي — آخر خطوة ودّية قبل اللجوء إلى إجراءات المنصة */
   function makeFinalNotice(o: Owner, feeApprovedOn?: string) {
     if (!active) return;
     const fee = active.fee || 0;
@@ -489,13 +489,15 @@ export default function AssociationView({ initial, issuer }: { initial: Associat
       "",
       "السلام عليكم ورحمة الله وبركاته،",
       "",
-      `إلحاقًا بمطالباتنا السابقة${prev.length ? ` (${prev.map((n) => n.note_date).join("، ")})` : ""}، وبالإشارة إلى نظام ملكية الوحدات العقارية وفرزها وإدارتها الصادر بالمرسوم الملكي رقم (م/85) وتاريخ 02/07/1441هـ، وإلى النظام الأساسي للجمعية${feeApprovedOn ? ` وقرار الجمعية العامة باعتماد رسوم الاشتراك بتاريخ ${feeApprovedOn}` : ""}؛`,
+      `إلحاقًا بمطالباتنا السابقة${prev.length ? ` (${prev.map((n) => n.note_date).join("، ")})` : ""}، وبالإشارة إلى نظام ملكية الوحدات العقارية وفرزها وإدارتها الصادر بالمرسوم الملكي رقم (م/85) وتاريخ 02/07/1441هـ ولائحته التنفيذية، وإلى النظام الأساسي لجمعية الملاك${feeApprovedOn ? ` وقرار الجمعية العامة بتحديد مبلغ الاشتراك الصادر بتاريخ ${feeApprovedOn}` : ""}؛`,
       "",
       `نُنذركم إنذارًا نهائيًّا بسداد مبلغ (${sar(due)}) ريال، قيمة (${o.months_late}) فترة اشتراك مستحقة عن الوحدة رقم (${unit})${fee ? `، بواقع (${sar(fee)}) ريال للفترة` : ""}${partial > 0 ? `، بعد خصم مبلغ (${sar(partial)}) ريال مسدَّد جزئيًّا` : ""}.`,
       "",
-      "وذلك خلال (15) يومًا من تاريخ استلامكم هذا الإنذار، إيداعًا في الحساب البنكي للجمعية.",
+      "ويكون السداد — وفق المادة السادسة من النظام الأساسي — بتحويل بنكي من حسابكم إلى الحساب البنكي لجمعية الملاك، مع تزويد رئيس الجمعية بما يفيد التحويل فور إتمامه، وذلك خلال (15) يومًا من تاريخ استلامكم هذا الإنذار.",
       "",
-      "وفي حال عدم السداد خلال المدة المذكورة، سيقوم مدير العقار برفع بياناتكم ضمن المتعثّرين عن السداد عبر منصة «ملاك» تمهيدًا لاستصدار سند تنفيذي بحقكم وفق الإجراءات المعتمدة، مع تحمّلكم ما يترتّب على ذلك من آثار.",
+      "ونذكّركم بأن النظام الأساسي لا يجيز التخلّي عن الالتزام تجاه الجمعية بأي مسوّغ، ولو أبديتم رغبتكم بعدم الانتفاع بالأجزاء المشتركة (المادة الثلاثون)، وأن التزامكم يبقى قائمًا حتى لو كانت الوحدة مؤجَّرة (المادة الحادية والثلاثون).",
+      "",
+      "وفي حال عدم السداد خلال المدة المذكورة، سيتّخذ مدير العقار الإجراءات المقرّرة نظامًا — بما فيها الاستناد إلى قراره بقيم الاشتراكات المعتمد من الهيئة العامة للعقار، والذي يُعدّ سندًا تنفيذيًّا في مواجهة الملاك وفق المادة السادسة/4 والمادة العشرين من النظام الأساسي — واستكمال إجراءات التنفيذ لدى الجهة المختصة.",
       "",
       "ونؤكّد رغبتنا في تسوية الأمر ودّيًا قبل بلوغ هذه المرحلة، وباب التواصل مفتوح لأي ترتيب للسداد.",
       "",
@@ -509,89 +511,6 @@ export default function AssociationView({ initial, issuer }: { initial: Associat
     logNotice(o, "إنذار نهائي");
   }
 
-  /** ملف السند التنفيذي — حزمة المستندات التي يرفعها مدير العقار في «ملاك» */
-  async function makeExecFile(o: Owner, opts: { feeApprovedOn: string; managerName: string; managerLicense: string; bankRef?: string }) {
-    if (!active) return;
-    const fee = active.fee || 0;
-    // حرّاس: ملف ناقص البيانات لا يصلح للرفع، وإخراجه أسوأ من عدم إخراجه
-    if (fee <= 0) return notify("err", "حدّد قيمة الاشتراك في «إعدادات الجمعية» أولًا — الملف لا يُبنى بلا قيمة اشتراك.");
-    if (!o.unit) return notify("err", "أضف رقم الوحدة لهذا المالك — لا يصح الملف بدون تحديد الوحدة.");
-    if (o.months_late <= 0) return notify("err", "لا توجد متأخرات على هذا المالك.");
-    if (!opts.feeApprovedOn) return notify("err", "أدخل تاريخ قرار الجمعية العامة باعتماد الرسوم — هو الأساس النظامي للمطالبة.");
-
-    const { data: pays, error } = await supabase.from("payments")
-      .select("paid_on,amount,method,periods_covered")
-      .eq("owner_id", o.id).order("paid_on", { ascending: true }).limit(200);
-    if (error) console.error("Watheq exec-file payments error:", error);
-
-    const partial = Number(o.partial_amount) || 0;
-    const gross = o.months_late * fee;
-    const due = Math.max(0, gross - partial);
-    const log = noticeLog(o);
-
-    const body = [
-      ...trialBanner(),
-      "ملف مطالبة بالاشتراكات المتأخرة — تمهيدًا لطلب سند تنفيذي",
-      `تاريخ إعداد الملف: ${today()}`,
-      "",
-      "① بيانات الجمعية",
-      `الجمعية: ${active.name}`,
-      `عدد الوحدات: ${active.units || (active.owners || []).length || "—"}`,
-      `قيمة الاشتراك المعتمدة: ${sar(fee)} ريال للفترة`,
-      `تاريخ قرار الجمعية العامة باعتماد الرسوم: ${opts.feeApprovedOn}`,
-      "",
-      "② بيانات المالك والوحدة",
-      `اسم المالك: ${o.name}`,
-      `رقم الوحدة: ${o.unit}`,
-      `جوال التواصل: ${o.phone || "—"}`,
-      `آخر سداد مسجَّل: ${o.last_paid || "لا يوجد"}`,
-      "",
-      "③ بيان المديونية",
-      `عدد الفترات المتأخرة: ${o.months_late}`,
-      `إجمالي المستحق قبل الخصم: ${sar(gross)} ريال`,
-      `المسدَّد جزئيًّا: ${sar(partial)} ريال`,
-      `صافي المبلغ المطالَب به: ${sar(due)} ريال`,
-      "",
-      "④ الأساس النظامي للمطالبة",
-      "• نظام ملكية الوحدات العقارية وفرزها وإدارتها، الصادر بالمرسوم الملكي رقم (م/85) وتاريخ 02/07/1441هـ.",
-      "• النظام الأساسي للجمعية المعتمد لدى الهيئة العامة للعقار.",
-      `• قرار الجمعية العامة باعتماد رسوم الاشتراك بتاريخ ${opts.feeApprovedOn}.`,
-      "",
-      "⑤ سجل المطالبات الموجّهة للمالك",
-      ...(log.length
-        ? log.map((n, i) => `${i + 1}. ${n.note_date} — ${String(n.text).replace(NOTICE_TAG, "").trim()}`)
-        : ["لم تُوثَّق مطالبات سابقة في النظام. يُنصح بإرسال خطاب مطالبة ثم إنذار نهائي وتوثيقهما قبل الرفع."]),
-      "",
-      "⑥ سجل المدفوعات المسجَّلة",
-      ...((pays && pays.length)
-        ? pays.map((p: any, i: number) => `${i + 1}. ${p.paid_on} — ${sar(Number(p.amount) || 0)} ريال (${methodLabel(p.method)})${p.periods_covered ? ` · ${p.periods_covered} فترة` : ""}`)
-        : ["لا توجد مدفوعات مسجَّلة لهذا المالك."]),
-      "",
-      "⑦ إقرار مدير العقار",
-      `اسم مدير العقار: ${opts.managerName || "____________________"}`,
-      `رقم رخصة «فال» لإدارة الأملاك: ${opts.managerLicense || "____________________"}`,
-      opts.bankRef ? `الحساب البنكي للجمعية: ${opts.bankRef}` : "الحساب البنكي للجمعية: ____________________",
-      "أُقرّ بأن البيانات الواردة أعلاه مطابقة لسجلات الجمعية، وأن المبلغ المذكور لم يُسدَّد حتى تاريخه.",
-      "التوقيع: ____________________     التاريخ: ____________________",
-      "",
-      "⑧ قائمة تحقّق قبل الرفع في منصة «ملاك»",
-      "☐ شهادة تسجيل الجمعية سارية المفعول",
-      "☐ محضر الجمعية العامة المتضمّن اعتماد رسوم الاشتراك",
-      "☐ الموازنة السنوية المعتمدة",
-      "☐ كشف حساب المالك موقّعًا من إدارة الجمعية",
-      "☐ صور خطاب المطالبة والإنذار النهائي مع ما يفيد التبليغ",
-      "☐ تسجيل مدير العقار في المنصة ورخصة «فال» سارية",
-      "",
-      "──────────────────────────────",
-      "تنبيه: هذا الملف مستند إداري يُجهّزه وثيق من بيانات لوحتكم.",
-      "رفع طلب السند التنفيذي في منصة «ملاك»، واعتماده من الهيئة العامة للعقار،",
-      "ثم استكماله عبر «ناجز» — كلّها إجراءات يقوم بها مدير العقار نفسه.",
-      "وثيق لا يرفع نيابةً عنكم، ولا يمثّلكم أمام أي جهة، ولا يستلم أي مبالغ.",
-    ].join("\n");
-
-    setDoc({ title: `ملف السند التنفيذي — الوحدة (${o.unit})`, body, kind: "file" });
-    logNotice(o, "تجهيز ملف السند التنفيذي");
-  }
 
   function ownerNoticeLink(o: Owner) {
     if (!active) return "#";
@@ -601,7 +520,7 @@ export default function AssociationView({ initial, issuer }: { initial: Associat
   function renewLink() {
     if (!active) return "#";
     const dl = daysLeft(active.cert_expiry);
-    return waLink(WATHEQ_WA, `مرحبًا، أرغب بتجهيز مستندات تجديد شهادة جمعيتنا.\nالجمعية: ${active.name}\nانتهاء الشهادة: ${active.cert_expiry || "غير محدد"}${dl !== null ? ` (خلال ${dl} يومًا)` : ""}\nالمطلوب: محضر التجديد + الموازنة.`);
+    return waLink(WATHEQ_WA, `مرحبًا، أرغب بمساعدتكم في تجهيز موازنة جمعيتنا وأرقام الاشتراك.\nالجمعية: ${active.name}\nانتهاء الشهادة: ${active.cert_expiry || "غير محدد"}${dl !== null ? ` (خلال ${dl} يومًا)` : ""}\nالمطلوب: الموازنة وبنود رسوم الاشتراك.`);
   }
 
   // ---------- عرض ----------
@@ -699,9 +618,9 @@ export default function AssociationView({ initial, issuer }: { initial: Associat
       {/* تنبيه الشهادة */}
       {dl !== null && dl < 0 && (
         <div className="flex flex-wrap items-center gap-3 rounded-xl p-3.5 mb-4 bg-[#FBE9E7] border border-[#F5C6C2] text-[#8f2b26]">
-          <span>🔴</span><span><b>انتهت شهادة الجمعية.</b> بادر بالتجديد — المطلوب في منصة ملاك: محضر الاجتماع + الموازنة.</span>
+          <span>🔴</span><span><b>انتهت شهادة الجمعية.</b> إصدارها من «ملاك» إجراء مباشر ويشترط الرقم الموحّد 700 أولًا.</span>
           <div className="flex gap-2 mr-auto">
-            <button type="button" className="btn btn-gold text-sm" onClick={openRenewal}>🗂 جهّز حزمة التجديد</button>
+            <button type="button" className="btn btn-gold text-sm" onClick={openRenewal}>🗂 جهّز الاجتماع السنوي</button>
             <a href={renewLink()} target="_blank" rel="noreferrer" className="btn btn-ghost text-sm">اطلبها جاهزة</a>
           </div>
         </div>
@@ -709,9 +628,9 @@ export default function AssociationView({ initial, issuer }: { initial: Associat
       {dl !== null && dl >= 0 && dl <= 60 && (
         <div className={`flex flex-wrap items-center gap-3 rounded-xl p-3.5 mb-4 border ${dl <= 30 ? "bg-[#FBE9E7] border-[#F5C6C2] text-[#8f2b26]" : "bg-[#FBF1DF] border-[#EBD9AA] text-[#8a5a11]"}`}>
           <span>{dl <= 30 ? "🔴" : "⚠️"}</span>
-          <span><b>تنتهي شهادة الجمعية خلال {dl} يومًا</b> ({a.cert_expiry}). المطلوب للتجديد: محضر الاجتماع + الموازنة.</span>
+          <span><b>تنتهي شهادة الجمعية خلال {dl} يومًا</b> ({a.cert_expiry}). إصدارها من «ملاك» إجراء مباشر ويشترط الرقم الموحّد 700 أولًا.</span>
           <div className="flex gap-2 mr-auto">
-            <button type="button" className="btn btn-gold text-sm" onClick={openRenewal}>🗂 جهّز حزمة التجديد</button>
+            <button type="button" className="btn btn-gold text-sm" onClick={openRenewal}>🗂 جهّز الاجتماع السنوي</button>
             <a href={renewLink()} target="_blank" rel="noreferrer" className="btn btn-ghost text-sm">اطلبها جاهزة</a>
           </div>
         </div>
@@ -736,11 +655,11 @@ export default function AssociationView({ initial, issuer }: { initial: Associat
               <button type="button" className="btn btn-ghost text-xs" onClick={exportOwnersCSV} title="تنزيل ملف Excel/CSV بكل الملّاك وحالتهم">⬇️ CSV</button>
               {late.length > 0 && (
                 <button type="button" className="btn btn-ghost text-xs" onClick={() => setCollect({})}
-                  title="سلّم التحصيل: خطاب مطالبة ← إنذار نهائي ← ملف السند التنفيذي">⚖️ ملف التحصيل ({late.length})</button>
+                  title="سلّم التحصيل: تذكير ← خطاب مطالبة ← إنذار نهائي، وجاهزية السند التنفيذي">⚖️ التحصيل ({late.length})</button>
               )}
               <button type="button" className="btn btn-ghost text-xs" onClick={openBudget}>📊 الموازنة</button>
               <button type="button" className="btn btn-ghost text-xs" onClick={() => setMinutes(true)}>📄 محضر تأسيسي</button>
-              <button type="button" className="btn btn-gold text-xs" onClick={openRenewal} title="محضر الاجتماع السنوي + الموازنة — مستندا تجديد الشهادة في منصة ملاك">🗂 حزمة التجديد</button>
+              <button type="button" className="btn btn-gold text-xs" onClick={openRenewal} title="موازنة العام القادم + محضر الاجتماع السنوي، وأرقامهما جاهزة لقرار الرسوم في المنصة">🗂 الاجتماع السنوي</button>
             </div>
           </div>
 
@@ -880,8 +799,7 @@ export default function AssociationView({ initial, issuer }: { initial: Associat
         onClose={() => setCollect(null)}
         onRemind={(o) => window.open(ownerRemindLink(o), "_blank")}
         onNotice={(o) => makeOwnerNotice(o)}
-        onFinal={(o, d) => makeFinalNotice(o, d)}
-        onFile={(o, opts) => makeExecFile(o, opts)} />}
+        onFinal={(o, d) => makeFinalNotice(o, d)} />}
       {ownerModal?.owner && <OwnerModal owner={ownerModal.owner} onClose={() => setOwnerModal(null)}
         onSubmit={(d) => saveOwner(ownerModal.owner!.id, d)} />}
       {history && <HistoryModal data={history} onClose={() => setHistory(null)} />}
@@ -1436,7 +1354,7 @@ function HistoryModal({ data, onClose }: { data: { owner: Owner; rows: any[] }; 
 /** عرض الخطاب مع النسخ والطباعة */
 /** ════════════════════════════════════════════════════════════
  *  ملف التحصيل — سلّم تصعيد موثّق:
- *  ① تذكير واتساب  ② خطاب مطالبة  ③ إنذار نهائي  ④ ملف السند التنفيذي
+ *  ① تذكير واتساب  ② خطاب مطالبة  ③ إنذار نهائي — ثم جاهزية السند التنفيذي في المنصة
  *  كل خطوة تُوثَّق تلقائيًّا في سجل العمارة، وهذا التوثيق هو ما يبني
  *  «سجل المطالبات» داخل الملف — وهو أهم ما يُطلب عند الرفع.
  *  ════════════════════════════════════════════════════════════ */
@@ -1446,7 +1364,7 @@ const STAGE_META = [
   { label: "أُنذر نهائيًّا", cls: "bg-[#F7DAD7] text-[#8f2b26]" },
 ];
 
-function CollectionsModal({ assoc, owners, only, fee, stageOf, logOf, dueOf, onClose, onRemind, onNotice, onFinal, onFile }: {
+function CollectionsModal({ assoc, owners, only, fee, stageOf, logOf, dueOf, onClose, onRemind, onNotice, onFinal }: {
   assoc: Association;
   owners: Owner[];
   only?: Owner;
@@ -1458,12 +1376,8 @@ function CollectionsModal({ assoc, owners, only, fee, stageOf, logOf, dueOf, onC
   onRemind: (o: Owner) => void;
   onNotice: (o: Owner) => void;
   onFinal: (o: Owner, feeApprovedOn?: string) => void;
-  onFile: (o: Owner, opts: { feeApprovedOn: string; managerName: string; managerLicense: string; bankRef?: string }) => void;
 }) {
   const [feeApprovedOn, setFeeApprovedOn] = useState("");
-  const [managerName, setManagerName] = useState("");
-  const [managerLicense, setManagerLicense] = useState("");
-  const [bankRef, setBankRef] = useState("");
   const list = only ? [only] : owners;
   const missingFee = !(Number(fee) > 0);
 
@@ -1472,30 +1386,34 @@ function CollectionsModal({ assoc, owners, only, fee, stageOf, logOf, dueOf, onC
       <div className="w-full max-w-3xl bg-white rounded-2xl shadow-xl p-6 max-h-[90vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
         <h3 className="font-display font-bold text-deep text-lg mb-1">ملف التحصيل — {assoc.name}</h3>
         <p className="text-sm text-muted mb-4">
-          تصعيد متدرّج وموثّق: تذكير ← مطالبة ← إنذار نهائي ← ملف السند التنفيذي. كل خطوة تُسجَّل بتاريخها في سجل العمارة.
+          تصعيد متدرّج وموثّق: تذكير ← مطالبة ← إنذار نهائي. كل خطوة تُسجَّل بتاريخها في سجل العمارة.
         </p>
 
         {missingFee && (
           <div className="text-xs bg-[#FBE9E7] border border-[#F5C6C2] text-[#8f2b26] rounded-lg p-2.5 mb-4 leading-relaxed">
-            قيمة الاشتراك غير محدَّدة في إعدادات الجمعية — المبالغ ستظهر صفرًا ولن يُبنى ملف السند التنفيذي. حدّدها أولًا من «⚙︎ إعدادات».
+            قيمة الاشتراك غير محدَّدة في إعدادات الجمعية — ستظهر كل المبالغ أصفارًا. حدّدها أولًا من «⚙︎ إعدادات».
           </div>
         )}
 
-        {/* بيانات الملف — مطلوبة لبناء ملف السند التنفيذي */}
+        {/* جاهزية السند التنفيذي — شروط الخدمة الحكومية المجانية */}
         <div className="bg-paper border border-line rounded-xl p-4 mb-4">
-          <div className="text-sm font-semibold mb-2.5">بيانات الملف <span className="font-normal text-muted text-xs">— تُستخدم في ملف السند التنفيذي</span></div>
-          <div className="grid sm:grid-cols-2 gap-3">
-            <Field label="تاريخ قرار الجمعية العامة باعتماد الرسوم" hint="الأساس النظامي للمطالبة">
-              <input type="date" className="fld w-full" value={feeApprovedOn} onChange={(e) => setFeeApprovedOn(e.target.value)} />
-            </Field>
-            <Field label="اسم مدير العقار">
-              <input className="fld w-full" value={managerName} onChange={(e) => setManagerName(e.target.value)} placeholder="الاسم كما في المنصة" />
-            </Field>
-            <Field label="رقم رخصة «فال» لإدارة الأملاك">
-              <input className="fld w-full" value={managerLicense} onChange={(e) => setManagerLicense(e.target.value)} placeholder="اختياري — يُترك فارغًا للتعبئة يدويًّا" />
-            </Field>
-            <Field label="الحساب البنكي للجمعية" hint="اختياري">
-              <input className="fld w-full" value={bankRef} onChange={(e) => setBankRef(e.target.value)} placeholder="IBAN أو اسم البنك" />
+          <div className="text-sm font-semibold mb-1.5">جاهزية السند التنفيذي</div>
+          <p className="text-xs text-muted mb-3 leading-relaxed">
+            «السند التنفيذي الإلكتروني» خدمة مجانية وفورية في منصة «ملاك» يقدّمها <b>مدير العقار</b>؛ تعرض المنصة قائمة المتعثّرين بنفسها
+            ثم تُصدر النموذج المعتمد لاستكماله عبر «ناجز». لا يوجد ملف تُعدّه أنت. لكنها تشترط ثلاثة أمور:
+          </p>
+          <ul className="text-xs text-[#33413d] leading-relaxed space-y-1.5">
+            <li>① <b>جمعية مفعّلة</b> — لها رئيس ومدير عقار ورسوم مقرّرة.</li>
+            <li>② <b>فواتير متأخرة داخل المنصة</b> — أي أن الرسوم صُوّت عليها واعتُمدت وصدرت فواتيرها هناك. التحصيل خارج المنصة لا يُنشئ متأخرات لديها.</li>
+            <li>③ <b>رقم موحّد 700</b> للجمعية — يُصدَر من «المزيد من الإجراءات ← إصدار الرقم الموحّد».</li>
+          </ul>
+          <p className="text-xs text-muted mt-3 leading-relaxed">
+            ودور وثيق هنا ما لا تفعله المنصة: حساب الأرقام، ومتابعة المتأخرات، و<b>كتابة خطابات المطالبة والإنذار</b> وتوثيق تواريخها —
+            وهي ما يفيدك في التسوية الودّية قبل بلوغ هذه المرحلة.
+          </p>
+          <div className="mt-3">
+            <Field label="تاريخ قرار الجمعية العامة بتحديد الاشتراك" hint="يُذكر في الإنذار كسند للمطالبة — اختياري">
+              <input type="date" className="fld w-full sm:w-64" value={feeApprovedOn} onChange={(e) => setFeeApprovedOn(e.target.value)} />
             </Field>
           </div>
         </div>
@@ -1525,17 +1443,13 @@ function CollectionsModal({ assoc, owners, only, fee, stageOf, logOf, dueOf, onC
                   <button type="button" className="btn btn-wa text-xs" onClick={() => onRemind(o)}>💬 تذكير واتساب</button>
                   <button type="button" className={`btn text-xs ${stage === 0 ? "btn-gold" : "btn-ghost"}`} onClick={() => onNotice(o)}>📄 خطاب مطالبة</button>
                   <button type="button" className={`btn text-xs ${stage === 1 ? "btn-gold" : "btn-ghost"}`} onClick={() => onFinal(o, feeApprovedOn)}>⚠️ إنذار نهائي</button>
-                  <button type="button" className={`btn text-xs ${stage === 2 ? "btn-gold" : "btn-ghost"}`}
-                    onClick={() => onFile(o, { feeApprovedOn, managerName, managerLicense, bankRef })}>⚖️ ملف السند التنفيذي</button>
+
                 </div>
 
                 {stage < 2 && (
                   <div className="text-xs text-muted mt-2 leading-relaxed">
-                    يُنصح بتوثيق خطاب مطالبة ثم إنذار نهائي قبل تجهيز الملف — سجل المطالبات من أهم ما يُطلب عند الرفع.
+                    وثّق خطاب مطالبة ثم إنذارًا نهائيًّا — تواريخهما تُثبت جدّية المطالبة وتفيدك في أي تسوية لاحقة.
                   </div>
-                )}
-                {!o.unit && (
-                  <div className="text-xs text-[#8f2b26] mt-2">لا يمكن بناء ملف السند التنفيذي بدون رقم الوحدة — أضفه من «تعديل البيانات».</div>
                 )}
               </div>
             );
@@ -1543,9 +1457,13 @@ function CollectionsModal({ assoc, owners, only, fee, stageOf, logOf, dueOf, onC
           {!list.length && <div className="text-center text-muted py-8 text-sm">لا يوجد ملّاك متأخرون.</div>}
         </div>
 
-        <p className="text-xs text-[#8a5a11] mt-4 bg-[#FBF1DF] border border-[#EBD9AA] rounded-lg p-2.5 leading-relaxed">
-          <b>حدّ دورنا:</b> وثيق يُجهّز المستندات فقط. رفع طلب السند التنفيذي في منصة «ملاك»، واعتماده من الهيئة العامة للعقار،
-          ثم استكماله عبر «ناجز» — إجراءات يقوم بها <b>مدير العقار</b> المرخّص نفسه.
+        <p className="text-xs text-muted mt-4 leading-relaxed">
+          <b>تذكير نظامي:</b> الحد الأعلى للاشتراك السنوي وفق المادة السادسة/1 من النظام الأساسي هو 3% من القيمة السوقية أو الشرائية —
+          أيّهما أعلى — للوحدة التي تتجاوز قيمتها 300,000 ريال، و7% لما قيمته 300,000 ريال فأقل.
+        </p>
+        <p className="text-xs text-[#8a5a11] mt-2 bg-[#FBF1DF] border border-[#EBD9AA] rounded-lg p-2.5 leading-relaxed">
+          <b>حدّ دورنا:</b> وثيق يكتب الخطابات ويحسب المبالغ ويوثّق التواريخ فقط. أمّا طلب السند التنفيذي في «ملاك»
+          واستكماله عبر «ناجز» فيقوم به <b>مدير العقار</b> المرخّص نفسه داخل المنصة.
         </p>
 
         <div className="flex gap-2 mt-4">
@@ -1587,9 +1505,10 @@ function Field({ label, hint, children }: { label: string; hint?: string; childr
 }
 
 /** ════════════════════════════════════════════════════════════
- *  حزمة تجديد الشهادة — المستندان المطلوبان في منصة ملاك:
- *  ① موازنة العام القادم  ② محضر الاجتماع السنوي
- *  الشهادة صالحة 12 شهرًا فقط، فهذه حاجة متكرّرة لكل جمعية مسجّلة.
+ *  حزمة الاجتماع السنوي — الأرقام التي تحتاجها جمعيتك:
+ *  ① موازنة العام القادم  ② محضر الاجتماع السنوي  ③ إدخالها في المنصة
+ *  ملاحظة مهمّة: إصدار شهادة الجمعية إجراء إلكتروني مباشر في «ملاك»
+ *  ولا يتطلّب رفع مستندات — لكنه يشترط إصدار الرقم الموحّد 700 أولًا.
  *  ════════════════════════════════════════════════════════════ */
 function RenewalModal({ assoc, annualBudget, onClose, onEditBudget, onPrintBudget, onPrintMinutes }: {
   assoc: Association; annualBudget: number | null; onClose: () => void;
@@ -1609,9 +1528,9 @@ function RenewalModal({ assoc, annualBudget, onClose, onEditBudget, onPrintBudge
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4" onClick={onClose}>
       <div className="w-full max-w-2xl bg-white rounded-2xl shadow-xl p-6 max-h-[92vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
-        <h3 className="font-display font-bold text-deep text-xl mb-1">🗂 حزمة تجديد شهادة الجمعية</h3>
+        <h3 className="font-display font-bold text-deep text-xl mb-1">🗂 حزمة الاجتماع السنوي</h3>
         <p className="text-sm text-muted mb-4">
-          {assoc.name} — تجديد الشهادة في منصة «ملاك» يتطلّب مستندين اثنين فقط. جهّزهما من هنا.
+          {assoc.name} — موازنة العام القادم ومحضر الاجتماع، ثم إدخال الأرقام في قرار الرسوم بالمنصة.
         </p>
 
         {/* الخطوة ١ — الموازنة */}
@@ -1623,7 +1542,7 @@ function RenewalModal({ assoc, annualBudget, onClose, onEditBudget, onPrintBudge
               ? <span className="text-xs font-semibold text-paid bg-[#E6F4EC] border border-[#B7DFC7] rounded-full px-2 py-0.5 mr-auto">محفوظة · {sar(annualBudget)} ريال</span>
               : <span className="text-xs font-semibold text-[#8a5a11] bg-[#FBF1DF] border border-[#EBD9AA] rounded-full px-2 py-0.5 mr-auto">لم تُنشأ بعد</span>}
           </div>
-          <p className="text-xs text-muted mb-2.5">الموازنة التقديرية للتشغيل والصيانة مع احتياطي رأس المال — تُرفَق مع المحضر.</p>
+          <p className="text-xs text-muted mb-2.5">الموازنة التقديرية للتشغيل والصيانة مع احتياطي رأس المال — بنودها وأرقامها هي ما تُدخله في قرار رسوم الاشتراك بالمنصة.</p>
           <div className="flex gap-2 flex-wrap">
             <button type="button" className="btn btn-ghost text-xs" onClick={onEditBudget}>✎ {annualBudget !== null ? "تعديل الموازنة" : "إنشاء الموازنة"}</button>
             {annualBudget !== null && <button type="button" className="btn btn-primary text-xs" onClick={onPrintBudget}>🖨 طباعة الموازنة</button>}
@@ -1689,7 +1608,7 @@ function RenewalModal({ assoc, annualBudget, onClose, onEditBudget, onPrintBudge
           </div>
 
           <button type="button" className="btn btn-gold text-sm w-full justify-center mt-3" onClick={() => onPrintMinutes(d)}>
-            🖨 إنشاء محضر التجديد
+            🖨 إنشاء محضر الاجتماع السنوي
           </button>
         </div>
 
@@ -1697,19 +1616,19 @@ function RenewalModal({ assoc, annualBudget, onClose, onEditBudget, onPrintBudge
         <div className="border border-line rounded-xl p-4 bg-paper">
           <div className="flex items-center gap-2 mb-2">
             <span className="w-6 h-6 rounded-full bg-deep text-goldSoft grid place-items-center text-xs font-bold shrink-0">٣</span>
-            <b className="text-deep">الرفع في منصة ملاك</b>
+            <b className="text-deep">ماذا تفعل بعدها في منصة ملاك</b>
           </div>
           <ol className="text-xs text-[#33413d] leading-relaxed pr-4 list-decimal space-y-1">
-            <li>ادخل على منصة «ملاك» عبر النفاذ الوطني بحساب رئيس الجمعية أو مدير العقار.</li>
-            <li>من صفحة الجمعية اختر خدمة <b>تجديد الشهادة</b>.</li>
-            <li>ارفع المستندين: <b>محضر الاجتماع</b> + <b>موازنة عام {nextYear}</b> (اطبعهما PDF من نافذة الطباعة).</li>
-            <li>تابع حالة الطلب حتى صدور الشهادة الجديدة، ثم حدّث تاريخ الانتهاء في إعدادات الجمعية هنا.</li>
+            <li>ادخل «ملاك» عبر النفاذ الوطني بحساب رئيس الجمعية أو مدير العقار.</li>
+            <li>من <b>قرارات الجمعية</b> أنشئ قرار <b>«إعادة تحديد رسوم الاشتراك»</b>، وأدخل البنود والمبالغ من موازنة عام {nextYear}، وحدّد موعد استحقاق إصدار الفواتير، ثم اطرحه للتصويت.</li>
+            <li>إن لم يكن للجمعية <b>رقم موحّد 700</b> فأصدره من «المزيد من الإجراءات» — وهو شرط إصدار شهادة الجمعية.</li>
+            <li>الشهادة تُصدَر من «المزيد من الإجراءات ← إصدار شهادة الجمعية ← تأكيد» — بلا رفع مستندات. حدّث تاريخ انتهائها في إعدادات الجمعية هنا.</li>
           </ol>
         </div>
 
         <p className="text-xs text-[#8a5a11] mt-3 bg-[#FBF1DF] border border-[#EBD9AA] rounded-lg p-2.5 leading-relaxed">
-          المستندان استرشاديان — طابقهما مع النظام الأساسي المعتمد ومتطلبات المنصة قبل الرفع الرسمي.
-          وثيق لا يقدّم خدمات قانونية ولا يمثّل الجمعية أمام أي جهة.
+          المستندان استرشاديان للسجل الداخلي للجمعية — طابقهما مع النظام الأساسي المعتمد قبل أي اعتماد رسمي.
+          إجراءات منصة «ملاك» مجانية وتقوم بها بنفسك، ووثيق لا يقدّم خدمات قانونية ولا يمثّل الجمعية أمام أي جهة.
         </p>
 
         <div className="flex gap-2 mt-4">
