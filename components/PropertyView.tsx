@@ -7,7 +7,7 @@ import { sar, waLink, today } from "@/lib/utils";
 import { contractState, buildSchedule, FREQUENCIES, freqLabel, freqShort, derivedEndDate, renewContract, needsRenewal, applyPayment, splitVat, isCommercial, isVacant, settleDeposit,
   vacancyDays, TURNOVER_CHECKLIST, type Frequency } from "@/lib/contracts";
 import { PROPERTY_TYPES, typeLabel, unitLabel, typeIcon } from "@/lib/domain";
-import { statementHTML, invoiceHTML, propertyStatementHTML, moveOutSettlementHTML, openDoc } from "@/lib/documents";
+import { statementHTML, invoiceHTML, propertyStatementHTML, moveOutSettlementHTML, quotationHTML, DEFAULT_CHARGES, openDoc, type ChargeRow } from "@/lib/documents";
 
 /** تحويل كل دورة إلى مكافئ شهري لحساب الدخل التقريبي */
 const PERIODS_PER_MONTH: Record<Frequency, number> = {
@@ -75,6 +75,7 @@ export default function PropertyView({ initial, orgName, issuer }: { initial: Pr
   const [items, setItems] = useState<Property[]>(() => normalize(initial));
   const [activeId, setActiveId] = useState<string | null>(initial[0]?.id || null);
   const [modal, setModal] = useState<null | { kind: "newProp" | "editProp" | "tenant"; id?: string }>(null);
+  const [quoteOpen, setQuoteOpen] = useState(false);
   const [doc, setDoc] = useState<null | { title: string; body: string }>(null);
   const [history, setHistory] = useState<null | { tenant: Tenant; rows: any[] }>(null);
   const [schedule, setSchedule] = useState<Tenant | null>(null);
@@ -606,6 +607,8 @@ export default function PropertyView({ initial, orgName, issuer }: { initial: Pr
             <h2 className="font-semibold">الوحدات والمستأجرون</h2>
             <div className="flex gap-2 flex-wrap">
               <button className="btn btn-ghost text-xs" onClick={openPropertyStatement}>كشف حساب العقار</button>
+              <button className="btn btn-ghost text-xs" onClick={() => setQuoteOpen(true)}
+                title="إصدار عرض سعر تأجير لمستأجر محتمل قبل التعاقد">📋 عرض سعر</button>
               <button className="btn btn-ghost text-xs" onClick={exportCSV} title="تنزيل ملف Excel/CSV بكل الوحدات وحالتها">⬇️ CSV</button>
               {lateCount > 0 && (
                 <button className="btn btn-wa text-xs" onClick={() => setRemindAll(true)}
@@ -753,6 +756,10 @@ export default function PropertyView({ initial, orgName, issuer }: { initial: Pr
         onClose={() => setModal(null)} onSubmit={(d) => saveProperty(d, active!.id)} onDelete={deleteProperty} />
       <TenantModal open={modal?.kind === "tenant"} initial={editing} unitWord={ul}
         onClose={() => setModal(null)} onSubmit={(d) => saveTenant(d, editing?.id)} />
+
+      {quoteOpen && active && (
+        <QuoteModal property={active} unitWord={ul} issuer={issuer || {}} onClose={() => setQuoteOpen(false)} />
+      )}
 
       {schedule && <ScheduleModal tenant={schedule} unitWord={ul} onClose={() => setSchedule(null)} />}
       {renewing && <RenewModal tenant={renewing} unitWord={ul} onClose={() => setRenewing(null)} onRenew={(o) => doRenew(renewing, o)} />}
@@ -1243,6 +1250,151 @@ function TenantModal({ open, initial, unitWord, onClose, onSubmit }: {
           onClick={() => onSubmit(d)}>حفظ</button>
       </div>
       {!(d.name || "").trim() && <p className="text-xs text-late mt-3 text-center">اسم المستأجر مطلوب لتفعيل الحفظ.</p>}
+    </Shell>
+  );
+}
+
+/** عرض سعر تأجير — مستند مبدئي غير مُلزم يُرسل لمستأجر محتمل قبل التعاقد */
+function QuoteModal({ property, unitWord, issuer, onClose }: {
+  property: Property; unitWord: string; issuer: any; onClose: () => void;
+}) {
+  const plusDays = (n: number) => {
+    const d = new Date(); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10);
+  };
+  const stamp = () => {
+    const d = new Date(), z = (n: number) => String(n).padStart(2, "0");
+    return `Q-${d.getFullYear()}${z(d.getMonth() + 1)}${z(d.getDate())}-${z(d.getHours())}${z(d.getMinutes())}`;
+  };
+  const [d, setD] = useState<any>({
+    quote_no: stamp(), tenant_name: "", unit: "", rent_amount: "",
+    payment_frequency: "annual", contract_periods: 1,
+    start_date: today(), deposit: "", valid_until: plusDays(7), notes: "",
+  });
+  const [charges, setCharges] = useState<ChargeRow[]>(DEFAULT_CHARGES.map((c) => ({ ...c })));
+
+  const periods = Math.max(1, Number(d.contract_periods) || 1);
+  const perPeriod = Number(d.rent_amount) || 0;
+  const gross = perPeriod * periods;
+  const v = { enabled: !!property.vat_enabled, rate: Number(property.vat_rate) || 15, inclusive: property.vat_inclusive !== false };
+  const x = splitVat(gross, v);
+  const xp = splitVat(perPeriod, v);
+  const upfront = xp.total + (Number(d.deposit) || 0);
+  const ready = !!(d.tenant_name || "").trim() && perPeriod > 0 && !!d.start_date;
+
+  function issue() {
+    openDoc(quotationHTML(property as any, {
+      quote_no: d.quote_no || stamp(),
+      tenant_name: String(d.tenant_name || "").trim(),
+      unit: String(d.unit || "").trim(),
+      rent_amount: perPeriod,
+      payment_frequency: d.payment_frequency,
+      contract_periods: periods,
+      start_date: d.start_date,
+      deposit: Number(d.deposit) || 0,
+      valid_until: d.valid_until,
+      charges,
+      notes: String(d.notes || "").trim() || null,
+    }, issuer));
+    onClose();
+  }
+
+  return (
+    <Shell onClose={onClose} wide>
+      <h2 className="font-display font-bold text-deep text-xl mb-1">عرض سعر تأجير</h2>
+      <p className="text-sm text-muted mb-4">
+        مستند مبدئي غير مُلزم تُرسله لمستأجر محتمل. التعاقد النهائي يُوثَّق عبر منصة إيجار.
+      </p>
+
+      <div className="space-y-3">
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="اسم المستأجر المحتمل">
+            <input className="fld" value={d.tenant_name} onChange={(e) => setD({ ...d, tenant_name: e.target.value })} />
+          </Field>
+          <Field label={`رقم ${unitWord}`}>
+            <input className="fld" value={d.unit} onChange={(e) => setD({ ...d, unit: e.target.value })} placeholder="101" />
+          </Field>
+        </div>
+
+        <div className="grid grid-cols-2 gap-3">
+          <Field label={`قيمة الدفعة (ريال)${v.enabled ? v.inclusive ? " — شاملة الضريبة" : " — قبل الضريبة" : ""}`}>
+            <input className="fld" type="number" value={d.rent_amount}
+              onChange={(e) => setD({ ...d, rent_amount: e.target.value })} placeholder="25000" />
+          </Field>
+          <Field label="عدد الدفعات">
+            <input className="fld" type="number" value={d.contract_periods}
+              onChange={(e) => setD({ ...d, contract_periods: e.target.value })} placeholder="1" />
+          </Field>
+        </div>
+
+        <Field label="دورة السداد">
+          <div className="grid grid-cols-3 gap-2">
+            {FREQUENCIES.map((f) => (
+              <button key={f.value} type="button" onClick={() => setD({ ...d, payment_frequency: f.value })}
+                className={`border-2 rounded-lg py-2 text-xs font-semibold transition ${
+                  d.payment_frequency === f.value ? "border-gold bg-[#FBF1DF]" : "border-line hover:border-goldSoft"}`}>
+                {f.label}
+              </button>
+            ))}
+          </div>
+        </Field>
+
+        <div className="grid grid-cols-3 gap-3">
+          <Field label="بداية العقد">
+            <input className="fld" type="date" value={d.start_date} onChange={(e) => setD({ ...d, start_date: e.target.value })} />
+          </Field>
+          <Field label="التأمين (ريال)" hint="مسترد">
+            <input className="fld" type="number" value={d.deposit} onChange={(e) => setD({ ...d, deposit: e.target.value })} placeholder="5000" />
+          </Field>
+          <Field label="العرض صالح حتى">
+            <input className="fld" type="date" value={d.valid_until} onChange={(e) => setD({ ...d, valid_until: e.target.value })} />
+          </Field>
+        </div>
+
+        <Field label="من يتحمّل ماذا" hint="اضغط لتبديل الطرف">
+          <div className="border border-line rounded-xl overflow-hidden">
+            {charges.map((c, i) => (
+              <div key={c.label} className="flex items-center justify-between gap-2 px-3 py-2 border-b border-line last:border-b-0 text-sm">
+                <span className="text-ink">{c.label}</span>
+                <button type="button"
+                  onClick={() => setCharges(charges.map((r, j) => j === i ? { ...r, who: r.who === "tenant" ? "owner" : "tenant" } : r))}
+                  className={`text-xs font-semibold rounded-lg px-2.5 py-1 border transition ${
+                    c.who === "tenant" ? "bg-deep text-[#F6F1E4] border-deep" : "bg-[#FBF1DF] text-[#8a5a11] border-[#EBD9AA]"}`}>
+                  {c.who === "tenant" ? "المستأجر" : "المؤجّر"}
+                </button>
+              </div>
+            ))}
+          </div>
+        </Field>
+
+        <Field label="ملاحظات إضافية" hint="اختياري">
+          <input className="fld" value={d.notes} onChange={(e) => setD({ ...d, notes: e.target.value })}
+            placeholder="يشمل موقف سيارة واحد…" />
+        </Field>
+
+        <Field label="رقم العرض">
+          <input className="fld" value={d.quote_no} onChange={(e) => setD({ ...d, quote_no: e.target.value })} />
+        </Field>
+
+        {perPeriod > 0 && (
+          <div className="bg-paper border border-line rounded-xl p-3 text-sm">
+            <div className="font-semibold text-deep mb-1.5">ملخّص العرض</div>
+            <div className="text-muted space-y-1 text-xs leading-relaxed">
+              <div>إجمالي قيمة العقد{v.enabled ? " (شامل الضريبة)" : ""}: <b className="text-ink">{sar(x.total)} ريال</b></div>
+              {v.enabled && <div>منها ضريبة قيمة مضافة ({v.rate}%): <b className="text-ink">{sar(x.vat)} ريال</b></div>}
+              <div>المطلوب عند التعاقد (الدفعة الأولى + التأمين): <b className="text-ink">{sar(upfront)} ريال</b></div>
+              <div>عدد الدفعات: <b className="text-ink">{periods}</b> · {freqLabel(d.payment_frequency)}</div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="flex gap-2 mt-6">
+        <button type="button" className="btn btn-ghost flex-1 justify-center" onClick={onClose}>إلغاء</button>
+        <button type="button" className="btn btn-gold flex-1 justify-center" disabled={!ready}
+          style={!ready ? { opacity: .5, cursor: "not-allowed" } : undefined}
+          onClick={issue}>إصدار عرض السعر</button>
+      </div>
+      {!ready && <p className="text-xs text-late mt-3 text-center">اسم المستأجر وقيمة الدفعة وتاريخ البداية مطلوبة.</p>}
     </Shell>
   );
 }
