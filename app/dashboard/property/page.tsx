@@ -27,7 +27,12 @@ export default async function PropertyPage() {
 
   const { data: { user } } = await supabase.auth.getUser();
   const { data: profile } = await supabase
-    .from("profiles").select("org_name, billing_name, vat_number, cr_number, billing_phone, plan").eq("id", user!.id).maybeSingle();
+    .from("profiles").select("org_name, billing_name, vat_number, cr_number, billing_phone, plan, trial_ends_at").eq("id", user!.id).maybeSingle();
 
-  return <PropertyView initial={properties || []} orgName={profile?.org_name || ""} issuer={{ ...(profile || {}), trial: !["basic", "pro", "full"].includes(String(profile?.plan || "")) }} />;
+  // ثلاث حالات: مشترك = مستند نظيف · تجربة نشطة = سطر «أُنشئ عبر وثيق» · انتهت بلا اشتراك = علامة مائية
+  const paid = ["basic", "pro", "full"].includes(String(profile?.plan || ""));
+  const endsAt = profile?.trial_ends_at ? new Date(String(profile.trial_ends_at)) : null;
+  const expired = !paid && !!endsAt && !Number.isNaN(endsAt.getTime()) && endsAt.getTime() < Date.now();
+
+  return <PropertyView initial={properties || []} orgName={profile?.org_name || ""} issuer={{ ...(profile || {}), trial: !paid, expired }} />;
 }
