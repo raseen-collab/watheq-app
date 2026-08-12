@@ -12,7 +12,9 @@ export default async function AssociationPage() {
 
   // حماية: هل يملك هذا الحساب صلاحية لوحة الجمعيات؟
   const { data: profile } = await supabase
-    .from("profiles").select("account_type, role, plan, trial_ends_at").eq("id", user.id).maybeSingle();
+    .from("profiles")
+    .select("account_type, role, plan, trial_ends_at, billing_name, vat_number, cr_number, billing_phone")
+    .eq("id", user.id).maybeSingle();
   const type = normalizeAccountType(profile || {});
   if (!type) redirect("/onboarding");
   if (!canAccess(type, "association")) redirect("/dashboard/property");
@@ -27,8 +29,22 @@ export default async function AssociationPage() {
     .select("*, owners(*), association_notes(*)")
     .order("created_at", { ascending: false });
 
-  // المستندات تخرج بعلامة «نسخة تجريبية» ما دام لا يوجد اشتراك مفعّل
-  const trial = !["basic", "pro", "full"].includes(String(profile?.plan || ""));
+  // ثلاث حالات: مشترك = مستند نظيف · تجربة نشطة = سطر «أُنشئ عبر وثيق» · انتهت بلا اشتراك = علامة مائية
+  const paid = ["basic", "pro", "full"].includes(String(profile?.plan || ""));
+  const endsAt = profile?.trial_ends_at ? new Date(String(profile.trial_ends_at)) : null;
+  const expired = !paid && !!endsAt && !Number.isNaN(endsAt.getTime()) && endsAt.getTime() < Date.now();
 
-  return <AssociationView initial={associations || []} issuer={{ trial }} />;
+  return (
+    <AssociationView
+      initial={associations || []}
+      issuer={{
+        billing_name: profile?.billing_name ?? null,
+        vat_number: profile?.vat_number ?? null,
+        cr_number: profile?.cr_number ?? null,
+        billing_phone: profile?.billing_phone ?? null,
+        trial: !paid,
+        expired,
+      }}
+    />
+  );
 }
