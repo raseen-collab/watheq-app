@@ -18,13 +18,30 @@ export default function OnboardingPage() {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) { router.push("/login"); return; }
 
-    const { error } = await supabase
+    /**
+     * select() بعد upsert مقصود: يجبر القاعدة على إرجاع الصف المكتوب فعلًا.
+     * بدونه قد ينجح الطلب شكليًّا دون أن يُحفظ شيء (سياسة RLS مثلًا)،
+     * فيعود المستخدم إلى هذه الصفحة نفسها في حلقة لا تنتهي بلا رسالة خطأ.
+     */
+    const { data: saved, error } = await supabase
       .from("profiles")
-      .upsert({ id: user.id, account_type: type, org_name: orgName || null }, { onConflict: "id" });
+      .upsert({ id: user.id, account_type: type, org_name: orgName || null }, { onConflict: "id" })
+      .select("account_type")
+      .maybeSingle();
 
     if (error) { setError(error.message); setSaving(false); return; }
-    router.push(dashboardPath(defaultDashboard(type)));
-    router.refresh();
+    if (!saved?.account_type) {
+      setError("لم يُحفظ نوع الحساب. حدّث الصفحة وحاول مرة أخرى، وإن تكرر راسلنا على watheqdocs@gmail.com");
+      setSaving(false);
+      return;
+    }
+
+    /**
+     * تنقّل صلب بدل router.push + router.refresh — الاثنان يتسابقان،
+     * وذاكرة موجّه App Router قد تُعيد نسخة اللوحة المخزّنة من قبل الحفظ
+     * (وهي حينها إعادة توجيه إلى /onboarding) فتبدو الصفحة عالقة.
+     */
+    window.location.assign(dashboardPath(defaultDashboard(type)));
   }
 
   const placeholder =
@@ -82,7 +99,7 @@ export default function OnboardingPage() {
         <div className="max-w-xl mx-auto">
           <button onClick={save} disabled={!type || saving}
             className="btn btn-gold w-full justify-center mt-6 disabled:opacity-40">
-            {saving ? "..." : "ابدأ الآن ←"}
+            {saving ? "جارٍ التجهيز…" : "ابدأ الآن ←"}
           </button>
           <p className="text-center text-xs text-muted mt-4">يمكنك تغيير نوع حسابك لاحقًا من الإعدادات.</p>
         </div>
