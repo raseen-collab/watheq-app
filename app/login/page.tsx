@@ -1,6 +1,6 @@
 "use client";
 import { Suspense, useEffect, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase-client";
 
 /** مصادر التسجيل — يختارها المستخدم بنفسه، بلا كوكيز ولا تتبّع */
@@ -16,6 +16,19 @@ const SOURCES: { v: string; l: string }[] = [
 ];
 const sourceLabel = (v?: string | null) => SOURCES.find((s) => s.v === v)?.l || "—";
 
+/**
+ * تنظيف وجهة ما بعد الدخول.
+ * يقبل المسارات الداخلية فقط — يمنع `?next=https://…` من نقل المستخدم
+ * إلى موقع خارجي بعد تسجيل دخول ناجح (ثغرة إعادة توجيه مفتوحة).
+ */
+function safeNext(raw: string | null): string {
+  if (!raw) return "/dashboard";
+  if (!raw.startsWith("/")) return "/dashboard";   // روابط مطلقة أو نسبية غريبة
+  if (raw.startsWith("//")) return "/dashboard";   // //evil.com يُقرأ كنطاق خارجي
+  if (raw.startsWith("/\\")) return "/dashboard";
+  return raw;
+}
+
 export default function LoginPage() {
   return (
     <Suspense fallback={<div className="min-h-screen grid place-items-center text-muted">جارٍ التحميل…</div>}>
@@ -25,9 +38,8 @@ export default function LoginPage() {
 }
 
 function LoginInner() {
-  const router = useRouter();
   const searchParams = useSearchParams();
-  const next = searchParams.get("next") || "/dashboard";
+  const next = safeNext(searchParams.get("next"));
   const [mode, setMode] = useState<"signin" | "signup">("signin");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -36,6 +48,8 @@ function LoginInner() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [info, setInfo] = useState<string | null>(null);
+  // يبقى true بعد نجاح الدخول حتى تُغادر الصفحة — فلا يعود الزر قابلًا للضغط
+  const [leaving, setLeaving] = useState(false);
 
   // يقبل ?src=twitter من روابط الحملات فيملأ الحقل تلقائيًّا
   useEffect(() => {
@@ -82,8 +96,17 @@ function LoginInner() {
         const { error } = await supabase.auth.signInWithPassword({ email, password });
         if (error) throw error;
         await syncSource(supabase);
-        router.push(next);
-        router.refresh();
+        /**
+         * تنقّل صلب مقصود بدل router.push + router.refresh.
+         * السبب: الاثنان معًا يتسابقان — refresh يُلغي التنقّل الجاري أحيانًا
+         * فيبقى المستخدم على صفحة الدخول رغم نجاحها، كما أن ذاكرة موجّه
+         * App Router قد تُعيد نسخة /dashboard المخزّنة من قبل الدخول
+         * (وهي إعادة توجيه إلى /login). التحميل الكامل يجعل الخادم يقرأ
+         * كوكي الجلسة الجديد ويبني الصفحة من جديد — بلا ذاكرة وبلا سباق.
+         */
+        setLeaving(true);
+        window.location.assign(next);
+        return;   // finally أدناه لا يُفعّل الزر لأن leaving بقيت true
       }
     } catch (e: any) {
       const msg = String(e?.message || e);
@@ -92,7 +115,7 @@ function LoginInner() {
       else if (msg.includes("Password should")) setError("كلمة المرور قصيرة — استخدم 6 أحرف على الأقل.");
       else setError(msg);
     } finally {
-      setLoading(false);
+      setLoading(false);   // leaving يبقي الزر معطّلًا حتى تُغادر الصفحة
     }
   }
 
@@ -141,8 +164,8 @@ function LoginInner() {
           {error && <div className="text-sm text-late bg-[#FBE9E7] border border-[#F5C6C2] rounded-lg p-2.5">{error}</div>}
           {info && <div className="text-sm text-[#137a50] bg-[#E6F4EC] border border-[#B7DFC7] rounded-lg p-2.5">{info}</div>}
 
-          <button type="submit" disabled={loading} className="btn btn-gold w-full justify-center mt-2">
-            {loading ? "..." : mode === "signin" ? "دخول" : "إنشاء الحساب"}
+          <button type="submit" disabled={loading || leaving} className="btn btn-gold w-full justify-center mt-2">
+            {leaving ? "جارٍ فتح لوحتك…" : loading ? "..." : mode === "signin" ? "دخول" : "إنشاء الحساب"}
           </button>
         </form>
 
