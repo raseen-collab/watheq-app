@@ -22,7 +22,8 @@ export default function SettingsView({ profile }: { profile: any }) {
   }
 
   async function regen() {
-    const { data, error } = await supabase.rpc("regen_link_code", { p_user: p.id });
+    // بلا وسيط — الدالة تقرأ auth.uid() بنفسها في القاعدة (منع توليد رمز لحساب غير حسابك)
+    const { data, error } = await supabase.rpc("regen_link_code");
     if (error) return setMsg({ t: "err", m: error.message });
     setP({ ...p, telegram_link_code: data });
     setMsg({ t: "ok", m: "أُنشئ رمز جديد — الرمز القديم لم يعد صالحًا." });
