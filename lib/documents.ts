@@ -25,7 +25,8 @@ const METHOD_AR: Record<string, string> = {
 const methodAr = (m?: string | null) => METHOD_AR[String(m || "")] || "—";
 
 type Issuer = { billing_name?: string | null; vat_number?: string | null; cr_number?: string | null; billing_phone?: string | null;
-  /** true أثناء التجربة المجانية — تخرج المستندات بعلامة «نسخة تجريبية» */
+  /** true لأي حساب بلا باقة مدفوعة — يُضاف سطر «أُنشئ عبر وثيق» في تذييل المستند فقط.
+   *  لا علامة مائية ولا تقييد: المستند صالح للاستعمال كاملًا. */
   trial?: boolean | null };
 
 const SHELL = (title: string, inner: string, trial = false) => `<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8">
@@ -80,24 +81,14 @@ const SHELL = (title: string, inner: string, trial = false) => `<!DOCTYPE html><
   .noprint .a{background:#0E3A37;color:#F6F1E4}
   .noprint .b{background:#fff;color:#0E3A37;border:1px solid #E4DDCD}
   @media print{.noprint{display:none}}
-  /* ── علامة النسخة التجريبية ── */
-  .wm{position:fixed;top:0;right:0;bottom:0;left:0;z-index:9999;pointer-events:none;
-      display:flex;align-items:center;justify-content:center}
-  .wm span{transform:rotate(-32deg);font-size:3.6rem;font-weight:800;letter-spacing:2px;
-      color:rgba(208,69,63,.14);border:6px solid rgba(208,69,63,.14);
-      padding:16px 46px;border-radius:18px;white-space:nowrap}
-  .trialbar{background:#FBE9E7;border:1px solid #F5C6C2;color:#8f2b26;border-radius:10px;
-      padding:11px 15px;margin:14px 0 0;font-size:.82rem;font-weight:600;line-height:1.75}
+  /* ── سطر المصدر للحسابات غير المشتركة ── */
+  .madeby{margin:18px 0 0;padding-top:9px;border-top:1px solid #E4DDCD;
+      font-size:.72rem;color:#8C8579;text-align:center;letter-spacing:.2px}
+  .madeby b{font-weight:700;color:#6E675C}
 </style></head><body>
 <div class="noprint"><button class="a" onclick="window.print()">🖨️ طباعة / حفظ PDF</button><button class="b" onclick="window.close()">إغلاق</button></div>
-${trial ? `<div class="wm"><span>نسخة تجريبية — غير معتمدة</span></div>` : ""}
 ${inner}
-${trial ? `<div class="trialbar">
-  هذه <b>نسخة تجريبية</b> صادرة خلال فترة التجربة المجانية، وهي للاطّلاع والمراجعة الداخلية فقط —
-  ولا تصلح للتقديم الرسمي أو الرفع في المنصات الحكومية.
-  للحصول على النسخة النهائية بلا علامة: فعّل اشتراكك أو اطلب حزمة المستندات لمرة واحدة عبر
-  watheqdocs@gmail.com
-</div>` : ""}
+${trial ? `<div class="madeby">أُنشئ عبر <b>وثيق</b> · watheqapp.netlify.app</div>` : ""}
 </body></html>`;
 
 /** إعدادات الضريبة الخاصة بالعقار */
