@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 
 type Msg = {
@@ -30,6 +30,176 @@ const SUGGESTIONS: { group: string; scope: "hoa" | "property"; items: string[] }
     ],
   },
 ];
+
+/* ═══════════════════════════════════════════════════════════════
+   عرض Markdown الذي يخرجه المستشار
+   ───────────────────────────────────────────────────────────────
+   يبني عناصر React مباشرةً — بلا مكتبة خارجية وبلا
+   dangerouslySetInnerHTML، فلا مجال لحقن HTML من نص النموذج.
+   المدعوم: عناوين # · **غامق** · `كود` · [نص](رابط) · قوائم نقطية
+   ومرقّمة · اقتباس > · جدول | · فاصل ---
+   ═══════════════════════════════════════════════════════════════ */
+
+const INLINE_SRC = "(`[^`\\n]+`)|(\\*\\*[^*\\n]+\\*\\*)|(\\[[^\\]\\n]+\\]\\((https?:\\/\\/[^\\s)]+)\\))";
+
+/** تحويل التنسيق داخل السطر إلى عُقد React */
+function inline(text: string, kp: string): ReactNode[] {
+  const re = new RegExp(INLINE_SRC, "g");
+  const out: ReactNode[] = [];
+  let last = 0, n = 0, m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > last) out.push(text.slice(last, m.index));
+    const f = m[0];
+    if (f.startsWith("`")) {
+      out.push(
+        <code key={`${kp}c${n}`} className="bg-paper2 border border-line rounded px-1 py-0.5 text-[.82em]">
+          {f.slice(1, -1)}
+        </code>
+      );
+    } else if (f.startsWith("**")) {
+      out.push(<b key={`${kp}b${n}`} className="font-bold text-deep">{f.slice(2, -2)}</b>);
+    } else {
+      const c = f.indexOf("](");
+      out.push(
+        <a key={`${kp}a${n}`} href={f.slice(c + 2, -1)} target="_blank" rel="noreferrer noopener"
+           className="text-gold font-semibold underline underline-offset-2">
+          {f.slice(1, c)}
+        </a>
+      );
+    }
+    last = m.index + f.length; n++;
+  }
+  if (last < text.length) out.push(text.slice(last));
+  return out;
+}
+
+const isHead  = (s: string) => /^#{1,6}\s+/.test(s);
+const isQuote = (s: string) => /^>\s?/.test(s);
+const isUl    = (s: string) => /^[-*•]\s+/.test(s);
+const isOl    = (s: string) => /^\d+[.)]\s+/.test(s);
+const isHr    = (s: string) => /^(-{3,}|_{3,}|\*{3,})$/.test(s);
+const isRow   = (s: string) => s.startsWith("|") && s.endsWith("|");
+const isSep   = (s: string) => /^\|[\s:|-]+\|$/.test(s);
+const cellsOf = (r: string) => r.trim().replace(/^\||\|$/g, "").split("|").map((c) => c.trim());
+
+function Markdown({ text }: { text: string }) {
+  const lines = String(text || "").replace(/\r\n/g, "\n").split("\n");
+  const out: ReactNode[] = [];
+  let i = 0, k = 0;
+
+  const isTableStart = (idx: number) =>
+    isRow(lines[idx].trim()) && idx + 1 < lines.length && isSep(lines[idx + 1].trim());
+
+  while (i < lines.length) {
+    const t = lines[i].trim();
+    if (!t) { i++; continue; }
+
+    if (isHr(t)) { out.push(<hr key={k++} className="my-3 border-line" />); i++; continue; }
+
+    if (isHead(t)) {
+      const m = t.match(/^(#{1,6})\s+(.*)$/)!;
+      const big = m[1].length <= 2;
+      out.push(
+        <div key={k} className={big
+          ? "font-display font-bold text-deep text-[.98rem] mt-3.5 mb-1.5 first:mt-0"
+          : "font-semibold text-deep mt-3 mb-1 first:mt-0"}>
+          {inline(m[2], `h${k}`)}
+        </div>
+      );
+      k++; i++; continue;
+    }
+
+    if (isTableStart(i)) {
+      const head = cellsOf(lines[i]); i += 2;
+      const rows: string[][] = [];
+      while (i < lines.length && isRow(lines[i].trim()) && !isSep(lines[i].trim())) {
+        rows.push(cellsOf(lines[i])); i++;
+      }
+      out.push(
+        <div key={k} className="my-2.5 border border-line rounded-xl overflow-x-auto">
+          <table className="w-full text-[.85em]">
+            <thead className="bg-paper2">
+              <tr>{head.map((h, j) => (
+                <th key={j} className="p-2 text-right font-semibold text-deep">{inline(h, `th${k}-${j}`)}</th>
+              ))}</tr>
+            </thead>
+            <tbody>{rows.map((r, ri) => (
+              <tr key={ri} className="border-t border-line align-top">
+                {r.map((c, ci) => <td key={ci} className="p-2">{inline(c, `td${k}-${ri}-${ci}`)}</td>)}
+              </tr>
+            ))}</tbody>
+          </table>
+        </div>
+      );
+      k++; continue;
+    }
+
+    if (isQuote(t)) {
+      const buf: string[] = [];
+      while (i < lines.length && isQuote(lines[i].trim())) {
+        buf.push(lines[i].trim().replace(/^>\s?/, "")); i++;
+      }
+      out.push(
+        <div key={k} className="bg-paper rounded-lg px-3 py-2 my-2.5 text-muted whitespace-pre-wrap"
+             style={{ borderInlineStart: "3px solid #EBD9AA" }}>
+          {inline(buf.join("\n"), `q${k}`)}
+        </div>
+      );
+      k++; continue;
+    }
+
+    if (isUl(t)) {
+      const items: string[] = [];
+      while (i < lines.length && isUl(lines[i].trim())) {
+        items.push(lines[i].trim().replace(/^[-*•]\s+/, "")); i++;
+      }
+      out.push(
+        <ul key={k} className="my-2 space-y-1.5">
+          {items.map((it, j) => (
+            <li key={j} className="flex gap-2">
+              <span className="text-gold shrink-0 mt-0.5 text-[.7em]">◆</span>
+              <span className="flex-1">{inline(it, `u${k}-${j}`)}</span>
+            </li>
+          ))}
+        </ul>
+      );
+      k++; continue;
+    }
+
+    if (isOl(t)) {
+      const items: string[] = [];
+      while (i < lines.length && isOl(lines[i].trim())) {
+        items.push(lines[i].trim().replace(/^\d+[.)]\s+/, "")); i++;
+      }
+      out.push(
+        <ol key={k} className="my-2 space-y-1.5">
+          {items.map((it, j) => (
+            <li key={j} className="flex gap-2">
+              <span className="text-gold font-bold shrink-0">{j + 1}.</span>
+              <span className="flex-1">{inline(it, `o${k}-${j}`)}</span>
+            </li>
+          ))}
+        </ol>
+      );
+      k++; continue;
+    }
+
+    const buf: string[] = [];
+    while (i < lines.length) {
+      const s2 = lines[i].trim();
+      if (!s2 || isHr(s2) || isHead(s2) || isQuote(s2) || isUl(s2) || isOl(s2) || isTableStart(i)) break;
+      buf.push(lines[i]); i++;
+    }
+    out.push(
+      <p key={k} className="my-1.5 whitespace-pre-wrap first:mt-0 last:mb-0">
+        {inline(buf.join("\n"), `p${k}`)}
+      </p>
+    );
+    k++;
+  }
+
+  return <>{out}</>;
+}
 
 export type AdvisorScope = "hoa" | "property";
 
@@ -179,7 +349,7 @@ export default function AdvisorChat({
                 m.risk === "high" || m.risk === "out"
                   ? "bg-[#FBF1DF] border-[#EBD9AA] text-[#6b4a12]"
                   : "bg-white border-line text-ink"}`}>
-                <div className="whitespace-pre-wrap">{m.text}</div>
+                <div className="advisor-md"><Markdown text={m.text} /></div>
                 <div className="flex items-center gap-3 mt-2.5 pt-2.5 border-t border-dashed border-line">
                   <span className="text-[.68rem] text-muted flex-1 leading-relaxed">
                     ⚖️ استرشادي — لا يُغني عن محامٍ أو مختص عقاري مرخّص.
