@@ -85,11 +85,27 @@ function LoginInner() {
     const supabase = createClient();
     try {
       if (mode === "signup") {
-        const { error } = await supabase.auth.signUp({
+        const { data, error } = await supabase.auth.signUp({
           email, password,
           options: { data: { name, signup_source: source || "skip" } },
         });
         if (error) throw error;
+
+        /**
+         * حين يكون «Confirm email» مُعطَّلًا في Supabase تُنشأ جلسة فورًا
+         * ولا يُرسل أي بريد. عرض «تحقق من بريدك» هنا كان يوقف المستخدم
+         * أمام رسالة لن تصل أبدًا رغم أن حسابه جاهز — فيغادر.
+         * لذا: إن وُجدت جلسة، ادخل به مباشرةً. وإن لم توجد (أي التأكيد
+         * مُفعَّل) فأبقِ رسالة البريد كما هي. الفرعان يعملان في الحالتين
+         * فلا ينكسر شيء إن غُيّر الإعداد لاحقًا.
+         */
+        if (data.session) {
+          await syncSource(supabase);
+          setLeaving(true);
+          window.location.assign(next);
+          return;
+        }
+
         setInfo("تم إنشاء الحساب. تحقق من بريدك لتفعيله ثم سجّل الدخول.");
         setMode("signin");
       } else {
