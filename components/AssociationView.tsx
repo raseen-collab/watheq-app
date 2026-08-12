@@ -393,6 +393,7 @@ export default function AssociationView({ initial, issuer }: { initial: Associat
     const due = Math.max(0, o.months_late * fee - partial);
     const unit = o.unit || "—";
     const body = [
+      ...trialBanner(),
       "إشعار بسداد اشتراكات الصيانة المتأخرة",
       `التاريخ: ${today()}`,
       "",
@@ -420,6 +421,7 @@ export default function AssociationView({ initial, issuer }: { initial: Associat
       "",
       "الاسم: ____________________     الصفة: ____________________",
       `التوقيع: ____________________     التاريخ: ${today()}`,
+      ...brandLine(),
     ].join("\n");
     setDoc({ title: `إشعار سداد اشتراكات — ${o.name}`, body, kind: "notice" });
     logNotice(o, "خطاب مطالبة");
@@ -464,9 +466,14 @@ export default function AssociationView({ initial, issuer }: { initial: Associat
       ? { ...x, association_notes: [data as Note, ...(x.association_notes || [])] } : x));
   }
 
-  /** سطر العلامة التجريبية — يظهر في كل مستند ما دام لا يوجد اشتراك مفعّل */
-  const trialBanner = () => issuer?.trial
-    ? ["《 نسخة تجريبية — غير معتمدة 》", "هذه النسخة للمراجعة الداخلية فقط ولا تصلح للرفع الرسمي. فعّل اشتراكك لإصدار النسخة النهائية.", "", "──────────────────────────────", ""]
+  /** ثلاث حالات: مشترك = نظيف · تجربة نشطة = لا شيء (سطر المصدر في التذييل) · انتهت بلا اشتراك = علامة */
+  const trialBanner = () => issuer?.expired
+    ? ["《 نسخة تجريبية — غير معتمدة 》", "انتهت فترة التجربة ولم يُفعَّل اشتراك. فعّل اشتراكك لإصدار النسخة النهائية.", "", "──────────────────────────────", ""]
+    : [];
+
+  /** سطر المصدر — يُذيَّل به كل مستند نصّي أثناء التجربة النشطة */
+  const brandLine = () => (issuer?.trial && !issuer?.expired)
+    ? ["", "──────────────────────────────", "أُنشئ عبر وثيق · watheqapp.netlify.app"]
     : [];
 
   /** إنذار نهائي — آخر خطوة ودّية قبل اللجوء إلى إجراءات المنصة */
@@ -506,6 +513,7 @@ export default function AssociationView({ initial, issuer }: { initial: Associat
       "",
       "الاسم: ____________________     الصفة: ____________________",
       `التوقيع: ____________________     التاريخ: ${today()}`,
+      ...brandLine(),
     ].join("\n");
     setDoc({ title: `إنذار نهائي — ${o.name}`, body, kind: "final" });
     logNotice(o, "إنذار نهائي");
