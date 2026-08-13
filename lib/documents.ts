@@ -1107,3 +1107,104 @@ ${header("محضر اجتماع", "الجمعية العمومية السنوي�
 ${footer()}`;
   return SHELL(`محضر الاجتماع السنوي — ${a.name}`, body, markOf(issuer));
 }
+
+// ============================================================
+// فاتورة اشتراك وثيق — من وثيق إلى المشترك (تُصدر من لوحة الإدارة فقط)
+// ============================================================
+
+export type SubInvoice = {
+  invoice_no: string;
+  /** اسم المشترك ومنشأته */
+  to_name: string;
+  to_org?: string | null;
+  to_phone?: string | null;
+  /** الباقة كما تُعرض للمشترك، مثل: باقة المالك · الاحترافية */
+  plan_label: string;
+  months: number;
+  amount: number;
+  /** بداية ونهاية الفترة المشمولة (YYYY-MM-DD) */
+  from_date: string;
+  to_date: string;
+  method?: string | null;
+  paid_at?: string | null;
+  /** الرقم الضريبي لوثيق — إن وُجد تُحتسب الضريبة، وإن غاب تُطبع فاتورة بلا ضريبة */
+  vat_number?: string | null;
+  vat_rate?: number | null;
+};
+
+/**
+ * فاتورة/إيصال اشتراك تُسلَّم للمشترك.
+ * لا علامة مائية ولا سطر «أُنشئ عبر وثيق» — المُصدِر هنا وثيق نفسه.
+ */
+export function subscriptionInvoiceHTML(inv: SubInvoice) {
+  const rate = Number(inv.vat_rate ?? 15);
+  const hasVat = !!inv.vat_number;
+  const total = Number(inv.amount) || 0;
+  const base = hasVat ? Math.round((total / (1 + rate / 100)) * 100) / 100 : total;
+  const vat = Math.round((total - base) * 100) / 100;
+  const paid = inv.paid_at || today();
+
+  const body = `
+${header(hasVat ? "فاتورة ضريبية" : "فاتورة اشتراك", inv.invoice_no)}
+<h1>${hasVat ? "فاتورة ضريبية — اشتراك وثيق" : "فاتورة اشتراك وثيق"}</h1>
+<div class="sub">الفترة: ${inv.from_date} حتى ${inv.to_date} · ${inv.months} ${inv.months === 1 ? "شهر" : "شهرًا"}</div>
+
+<div class="grid">
+  <div class="box">
+    <h3>المُصدِر</h3>
+    <div class="r"><span>الاسم</span><span>وثيق — منصة إدارة الأملاك</span></div>
+    <div class="r"><span>وثيقة العمل الحر</span><span>FL-763162251</span></div>
+    ${inv.vat_number ? `<div class="r"><span>الرقم الضريبي</span><span>${inv.vat_number}</span></div>` : ""}
+    <div class="r"><span>للتواصل</span><span>watheqdocs@gmail.com</span></div>
+  </div>
+  <div class="box">
+    <h3>إلى</h3>
+    <div class="r"><span>الاسم</span><span>${inv.to_name || "—"}</span></div>
+    ${inv.to_org ? `<div class="r"><span>المنشأة</span><span>${inv.to_org}</span></div>` : ""}
+    ${inv.to_phone ? `<div class="r"><span>الجوال</span><span>${inv.to_phone}</span></div>` : ""}
+    <div class="r"><span>الباقة</span><span>${inv.plan_label}</span></div>
+  </div>
+</div>
+
+<table>
+  <thead><tr><th>البيان</th><th>الفترة</th><th>المدة</th><th>المبلغ${hasVat ? " قبل الضريبة" : ""} (ريال)</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>اشتراك منصة وثيق — ${inv.plan_label}</td>
+      <td>${inv.from_date} → ${inv.to_date}</td>
+      <td>${inv.months} ${inv.months === 1 ? "شهر" : "شهرًا"}</td>
+      <td>${sar(base)}</td>
+    </tr>
+  </tbody>
+</table>
+
+${hasVat ? `<table style="max-width:340px;margin-inline-start:auto">
+  <tbody>
+    <tr><td>الإجمالي قبل الضريبة</td><td style="text-align:left;font-weight:600">${sar(base)}</td></tr>
+    <tr><td>ضريبة القيمة المضافة (${rate}%)</td><td style="text-align:left;font-weight:600">${sar(vat)}</td></tr>
+    <tr><td style="font-weight:700">الإجمالي شامل الضريبة</td><td style="text-align:left;font-weight:700">${sar(total)}</td></tr>
+  </tbody>
+</table>` : ""}
+
+<div class="due"><span class="l">الإجمالي المدفوع${hasVat ? " (شامل الضريبة)" : ""}</span><span class="v">${sar(total)} ريال</span></div>
+
+<div class="note">
+  ${methodAr(inv.method) !== "—" ? `وسيلة السداد: <b>${methodAr(inv.method)}</b> · ` : ""}تاريخ السداد: <b>${paid}</b>.
+  يسري الاشتراك حتى <b>${inv.to_date}</b>، وتبقى بيانات الحساب ومستنداته متاحة للمشترك طوال الفترة.
+</div>
+
+${hasVat ? `<div class="note" style="border-inline-start-color:#D0453F;background:#FBE9E7;color:#a5322c">
+  <b>تنويه:</b> هذا مستند إداري يبيّن احتساب الضريبة، وليس فاتورة إلكترونية معتمدة من هيئة الزكاة والضريبة والدخل
+  (لا يتضمّن رمز الاستجابة السريعة ولا التوقيع الإلكتروني المطلوبين نظامًا).
+</div>` : `<div class="note">
+  <b>لا تشمل هذه الفاتورة ضريبة القيمة المضافة</b> — المُصدِر غير مسجَّل في ضريبة القيمة المضافة،
+  وهي مستند إداري لإثبات السداد وليست فاتورة إلكترونية معتمدة من هيئة الزكاة والضريبة والدخل.
+</div>`}
+
+<div class="sign">
+  <div>المُصدِر: وثيق<br><br>التوقيع: ________________</div>
+  <div>تاريخ الإصدار: ${today()}<br><br>رقم الفاتورة: ${inv.invoice_no}</div>
+</div>
+${footer()}`;
+  return SHELL(`فاتورة ${inv.invoice_no} — ${inv.to_name}`, body, "none");
+}
