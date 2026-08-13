@@ -214,6 +214,7 @@ export default async function AdminPage({
           <h1 className="font-display font-bold text-deep text-xl">لوحة الإدارة</h1>
           <div className="text-sm text-muted">قراءة فقط · {dayISO(new Date())}</div>
         </div>
+        <Link href="/admin/subs" className="btn btn-primary text-sm">💳 الاشتراكات والتجديد</Link>
         <Link href="/dashboard/property" className="btn btn-ghost text-sm">← رجوع للوحة</Link>
       </div>
 
