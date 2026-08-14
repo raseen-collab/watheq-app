@@ -193,9 +193,13 @@ export const OUT_OF_SCOPE_REPLY =
 export const ADVISOR_QUOTAS = { trial: 10, basic: 5, pro: 15, full: 30, expired: 3 } as const;
 
 /** الحد اليومي للمستخدم: الباقة المدفوعة أولًا، ثم التجربة، ثم حد ما بعد التجربة */
-export function advisorLimit(profile?: { plan?: string | null; trial_ends_at?: string | null } | null): number {
+export function advisorLimit(profile?: { plan?: string | null; trial_ends_at?: string | null; subscribed_until?: string | null } | null): number {
   const plan = String(profile?.plan || "").toLowerCase();
-  if (plan === "basic" || plan === "pro" || plan === "full") return ADVISOR_QUOTAS[plan];
+  // الباقة وحدها لا تكفي — لا بد أن يكون الاشتراك ساريًا.
+  // (بلا تاريخ اشتراك = حساب قديم ضُبطت باقته يدويًا، يبقى ساريًا)
+  const sub = profile?.subscribed_until ? Date.parse(String(profile.subscribed_until)) : null;
+  const subActive = sub === null || (!isNaN(sub) && sub >= Date.now());
+  if (subActive && (plan === "basic" || plan === "pro" || plan === "full")) return ADVISOR_QUOTAS[plan];
   const ends = profile?.trial_ends_at ? new Date(profile.trial_ends_at) : null;
   if (ends && !isNaN(ends.getTime()) && ends.getTime() >= Date.now()) return ADVISOR_QUOTAS.trial;
   return ADVISOR_QUOTAS.expired;
