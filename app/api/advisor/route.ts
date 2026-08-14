@@ -40,7 +40,7 @@ export async function POST(req: Request) {
 
   // ---------- 2) الإقرار بإخلاء المسؤولية (مرة واحدة) ----------
   const { data: profile } = await db
-    .from("profiles").select("advisor_ack_at, plan, trial_ends_at").eq("id", user.id).maybeSingle();
+    .from("profiles").select("advisor_ack_at, plan, trial_ends_at, subscribed_until").eq("id", user.id).maybeSingle();
   if (!profile?.advisor_ack_at) {
     return NextResponse.json({
       ok: false, needsAck: true, disclaimer: DISCLAIMER,
