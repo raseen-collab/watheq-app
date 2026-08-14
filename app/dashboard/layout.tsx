@@ -2,6 +2,7 @@ import { createClient } from "@/lib/supabase-server";
 import { redirect } from "next/navigation";
 import DashboardShell from "@/components/DashboardShell";
 import { normalizeAccountType, canSwitch } from "@/lib/roles";
+import { subState } from "@/lib/subscription";
 
 export const dynamic = "force-dynamic";
 
@@ -12,7 +13,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
 
   const { data: profile } = await supabase
     .from("profiles")
-    .select("account_type, role, full_name, org_name, trial_ends_at, last_dashboard")
+    .select("account_type, role, full_name, org_name, plan, trial_ends_at, subscribed_until, last_dashboard")
     .eq("id", user.id)
     .maybeSingle();
 
@@ -27,6 +28,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
       accountType={accountType}
       showSwitcher={canSwitch(accountType)}
       trialEndsAt={profile?.trial_ends_at}
+      sub={subState(profile || {})}
     >
       {children}
     </DashboardShell>
