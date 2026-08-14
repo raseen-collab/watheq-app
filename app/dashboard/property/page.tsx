@@ -2,6 +2,7 @@ import { createClient } from "@/lib/supabase-server";
 import PropertyView from "@/components/PropertyView";
 import { redirect } from "next/navigation";
 import { normalizeAccountType, canAccess } from "@/lib/roles";
+import { issuerMarks } from "@/lib/subscription";
 
 export const dynamic = "force-dynamic";
 
@@ -27,12 +28,10 @@ export default async function PropertyPage() {
 
   const { data: { user } } = await supabase.auth.getUser();
   const { data: profile } = await supabase
-    .from("profiles").select("org_name, billing_name, vat_number, cr_number, billing_phone, plan, trial_ends_at").eq("id", user!.id).maybeSingle();
+    .from("profiles").select("org_name, billing_name, vat_number, cr_number, billing_phone, plan, trial_ends_at, subscribed_until").eq("id", user!.id).maybeSingle();
 
   // ثلاث حالات: مشترك = مستند نظيف · تجربة نشطة = سطر «أُنشئ عبر وثيق» · انتهت بلا اشتراك = علامة مائية
-  const paid = ["basic", "pro", "full"].includes(String(profile?.plan || ""));
-  const endsAt = profile?.trial_ends_at ? new Date(String(profile.trial_ends_at)) : null;
-  const expired = !paid && !!endsAt && !Number.isNaN(endsAt.getTime()) && endsAt.getTime() < Date.now();
+  const { trial, expired } = issuerMarks(profile);
 
-  return <PropertyView initial={properties || []} orgName={profile?.org_name || ""} issuer={{ ...(profile || {}), trial: !paid, expired }} />;
+  return <PropertyView initial={properties || []} orgName={profile?.org_name || ""} issuer={{ ...(profile || {}), trial, expired }} />;
 }
