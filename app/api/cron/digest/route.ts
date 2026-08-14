@@ -14,9 +14,12 @@ const sar = (n: number) => (Number(n) || 0).toLocaleString("en-US");
  * يُستدعى من Vercel Cron يوميًّا. محمي بـ CRON_SECRET.
  */
 export async function GET(req: Request) {
+  // 🔒 إغلاق افتراضي: غياب السر يمنع التشغيل، لا يفتحه.
+  // النسخة السابقة كانت تتخطى الفحص كليًّا إن لم يُضبط CRON_SECRET،
+  // فيستطيع أي شخص استدعاء المسار وإطلاق موجة رسائل تليجرام لكل المستخدمين.
   const auth = req.headers.get("authorization");
   const secret = process.env.CRON_SECRET;
-  if (secret && auth !== `Bearer ${secret}`) {
+  if (!secret || auth !== `Bearer ${secret}`) {
     return NextResponse.json({ ok: false, error: "غير مصرّح" }, { status: 401 });
   }
 
