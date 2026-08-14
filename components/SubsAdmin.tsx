@@ -49,6 +49,38 @@ const METHODS: { v: string; l: string }[] = [
   { v: "other", l: "أخرى" },
 ];
 
+/** مدد التجديد كما تُقرأ لا كأرقام مجرّدة */
+const DURATIONS: { m: number; l: string; verb: string }[] = [
+  { m: 1, l: "شهر", verb: "شهرًا" },
+  { m: 3, l: "3 أشهر", verb: "3 أشهر" },
+  { m: 6, l: "6 أشهر", verb: "6 أشهر" },
+  { m: 12, l: "سنة", verb: "سنة" },
+  { m: 24, l: "سنتان", verb: "سنتين" },
+];
+const durVerb = (m: number) => DURATIONS.find((d) => d.m === m)?.verb || `${m} شهرًا`;
+const durLabel = (m: number) => DURATIONS.find((d) => d.m === m)?.l || `${m} شهرًا`;
+
+const MONTHS_AR = ["يناير","فبراير","مارس","أبريل","مايو","يونيو",
+                   "يوليو","أغسطس","سبتمبر","أكتوبر","نوفمبر","ديسمبر"];
+
+/** 31 أغسطس 2026 — ميلادي بأسماء عربية، بلا اعتماد على لغة الجهاز */
+function arDate(v?: string | null): string {
+  if (!v) return "—";
+  const t = Date.parse(v);
+  if (isNaN(t)) return "—";
+  const d = new Date(t);
+  return `${d.getDate()} ${MONTHS_AR[d.getMonth()]} ${d.getFullYear()}`;
+}
+
+/** صياغة العدد كما تُنطق: يوم · يومان · أيام · يومًا */
+function daysWord(n: number): string {
+  const a = Math.abs(n);
+  if (a === 1) return "يوم واحد";
+  if (a === 2) return "يومان";
+  if (a >= 3 && a <= 10) return `${a} أيام`;
+  return `${a} يومًا`;
+}
+
 const day = (v?: string | null) => (v ? String(v).slice(0, 10) : "—");
 const sar = (n: number) => (Number(n) || 0).toLocaleString("en-US");
 const daysTo = (v?: string | null) => {
@@ -64,14 +96,14 @@ function stateOf(r: SubRow): { s: State; label: string; tone: string } {
   const sub = daysTo(r.subscribed_until);
   if (sub !== null && sub >= 0) {
     return sub <= 14
-      ? { s: "soon", label: `مشترك · ينتهي بعد ${sub} يوم`, tone: "text-gold font-semibold" }
-      : { s: "paid", label: `مشترك · ${sub} يوم`, tone: "text-paid font-semibold" };
+      ? { s: "soon", label: `بقي ${daysWord(sub)}`, tone: "text-gold font-semibold" }
+      : { s: "paid", label: `بقي ${daysWord(sub)}`, tone: "text-paid font-semibold" };
   }
   if (sub !== null && sub < 0) {
-    return { s: "ended", label: `انتهى اشتراكه قبل ${Math.abs(sub)} يوم`, tone: "text-late font-semibold" };
+    return { s: "ended", label: `انتهى قبل ${daysWord(sub)}`, tone: "text-late font-semibold" };
   }
   const tr = daysTo(r.trial_ends_at);
-  if (tr !== null && tr >= 0) return { s: "trial", label: `تجربة · ${tr} يوم`, tone: "text-muted" };
+  if (tr !== null && tr >= 0) return { s: "trial", label: `تجربة · بقي ${daysWord(tr)}`, tone: "text-muted" };
   return { s: "trial_ended", label: "انتهت التجربة بلا اشتراك", tone: "text-late" };
 }
 
@@ -115,7 +147,7 @@ export default function SubsAdmin({ rows, pays }: { rows: SubRow[]; pays: PayRow
     });
     setBusy(false);
     if (!res.ok) { setMsg({ kind: "err", text: res.error }); return; }
-    setMsg({ kind: "ok", text: `سُجّلت الدفعة · الاشتراك حتى ${res.extendedTo} · فاتورة ${res.invoiceNo}` });
+    setMsg({ kind: "ok", text: `سُجّلت الدفعة · الاشتراك حتى ${arDate(res.extendedTo)} · فاتورة ${res.invoiceNo}` });
     setOpenFor(null);
     reset();
   }
@@ -175,7 +207,7 @@ export default function SubsAdmin({ rows, pays }: { rows: SubRow[]; pays: PayRow
               <th className="p-2.5 text-right font-semibold">الحساب</th>
               <th className="p-2.5 text-right font-semibold">الباقة</th>
               <th className="p-2.5 text-right font-semibold">الحالة</th>
-              <th className="p-2.5 text-right font-semibold">حتى</th>
+              <th className="p-2.5 text-right font-semibold">ينتهي في</th>
               <th className="p-2.5 text-right font-semibold">آخر دفعة</th>
               <th className="p-2.5 text-right font-semibold">إجراء</th>
             </tr></thead>
@@ -188,10 +220,10 @@ export default function SubsAdmin({ rows, pays }: { rows: SubRow[]; pays: PayRow
                   </td>
                   <td className="p-2.5 text-xs whitespace-nowrap">{planLabel(r.plan, r.account_type)}</td>
                   <td className={`p-2.5 text-xs whitespace-nowrap ${st.tone}`}>{st.label}</td>
-                  <td className="p-2.5 text-xs whitespace-nowrap">{day(r.subscribed_until)}</td>
+                  <td className="p-2.5 text-xs whitespace-nowrap">{arDate(r.subscribed_until)}</td>
                   <td className="p-2.5 text-xs whitespace-nowrap">
                     {last
-                      ? <>{day(last.paid_at)} · {sar(Number(last.amount))} ريال</>
+                      ? <>{arDate(last.paid_at)} · {sar(Number(last.amount))} ريال</>
                       : <span className="text-muted">—</span>}
                   </td>
                   <td className="p-2.5">
@@ -199,7 +231,7 @@ export default function SubsAdmin({ rows, pays }: { rows: SubRow[]; pays: PayRow
                       <button
                         onClick={() => { setOpenFor(openFor === r.id ? null : r.id); setMsg(null); reset(); }}
                         className="btn btn-primary text-xs px-2.5">
-                        {openFor === r.id ? "إلغاء" : "تسجيل سداد"}
+                        {openFor === r.id ? "إلغاء" : "سجّل دفعة"}
                       </button>
                       {last && (
                         <button onClick={() => invoice(r, last)} className="btn btn-ghost text-xs px-2.5">
@@ -210,14 +242,14 @@ export default function SubsAdmin({ rows, pays }: { rows: SubRow[]; pays: PayRow
 
                     {openFor === r.id && (
                       <div className="mt-3 bg-paper2 border border-line rounded-xl p-3 min-w-[280px]">
-                        <div className="text-xs text-muted mb-2">عدد الأشهر</div>
+                        <div className="text-xs text-muted mb-2">المدة المجدَّدة</div>
                         <div className="flex gap-1.5 mb-3 flex-wrap">
-                          {[1, 3, 6, 12].map((m) => (
-                            <button key={m} onClick={() => setMonths(m)}
-                              className={`text-xs rounded-lg px-2.5 py-1.5 border ${
-                                months === m ? "bg-deep text-[#F6F1E4] border-deep font-semibold"
-                                             : "bg-white text-deep border-line"}`}>
-                              {m}
+                          {DURATIONS.map((d) => (
+                            <button key={d.m} onClick={() => setMonths(d.m)}
+                              className={`text-xs rounded-full px-3 py-1.5 border ${
+                                months === d.m ? "bg-gold text-white border-gold font-semibold"
+                                              : "bg-white text-deep border-line"}`}>
+                              {d.l}
                             </button>
                           ))}
                         </div>
@@ -227,8 +259,8 @@ export default function SubsAdmin({ rows, pays }: { rows: SubRow[]; pays: PayRow
                           {[{ v: "", l: "بلا تغيير" }, { v: "basic", l: planLabel("basic", r.account_type) },
                             { v: "pro", l: planLabel("pro", r.account_type) }, { v: "full", l: planLabel("full", r.account_type) }].map((o) => (
                             <button key={o.v} onClick={() => setPlan(o.v)}
-                              className={`text-xs rounded-lg px-2.5 py-1.5 border ${
-                                plan === o.v ? "bg-deep text-[#F6F1E4] border-deep font-semibold"
+                              className={`text-xs rounded-full px-3 py-1.5 border ${
+                                plan === o.v ? "bg-gold text-white border-gold font-semibold"
                                              : "bg-white text-deep border-line"}`}>
                               {o.l}
                             </button>
@@ -250,8 +282,8 @@ export default function SubsAdmin({ rows, pays }: { rows: SubRow[]; pays: PayRow
                           className="w-full border border-line rounded-lg px-2.5 py-1.5 text-sm bg-white mb-3" />
 
                         <button disabled={busy} onClick={() => submit(r)}
-                          className="btn btn-gold w-full justify-center text-sm disabled:opacity-60">
-                          {busy ? "…" : `تأكيد — تمديد ${months} ${months === 1 ? "شهر" : "شهرًا"}`}
+                          className="btn btn-primary w-full justify-center text-sm disabled:opacity-60">
+                          {busy ? "…" : `أكّد الدفع وجدّد ${durVerb(months)}`}
                         </button>
                       </div>
                     )}
@@ -278,19 +310,19 @@ export default function SubsAdmin({ rows, pays }: { rows: SubRow[]; pays: PayRow
                   <th className="p-2.5 text-right font-semibold">الحساب</th>
                   <th className="p-2.5 text-right font-semibold">المدة</th>
                   <th className="p-2.5 text-right font-semibold">المبلغ</th>
-                  <th className="p-2.5 text-right font-semibold">حتى</th>
+                  <th className="p-2.5 text-right font-semibold">يمتد إلى</th>
                 </tr></thead>
                 <tbody>
                   {pays.map((p) => {
                     const r = rows.find((x) => x.id === p.user_id);
                     return (
                       <tr key={p.id} className="border-t border-line">
-                        <td className="p-2.5 text-xs whitespace-nowrap">{day(p.paid_at)}</td>
+                        <td className="p-2.5 text-xs whitespace-nowrap">{arDate(p.paid_at)}</td>
                         <td className="p-2.5 text-xs whitespace-nowrap">{p.invoice_no || "—"}</td>
                         <td className="p-2.5 text-xs">{r?.full_name || "—"}</td>
-                        <td className="p-2.5 text-xs whitespace-nowrap">{p.months} شهر</td>
+                        <td className="p-2.5 text-xs whitespace-nowrap">{durLabel(p.months)}</td>
                         <td className="p-2.5 text-xs whitespace-nowrap">{sar(Number(p.amount))} ريال</td>
-                        <td className="p-2.5 text-xs whitespace-nowrap">{day(p.extended_to)}</td>
+                        <td className="p-2.5 text-xs whitespace-nowrap">{arDate(p.extended_to)}</td>
                       </tr>
                     );
                   })}
