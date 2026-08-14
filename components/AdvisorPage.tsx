@@ -16,7 +16,7 @@ export default async function AdvisorPage({ scope }: { scope: AdvisorScope }) {
   if (!user) redirect("/login");
 
   const { data: profile } = await supabase
-    .from("profiles").select("advisor_ack_at, plan, trial_ends_at").eq("id", user.id).maybeSingle();
+    .from("profiles").select("advisor_ack_at, plan, trial_ends_at, subscribed_until").eq("id", user.id).maybeSingle();
 
   const today = new Date().toISOString().slice(0, 10);
   const { count } = await supabase
