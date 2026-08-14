@@ -4,14 +4,16 @@ import { usePathname, useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase-client";
 import { trialDaysLeft } from "@/lib/domain";
 import type { AccountType } from "@/lib/roles";
+import type { SubState } from "@/lib/subscription";
 
 export default function DashboardShell({
-  userName, accountType, showSwitcher, trialEndsAt, children,
+  userName, accountType, showSwitcher, trialEndsAt, sub, children,
 }: {
   userName: string;
   accountType: AccountType;
   showSwitcher: boolean;
   trialEndsAt?: string | null;
+  sub?: SubState;
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
@@ -91,13 +93,27 @@ export default function DashboardShell({
         </div>
       </header>
 
-      {days !== null && days <= 30 && (
+      {sub?.kind === "paid_soon" && (
+        <div className="text-center text-sm py-2 px-4 bg-[#FBF1DF] text-[#8a5a11] border-b border-[#EBD9AA]">
+          اشتراكك ينتهي بعد <b>{sub.subDaysLeft}</b> يومًا.{" "}
+          <a href="https://wa.me/966596300591?text=%D8%A3%D8%A8%D8%BA%D9%89%20%D8%A3%D8%AC%D8%AF%D8%AF%20%D8%A7%D8%B4%D8%AA%D8%B1%D8%A7%D9%83%D9%8A%20%D9%81%D9%8A%20%D9%88%D8%AB%D9%8A%D9%82" target="_blank" rel="noreferrer" className="underline font-bold">جدّد الآن</a>
+        </div>
+      )}
+
+      {sub?.expired && (
+        <div className="text-center text-sm py-2 px-4 bg-[#FBE9E7] text-[#8f2b26] border-b border-[#F5C6C2]">
+          {sub.planPaid
+            ? <>انتهى اشتراكك — المستندات تُطبع بعلامة «نسخة تجريبية» وحصة المستشار ٣ أسئلة يوميًا. </>
+            : <>انتهت تجربتك المجانية. </>}
+          <a href="https://wa.me/966596300591?text=%D8%A3%D8%A8%D8%BA%D9%89%20%D8%A3%D8%AC%D8%AF%D8%AF%20%D8%A7%D8%B4%D8%AA%D8%B1%D8%A7%D9%83%D9%8A%20%D9%81%D9%8A%20%D9%88%D8%AB%D9%8A%D9%82" target="_blank" rel="noreferrer" className="underline font-bold">راسلنا للتفعيل</a>
+        </div>
+      )}
+
+      {sub?.trial && days !== null && days <= 30 && days > 0 && (
         <div className={`text-center text-sm py-2 px-4 ${
           days <= 5 ? "bg-[#FBE9E7] text-[#8f2b26] border-b border-[#F5C6C2]"
                     : "bg-[#FBF1DF] text-[#8a5a11] border-b border-[#EBD9AA]"}`}>
-          {days > 0
-            ? <>🎁 تجربتك المجانية — متبقٍ <b>{days}</b> يومًا من أصل ٣٠. كل المزايا مفعّلة.</>
-            : <>انتهت تجربتك المجانية. <a href="https://t.me/+966550165210" target="_blank" rel="noreferrer" className="underline font-bold">راسلنا لتفعيل اشتراكك</a></>}
+          🎁 تجربتك المجانية — متبقٍ <b>{days}</b> يومًا من أصل ٣٠. كل المزايا مفعّلة.
         </div>
       )}
 
