@@ -2,6 +2,7 @@ import { createClient } from "@/lib/supabase-server";
 import { redirect } from "next/navigation";
 import AssociationView from "@/components/AssociationView";
 import { normalizeAccountType, canAccess } from "@/lib/roles";
+import { issuerMarks } from "@/lib/subscription";
 
 export const dynamic = "force-dynamic";
 
@@ -13,7 +14,7 @@ export default async function AssociationPage() {
   // حماية: هل يملك هذا الحساب صلاحية لوحة الجمعيات؟
   const { data: profile } = await supabase
     .from("profiles")
-    .select("account_type, role, plan, trial_ends_at, billing_name, vat_number, cr_number, billing_phone")
+    .select("account_type, role, plan, trial_ends_at, subscribed_until, billing_name, vat_number, cr_number, billing_phone")
     .eq("id", user.id).maybeSingle();
   const type = normalizeAccountType(profile || {});
   if (!type) redirect("/onboarding");
@@ -30,9 +31,7 @@ export default async function AssociationPage() {
     .order("created_at", { ascending: false });
 
   // ثلاث حالات: مشترك = مستند نظيف · تجربة نشطة = سطر «أُنشئ عبر وثيق» · انتهت بلا اشتراك = علامة مائية
-  const paid = ["basic", "pro", "full"].includes(String(profile?.plan || ""));
-  const endsAt = profile?.trial_ends_at ? new Date(String(profile.trial_ends_at)) : null;
-  const expired = !paid && !!endsAt && !Number.isNaN(endsAt.getTime()) && endsAt.getTime() < Date.now();
+  const { trial, expired } = issuerMarks(profile);
 
   return (
     <AssociationView
@@ -42,7 +41,7 @@ export default async function AssociationPage() {
         vat_number: profile?.vat_number ?? null,
         cr_number: profile?.cr_number ?? null,
         billing_phone: profile?.billing_phone ?? null,
-        trial: !paid,
+        trial,
         expired,
       }}
     />
