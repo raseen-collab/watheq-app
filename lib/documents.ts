@@ -2,7 +2,27 @@ import { contractState, buildSchedule, freqLabel, splitVat, settleDeposit, vacan
 import { unitLabel, typeLabel } from "./domain";
 
 const sar = (n: number) => (Number(n) || 0).toLocaleString("en-US");
-const today = () => new Date().toISOString().slice(0, 10);
+const MONTHS_AR = ["يناير","فبراير","مارس","أبريل","مايو","يونيو",
+                   "يوليو","أغسطس","سبتمبر","أكتوبر","نوفمبر","ديسمبر"];
+
+/**
+ * 5 مارس 2026 — ميلادي بأسماء عربية.
+ * لا يُستعمل Intl مع "ar-SA" لأنه يُخرج التاريخ **هجريًّا** على كثير من
+ * الأجهزة، فيقرأ المستأجر تاريخًا لا يطابق عقده.
+ */
+export function arDate(v?: string | null): string {
+  if (!v) return "—";
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(v));
+  if (!m) return String(v);
+  const mo = Number(m[2]) - 1;
+  if (mo < 0 || mo > 11) return String(v);
+  return `${Number(m[3])} ${MONTHS_AR[mo]} ${m[1]}`;
+}
+
+const today = () => {
+  const d = new Date(), p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+};
 
 type Tenant = {
   id: string; name: string; unit: string | null; phone: string | null; national_id: string | null;
@@ -122,7 +142,7 @@ const graceOf = (p: Property) => ({ graceDays: Number(p.grace_days) || 0 });
 const header = (docTitle: string, docNo: string) => `
 <div class="hd">
   <div class="lg"><div class="seal">و</div><div><div class="t">وثيق</div><div class="s">إدارة الأملاك العقارية</div></div></div>
-  <div class="meta">${docTitle}<b>${docNo}</b>التاريخ: ${today()}</div>
+  <div class="meta">${docTitle}<b>${docNo}</b>التاريخ: ${arDate(today())}</div>
 </div>`;
 
 const footer = () => `
@@ -170,8 +190,8 @@ ${header("كشف حساب", `${t.name}`)}
 <div class="grid">
   <div class="box">
     <h3>بيانات العقد</h3>
-    <div class="r"><span>بداية العقد</span><span>${t.contract_start || "—"}</span></div>
-    <div class="r"><span>نهاية العقد</span><span>${st.endDate || "—"}</span></div>
+    <div class="r"><span>بداية العقد</span><span>${arDate(t.contract_start)}</span></div>
+    <div class="r"><span>نهاية العقد</span><span>${arDate(st.endDate)}</span></div>
     <div class="r"><span>دورة السداد</span><span>${freqLabel(t.payment_frequency)}</span></div>
     <div class="r"><span>قيمة الدفعة${v.enabled ? " (شاملة الضريبة)" : ""}</span><span>${sar(unit.total)} ريال</span></div>
     ${v.enabled ? `<div class="r"><span>منها إيجار أساسي</span><span>${sar(unit.base)} ريال</span></div>
@@ -184,7 +204,7 @@ ${header("كشف حساب", `${t.name}`)}
     <div class="r"><span>المتأخر</span><span>${sar(st.amountDue)} ريال</span></div>
     ${v.enabled && st.amountDue > 0 ? `<div class="r"><span>منه ضريبة</span><span>${sar(dueSplit.vat)} ريال</span></div>` : ""}
     ${st.hasPartial ? `<div class="r"><span>مدفوع جزئيًّا</span><span>${sar(st.partial)} ريال</span></div>` : ""}
-    <div class="r"><span>الدفعة القادمة</span><span>${st.nextDueDate || "—"}</span></div>
+    <div class="r"><span>الدفعة القادمة</span><span>${arDate(st.nextDueDate)}</span></div>
   </div>
 </div>
 
@@ -202,7 +222,7 @@ ${st.amountDue > 0 ? `<div class="due"><span class="l">الرصيد المستح
   <thead><tr><th>#</th><th>تاريخ الاستحقاق</th>${v.enabled ? "<th>الأساس</th><th>الضريبة</th>" : ""}<th>الإجمالي (ريال)</th><th>الحالة</th></tr></thead>
   <tbody>
     ${rows.map((r) => { const x = splitVat(r.amount, v); return `<tr>
-      <td>${r.n}</td><td>${r.date}</td>
+      <td>${r.n}</td><td>${arDate(r.date)}</td>
       ${v.enabled ? `<td>${sar(x.base)}</td><td>${sar(x.vat)}</td>` : ""}
       <td>${sar(x.total)}</td>
       <td>${r.status === "paid" ? '<span class="pill p">مسدّدة</span>'
@@ -417,7 +437,7 @@ ${header("عرض سعر", q.quote_no)}
 <table>
   <thead><tr><th>#</th><th>تاريخ الاستحقاق</th><th>المبلغ${v.enabled ? " (شامل الضريبة)" : ""} (ريال)</th></tr></thead>
   <tbody>
-    ${rows.map((r) => `<tr><td>${r.n}</td><td>${r.date}</td><td>${sar(splitVat(r.amount, v).total)}</td></tr>`).join("")}
+    ${rows.map((r) => `<tr><td>${r.n}</td><td>${arDate(r.date)}</td><td>${sar(splitVat(r.amount, v).total)}</td></tr>`).join("")}
   </tbody>
 </table>
 
@@ -486,7 +506,7 @@ ${totalDue > 0 ? `<div class="due"><span class="l">إجمالي المستحق �
       <td>${t.name}</td>
       <td>${sar(splitVat(Number(t.rent_amount) || 0, v).total)}</td>
       <td>${freqLabel(t.payment_frequency)}</td>
-      <td>${st.nextDueDate || "—"}</td>
+      <td>${arDate(st.nextDueDate)}</td>
       <td>${st.amountDue ? sar(st.amountDue) : "—"}</td>
       <td>${st.inGrace ? '<span class="pill u">فترة سماح</span>'
           : st.hasPartial && st.status === "late" ? '<span class="pill u">سداد جزئي</span>'
@@ -921,10 +941,10 @@ ${header("مخالصة إخلاء", t.name)}
   </div>
   <div class="box">
     <h3>بيانات الإخلاء</h3>
-    <div class="r"><span>بداية العقد</span><span>${t.contract_start || "—"}</span></div>
-    <div class="r"><span>نهاية العقد</span><span>${st.endDate || "—"}</span></div>
-    ${t.notice_date ? `<div class="r"><span>تاريخ الإشعار</span><span>${t.notice_date}</span></div>` : ""}
-    <div class="r"><span>تاريخ الإخلاء الفعلي</span><span>${t.move_out_date || "—"}</span></div>
+    <div class="r"><span>بداية العقد</span><span>${arDate(t.contract_start)}</span></div>
+    <div class="r"><span>نهاية العقد</span><span>${arDate(st.endDate)}</span></div>
+    ${t.notice_date ? `<div class="r"><span>تاريخ الإشعار</span><span>${arDate(t.notice_date)}</span></div>` : ""}
+    <div class="r"><span>تاريخ الإخلاء الفعلي</span><span>${arDate(t.move_out_date)}</span></div>
     ${vac !== null ? `<div class="r"><span>أيام الشغور حتى تاريخه</span><span>${vac}</span></div>` : ""}
   </div>
 </div>
