@@ -1268,7 +1268,9 @@ function QuoteModal({ property, unitWord, issuer, onClose }: {
   property: Property; unitWord: string; issuer: any; onClose: () => void;
 }) {
   const plusDays = (n: number) => {
-    const d = new Date(); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10);
+    const d = new Date(); d.setDate(d.getDate() + n);
+    const p = (x: number) => String(x).padStart(2, "0");
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
   };
   const stamp = () => {
     const d = new Date(), z = (n: number) => String(n).padStart(2, "0");
