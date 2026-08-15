@@ -1,4 +1,5 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
+import PWARegister from "@/components/PWARegister";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase-server";
 import "./globals.css";
@@ -6,6 +7,21 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "وثيق — لوحة التحكم",
   description: "منصة وثيق لإدارة جمعيات الملاك والأملاك",
+  applicationName: "وثيق",
+  // شاشة كاملة بلا شريط عنوان المتصفح عند التثبيت على آيفون
+  appleWebApp: { capable: true, title: "وثيق", statusBarStyle: "default" },
+  icons: {
+    icon: [{ url: "/icons/icon-192.png", sizes: "192x192", type: "image/png" }],
+    apple: [{ url: "/apple-touch-icon.png", sizes: "180x180", type: "image/png" }],
+  },
+};
+
+/** لون شريط النظام في الوضع المثبَّت */
+export const viewport: Viewport = {
+  themeColor: "#0E3A37",
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
 };
 
 const pill: React.CSSProperties = {
@@ -96,6 +112,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <link href="https://fonts.googleapis.com/css2?family=Readex+Pro:wght@400;500;600;700&family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&display=swap" rel="stylesheet" />
       </head>
       <body>
+        <PWARegister />
         {children}
         <FloatingLinks />
         <script dangerouslySetInnerHTML={{ __html: THEME_TOGGLE }} />
