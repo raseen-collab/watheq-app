@@ -61,10 +61,8 @@ export default function SettingsView({ profile }: { profile: any }) {
     if (!p.telegram_chat_id) return setMsg({ t: "err", m: "أدخل معرّف المحادثة أولًا." });
     setTesting(true); setMsg(null);
     try {
-      const res = await fetch("/api/telegram", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ chatId: p.telegram_chat_id }),
-      });
+      // بلا جسم طلب — الخادم يقرأ معرّف المحادثة من صفّ المستخدم نفسه
+      const res = await fetch("/api/telegram", { method: "POST" });
       const d = await res.json();
       setMsg(d.ok ? { t: "ok", m: "أُرسلت رسالة تجريبية — تحقّق من تليجرام." } : { t: "err", m: d.error || "فشل الإرسال" });
     } catch (e: any) {
