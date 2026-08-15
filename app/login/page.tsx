@@ -168,10 +168,12 @@ function LoginInner() {
           {mode === "signup" && (
             <div>
               <label className="block text-sm font-semibold mb-1">
-                كيف عرفت عن وثيق؟ <span className="text-muted font-normal text-xs">— يساعدنا نعرف أين نكون</span>
+                كيف عرفت عن وثيق؟ <span className="text-muted font-normal text-xs">— اختياري</span>
               </label>
-              <select className="fld" value={source} onChange={(e) => setSource(e.target.value)} required>
-                <option value="" disabled>اختر…</option>
+              {/* غير إلزامي عمدًا: حقل رابع مطلوب على زائر بارد يوقف التسجيل،
+                  وفائدته لنا لا له. الفارغ يُحفظ "skip" كما كان. */}
+              <select className="fld" value={source} onChange={(e) => setSource(e.target.value)}>
+                <option value="">أفضّل عدم الذكر</option>
                 {SOURCES.map((s) => <option key={s.v} value={s.v}>{s.l}</option>)}
               </select>
             </div>
