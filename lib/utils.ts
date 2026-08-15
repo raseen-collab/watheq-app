@@ -18,6 +18,11 @@ export function waLink(phone: string | undefined | null, text: string) {
   return `https://wa.me/${waNumber(phone)}?text=${encodeURIComponent(text)}`;
 }
 
-export const today = () => new Date().toISOString().slice(0, 10);
+export const today = () => {
+  // مكوّنات محلية لا toISOString: الأخيرة تطبع تاريخ الأمس
+  // لكل من يستعمل التطبيق بين منتصف الليل والثالثة فجرًا بتوقيت الرياض.
+  const d = new Date(), p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+};
 
 export const WATHEQ_WA = "966596300591";
