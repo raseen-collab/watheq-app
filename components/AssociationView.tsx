@@ -1528,7 +1528,7 @@ function RenewalModal({ assoc, annualBudget, onClose, onEditBudget, onPrintBudge
   const units = Number(assoc.units) || (Array.isArray(assoc.owners) ? assoc.owners.length : 0);
   const nextYear = new Date().getFullYear() + 1;
   const [d, setD] = useState<any>({
-    meeting_date: new Date().toISOString().slice(0, 10), mode: "حضوري", place: "",
+    meeting_date: today(), mode: "حضوري", place: "",
     attendees: "", total_units: units || "",
     president: "", manager: "", fee: assoc.fee || "",
     year: nextYear, annual_budget: annualBudget ?? "",
