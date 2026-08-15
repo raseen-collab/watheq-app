@@ -11,7 +11,10 @@ import { deriveState, STATE_ORDER, stateMeta, stateLabel, type StateKey } from "
 type DB = SupabaseClient<any, any, any>;
 type Track = "properties" | "associations";
 
-const iso = (d: Date) => d.toISOString().slice(0, 10);
+const iso = (d: Date) => {
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+};
 const todayISO = () => iso(new Date());
 export const sar = (n: number) => (Number(n) || 0).toLocaleString("en-US");
 const esc = (s: any) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
