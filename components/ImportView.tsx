@@ -33,7 +33,9 @@ function normalizeDate(v: string): string {
   const m = s.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})$/);
   if (m) return `${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
   const d = new Date(s);
-  return isNaN(d.getTime()) ? "" : d.toISOString().slice(0, 10);
+  if (isNaN(d.getTime())) return "";
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 }
 
 /** قارئ CSV بسيط يدعم علامات الاقتباس */
