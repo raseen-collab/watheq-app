@@ -751,11 +751,20 @@ export default function PropertyView({ initial, orgName, issuer }: { initial: Pr
         </div>
       </div>
 
-      <PropertyModal open={modal?.kind === "newProp"} orgName={orgName} onClose={() => setModal(null)} onSubmit={(d) => saveProperty(d)} />
-      <PropertyModal open={modal?.kind === "editProp"} initial={active || undefined} orgName={orgName}
-        onClose={() => setModal(null)} onSubmit={(d) => saveProperty(d, active!.id)} onDelete={deleteProperty} />
-      <TenantModal open={modal?.kind === "tenant"} initial={editing} unitWord={ul}
-        onClose={() => setModal(null)} onSubmit={(d) => saveTenant(d, editing?.id)} />
+      {/* عرض شرطي مقصود: النموذج يُفكَّك عند الإغلاق فتُمحى حقوله.
+          كان يبقى مركَّبًا ويكتفي بإخفاء نفسه، فتبقى بيانات آخر إدخال ظاهرة
+          في المرة التالية — لأن useState لا يُعاد تشغيله إلا عند التركيب. */}
+      {modal?.kind === "newProp" && (
+        <PropertyModal open orgName={orgName} onClose={() => setModal(null)} onSubmit={(d) => saveProperty(d)} />
+      )}
+      {modal?.kind === "editProp" && active && (
+        <PropertyModal open initial={active} orgName={orgName}
+          onClose={() => setModal(null)} onSubmit={(d) => saveProperty(d, active.id)} onDelete={deleteProperty} />
+      )}
+      {modal?.kind === "tenant" && (
+        <TenantModal open initial={editing} unitWord={ul}
+          onClose={() => setModal(null)} onSubmit={(d) => saveTenant(d, editing?.id)} />
+      )}
 
       {quoteOpen && active && (
         <QuoteModal property={active} unitWord={ul} issuer={issuer || {}} onClose={() => setQuoteOpen(false)} />
