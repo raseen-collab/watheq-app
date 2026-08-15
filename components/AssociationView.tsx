@@ -543,7 +543,7 @@ export default function AssociationView({ initial, issuer }: { initial: Associat
         <h2 className="font-display text-xl font-bold text-deep mb-2">ابدأ بإضافة جمعيتك</h2>
         <p className="text-muted mb-6">أدر ملّاك جمعيتك، حالات السداد، ورصيد الصندوق من مكان واحد.</p>
         <button className="btn btn-gold" onClick={() => setModal("new")}>+ إنشاء جمعية</button>
-        <FormModal open={modal === "new"} title="جمعية جديدة" onClose={() => setModal(null)} onSubmit={createAssociation} />
+        {modal === "new" && <FormModal open title="جمعية جديدة" onClose={() => setModal(null)} onSubmit={createAssociation} />}
       </div>
     );
   }
@@ -814,8 +814,11 @@ export default function AssociationView({ initial, issuer }: { initial: Associat
       {doc && <DocModal doc={doc} onClose={() => setDoc(null)} />}
       {paying && <OwnerPaymentModal owner={paying} fee={a.fee || 0} onClose={() => setPaying(null)}
         onSubmit={(amt, method, note) => { recordOwnerPayment(paying, a.fee || 0, amt, method, note); setPaying(null); }} />}
-      <FormModal open={modal === "new"} title="جمعية جديدة" onClose={() => setModal(null)} onSubmit={createAssociation} />
-      <FormModal open={modal === "edit"} title="إعدادات الجمعية" initial={active || undefined} onClose={() => setModal(null)} onSubmit={updateAssociation} onDelete={deleteAssociation} />
+      {/* عرض شرطي: التفكيك عند الإغلاق هو ما يمحو الحقول */}
+      {modal === "new" && <FormModal open title="جمعية جديدة" onClose={() => setModal(null)} onSubmit={createAssociation} />}
+      {modal === "edit" && active && (
+        <FormModal open title="إعدادات الجمعية" initial={active} onClose={() => setModal(null)} onSubmit={updateAssociation} onDelete={deleteAssociation} />
+      )}
     </div>
   );
 }
