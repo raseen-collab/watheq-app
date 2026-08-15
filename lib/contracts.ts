@@ -26,6 +26,28 @@ const PERIODS_PER_YEAR: Record<Frequency, number> = {
 
 const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
 
+/**
+ * 🕐 قراءة تاريخ مخزّن (YYYY-MM-DD) كتاريخ **محلي** لا عالمي.
+ *
+ * `new Date("2026-03-05")` يُفسَّر منتصف ليل UTC؛ وفي توقيت الرياض (+3)
+ * يصير ذلك 03:00 صباح 5 مارس محليًّا، فإذا أعيد إلى نص بـtoISOString
+ * عاد **4 مارس** — يوم كامل قبل الحقيقة. كان هذا يزيح كل تاريخ في
+ * كل مستند بيوم واحد لكل مستخدم شرق غرينتش.
+ */
+export function parseDate(v: string | Date): Date {
+  if (v instanceof Date) return startOfDay(v);
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(v));
+  if (m) return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  const d = new Date(String(v));
+  return isNaN(d.getTime()) ? startOfDay(new Date()) : startOfDay(d);
+}
+
+/** كتابة تاريخ بمكوّناته المحلية — البديل الآمن عن toISOString().slice(0,10) */
+export function isoDate(d: Date): string {
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
 /** إضافة (n) فترة إلى تاريخ — يراعي اختلاف أطوال الأشهر */
 export function addPeriods(date: Date, freq: Frequency, n: number, anchorDay?: number | null): Date {
   const d = new Date(date.getTime());
@@ -53,7 +75,7 @@ export function periodsElapsed(
   startISO: string | null | undefined, freq: Frequency, asOf?: Date, anchorDay?: number | null
 ): number {
   if (!startISO) return 0;
-  const start = startOfDay(new Date(startISO));
+  const start = parseDate(startISO);
   const today = startOfDay(asOf || new Date());
   if (today < start) return 0;
   let n = 0;
@@ -70,12 +92,12 @@ export function derivedEndDate(
   startISO: string, freq: Frequency, periods?: number | null, anchorDay?: number | null
 ): string {
   const n = periods && periods > 0 ? periods : defaultTermPeriods(freq);
-  return addPeriods(startOfDay(new Date(startISO)), freq, n, anchorDay).toISOString().slice(0, 10);
+  return isoDate(addPeriods(parseDate(startISO), freq, n, anchorDay));
 }
 
 /** يوم المرساة: المحفوظ، وإلا يوم بداية العقد */
 export const anchorOf = (t: { billing_anchor_day?: number | null; contract_start?: string | null }) =>
-  Number(t?.billing_anchor_day) || (t?.contract_start ? new Date(t.contract_start).getDate() : null);
+  Number(t?.billing_anchor_day) || (t?.contract_start ? parseDate(t.contract_start).getDate() : null);
 
 /** هل الوحدة شاغرة (أُخليت)؟ */
 export const isVacant = (t: { status?: string | null }) => String(t?.status || "active") === "vacated";
@@ -142,7 +164,7 @@ export function contractState(t: {
     };
   }
 
-  const start = startOfDay(new Date(t.contract_start));
+  const start = parseDate(t.contract_start);
   // مرجع الاحتساب: اليوم، أو تاريخ الإخلاء إن كانت الوحدة مُخلاة (أيّهما أسبق)
   const now = new Date();
   const cutoff = vacated ? new Date(Math.min(Date.parse(String(t.move_out_date)), now.getTime())) : now;
@@ -158,7 +180,7 @@ export function contractState(t: {
 
   // تاريخ الدفعة القادمة = بداية العقد + عدد الفترات المسدّدة
   const nextDue = addPeriods(start, freq, paid, anchor);
-  const nextDueDate = nextDue.toISOString().slice(0, 10);
+  const nextDueDate = isoDate(nextDue);
   const daysToNextDue = daysBetween(nextDue, today);
 
   // نهاية العقد: يدوية أو مستنتجة
@@ -209,7 +231,7 @@ export function buildSchedule(t: {
   if (!t.contract_start) return [];
   const anchor = anchorOf(t);
   const freq = (t.payment_frequency || "monthly") as Frequency;
-  const start = startOfDay(new Date(t.contract_start));
+  const start = parseDate(t.contract_start);
   const total = t.contract_periods && t.contract_periods > 0 ? t.contract_periods : defaultTermPeriods(freq);
   const paid = Math.max(0, Number(t.paid_periods) || 0);
   const rent = Number(t.rent_amount) || 0;
@@ -224,7 +246,7 @@ export function buildSchedule(t: {
     const isPartialRow = !isPaid && i === paid && partial > 0;
     return {
       n: i + 1,
-      date: date.toISOString().slice(0, 10),
+      date: isoDate(date),
       amount: rent,
       paidAmount: isPaid ? rent : isPartialRow ? partial : 0,
       status: isPaid ? ("paid" as const)
@@ -252,7 +274,7 @@ export function renewContract(t: {
   const freq = (opts.newFrequency || oldFreq) as Frequency;
   const st = contractState(t);
   // المدة الجديدة تبدأ من نهاية الحالية (أو من اليوم إن كانت منتهية منذ زمن)
-  const startISO = st.endDate || new Date().toISOString().slice(0, 10);
+  const startISO = st.endDate || isoDate(new Date());
   const periods = opts.periods && opts.periods > 0 ? opts.periods : (t.contract_periods || defaultTermPeriods(freq));
   const amount = opts.newAmount && opts.newAmount > 0 ? opts.newAmount : (Number(t.rent_amount) || 0);
   return {
