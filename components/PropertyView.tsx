@@ -1463,7 +1463,7 @@ function DocModal({ doc, onClose }: { doc: { title: string; body: string }; onCl
       <pre className="whitespace-pre-wrap bg-paper border border-line rounded-xl p-4 text-sm leading-8 text-ink" style={{ fontFamily: "inherit" }}>{doc.body}</pre>
       <div className="flex gap-2 mt-4">
         <button onClick={() => navigator.clipboard?.writeText(doc.body)} className="btn btn-primary flex-1 justify-center">نسخ النص</button>
-        <button onClick={() => { const w = window.open("", "_blank"); if (w) { w.document.write('<pre dir="rtl" style="font-family:sans-serif;white-space:pre-wrap;padding:24px;line-height:1.9">' + doc.body.replace(/</g, "&lt;") + "</pre>"); w.document.close(); w.print(); } }} className="btn btn-ghost flex-1 justify-center">طباعة</button>
+        <button onClick={() => openDoc('<!doctype html><html dir="rtl"><meta charset="utf-8"><body><pre style="font-family:sans-serif;white-space:pre-wrap;padding:24px;line-height:1.9">' + doc.body.replace(/</g, "&lt;") + "</pre></body></html>")} className="btn btn-ghost flex-1 justify-center">طباعة</button>
         <button type="button" onClick={onClose} className="btn text-muted">إغلاق</button>
       </div>
     </Shell>
