@@ -524,11 +524,82 @@ ${footer()}`;
 }
 
 /** فتح المستند في نافذة جديدة للطباعة */
+/**
+ * يعرض المستند للمستخدم.
+ *
+ * كان يعتمد على window.open وحدها، وسفاري على الآيفون يحجبها افتراضيًّا
+ * (وكذلك وضع التطبيق المثبَّت)، فكان المستخدم يرى «اسمح بالنوافذ المنبثقة»
+ * ولا يصل إلى مستنده أبدًا — وهو جوهر المنتج.
+ *
+ * الآن: تُجرَّب النافذة أولًا (أفضل تجربة على الحاسب للطباعة)، وإن حُجبت
+ * يُعرض المستند داخل التطبيق نفسه في طبقة ملء الشاشة، فلا يعتمد على إذن.
+ */
 export function openDoc(html: string) {
-  const w = window.open("", "_blank");
-  if (!w) { alert("فضلًا اسمح بالنوافذ المنبثقة لعرض المستند."); return; }
-  w.document.write(html);
-  w.document.close();
+  try {
+    const w = window.open("", "_blank");
+    if (w && w.document) {
+      w.document.write(html);
+      w.document.close();
+      return;
+    }
+  } catch {
+    /* محجوبة — نكمل إلى البديل */
+  }
+  showDocInline(html);
+}
+
+/** عرض المستند داخل الصفحة في طبقة ملء الشاشة مع أزرار طباعة وإغلاق */
+function showDocInline(html: string) {
+  const prev = document.getElementById("watheq-doc-overlay");
+  if (prev) prev.remove();
+
+  const overlay = document.createElement("div");
+  overlay.id = "watheq-doc-overlay";
+  overlay.setAttribute("dir", "rtl");
+  overlay.style.cssText =
+    "position:fixed;inset:0;z-index:99999;background:#F6F1E4;display:flex;flex-direction:column";
+
+  const bar = document.createElement("div");
+  bar.style.cssText =
+    "flex:0 0 auto;display:flex;gap:8px;padding:10px 12px;background:#0E3A37;" +
+    "align-items:center;padding-top:calc(10px + env(safe-area-inset-top))";
+
+  const mkBtn = (label: string, bg: string, color: string) => {
+    const b = document.createElement("button");
+    b.textContent = label;
+    b.style.cssText =
+      `appearance:none;border:0;border-radius:10px;padding:10px 16px;font-size:15px;` +
+      `font-weight:700;cursor:pointer;background:${bg};color:${color};` +
+      `font-family:inherit`;
+    return b;
+  };
+
+  const printBtn = mkBtn("🖨️ طباعة / حفظ PDF", "#E7C877", "#0E3A37");
+  const closeBtn = mkBtn("إغلاق", "transparent", "#F6F1E4");
+  closeBtn.style.border = "1px solid rgba(246,241,228,.45)";
+
+  const frame = document.createElement("iframe");
+  frame.style.cssText = "flex:1 1 auto;width:100%;border:0;background:#fff";
+  frame.setAttribute("title", "مستند وثيق");
+
+  printBtn.onclick = () => {
+    try {
+      frame.contentWindow?.focus();
+      frame.contentWindow?.print();
+    } catch {
+      window.print();
+    }
+  };
+  closeBtn.onclick = () => overlay.remove();
+
+  bar.appendChild(printBtn);
+  bar.appendChild(closeBtn);
+  overlay.appendChild(bar);
+  overlay.appendChild(frame);
+  document.body.appendChild(overlay);
+
+  // srcdoc بدل document.write: يعمل في كل المتصفحات ولا يحتاج إذنًا
+  frame.srcdoc = html;
 }
 
 // ============================================================
