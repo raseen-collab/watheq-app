@@ -45,6 +45,7 @@ function LoginInner() {
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
   const [source, setSource] = useState("");
+  const [googleLoading, setGoogleLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [info, setInfo] = useState<string | null>(null);
@@ -56,6 +57,9 @@ function LoginInner() {
     const s = searchParams.get("src");
     if (s && SOURCES.some((x) => x.v === s)) setSource(s);
     if (searchParams.get("mode") === "signup") setMode("signup");
+    // خطأ عائد من /auth/callback (فشل قوقل أو رفض المستخدم)
+    const err = searchParams.get("err");
+    if (err) setError(err.includes("access_denied") ? "أُلغي الدخول بقوقل." : err);
   }, [searchParams]);
 
   /**
@@ -76,6 +80,30 @@ function LoginInner() {
         .is("signup_source", null);
     } catch {
       /* لا يُعطّل الدخول إن فشل */
+    }
+  }
+
+  /**
+   * الدخول بحساب قوقل.
+   * لا نحتاج معالجة نجاح هنا: المتصفح يغادر الصفحة إلى قوقل، ثم يعود
+   * إلى /auth/callback الذي يبادل الرمز بجلسة وينقل المستخدم.
+   */
+  async function signInWithGoogle() {
+    setError(null); setInfo(null); setGoogleLoading(true);
+    try {
+      const supabase = createClient();
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: "google",
+        options: {
+          redirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent(next)}`,
+          queryParams: { prompt: "select_account" },   // يسمح باختيار الحساب لا الدخول بآخر واحد صامتًا
+        },
+      });
+      if (error) throw error;
+      setLeaving(true);
+    } catch (e: any) {
+      setError(String(e?.message || e));
+      setGoogleLoading(false);
     }
   }
 
@@ -148,6 +176,26 @@ function LoginInner() {
 
         <h1 className="font-display text-2xl font-bold text-deep mb-1">{mode === "signin" ? "تسجيل الدخول" : "إنشاء حساب جديد"}</h1>
         <p className="text-sm text-muted mb-5">{mode === "signin" ? "أدخل بريدك وكلمة المرور." : "أنشئ حسابك المجاني لإدارة جمعياتك أو عقاراتك."}</p>
+
+        {/* الدخول بقوقل أولًا وأكبر: يحذف حقلين من طريق زائر بارد */}
+        <button type="button" onClick={signInWithGoogle} disabled={googleLoading || leaving}
+          className="w-full flex items-center justify-center gap-3 border border-line rounded-xl
+                     bg-white hover:bg-paper2 transition px-4 py-3 font-semibold text-deep
+                     disabled:opacity-60 mb-4">
+          <svg width="19" height="19" viewBox="0 0 48 48" aria-hidden="true">
+            <path fill="#4285F4" d="M45.1 24.5c0-1.6-.1-3.1-.4-4.5H24v8.5h11.8c-.5 2.7-2 5-4.4 6.6v5.5h7.1c4.2-3.8 6.6-9.5 6.6-16.1z"/>
+            <path fill="#34A853" d="M24 46c6 0 11-2 14.6-5.4l-7.1-5.5c-2 1.3-4.5 2.1-7.5 2.1-5.8 0-10.7-3.9-12.4-9.1H4.3v5.7C7.9 41.1 15.4 46 24 46z"/>
+            <path fill="#FBBC05" d="M11.6 28.1c-.4-1.3-.7-2.7-.7-4.1s.2-2.8.7-4.1v-5.7H4.3C2.8 17.2 2 20.5 2 24s.8 6.8 2.3 9.8l7.3-5.7z"/>
+            <path fill="#EA4335" d="M24 10.8c3.3 0 6.2 1.1 8.5 3.3l6.3-6.3C34.9 4.2 30 2 24 2 15.4 2 7.9 6.9 4.3 14.2l7.3 5.7c1.7-5.2 6.6-9.1 12.4-9.1z"/>
+          </svg>
+          {googleLoading ? "جارٍ التحويل…" : "المتابعة بحساب قوقل"}
+        </button>
+
+        <div className="flex items-center gap-3 mb-4 text-xs text-muted">
+          <span className="h-px bg-line flex-1" />
+          أو بالبريد الإلكتروني
+          <span className="h-px bg-line flex-1" />
+        </div>
 
         <form onSubmit={submit} className="space-y-3">
           {mode === "signup" && (
