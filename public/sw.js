@@ -1,17 +1,16 @@
 /* ============================================================
    عامل الخدمة (Service Worker) — وثيق
    ------------------------------------------------------------
-   غرضه الوحيد: استيفاء شرط كروم لإظهار زر «تثبيت التطبيق»،
-   وهو وجود مستمع fetch.
+   ⚠️ بلا مستمع fetch إطلاقًا — عن قصد.
 
-   ⚠️ لا يعترض أي طلب ولا يخزّن شيئًا.
+   كروم الحديث لم يعد يشترط مستمع fetch لإظهار زر «تثبيت التطبيق»،
+   بل صار ينبّه على المستمع الفارغ:
+     "No-op fetch handler may bring overhead during navigation.
+      Consider removing the handler if possible."
 
-   النسخة السابقة كانت تستدعي:
-       event.respondWith(fetch(event.request));
-   وهذا خطأ: أي فشل شبكة عابر يتحول إلى استجابة خطأ صلبة
-   (FetchEvent … resulted in a network error response) بدل أن
-   يتكفّل المتصفح بالأمر كما لو لم يكن هناك عامل خدمة أصلًا.
-   المستمع الفارغ يحقق شرط التثبيت ولا يمسّ أي طلب.
+   فالنسخة الأولى (respondWith) كسرت الطلبات، والثانية (مستمع فارغ)
+   أضافت عبئًا بلا فائدة. الصحيح: لا مستمع أصلًا.
+   التثبيت يعمل بالبيان (manifest) والأيقونات وحدها.
    ============================================================ */
 
 self.addEventListener("install", () => {
@@ -21,13 +20,9 @@ self.addEventListener("install", () => {
 self.addEventListener("activate", (event) => {
   event.waitUntil(
     (async () => {
-      // احذف أي مخزن خلّفته نسخة سابقة
       const keys = await caches.keys();
       await Promise.all(keys.map((k) => caches.delete(k)));
       await self.clients.claim();
     })()
   );
 });
-
-// مستمع بلا respondWith: المتصفح يتولى الطلب كالمعتاد
-self.addEventListener("fetch", () => {});
