@@ -69,7 +69,7 @@ export async function GET(req: Request) {
     if (dueSoon.length) parts.push(`🟡 <b>تستحق خلال ${within} أيام (${dueSoon.length})</b>`, ...dueSoon.slice(0, 12), "");
     if (lateList.length) parts.push(`🔴 <b>متأخرة (${lateList.length})</b> — إجمالي ${sar(totalDue)} ريال`, ...lateList.slice(0, 12), "");
     if (expiring.length) parts.push(`📄 <b>عقود تنتهي قريبًا (${expiring.length})</b>`, ...expiring.slice(0, 12), "");
-    parts.push("", "افتح لوحتك: https://watheq-app.vercel.app/dashboard/property");
+    parts.push("", "افتح لوحتك: https://app.watheqapp.com/dashboard/property");
 
     const r = await sendTelegram(p.telegram_chat_id as string, parts.join("\n"));
     if (r.ok) {
