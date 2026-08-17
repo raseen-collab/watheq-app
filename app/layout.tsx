@@ -10,6 +10,8 @@ export const metadata: Metadata = {
   applicationName: "وثيق",
   // شاشة كاملة بلا شريط عنوان المتصفح عند التثبيت على آيفون
   appleWebApp: { capable: true, title: "وثيق", statusBarStyle: "default" },
+  // النسخة الحديثة من الوسم؛ apple-mobile-web-app-capable وحدها صارت مهجورة
+  other: { "mobile-web-app-capable": "yes" },
   icons: {
     icon: [{ url: "/icons/icon-192.png", sizes: "192x192", type: "image/png" }],
     apple: [{ url: "/apple-touch-icon.png", sizes: "180x180", type: "image/png" }],
