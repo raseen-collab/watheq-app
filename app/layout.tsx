@@ -54,7 +54,9 @@ document.addEventListener("click",function(e){
   else document.documentElement.setAttribute("data-theme","dark");
   try{localStorage.setItem(K,d?"light":"dark");}catch(err){}
   paint();});
-paint();
+// التأجيل حتى بعد ترطيب React: التغيير أثناءه يُنتج تعارضًا
+if(document.readyState==="complete")setTimeout(paint,0);
+else window.addEventListener("load",function(){setTimeout(paint,0);});
 })();`;
 
 /**
@@ -97,7 +99,9 @@ async function FloatingLinks() {
           💬 المستشار
         </Link>
       )}
-      <button type="button" className="wq-theme-btn" data-wq-theme aria-label="التبديل للوضع الليلي">
+      {/* نصّ الزر وaria يعيد paint() كتابتهما قبل الترطيب حسب الوضع المحفوظ */}
+      <button type="button" className="wq-theme-btn" data-wq-theme
+        aria-label="التبديل للوضع الليلي" suppressHydrationWarning>
         ☾ ليلي
       </button>
     </div>
@@ -106,7 +110,9 @@ async function FloatingLinks() {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="ar" dir="rtl">
+    /* suppressHydrationWarning ضروري: THEME_INIT يضيف data-theme على
+       <html> قبل أن يرطّب React، فيرى React سمة لم يرسلها الخادم. */
+    <html lang="ar" dir="rtl" suppressHydrationWarning>
       <head>
         <script dangerouslySetInnerHTML={{ __html: THEME_INIT }} />
         <link rel="preconnect" href="https://fonts.googleapis.com" />
