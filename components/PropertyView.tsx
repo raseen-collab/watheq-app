@@ -7,7 +7,9 @@ import { sar, waLink, today } from "@/lib/utils";
 import { contractState, buildSchedule, FREQUENCIES, freqLabel, freqShort, derivedEndDate, renewContract, needsRenewal, applyPayment, splitVat, isCommercial, isVacant, settleDeposit,
   vacancyDays, TURNOVER_CHECKLIST, type Frequency } from "@/lib/contracts";
 import { PROPERTY_TYPES, typeLabel, unitLabel, typeIcon } from "@/lib/domain";
-import { statementHTML, invoiceHTML, propertyStatementHTML, moveOutSettlementHTML, quotationHTML, DEFAULT_CHARGES, openDoc, type ChargeRow } from "@/lib/documents";
+import { statementHTML, invoiceHTML, propertyStatementHTML, moveOutSettlementHTML, quotationHTML, ownerReportHTML, DEFAULT_CHARGES, openDoc, type ChargeRow, type OwnerReportPayment } from "@/lib/documents";
+import { alertCount, type ComplianceItem } from "@/lib/compliance";
+import ComplianceModal from "@/components/ComplianceModal";
 
 /** تحويل كل دورة إلى مكافئ شهري لحساب الدخل التقريبي */
 const PERIODS_PER_MONTH: Record<Frequency, number> = {
@@ -61,7 +63,7 @@ function rowKey(t: Tenant, st: ReturnType<typeof contractState>): RowKey {
 
 const URGENCY: Record<RowKey, number> = { late: 0, partial: 1, soon: 2, expiring: 3, litigation: 4, vacant: 5, ok: 6 };
 
-export default function PropertyView({ initial, orgName, issuer }: { initial: Property[]; orgName: string; issuer?: any }) {
+export default function PropertyView({ initial, orgName, issuer, compliance }: { initial: Property[]; orgName: string; issuer?: any; compliance?: ComplianceItem[] }) {
   const supabase = createClient();
   const router = useRouter();
   /** يضمن أن كل عقار يحمل مصفوفتيه — يمنع انكسار العرض عند صفٍّ جديد */
@@ -76,6 +78,11 @@ export default function PropertyView({ initial, orgName, issuer }: { initial: Pr
   const [activeId, setActiveId] = useState<string | null>(initial[0]?.id || null);
   const [modal, setModal] = useState<null | { kind: "newProp" | "editProp" | "tenant"; id?: string }>(null);
   const [quoteOpen, setQuoteOpen] = useState(false);
+  // ⚖️ التزامات المكتب: تُدار محليًّا وتُزامَن مع بيانات السيرفر عند كل refresh
+  const [comp, setComp] = useState<ComplianceItem[]>(compliance || []);
+  useEffect(() => { setComp(compliance || []); }, [compliance]);
+  const [compOpen, setCompOpen] = useState(false);
+  const [reporting, setReporting] = useState(false);
   const [doc, setDoc] = useState<null | { title: string; body: string }>(null);
   const [history, setHistory] = useState<null | { tenant: Tenant; rows: any[] }>(null);
   const [schedule, setSchedule] = useState<Tenant | null>(null);
@@ -581,6 +588,12 @@ export default function PropertyView({ initial, orgName, issuer }: { initial: Pr
           title="تحديث البيانات من السيرفر (بعد تسجيل دفعة من البوت مثلًا)">
           {refreshing ? "…" : "↻ تحديث"}
         </button>
+        <button type="button" className="btn btn-ghost text-sm" onClick={() => setCompOpen(true)}
+          title="عقود الوساطة ومددها، تراخيص الإعلانات، ورخصة فال — بتنبيهات قبل فوات وقتها">
+          ⚖️ الالتزامات{alertCount(comp) > 0 && (
+            <span className="mr-1.5 inline-grid place-items-center min-w-[20px] h-5 px-1 rounded-full bg-[#FBE9E7] text-[#a5322c] text-[.68rem] font-bold">{alertCount(comp)}</span>
+          )}
+        </button>
         <button type="button" className="btn btn-ghost text-sm" onClick={() => setModal({ kind: "editProp" })}>الإعدادات</button>
         <button className="btn btn-gold text-sm" onClick={() => setModal({ kind: "newProp" })}>+ عقار</button>
       </div>
@@ -606,6 +619,8 @@ export default function PropertyView({ initial, orgName, issuer }: { initial: Pr
           <div className="flex items-center justify-between border-b border-line px-5 py-4 gap-2 flex-wrap">
             <h2 className="font-semibold">الوحدات والمستأجرون</h2>
             <div className="flex gap-2 flex-wrap">
+              <button className="btn btn-ghost text-xs" onClick={() => setReporting(true)}
+                title="تقرير فترة للمالك: الإشغال والمحصَّل فعليًّا والمتأخرات — من سجل الدفعات">📊 تقرير المالك</button>
               <button className="btn btn-ghost text-xs" onClick={openPropertyStatement}>كشف حساب العقار</button>
               <button className="btn btn-ghost text-xs" onClick={() => setQuoteOpen(true)}
                 title="إصدار عرض سعر تأجير لمستأجر محتمل قبل التعاقد">📋 عرض سعر</button>
@@ -768,6 +783,15 @@ export default function PropertyView({ initial, orgName, issuer }: { initial: Pr
 
       {quoteOpen && active && (
         <QuoteModal property={active} unitWord={ul} issuer={issuer || {}} onClose={() => setQuoteOpen(false)} />
+      )}
+
+      {compOpen && (
+        <ComplianceModal initial={comp} orgName={orgName} issuer={issuer || {}}
+          properties={items.map((x) => ({ id: x.id, name: x.name }))}
+          onChanged={setComp} onClose={() => { setCompOpen(false); router.refresh(); }} />
+      )}
+      {reporting && active && (
+        <OwnerReportModal property={active} unitWord={ul} issuer={issuer || {}} onClose={() => setReporting(false)} />
       )}
 
       {schedule && <ScheduleModal tenant={schedule} unitWord={ul} onClose={() => setSchedule(null)} />}
@@ -1264,6 +1288,83 @@ function TenantModal({ open, initial, unitWord, onClose, onSubmit }: {
 }
 
 /** عرض سعر تأجير — مستند مبدئي غير مُلزم يُرسل لمستأجر محتمل قبل التعاقد */
+/**
+ * 📊 تقرير المالك الدوري — يختار المكتب الشهر، فنجلب دفعاته الموثّقة
+ * من جدول payments ونصدر تقرير الفترة: إشغال + محصَّل فعلي + متأخرات.
+ * هذا هو المستند الذي يبيع المكتب به نفسه لملّاكه كل شهر.
+ */
+const AR_MONTHS = ["يناير","فبراير","مارس","أبريل","مايو","يونيو","يوليو","أغسطس","سبتمبر","أكتوبر","نوفمبر","ديسمبر"];
+
+function OwnerReportModal({ property, unitWord, issuer, onClose }: {
+  property: Property; unitWord: string; issuer: any; onClose: () => void;
+}) {
+  const supabase = createClient();
+  const thisMonth = today().slice(0, 7); // YYYY-MM
+  const [ym, setYm] = useState(thisMonth);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const valid = /^\d{4}-\d{2}$/.test(ym);
+  const label = valid ? `${AR_MONTHS[Number(ym.slice(5, 7)) - 1] || ym} ${ym.slice(0, 4)}` : ym;
+
+  async function issue() {
+    if (!valid) return;
+    setLoading(true); setErr(null);
+    const y = Number(ym.slice(0, 4)), m = Number(ym.slice(5, 7));
+    const from = `${ym}-01`;
+    const lastDay = new Date(y, m, 0).getDate();
+    const to = `${ym}-${String(lastDay).padStart(2, "0")}`;
+
+    // دفعات العقار الموثّقة خلال الشهر — نفس السجل الذي يغذّي كشف حساب المستأجر
+    const { data, error } = await supabase.from("payments")
+      .select("id,paid_on,amount,method,periods_covered,note,tenant_id")
+      .eq("property_id", property.id)
+      .gte("paid_on", from).lte("paid_on", to)
+      .order("paid_on", { ascending: true }).limit(1000);
+    setLoading(false);
+    if (error) { setErr(error.message); return; }
+
+    const byId: Record<string, Tenant> = {};
+    (property.tenants || []).forEach((t) => { byId[t.id] = t; });
+    const payments: OwnerReportPayment[] = (data || []).map((x: any) => ({
+      id: x.id, paid_on: x.paid_on, amount: x.amount, method: x.method,
+      periods_covered: x.periods_covered, note: x.note,
+      tenant_name: byId[x.tenant_id]?.name || null,
+      unit: byId[x.tenant_id]?.unit || null,
+    }));
+
+    openDoc(ownerReportHTML(property as any, { label, from, to }, payments, issuer || {}));
+    onClose();
+  }
+
+  return (
+    <Shell onClose={onClose}>
+      <h2 className="font-display font-bold text-deep text-xl mb-1">📊 تقرير المالك — {property.name}</h2>
+      <p className="text-sm text-muted mb-4">
+        تقرير فترة يجمع الإشغال والمحصَّل فعليًّا والمتأخرات القائمة، من الدفعات الموثّقة في وثيق —
+        أرسله للمالك كل شهر بدل تجميعه يدويًّا.
+      </p>
+      <div className="space-y-3">
+        <Field label="شهر التقرير">
+          <input className="fld" type="month" value={ym} max={thisMonth} onChange={(e) => setYm(e.target.value)} />
+        </Field>
+        <div className="bg-paper border border-line rounded-xl p-3 text-xs text-muted leading-relaxed">
+          يشمل التقرير: نسبة الإشغال وعدد الشواغر · جدول {unitWord === "وحدة" ? "الوحدات" : `كل ${unitWord}`} وحالتها ·
+          الدفعات المستلمة خلال <b className="text-deep">{label}</b> بإجماليها · والمتأخرات القائمة وقت الإصدار.
+          الأرقام تعكس ما وثّقه المكتب في النظام.
+        </div>
+        {err && <div className="text-xs font-semibold text-[#8f2b26] bg-[#FBE9E7] border border-[#F5C6C2] rounded-lg p-2.5">{err}</div>}
+        <div className="flex gap-2 justify-end">
+          <button className="btn btn-ghost text-sm" onClick={onClose} disabled={loading}>إلغاء</button>
+          <button className="btn btn-gold text-sm" onClick={issue} disabled={!valid || loading}>
+            {loading ? "…" : "🖨️ إصدار التقرير"}
+          </button>
+        </div>
+      </div>
+    </Shell>
+  );
+}
+
 function QuoteModal({ property, unitWord, issuer, onClose }: {
   property: Property; unitWord: string; issuer: any; onClose: () => void;
 }) {
