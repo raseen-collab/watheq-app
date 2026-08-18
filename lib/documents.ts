@@ -1,4 +1,5 @@
-import { contractState, buildSchedule, freqLabel, splitVat, settleDeposit, vacancyDays } from "./contracts";
+import { contractState, buildSchedule, freqLabel, splitVat, settleDeposit, vacancyDays, isVacant } from "./contracts";
+import { complianceState, brokerageEnd, expectedCommission, UI_LEGAL, LEGAL_DISCLAIMER, DEFAULT_COMMISSION_PCT, type ComplianceItem } from "./compliance";
 import { unitLabel, typeLabel } from "./domain";
 
 const sar = (n: number) => (Number(n) || 0).toLocaleString("en-US");
@@ -1306,4 +1307,184 @@ ${hasVat ? `<div class="note" style="border-inline-start-color:#D0453F;backgroun
 </div>
 ${footer()}`;
   return SHELL(`فاتورة ${inv.invoice_no} — ${inv.to_name}`, body, "none");
+}
+
+// ============================================================
+// تقرير المالك الدوري — أهم مستند يقدّمه مكتب إدارة الأملاك لمالكه:
+// إشغال + محصَّل الفترة فعليًّا (من سجل الدفعات) + المتأخرات الحالية.
+// يختلف عن «كشف حساب العقار»: ذاك لقطة لحظية، وهذا حصاد فترة.
+// ============================================================
+
+export type OwnerReportPayment = PaymentRow & { tenant_name?: string | null; unit?: string | null };
+
+export function ownerReportHTML(
+  p: Property & { tenants: (Tenant & { status?: string | null; move_out_date?: string | null })[] },
+  period: { label: string; from: string; to: string },
+  payments: OwnerReportPayment[] = [],
+  issuer: Issuer = {},
+) {
+  const ul = unitLabel(p.property_type);
+  const who = issuer.billing_name || p.manager || "إدارة الأملاك";
+  const v = vatOf(p);
+  const g = graceOf(p);
+
+  const rows = (p.tenants || []).map((t) => ({ t, st: contractState(t, g), vacant: isVacant(t) }));
+  const total = rows.length;
+  const vacant = rows.filter((r) => r.vacant).length;
+  const occupied = total - vacant;
+  const occupancy = total ? Math.round((occupied / total) * 100) : 0;
+  const late = rows.filter((r) => !r.vacant && r.st.status === "late").length;
+  const totalDue = rows.reduce((s, r) => s + (r.vacant ? 0 : r.st.amountDue), 0);
+  const collected = payments.reduce((s, x) => s + (Number(x.amount) || 0), 0);
+  const expiring = rows.filter((r) => !r.vacant && r.st.daysToEnd !== null && r.st.daysToEnd >= 0 && r.st.daysToEnd <= 60).length;
+
+  const body = `
+${header("تقرير دوري للمالك", p.name)}
+<h1>تقرير المالك — ${p.name}</h1>
+<div class="sub">${typeLabel(p.property_type)}${p.address ? ` — ${p.address}` : ""}${p.city ? `، ${p.city}` : ""} · الفترة: <b>${period.label}</b> (${arDate(period.from)} إلى ${arDate(period.to)})</div>
+
+<div class="tot">
+  <div><div class="v">${total}</div><div class="l">إجمالي الوحدات</div></div>
+  <div><div class="v">${occupancy}%</div><div class="l">الإشغال (${vacant} شاغرة)</div></div>
+  <div><div class="v g">${sar(collected)}</div><div class="l">المُحصَّل خلال الفترة (ريال)</div></div>
+  <div><div class="v${totalDue ? " r" : ""}">${sar(totalDue)}</div><div class="l">المتأخرات القائمة (ريال)</div></div>
+</div>
+
+${totalDue > 0 || expiring > 0 ? `<div class="note">${[
+    late ? `${late} ${late === 1 ? "وحدة متأخرة" : "وحدات متأخرة"} بإجمالي ${sar(totalDue)} ريال` : "",
+    expiring ? `${expiring} ${expiring === 1 ? "عقد ينتهي" : "عقود تنتهي"} خلال 60 يومًا — قرار التجديد مطلوب` : "",
+  ].filter(Boolean).join(" · ")}</div>` : ""}
+
+<h2>حالة الوحدات في نهاية الفترة</h2>
+<div class="scrollx"><table>
+  <thead><tr><th>${ul}</th><th>المستأجر</th><th>الدفعة</th><th>الدورة</th><th>نهاية العقد</th><th>المتأخر</th><th>الحالة</th></tr></thead>
+  <tbody>
+    ${rows.map(({ t, st, vacant: vc }) => `<tr>
+      <td>${t.unit || "—"}</td>
+      <td>${vc ? "—" : t.name}</td>
+      <td>${vc ? "—" : sar(splitVat(Number(t.rent_amount) || 0, v).total)}</td>
+      <td>${vc ? "—" : freqLabel(t.payment_frequency)}</td>
+      <td>${vc ? "—" : arDate(st.endDate)}</td>
+      <td>${!vc && st.amountDue ? sar(st.amountDue) : "—"}</td>
+      <td>${vc ? '<span class="pill u">شاغرة</span>'
+          : st.status === "late" ? '<span class="pill l">متأخر</span>'
+          : st.inGrace ? '<span class="pill u">فترة سماح</span>'
+          : st.status === "soon" ? '<span class="pill u">يستحق قريبًا</span>'
+          : '<span class="pill p">منتظم</span>'}</td>
+    </tr>`).join("")}
+  </tbody>
+</table></div>
+
+<h2>الدفعات المستلمة خلال الفترة (${payments.length})</h2>
+${payments.length ? `<div class="scrollx"><table>
+  <thead><tr><th>التاريخ</th><th>المستأجر</th><th>${ul}</th><th>المبلغ</th><th>الطريقة</th><th>ملاحظة</th></tr></thead>
+  <tbody>
+    ${payments.map((x) => `<tr>
+      <td>${arDate(x.paid_on)}</td>
+      <td>${x.tenant_name || "—"}</td>
+      <td>${x.unit || "—"}</td>
+      <td><b>${sar(x.amount)}</b></td>
+      <td>${methodAr(x.method)}</td>
+      <td>${x.note ? String(x.note) : "—"}</td>
+    </tr>`).join("")}
+    <tr><td colspan="3"><b>الإجمالي</b></td><td><b>${sar(collected)}</b></td><td colspan="2">—</td></tr>
+  </tbody>
+</table></div>` : `<div class="sub">لم تُسجَّل دفعات خلال هذه الفترة.</div>`}
+
+<div class="note">تقرير استرشادي صادر آليًّا من سجل الدفعات وبيانات العقود المسجّلة في وثيق بتاريخ ${today()}. الأرقام تعكس ما وثّقه المكتب في النظام.</div>
+<div class="sign"><div>إدارة الأملاك: ${who}<br><br>التوقيع: ________________</div><div>المالك: ____________________<br><br>تاريخ الإصدار: ${today()}</div></div>
+${footer()}`;
+  return SHELL(`تقرير المالك — ${p.name} — ${period.label}`, body, markOf(issuer));
+}
+
+// ============================================================
+// سجل التزامات المكتب العقاري — نسخة مطبوعة لملف المكتب:
+// رخصة فال · عقود الوساطة ونوافذ عمولتها · تراخيص الإعلانات،
+// مع الحدود النظامية بصياغة استرشادية موحّدة (UI_LEGAL).
+// ============================================================
+
+const DEAL_AR: Record<string, string> = { sale: "بيع", rent: "إيجار" };
+const phasePill = (tone: "ok" | "warn" | "bad" | "muted", label: string) =>
+  `<span class="pill ${tone === "ok" ? "p" : tone === "bad" ? "l" : "u"}">${label}</span>`;
+
+export function complianceRegisterHTML(items: ComplianceItem[], orgName: string, issuer: Issuer = {}) {
+  const who = issuer.billing_name || orgName || "المكتب العقاري";
+  const fal = items.filter((x) => x.kind === "fal_license");
+  const bro = items.filter((x) => x.kind === "brokerage");
+  const ads = items.filter((x) => x.kind === "ad_license");
+
+  const falRows = fal.map((it) => {
+    const st = complianceState(it);
+    return `<tr>
+      <td>${it.title}</td>
+      <td>${it.ref_no || "—"}</td>
+      <td>${arDate(it.start_date)}</td>
+      <td>${arDate(st.endDate)}</td>
+      <td>${phasePill(st.tone, st.label)}</td>
+    </tr>`;
+  }).join("");
+
+  const broRows = bro.map((it) => {
+    const st = complianceState(it);
+    const be = brokerageEnd(it);
+    const fee = expectedCommission(it);
+    return `<tr>
+      <td>${it.title}${it.exclusive ? ' <span class="pill u">حصري</span>' : ""}</td>
+      <td>${it.party || "—"}</td>
+      <td>${DEAL_AR[String(it.deal_type || "")] || "—"}</td>
+      <td>${it.ref_no || "—"}</td>
+      <td>${arDate(it.start_date)}</td>
+      <td>${arDate(st.endDate)}${be.derived ? ' <span class="pill u">مستنتج 90 يومًا</span>' : ""}</td>
+      <td>${st.windowEnd ? arDate(st.windowEnd) : "—"}</td>
+      <td>${fee ? `${sar(fee)} <span style="font-size:.7rem;color:#5C6B67">(${Number(it.commission_pct) > 0 ? it.commission_pct : DEFAULT_COMMISSION_PCT}%)</span>` : "—"}</td>
+      <td>${phasePill(st.tone, st.label)}</td>
+    </tr>`;
+  }).join("");
+
+  const adRows = ads.map((it) => {
+    const st = complianceState(it);
+    return `<tr>
+      <td>${it.title}</td>
+      <td>${it.platform || "—"}</td>
+      <td>${it.ref_no || "—"}</td>
+      <td>${arDate(it.start_date)}</td>
+      <td>${arDate(st.endDate)}</td>
+      <td>${phasePill(st.tone, st.label)}</td>
+    </tr>`;
+  }).join("");
+
+  const body = `
+${header("سجل التزامات المكتب", who)}
+<h1>سجل التزامات المكتب العقاري</h1>
+<div class="sub">${who} · تاريخ الإصدار: ${arDate(today())} · ${items.length} بند</div>
+
+<h2>🪪 رخصة فال</h2>
+${fal.length ? `<div class="scrollx"><table>
+  <thead><tr><th>الرخصة</th><th>رقمها</th><th>الإصدار</th><th>الانتهاء</th><th>الحالة</th></tr></thead>
+  <tbody>${falRows}</tbody>
+</table></div>` : `<div class="sub">لم تُسجَّل رخصة فال بعد — سجّلها ليصلك تنبيه قبل انتهائها بثلاثين يومًا.</div>`}
+
+<h2>🤝 عقود الوساطة (${bro.length})</h2>
+${bro.length ? `<div class="scrollx"><table>
+  <thead><tr><th>العقد</th><th>المالك</th><th>النوع</th><th>رقم الإيداع</th><th>الإبرام</th><th>الانتهاء</th><th>نافذة العمولة حتى</th><th>العمولة المتوقعة</th><th>الحالة</th></tr></thead>
+  <tbody>${broRows}</tbody>
+</table></div>` : `<div class="sub">لا عقود وساطة مسجّلة.</div>`}
+
+<h2>📢 تراخيص الإعلانات (${ads.length})</h2>
+${ads.length ? `<div class="scrollx"><table>
+  <thead><tr><th>الإعلان</th><th>المنصة</th><th>رقم الترخيص</th><th>البداية</th><th>الانتهاء</th><th>الحالة</th></tr></thead>
+  <tbody>${adRows}</tbody>
+</table></div>` : `<div class="sub">لا تراخيص إعلانات مسجّلة.</div>`}
+
+<h2>الحدود النظامية — استرشاديًّا</h2>
+<table>
+  <tbody>
+    ${UI_LEGAL.map((x) => `<tr><td style="width:90px"><b>${x.ref}</b></td><td>${x.text}</td></tr>`).join("")}
+  </tbody>
+</table>
+
+<div class="note">${LEGAL_DISCLAIMER}</div>
+<div class="sign"><div>أعدّه: ${who}<br><br>التوقيع: ________________</div><div>تاريخ الإصدار: ${today()}</div></div>
+${footer()}`;
+  return SHELL(`سجل التزامات المكتب — ${who}`, body, markOf(issuer));
 }
