@@ -33,5 +33,12 @@ export default async function PropertyPage() {
   // ثلاث حالات: مشترك = مستند نظيف · تجربة نشطة = سطر «أُنشئ عبر وثيق» · انتهت بلا اشتراك = علامة مائية
   const { trial, expired } = issuerMarks(profile);
 
-  return <PropertyView initial={properties || []} orgName={profile?.org_name || ""} issuer={{ ...(profile || {}), trial, expired }} />;
+  // ⚖️ التزامات المكتب (عقود الوساطة/الإعلانات/فال).
+  // إن لم يُشغَّل schema-v6.sql بعد يعود خطأ — نمرّر [] فلا تنكسر اللوحة.
+  const { data: compliance } = await supabase
+    .from("compliance_items").select("*")
+    .order("end_date", { ascending: true, nullsFirst: false });
+
+  return <PropertyView initial={properties || []} orgName={profile?.org_name || ""}
+    issuer={{ ...(profile || {}), trial, expired }} compliance={compliance || []} />;
 }
