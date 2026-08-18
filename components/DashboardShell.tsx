@@ -34,6 +34,7 @@ export default function DashboardShell({
   const nav = onProperty
     ? [
         { href: "/dashboard/property", label: "عقاراتي" },
+        { href: "/dashboard/property/listings", label: "📋 المعروضات" },
         { href: "/dashboard/property/import", label: "رفع Excel" },
         { href: "/dashboard/property/advisor", label: "🧠 المستشار" },
       ]
