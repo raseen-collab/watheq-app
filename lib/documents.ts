@@ -1,5 +1,6 @@
 import { contractState, buildSchedule, freqLabel, splitVat, settleDeposit, vacancyDays, isVacant } from "./contracts";
 import { complianceState, brokerageEnd, expectedCommission, UI_LEGAL, LEGAL_DISCLAIMER, DEFAULT_COMMISSION_PCT, type ComplianceItem } from "./compliance";
+import { KIND_META as L_KIND, OFFER_LABEL, STATUS_META, freshness, pricePerMeter, shortDesc, sortListings, summarize, STALE_DAYS, type Listing } from "./listings";
 import { unitLabel, typeLabel } from "./domain";
 
 const sar = (n: number) => (Number(n) || 0).toLocaleString("en-US");
@@ -1487,4 +1488,57 @@ ${ads.length ? `<div class="scrollx"><table>
 <div class="sign"><div>أعدّه: ${who}<br><br>التوقيع: ________________</div><div>تاريخ الإصدار: ${today()}</div></div>
 ${footer()}`;
   return SHELL(`سجل التزامات المكتب — ${who}`, body, markOf(issuer));
+}
+
+// ============================================================
+// سجل المعروضات — نسخة مطبوعة تحلّ محلّ الأوراق المتفرقة:
+// كل معروض بكوده وحالته وسعر متره وتاريخ آخر تأكيد لتوفره.
+// ============================================================
+
+export function listingsRegisterHTML(items: Listing[], orgName: string, issuer: Issuer = {}) {
+  const who = issuer.billing_name || orgName || "المكتب العقاري";
+  const rows = sortListings(items || []);
+  const s = summarize(rows);
+
+  const line = (l: Listing) => {
+    const meta = L_KIND[l.kind] || L_KIND.other;
+    const st = STATUS_META[(l.status || "available") as keyof typeof STATUS_META] || STATUS_META.available;
+    const fr = freshness(l);
+    const ppm = pricePerMeter(l);
+    return `<tr>
+      <td><b>${l.code}</b></td>
+      <td>${meta.icon} ${meta.label} — ${OFFER_LABEL[l.offer_type] || ""}</td>
+      <td>${shortDesc(l)}${l.title ? `<div style="font-size:.72rem;color:#5C6B67">${l.title}</div>` : ""}</td>
+      <td>${Number(l.price) > 0 ? sar(Number(l.price)) : "—"}</td>
+      <td>${ppm ? sar(ppm) : "—"}</td>
+      <td>${l.owner_name || "—"}${l.owner_phone ? `<div style="font-size:.72rem;color:#5C6B67">${l.owner_phone}</div>` : ""}</td>
+      <td>${arDate(l.last_confirmed_at)}${fr.stale ? ' <span class="pill u">راجعه</span>' : ""}</td>
+      <td><span class="pill ${st.tone === "ok" ? "p" : st.tone === "warn" ? "u" : "u"}">${st.label}</span></td>
+    </tr>`;
+  };
+
+  const body = `
+${header("سجل المعروضات", who)}
+<h1>سجل المعروضات</h1>
+<div class="sub">${who} · تاريخ الإصدار: ${arDate(today())} · ${s.total} معروض</div>
+
+<div class="tot">
+  <div><div class="v">${s.total}</div><div class="l">إجمالي المعروضات</div></div>
+  <div><div class="v g">${s.available}</div><div class="l">متاح</div></div>
+  <div><div class="v">${s.reserved}</div><div class="l">محجوز بعربون</div></div>
+  <div><div class="v${s.stale ? " r" : ""}">${s.stale}</div><div class="l">يحتاج تأكيد توفر</div></div>
+</div>
+
+${s.stale > 0 ? `<div class="note">${s.stale} ${s.stale === 1 ? "معروض لم يُؤكَّد توفره" : "معروضًا لم تُؤكَّد توفراتها"} منذ ${STALE_DAYS} يومًا أو أكثر — تأكّد من المالك قبل عرضها على أي عميل.</div>` : ""}
+
+<h2>المعروضات</h2>
+${rows.length ? `<div class="scrollx"><table>
+  <thead><tr><th>الكود</th><th>النوع</th><th>الوصف</th><th>السعر</th><th>سعر المتر</th><th>المالك</th><th>آخر تأكيد</th><th>الحالة</th></tr></thead>
+  <tbody>${rows.map(line).join("")}</tbody>
+</table></div>` : `<div class="sub">لا معروضات مسجّلة بعد.</div>`}
+
+<div class="note">سجل داخلي للمكتب صادر آليًّا من وثيق بتاريخ ${today()}. الأسعار والحالات تعكس ما وثّقه المكتب، ولا يُعدّ هذا المستند عرضًا أو إعلانًا عقاريًّا.</div>
+<div class="sign"><div>أعدّه: ${who}<br><br>التوقيع: ________________</div><div>تاريخ الإصدار: ${today()}</div></div>
+${footer()}`;
+  return SHELL(`سجل المعروضات — ${who}`, body, markOf(issuer));
 }
