@@ -40,7 +40,7 @@ export default function LoginPage() {
 function LoginInner() {
   const searchParams = useSearchParams();
   const next = safeNext(searchParams.get("next"));
-  const [mode, setMode] = useState<"signin" | "signup">("signin");
+  const [mode, setMode] = useState<"signin" | "signup" | "forgot">("signin");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
@@ -112,6 +112,23 @@ function LoginInner() {
     setError(null); setInfo(null); setLoading(true);
     const supabase = createClient();
     try {
+      if (mode === "forgot") {
+        /**
+         * استعادة كلمة المرور: Supabase يرسل بريدًا برابط مؤقت يعود إلى
+         * /auth/callback (يبادل الرمز بجلسة) ثم إلى /reset-password.
+         * الرسالة واحدة سواء وُجد البريد أم لا — حتى لا يُستخدم النموذج
+         * لاكتشاف أي البريدات مسجّلة عندنا (تعداد حسابات).
+         */
+        const { error } = await supabase.auth.resetPasswordForEmail(email, {
+          redirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent("/reset-password")}`,
+        });
+        if (error && /rate limit|seconds/i.test(String(error.message))) {
+          setError("طلبات كثيرة متتالية — انتظر دقيقة ثم أعد المحاولة.");
+        } else {
+          setInfo("إن كان هذا البريد مسجّلًا عندنا فستصلك رسالة برابط تعيين كلمة مرور جديدة خلال دقائق. تحقق أيضًا من مجلد الرسائل غير المرغوبة.");
+        }
+        return;
+      }
       if (mode === "signup") {
         const { data, error } = await supabase.auth.signUp({
           email, password,
@@ -174,10 +191,17 @@ function LoginInner() {
           </div>
         </a>
 
-        <h1 className="font-display text-2xl font-bold text-deep mb-1">{mode === "signin" ? "تسجيل الدخول" : "إنشاء حساب جديد"}</h1>
-        <p className="text-sm text-muted mb-5">{mode === "signin" ? "أدخل بريدك وكلمة المرور." : "أنشئ حسابك المجاني لإدارة جمعياتك أو عقاراتك."}</p>
+        <h1 className="font-display text-2xl font-bold text-deep mb-1">
+          {mode === "signin" ? "تسجيل الدخول" : mode === "signup" ? "إنشاء حساب جديد" : "استعادة كلمة المرور"}
+        </h1>
+        <p className="text-sm text-muted mb-5">
+          {mode === "signin" ? "أدخل بريدك وكلمة المرور."
+            : mode === "signup" ? "أنشئ حسابك المجاني لإدارة جمعياتك أو عقاراتك."
+            : "أدخل بريدك المسجَّل وسنرسل لك رابط تعيين كلمة مرور جديدة."}
+        </p>
 
         {/* الدخول بقوقل أولًا وأكبر: يحذف حقلين من طريق زائر بارد */}
+        {mode !== "forgot" && (<>
         <button type="button" onClick={signInWithGoogle} disabled={googleLoading || leaving}
           className="w-full flex items-center justify-center gap-3 border border-line rounded-xl
                      bg-white hover:bg-paper2 transition px-4 py-3 font-semibold text-deep
@@ -196,6 +220,7 @@ function LoginInner() {
           أو بالبريد الإلكتروني
           <span className="h-px bg-line flex-1" />
         </div>
+        </>)}
 
         <form onSubmit={submit} className="space-y-3">
           {mode === "signup" && (
@@ -208,10 +233,20 @@ function LoginInner() {
             <label className="block text-sm font-semibold mb-1">البريد الإلكتروني</label>
             <input className="fld" type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" required />
           </div>
-          <div>
-            <label className="block text-sm font-semibold mb-1">كلمة المرور</label>
-            <input className="fld" type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="٦ أحرف على الأقل" required minLength={6} />
-          </div>
+          {mode !== "forgot" && (
+            <div>
+              <label className="block text-sm font-semibold mb-1">كلمة المرور</label>
+              <input className="fld" type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="٦ أحرف على الأقل" required minLength={6} />
+              {mode === "signin" && (
+                <div className="text-left mt-1">
+                  <button type="button" className="text-xs text-muted hover:text-gold font-semibold"
+                    onClick={() => { setMode("forgot"); setError(null); setInfo(null); }}>
+                    نسيت كلمة المرور؟
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
 
           {mode === "signup" && (
             <div>
@@ -231,15 +266,17 @@ function LoginInner() {
           {info && <div className="text-sm text-[#137a50] bg-[#E6F4EC] border border-[#B7DFC7] rounded-lg p-2.5">{info}</div>}
 
           <button type="submit" disabled={loading || leaving} className="btn btn-gold w-full justify-center mt-2">
-            {leaving ? "جارٍ فتح لوحتك…" : loading ? "..." : mode === "signin" ? "دخول" : "إنشاء الحساب"}
+            {leaving ? "جارٍ فتح لوحتك…" : loading ? "..." : mode === "signin" ? "دخول" : mode === "signup" ? "إنشاء الحساب" : "إرسال رابط الاستعادة"}
           </button>
         </form>
 
         <div className="text-center mt-5 text-sm">
           {mode === "signin" ? (
             <>ما عندك حساب؟ <button className="text-gold font-semibold" onClick={() => { setMode("signup"); setError(null); }}>أنشئ واحدًا</button></>
-          ) : (
+          ) : mode === "signup" ? (
             <>لديك حساب؟ <button className="text-gold font-semibold" onClick={() => { setMode("signin"); setError(null); }}>سجّل الدخول</button></>
+          ) : (
+            <>تذكرتها؟ <button className="text-gold font-semibold" onClick={() => { setMode("signin"); setError(null); setInfo(null); }}>سجّل الدخول</button></>
           )}
         </div>
         <div className="text-center mt-4 pt-4 border-t border-line text-sm">
