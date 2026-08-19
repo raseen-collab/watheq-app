@@ -5,6 +5,7 @@ import { contractState } from "@/lib/contracts";
 import { unitLabel } from "@/lib/domain";
 import { complianceDigestLines, type ComplianceItem } from "@/lib/compliance";
 import { listingsDigestLines, type Listing } from "@/lib/listings";
+import { requestsDigestLines, type SeekerRequest } from "@/lib/requests";
 import { complianceState } from "@/lib/compliance";
 
 export const dynamic = "force-dynamic";
@@ -80,6 +81,7 @@ export async function GET(req: Request) {
     // 📋 المعروضات: ما يحتاج تأكيد توفر، وما هو مفتوح بعقد وساطة منتهٍ.
     // داخل try أيضًا حتى لا يُسقط غيابُ جدول schema-v7 الملخّصَ اليومي.
     let listings: string[] = [];
+    let matchLines: string[] = [];
     try {
       const { data: lItems } = await db.from("listings").select("*").eq("user_id", p.id);
       const expiredBro = new Set(
@@ -87,10 +89,18 @@ export async function GET(req: Request) {
           .filter((b) => b.kind === "brokerage" && ["expired", "window"].includes(complianceState(b).phase))
           .map((b) => b.id),
       );
-      listings = listingsDigestLines((lItems || []) as Listing[], expiredBro);
+      const lRows = (lItems || []) as Listing[];
+      listings = listingsDigestLines(lRows, expiredBro);
+
+      // 🔎 طلبات لها معروضات مطابقة — مكالمة اليوم أثمن من مكالمة الأسبوع القادم
+      try {
+        const { data: rItems } = await db.from("seeker_requests").select("*")
+          .eq("user_id", p.id).eq("status", "active");
+        matchLines = requestsDigestLines((rItems || []) as SeekerRequest[], lRows);
+      } catch { /* جدول الطلبات غير منشأ بعد */ }
     } catch { /* الجدول غير منشأ بعد — نتجاهل القسم */ }
 
-    if (!dueSoon.length && !lateList.length && !expiring.length && !compliance.length && !listings.length) continue;
+    if (!dueSoon.length && !lateList.length && !expiring.length && !compliance.length && !listings.length && !matchLines.length) continue;
 
     const parts = [`🗂️ <b>ملخّص وثيق اليومي</b>${p.org_name ? ` — ${p.org_name}` : ""}`, ""];
     if (dueSoon.length) parts.push(`🟡 <b>تستحق خلال ${within} أيام (${dueSoon.length})</b>`, ...dueSoon.slice(0, 12), "");
@@ -98,6 +108,7 @@ export async function GET(req: Request) {
     if (expiring.length) parts.push(`📄 <b>عقود تنتهي قريبًا (${expiring.length})</b>`, ...expiring.slice(0, 12), "");
     if (compliance.length) parts.push(`⚖️ <b>التزامات المكتب (${compliance.length})</b>`, ...compliance.slice(0, 12), "");
     if (listings.length) parts.push(`📋 <b>المعروضات</b>`, ...listings, "");
+    if (matchLines.length) parts.push(...matchLines, "");
     parts.push("", "افتح لوحتك: https://app.watheqapp.com/dashboard/property");
 
     const r = await sendTelegram(p.telegram_chat_id as string, parts.join("\n"));
