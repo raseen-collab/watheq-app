@@ -1,6 +1,7 @@
 import { contractState, buildSchedule, freqLabel, splitVat, settleDeposit, vacancyDays, isVacant } from "./contracts";
 import { complianceState, brokerageEnd, expectedCommission, UI_LEGAL, LEGAL_DISCLAIMER, DEFAULT_COMMISSION_PCT, type ComplianceItem } from "./compliance";
 import { KIND_META as L_KIND, OFFER_LABEL, STATUS_META, freshness, pricePerMeter, shortDesc, sortListings, summarize, STALE_DAYS, type Listing } from "./listings";
+import { ownerNet, sumByCategory, catLabel, type ExpenseRow } from "./expenses";
 import { unitLabel, typeLabel } from "./domain";
 
 const sar = (n: number) => (Number(n) || 0).toLocaleString("en-US");
@@ -1323,6 +1324,8 @@ export function ownerReportHTML(
   period: { label: string; from: string; to: string },
   payments: OwnerReportPayment[] = [],
   issuer: Issuer = {},
+  // المصروفات وأتعاب الإدارة اختيارية — بدونها يبقى التقرير كما كان (توافق خلفي)
+  extra: { expenses?: ExpenseRow[]; fee_pct?: number | null } = {},
 ) {
   const ul = unitLabel(p.property_type);
   const who = issuer.billing_name || p.manager || "إدارة الأملاك";
@@ -1337,6 +1340,9 @@ export function ownerReportHTML(
   const late = rows.filter((r) => !r.vacant && r.st.status === "late").length;
   const totalDue = rows.reduce((s, r) => s + (r.vacant ? 0 : r.st.amountDue), 0);
   const collected = payments.reduce((s, x) => s + (Number(x.amount) || 0), 0);
+  const exp = extra.expenses || [];
+  const fin = ownerNet(collected, exp, extra.fee_pct);
+  const showFinance = exp.length > 0 || fin.feePct !== null;
   const expiring = rows.filter((r) => !r.vacant && r.st.daysToEnd !== null && r.st.daysToEnd >= 0 && r.st.daysToEnd <= 60).length;
 
   const body = `
@@ -1392,7 +1398,33 @@ ${payments.length ? `<div class="scrollx"><table>
   </tbody>
 </table></div>` : `<div class="sub">لم تُسجَّل دفعات خلال هذه الفترة.</div>`}
 
-<div class="note">تقرير استرشادي صادر آليًّا من سجل الدفعات وبيانات العقود المسجّلة في وثيق بتاريخ ${today()}. الأرقام تعكس ما وثّقه المكتب في النظام.</div>
+${showFinance ? `
+<h2>مصروفات الفترة (${exp.length})</h2>
+${exp.length ? `<div class="scrollx"><table>
+  <thead><tr><th>التاريخ</th><th>التصنيف</th><th>${ul}</th><th>المبلغ</th><th>ملاحظة</th></tr></thead>
+  <tbody>
+    ${exp.map((x) => `<tr>
+      <td>${arDate(x.spent_on)}</td>
+      <td>${catLabel(x.category)}</td>
+      <td>${x.unit || "—"}</td>
+      <td><b>${sar(Number(x.amount) || 0)}</b></td>
+      <td>${x.note ? String(x.note) : "—"}</td>
+    </tr>`).join("")}
+    <tr><td colspan="3"><b>إجمالي المصروفات</b></td><td><b>${sar(fin.expenses)}</b></td><td>${sumByCategory(exp).map((c) => `${c.label} ${sar(c.total)}`).join(" · ") || "—"}</td></tr>
+  </tbody>
+</table></div>` : `<div class="sub">لا مصروفات مسجّلة خلال هذه الفترة.</div>`}
+
+<h2>الحساب الختامي للمالك</h2>
+<table>
+  <tbody>
+    <tr><td>المحصَّل خلال الفترة</td><td style="text-align:left"><b>${sar(fin.collected)}</b></td></tr>
+    <tr><td>(−) مصروفات الفترة</td><td style="text-align:left">${sar(fin.expenses)}</td></tr>
+    ${fin.feePct !== null ? `<tr><td>(−) أتعاب الإدارة (${fin.feePct}% من المحصَّل)</td><td style="text-align:left">${sar(fin.fee)}</td></tr>` : ""}
+    <tr><td><b>صافي المالك عن ${period.label}</b></td><td style="text-align:left"><b style="font-size:1.1rem">${sar(fin.net)} ريال</b></td></tr>
+  </tbody>
+</table>
+` : ""}
+<div class="note">تقرير استرشادي صادر آليًّا من سجل الدفعات والمصروفات وبيانات العقود المسجّلة في وثيق بتاريخ ${today()}. الأرقام تعكس ما وثّقه المكتب في النظام.</div>
 <div class="sign"><div>إدارة الأملاك: ${who}<br><br>التوقيع: ________________</div><div>المالك: ____________________<br><br>تاريخ الإصدار: ${today()}</div></div>
 ${footer()}`;
   return SHELL(`تقرير المالك — ${p.name} — ${period.label}`, body, markOf(issuer));
