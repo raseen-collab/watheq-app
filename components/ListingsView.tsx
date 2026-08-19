@@ -17,6 +17,9 @@ import {
   type Listing, type ListingKind, type OfferType, type ListingStatus,
 } from "@/lib/listings";
 import { complianceState, type ComplianceItem } from "@/lib/compliance";
+import { matchesForListing, type SeekerRequest } from "@/lib/requests";
+import RequestsPanel from "@/components/RequestsPanel";
+import ListingPhotos from "@/components/ListingPhotos";
 
 const TONE_CLS: Record<string, string> = {
   ok:    "bg-[#E6F4EC] text-[#137a50]",
@@ -27,12 +30,15 @@ const TONE_CLS: Record<string, string> = {
 
 type Filter = "open" | "all" | "stale" | ListingStatus;
 
-export default function ListingsView({ initial, brokerages, orgName, issuer }: {
+export default function ListingsView({ initial, brokerages, requests, orgName, issuer }: {
   initial: Listing[];
   brokerages: ComplianceItem[];
+  requests: SeekerRequest[];
   orgName: string;
   issuer?: any;
 }) {
+  // تبويبان: المعروضات (ما عندك) والطلبات (ما يبحث عنه الناس) — والمطابقة تربطهما
+  const [tab, setTab] = useState<"listings" | "requests">("listings");
   const supabase = createClient();
   const router = useRouter();
   const [items, setItems] = useState<Listing[]>(initial || []);
@@ -138,12 +144,30 @@ export default function ListingsView({ initial, brokerages, orgName, issuer }: {
         </div>
       </div>
 
+      {/* تبويبا السجل: معروضاتك ↔ طلبات الباحثين */}
+      <div className="inline-flex bg-white border border-line rounded-xl p-1 mt-4">
+        <button onClick={() => setTab("listings")}
+          className={`px-3.5 py-1.5 rounded-lg text-sm font-semibold transition ${
+            tab === "listings" ? "bg-[#FBF1DF] text-deep" : "text-muted hover:bg-paper"}`}>
+          📋 المعروضات ({s.total})
+        </button>
+        <button onClick={() => setTab("requests")}
+          className={`px-3.5 py-1.5 rounded-lg text-sm font-semibold transition ${
+            tab === "requests" ? "bg-[#FBF1DF] text-deep" : "text-muted hover:bg-paper"}`}>
+          🔎 الطلبات ({requests.filter((r) => String(r.status || "active") === "active").length})
+        </button>
+      </div>
+
       {msg && (
         <div className={`mt-3 rounded-lg border px-3 py-2 text-sm font-semibold ${
           msg.k === "ok" ? "bg-[#E6F4EC] border-[#B7DFC7] text-[#137a50]" : "bg-[#FBE9E7] border-[#F5C6C2] text-[#8f2b26]"}`}>
           {msg.m}
         </div>
       )}
+
+      {tab === "requests" ? (
+        <div className="mt-4"><RequestsPanel initial={requests} listings={items} /></div>
+      ) : (<>
 
       {/* الأرقام التي تهمّ فعلًا */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-4">
@@ -190,12 +214,13 @@ export default function ListingsView({ initial, brokerages, orgName, issuer }: {
       ) : (
         <div className="mt-3 flex flex-col gap-2">
           {shown.map((l) => (
-            <Row key={l.id} l={l} brokerages={brokerages} busy={busy === l.id}
+            <Row key={l.id} l={l} brokerages={brokerages} requests={requests} busy={busy === l.id}
               onConfirm={() => confirmAvailable(l)} onEdit={() => setForm({ editing: l })}
               onStatus={(st) => setStatus(l, st)} onRemove={() => remove(l)} />
           ))}
         </div>
       )}
+      </>)}
     </div>
   );
 }
@@ -211,10 +236,13 @@ function Stat({ v, l, tone }: { v: number; l: string; tone?: "ok" | "warn" }) {
 
 /* ──────────────────────── سطر معروض واحد ──────────────────────── */
 
-function Row({ l, brokerages, busy, onConfirm, onEdit, onStatus, onRemove }: {
-  l: Listing; brokerages: ComplianceItem[]; busy: boolean;
+function Row({ l, brokerages, requests, busy, onConfirm, onEdit, onStatus, onRemove }: {
+  l: Listing; brokerages: ComplianceItem[]; requests: SeekerRequest[]; busy: boolean;
   onConfirm: () => void; onEdit: () => void; onStatus: (s: ListingStatus) => void; onRemove: () => void;
 }) {
+  const [showPhotos, setShowPhotos] = useState(false);
+  const [showMatches, setShowMatches] = useState(false);
+  const hits = matchesForListing(l, requests);
   const meta = KIND_META[l.kind] || KIND_META.other;
   const st = STATUS_META[(l.status || "available") as ListingStatus] || STATUS_META.available;
   const fr = freshness(l);
@@ -234,6 +262,12 @@ function Row({ l, brokerages, busy, onConfirm, onEdit, onStatus, onRemove }: {
             <span className="font-mono font-bold text-sm bg-paper border border-line rounded px-1.5 py-0.5">{l.code}</span>
             <span className="font-semibold text-sm">{meta.icon} {meta.label} {OFFER_LABEL[l.offer_type]}</span>
             <span className={`text-[.68rem] font-bold rounded-lg px-2 py-0.5 ${TONE_CLS[st.tone]}`}>{st.label}</span>
+            {open && hits.length > 0 && (
+              <button onClick={() => setShowMatches(!showMatches)}
+                className="text-[.68rem] font-bold rounded-lg px-2 py-0.5 bg-[#E6F4EC] text-[#137a50] hover:bg-[#d6ecdf] transition">
+                ✨ يطابق {hits.length} {hits.length === 1 ? "طلبًا" : "طلبات"}
+              </button>
+            )}
           </div>
           <div className="text-xs text-muted mt-1">{shortDesc(l)}</div>
           {l.title && <div className="text-xs text-[#33413d] mt-0.5">{l.title}</div>}
@@ -280,10 +314,30 @@ function Row({ l, brokerages, busy, onConfirm, onEdit, onStatus, onRemove }: {
               <option key={k} value={k}>{STATUS_META[k].label}</option>
             ))}
           </select>
+          <button className="btn btn-ghost text-xs" onClick={() => setShowPhotos(!showPhotos)}>📷 الصور</button>
           <button className="btn btn-ghost text-xs" onClick={onEdit}>تعديل</button>
           <button className="btn btn-ghost text-xs text-late" onClick={onRemove}>حذف</button>
         </div>
       </div>
+
+      {showMatches && hits.length > 0 && (
+        <div className="mt-2 border-t border-line pt-2 flex flex-col gap-1.5">
+          {hits.map((r) => (
+            <div key={r.id} className="flex items-center gap-2 text-xs bg-white border border-line rounded-lg px-2.5 py-1.5">
+              <span className="font-semibold shrink-0">{r.seeker_name || "طلب بلا اسم"}</span>
+              <span className="text-muted min-w-0 flex-1 truncate">{r.districts || "أي حي"}{Number(r.price_max) > 0 ? ` · حتى ${sar(Number(r.price_max))}` : ""}</span>
+              {r.seeker_phone && (
+                <a className="text-gold font-semibold shrink-0" target="_blank" rel="noreferrer"
+                  href={waLink(r.seeker_phone, `السلام عليكم ${r.seeker_name || ""}، توفر عندنا ${meta.label} ${OFFER_LABEL[l.offer_type]} يناسب طلبك — الكود ${l.code}${l.district ? ` في ${l.district}` : ""}${Number(l.price) > 0 ? ` بسعر ${sar(Number(l.price))} ريال` : ""}. نرتب لك معاينة؟`)}>
+                  واتساب
+                </a>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {showPhotos && <ListingPhotos listingId={l.id} code={l.code} />}
     </div>
   );
 }

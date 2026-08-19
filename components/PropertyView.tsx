@@ -10,6 +10,9 @@ import { PROPERTY_TYPES, typeLabel, unitLabel, typeIcon } from "@/lib/domain";
 import { statementHTML, invoiceHTML, propertyStatementHTML, moveOutSettlementHTML, quotationHTML, ownerReportHTML, DEFAULT_CHARGES, openDoc, type ChargeRow, type OwnerReportPayment } from "@/lib/documents";
 import { alertCount, type ComplianceItem } from "@/lib/compliance";
 import ComplianceModal from "@/components/ComplianceModal";
+import ExpensesModal from "@/components/ExpensesModal";
+import OwnerLinkModal from "@/components/OwnerLinkModal";
+import type { ExpenseRow } from "@/lib/expenses";
 
 /** تحويل كل دورة إلى مكافئ شهري لحساب الدخل التقريبي */
 const PERIODS_PER_MONTH: Record<Frequency, number> = {
@@ -35,6 +38,7 @@ type Property = {
   property_type: string | null; collected: number;
   grace_days?: number | null;
   vat_enabled?: boolean | null; vat_rate?: number | null; vat_inclusive?: boolean | null;
+  mgmt_fee_pct?: number | null;
   tenants: Tenant[]; property_notes: Note[];
 };
 
@@ -83,6 +87,8 @@ export default function PropertyView({ initial, orgName, issuer, compliance }: {
   useEffect(() => { setComp(compliance || []); }, [compliance]);
   const [compOpen, setCompOpen] = useState(false);
   const [reporting, setReporting] = useState(false);
+  const [expensesOpen, setExpensesOpen] = useState(false);
+  const [ownerLinkOpen, setOwnerLinkOpen] = useState(false);
   const [doc, setDoc] = useState<null | { title: string; body: string }>(null);
   const [history, setHistory] = useState<null | { tenant: Tenant; rows: any[] }>(null);
   const [schedule, setSchedule] = useState<Tenant | null>(null);
@@ -230,6 +236,8 @@ export default function PropertyView({ initial, orgName, issuer, compliance }: {
       vat_enabled: !!d.vat_enabled,
       vat_rate: Number(d.vat_rate) || 15,
       vat_inclusive: d.vat_inclusive !== false,
+      // نسبة أتعاب الإدارة: تُخصم من المحصَّل في تقرير المالك (فارغة = لا أتعاب)
+      mgmt_fee_pct: Number(d.mgmt_fee_pct) > 0 && Number(d.mgmt_fee_pct) <= 100 ? Number(d.mgmt_fee_pct) : null,
     };
     if (id) {
       const { error } = await supabase.from("properties").update(payload).eq("id", id);
@@ -619,8 +627,12 @@ export default function PropertyView({ initial, orgName, issuer, compliance }: {
           <div className="flex items-center justify-between border-b border-line px-5 py-4 gap-2 flex-wrap">
             <h2 className="font-semibold">الوحدات والمستأجرون</h2>
             <div className="flex gap-2 flex-wrap">
+              <button className="btn btn-ghost text-xs" onClick={() => setExpensesOpen(true)}
+                title="ما دفعه المكتب نيابة عن المالك — يُخصم تلقائيًّا في تقرير المالك">💸 المصروفات</button>
+              <button className="btn btn-ghost text-xs" onClick={() => setOwnerLinkOpen(true)}
+                title="رابط قراءة حي يرسله المكتب للمالك — يرى تقريره بلا حساب">🔗 رابط المالك</button>
               <button className="btn btn-ghost text-xs" onClick={() => setReporting(true)}
-                title="تقرير فترة للمالك: الإشغال والمحصَّل فعليًّا والمتأخرات — من سجل الدفعات">📊 تقرير المالك</button>
+                title="تقرير فترة للمالك: الإشغال والمحصَّل والمصروفات والصافي — من السجلات">📊 تقرير المالك</button>
               <button className="btn btn-ghost text-xs" onClick={openPropertyStatement}>كشف حساب العقار</button>
               <button className="btn btn-ghost text-xs" onClick={() => setQuoteOpen(true)}
                 title="إصدار عرض سعر تأجير لمستأجر محتمل قبل التعاقد">📋 عرض سعر</button>
@@ -792,6 +804,12 @@ export default function PropertyView({ initial, orgName, issuer, compliance }: {
       )}
       {reporting && active && (
         <OwnerReportModal property={active} unitWord={ul} issuer={issuer || {}} onClose={() => setReporting(false)} />
+      )}
+      {expensesOpen && active && (
+        <ExpensesModal propertyId={active.id} propertyName={active.name} unitWord={ul} onClose={() => setExpensesOpen(false)} />
+      )}
+      {ownerLinkOpen && active && (
+        <OwnerLinkModal propertyId={active.id} propertyName={active.name} onClose={() => setOwnerLinkOpen(false)} />
       )}
 
       {schedule && <ScheduleModal tenant={schedule} unitWord={ul} onClose={() => setSchedule(null)} />}
@@ -1187,6 +1205,11 @@ function PropertyModal({ open, initial, orgName, onClose, onSubmit, onDelete }: 
           </div>
         </div>
 
+        <Field label="نسبة أتعاب الإدارة %" hint="اختياري — تُخصم من المحصَّل ويظهر الصافي في تقرير المالك">
+          <input className="fld" type="number" min={0} max={100} step={0.5} placeholder="مثال: 5"
+            value={d.mgmt_fee_pct ?? ""} onChange={(e) => setD({ ...d, mgmt_fee_pct: e.target.value })} />
+        </Field>
+
         <div className="border border-line rounded-xl p-3 bg-paper">
           <label className="flex items-center gap-2.5 cursor-pointer">
             <input type="checkbox" className="w-4 h-4 accent-[#B8791F]" checked={!!d.vat_enabled}
@@ -1333,7 +1356,15 @@ function OwnerReportModal({ property, unitWord, issuer, onClose }: {
       unit: byId[x.tenant_id]?.unit || null,
     }));
 
-    openDoc(ownerReportHTML(property as any, { label, from, to }, payments, issuer || {}));
+    // مصروفات الفترة نفسها — إن لم يُشغَّل schema-v8 بعد نُصدر التقرير بلا خصومات
+    let expenses: ExpenseRow[] = [];
+    const ex = await supabase.from("expenses").select("*")
+      .eq("property_id", property.id).gte("spent_on", from).lte("spent_on", to)
+      .order("spent_on", { ascending: true }).limit(500);
+    if (!ex.error) expenses = (ex.data || []) as ExpenseRow[];
+
+    openDoc(ownerReportHTML(property as any, { label, from, to }, payments, issuer || {},
+      { expenses, fee_pct: (property as any).mgmt_fee_pct }));
     onClose();
   }
 
@@ -1341,8 +1372,8 @@ function OwnerReportModal({ property, unitWord, issuer, onClose }: {
     <Shell onClose={onClose}>
       <h2 className="font-display font-bold text-deep text-xl mb-1">📊 تقرير المالك — {property.name}</h2>
       <p className="text-sm text-muted mb-4">
-        تقرير فترة يجمع الإشغال والمحصَّل فعليًّا والمتأخرات القائمة، من الدفعات الموثّقة في وثيق —
-        أرسله للمالك كل شهر بدل تجميعه يدويًّا.
+        تقرير فترة يجمع الإشغال والمحصَّل فعليًّا والمصروفات وأتعاب الإدارة و<b>صافي المالك</b> —
+        من السجلات الموثّقة في وثيق، أرسله للمالك كل شهر بدل تجميعه يدويًّا.
       </p>
       <div className="space-y-3">
         <Field label="شهر التقرير">
