@@ -30,12 +30,17 @@ export default async function ListingsPage() {
     .from("compliance_items").select("*").eq("kind", "brokerage")
     .order("end_date", { ascending: true, nullsFirst: false });
 
+  // طلبات الباحثين (schema-v8) — غيابها يعطّل تبويب الطلبات لا الصفحة
+  const { data: requests } = await supabase
+    .from("seeker_requests").select("*").order("created_at", { ascending: false });
+
   const { trial, expired } = issuerMarks(profile);
 
   return (
     <ListingsView
       initial={listings || []}
       brokerages={brokerages || []}
+      requests={(requests || []) as any}
       orgName={profile?.org_name || ""}
       issuer={{ ...(profile || {}), trial, expired }}
     />
