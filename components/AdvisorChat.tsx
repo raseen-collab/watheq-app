@@ -282,7 +282,7 @@ export default function AdvisorChat({
 
           <p className="text-xs text-muted mt-4 leading-relaxed bg-paper border border-line rounded-xl p-3">
             تُحفظ أسئلتك وإجاباتها في سجل خاص بحسابك لأغراض الجودة والتدقيق، ويمكنك طلب حذفها في أي وقت.
-            التفاصيل في <a href="https://watheqapp.netlify.app/legal.html" target="_blank" rel="noreferrer" className="text-gold font-semibold">الشروط</a>.
+            التفاصيل في <a href="https://watheqapp.com/legal.html" target="_blank" rel="noreferrer" className="text-gold font-semibold">الشروط</a>.
           </p>
 
           {err && <p className="text-sm text-late mt-3">{err}</p>}

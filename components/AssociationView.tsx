@@ -473,7 +473,7 @@ export default function AssociationView({ initial, issuer }: { initial: Associat
 
   /** سطر المصدر — يُذيَّل به كل مستند نصّي أثناء التجربة النشطة */
   const brandLine = () => (issuer?.trial && !issuer?.expired)
-    ? ["", "──────────────────────────────", "أُنشئ عبر وثيق · watheqapp.netlify.app"]
+    ? ["", "──────────────────────────────", "أُنشئ عبر وثيق · watheqapp.com"]
     : [];
 
   /** إنذار نهائي — آخر خطوة ودّية قبل اللجوء إلى إجراءات المنصة */
