@@ -183,7 +183,7 @@ function LoginInner() {
   return (
     <div className="min-h-screen grid place-items-center p-4 bg-paper">
       <div className="w-full max-w-md bg-white border border-line rounded-2xl shadow-lg p-8">
-        <a href="https://watheqapp.netlify.app" className="flex items-center gap-3 mb-6 hover:opacity-90" title="العودة إلى موقع وثيق">
+        <a href="https://watheqapp.com" className="flex items-center gap-3 mb-6 hover:opacity-90" title="العودة إلى موقع وثيق">
           <div className="w-10 h-10 rounded-lg bg-deep grid place-items-center text-goldSoft font-bold font-display">و</div>
           <div>
             <div className="font-bold font-display text-deep text-lg">وثيق</div>
@@ -280,7 +280,7 @@ function LoginInner() {
           )}
         </div>
         <div className="text-center mt-4 pt-4 border-t border-line text-sm">
-          <a href="https://watheqapp.netlify.app" className="text-muted hover:text-deep">← العودة إلى موقع وثيق</a>
+          <a href="https://watheqapp.com" className="text-muted hover:text-deep">← العودة إلى موقع وثيق</a>
         </div>
       </div>
     </div>
