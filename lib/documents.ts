@@ -136,7 +136,7 @@ const SHELL = (title: string, inner: string, mark: Mark = "none") => `<!DOCTYPE 
 <div class="noprint"><button class="a" onclick="window.print()">🖨️ طباعة / حفظ PDF</button><button class="b" onclick="window.close()">إغلاق</button></div>
 ${mark === "wm" ? `<div class="wm"><span>نسخة تجريبية — غير معتمدة</span></div>` : ""}
 ${inner}
-${mark === "brand" ? `<div class="madeby">أُنشئ عبر <b>وثيق</b> · watheqapp.netlify.app</div>` : ""}
+${mark === "brand" ? `<div class="madeby">أُنشئ عبر <b>وثيق</b> · watheqapp.com</div>` : ""}
 ${mark === "wm" ? `<div class="trialbar">
   انتهت فترة التجربة المجانية ولم يُفعَّل اشتراك، لذا تخرج المستندات بعلامة «نسخة تجريبية».
   لإصدار نسخة نهائية بلا علامة: فعّل اشتراكك عبر watheqdocs@gmail.com
