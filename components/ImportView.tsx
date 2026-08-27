@@ -153,7 +153,11 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
           {/* الخطوات */}
           <div className="grid md:grid-cols-3 gap-3 mb-6">
             <StepCard n="١" title="حمّل القالب" desc="ملف جاهز بالأعمدة الصحيحة وأمثلة توضيحية.">
-              <button onClick={downloadTemplate} className="btn btn-ghost text-xs mt-2">⬇ تحميل القالب</button>
+              <div className="flex flex-col gap-1.5 mt-2">
+                <a href="/watheq-template.xlsx" download className="btn btn-gold text-xs justify-center"
+                  title="قوائم منسدلة لدورة السداد، وخانات لا تحذف صفر الجوال، وورقة شرح">⬇ قالب Excel — منسدلات جاهزة</a>
+                <button onClick={downloadTemplate} className="btn btn-ghost text-xs">⬇ قالب CSV مجرّد</button>
+              </div>
             </StepCard>
             <StepCard n="٢" title="املأ بياناتك" desc="افتحه بـ Excel أو Numbers، واملأ صفًّا لكل وحدة، ثم احفظه بصيغة CSV." />
             <StepCard n="٣" title="ارفعه هنا" desc="سنتحقق من البيانات ونعرضها لك قبل الحفظ." />
