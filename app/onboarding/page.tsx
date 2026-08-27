@@ -8,11 +8,28 @@ export default function OnboardingPage() {
   const router = useRouter();
   const [type, setType] = useState<AccountType | null>(null);
   const [orgName, setOrgName] = useState("");
+  const [phone, setPhone] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  /**
+   * تطبيع رقم الجوال قبل التحقق: كثيرون يكتبونه بالأرقام العربية (٠٥…)
+   * أو بمسافات وشرطات أو بصيغة +966. كلها تُقبل وتُخزَّن بصيغة واحدة
+   * 05xxxxxxxx حتى تعمل روابط واتساب (waNumber) وتظهر موحّدة في الفواتير.
+   */
+  function normalizeSaPhone(raw: string): string {
+    const latin = raw.replace(/[٠-٩]/g, (d) => String("٠١٢٣٤٥٦٧٨٩".indexOf(d)))
+                     .replace(/[۰-۹]/g, (d) => String("۰۱۲۳۴۵۶۷۸۹".indexOf(d)));
+    let d = latin.replace(/\D/g, "");
+    if (d.startsWith("966")) d = "0" + d.slice(3);
+    else if (d.length === 9 && d.startsWith("5")) d = "0" + d;
+    return d;
+  }
+  const phoneClean = normalizeSaPhone(phone);
+  const phoneOk = /^05\d{8}$/.test(phoneClean);
+
   async function save() {
-    if (!type) return;
+    if (!type || !phoneOk) return;
     setSaving(true); setError(null);
     const supabase = createClient();
     const { data: { user } } = await supabase.auth.getUser();
@@ -25,7 +42,17 @@ export default function OnboardingPage() {
      */
     const { data: saved, error } = await supabase
       .from("profiles")
-      .upsert({ id: user.id, account_type: type, org_name: orgName || null }, { onConflict: "id" })
+      .upsert(
+        {
+          id: user.id,
+          account_type: type,
+          org_name: orgName || null,
+          billing_phone: phoneClean,
+          // اسم الفوترة يُملأ من اسم المنشأة إن كان فارغًا — يظهر في الفواتير وكشوف الحساب
+          ...(orgName ? { billing_name: orgName } : {}),
+        },
+        { onConflict: "id" },
+      )
       .select("account_type")
       .maybeSingle();
 
@@ -86,6 +113,29 @@ export default function OnboardingPage() {
               اسم المنشأة أو الجهة <span className="text-muted font-normal">— اختياري، يظهر في الخطابات</span>
             </label>
             <input className="fld" value={orgName} onChange={(e) => setOrgName(e.target.value)} placeholder={placeholder} />
+
+            {/* جوال التواصل — مطلوب.
+                السبب: كان لدينا حسابات لا نملك أي وسيلة للوصول إليها حين تتعثّر،
+                فتنتهي تجربتها بصمت. حقل واحد هنا يحلّ ذلك، ومكانه هذه الشاشة
+                لا نموذج التسجيل لأن الداخلين بحساب قوقل لا يمرّون بذلك النموذج. */}
+            <label className="block text-sm font-semibold mb-2 mt-4">جوال التواصل</label>
+            <input
+              className="fld"
+              type="tel"
+              inputMode="numeric"
+              autoComplete="tel"
+              dir="ltr"
+              value={phone}
+              onChange={(e) => setPhone(e.target.value)}
+              placeholder="05xxxxxxxx"
+              aria-invalid={phone.length > 0 && !phoneOk}
+              required
+            />
+            <p className="text-xs text-muted mt-1.5">
+              {phone.length > 0 && !phoneOk
+                ? <span className="text-late font-semibold">أدخل رقمًا سعوديًا يبدأ بـ 05 (عشرة أرقام).</span>
+                : "نستخدمه للتواصل معك بخصوص حسابك فقط — ولن يظهر لأي مستخدم آخر."}
+            </p>
             {type === "both" && (
               <p className="text-xs text-muted mt-3 bg-paper border border-line rounded-lg p-3 leading-relaxed">
                 🔀 بالحساب المزدوج ستحصل على <b>لوحتين منفصلتين</b>، وتبدّل بينهما من الشريط العلوي في أي وقت.
@@ -97,11 +147,11 @@ export default function OnboardingPage() {
         {error && <div className="mt-4 max-w-xl mx-auto text-sm text-late bg-[#FBE9E7] border border-[#F5C6C2] rounded-lg p-3">{error}</div>}
 
         <div className="max-w-xl mx-auto">
-          <button onClick={save} disabled={!type || saving}
+          <button onClick={save} disabled={!type || !phoneOk || saving}
             className="btn btn-gold w-full justify-center mt-6 disabled:opacity-40">
             {saving ? "جارٍ التجهيز…" : "ابدأ الآن ←"}
           </button>
-          <p className="text-center text-xs text-muted mt-4">يمكنك تغيير نوع حسابك لاحقًا من الإعدادات.</p>
+          <p className="text-center text-xs text-muted mt-4">يمكنك تغيير نوع حسابك ورقم جوالك لاحقًا من الإعدادات.</p>
         </div>
       </div>
     </div>
