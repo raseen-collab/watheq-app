@@ -20,6 +20,7 @@ import { complianceState, type ComplianceItem } from "@/lib/compliance";
 import { matchesForListing, type SeekerRequest } from "@/lib/requests";
 import RequestsPanel from "@/components/RequestsPanel";
 import ListingPhotos from "@/components/ListingPhotos";
+import AdComposer from "@/components/AdComposer";
 
 const TONE_CLS: Record<string, string> = {
   ok:    "bg-[#E6F4EC] text-[#137a50]",
@@ -214,7 +215,7 @@ export default function ListingsView({ initial, brokerages, requests, orgName, i
       ) : (
         <div className="mt-3 flex flex-col gap-2">
           {shown.map((l) => (
-            <Row key={l.id} l={l} brokerages={brokerages} requests={requests} busy={busy === l.id}
+            <Row key={l.id} l={l} adOrg={orgName} adPhone={issuer?.billing_phone} brokerages={brokerages} requests={requests} busy={busy === l.id}
               onConfirm={() => confirmAvailable(l)} onEdit={() => setForm({ editing: l })}
               onStatus={(st) => setStatus(l, st)} onRemove={() => remove(l)} />
           ))}
@@ -236,11 +237,12 @@ function Stat({ v, l, tone }: { v: number; l: string; tone?: "ok" | "warn" }) {
 
 /* ──────────────────────── سطر معروض واحد ──────────────────────── */
 
-function Row({ l, brokerages, requests, busy, onConfirm, onEdit, onStatus, onRemove }: {
+function Row({ l, brokerages, requests, busy, onConfirm, onEdit, onStatus, onRemove, adOrg, adPhone }: {
   l: Listing; brokerages: ComplianceItem[]; requests: SeekerRequest[]; busy: boolean;
   onConfirm: () => void; onEdit: () => void; onStatus: (s: ListingStatus) => void; onRemove: () => void;
 }) {
   const [showPhotos, setShowPhotos] = useState(false);
+  const [showAd, setShowAd] = useState(false);
   const [showMatches, setShowMatches] = useState(false);
   const hits = matchesForListing(l, requests);
   const meta = KIND_META[l.kind] || KIND_META.other;
@@ -314,6 +316,8 @@ function Row({ l, brokerages, requests, busy, onConfirm, onEdit, onStatus, onRem
               <option key={k} value={k}>{STATUS_META[k].label}</option>
             ))}
           </select>
+          <button className="btn btn-ghost text-xs" onClick={() => setShowAd(true)}
+            title="نص إعلان جاهز لحراج وX وواتساب من بيانات هذا المعروض">📣 إعلان</button>
           <button className="btn btn-ghost text-xs" onClick={() => setShowPhotos(!showPhotos)}>📷 الصور</button>
           <button className="btn btn-ghost text-xs" onClick={onEdit}>تعديل</button>
           <button className="btn btn-ghost text-xs text-late" onClick={onRemove}>حذف</button>
@@ -338,6 +342,7 @@ function Row({ l, brokerages, requests, busy, onConfirm, onEdit, onStatus, onRem
       )}
 
       {showPhotos && <ListingPhotos listingId={l.id} code={l.code} />}
+      {showAd && <AdComposer listing={l} orgName={adOrg} phone={adPhone} onClose={() => setShowAd(false)} />}
     </div>
   );
 }
