@@ -240,6 +240,7 @@ function Stat({ v, l, tone }: { v: number; l: string; tone?: "ok" | "warn" }) {
 function Row({ l, brokerages, requests, busy, onConfirm, onEdit, onStatus, onRemove, adOrg, adPhone }: {
   l: Listing; brokerages: ComplianceItem[]; requests: SeekerRequest[]; busy: boolean;
   onConfirm: () => void; onEdit: () => void; onStatus: (s: ListingStatus) => void; onRemove: () => void;
+  adOrg?: string | null; adPhone?: string | null;
 }) {
   const [showPhotos, setShowPhotos] = useState(false);
   const [showAd, setShowAd] = useState(false);
