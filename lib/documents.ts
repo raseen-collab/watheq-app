@@ -144,6 +144,49 @@ ${mark === "wm" ? `<div class="trialbar">
 </body></html>`;
 
 /** إعدادات الضريبة الخاصة بالعقار */
+/**
+ * رمز QR للفاتورة الضريبية المبسطة — «فاتورة» المرحلة الأولى (إصدار).
+ * TLV بخمس خانات: اسم البائع، الرقم الضريبي، وقت الإصدار ISO،
+ * الإجمالي شامل الضريبة، مبلغ الضريبة — ثم Base64.
+ * بلا btoa: نبني Base64 يدويًّا حتى يعمل في المتصفح وخارجه سواء.
+ */
+function zatcaTlvBase64(sellerName: string, vatNo: string, isoDateTime: string, total: number, vat: number): string {
+  const enc = new TextEncoder();
+  const fields = [sellerName, vatNo, isoDateTime, total.toFixed(2), vat.toFixed(2)];
+  const parts: number[] = [];
+  fields.forEach((val, i) => {
+    const b = Array.from(enc.encode(val));
+    parts.push(i + 1, b.length, ...b);
+  });
+  const B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  let out = "";
+  for (let i = 0; i < parts.length; i += 3) {
+    const a = parts[i], b = parts[i + 1], c = parts[i + 2];
+    out += B64[a >> 2] + B64[((a & 3) << 4) | ((b ?? 0) >> 4)]
+        + (b === undefined ? "=" : B64[((b & 15) << 2) | ((c ?? 0) >> 6)])
+        + (c === undefined ? "=" : B64[c & 63]);
+  }
+  return out;
+}
+
+/**
+ * صندوق QR داخل الفاتورة. الرسم عبر مكتبة qrcodejs من CDN داخل نافذة
+ * الطباعة؛ وإن تعذّرت الشبكة يبقى نص Base64 ظاهرًا — وهو المحتوى
+ * النظامي نفسه، فالفاتورة لا تفقد صلاحيتها بغياب الرسم.
+ */
+function zatcaQrBlock(sellerName: string, vatNo: string, total: number, vat: number): string {
+  const tlv = zatcaTlvBase64(sellerName, vatNo, new Date().toISOString(), total, vat);
+  return `
+<div style="display:flex;justify-content:flex-end;margin-top:14px">
+  <div style="text-align:center">
+    <div id="zatca-qr" style="width:120px;height:120px;margin-inline-start:auto"></div>
+    <div style="font-size:8px;color:#8A8477;max-width:200px;word-break:break-all;margin-top:4px" id="zatca-tlv">${tlv}</div>
+  </div>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"><\/script>
+<script>try{new QRCode(document.getElementById("zatca-qr"),{text:document.getElementById("zatca-tlv").textContent,width:120,height:120,correctLevel:QRCode.CorrectLevel.M});document.getElementById("zatca-tlv").style.display="none";}catch(e){}<\/script>`;
+}
+
 const vatOf = (p: Property) => ({
   enabled: !!p.vat_enabled, rate: Number(p.vat_rate) || 15, inclusive: p.vat_inclusive !== false,
 });
@@ -289,8 +332,8 @@ export function invoiceHTML(
   const v = vatOf(p);
   const x = splitVat(Number(inv.amount) || 0, v);
   const body = `
-${header(v.enabled ? "فاتورة ضريبية" : "فاتورة", inv.invoice_no)}
-<h1>${v.enabled ? "فاتورة ضريبية — أجرة" : "فاتورة أجرة"}</h1>
+${header(v.enabled && issuer.vat_number ? "فاتورة ضريبية مبسطة" : "فاتورة", inv.invoice_no)}
+<h1>${v.enabled && issuer.vat_number ? "فاتورة ضريبية مبسطة — أجرة" : "فاتورة أجرة"}</h1>
 <div class="sub">${inv.period_label} · ${freqLabel(t.payment_frequency)}</div>
 
 <div class="grid">
@@ -332,8 +375,11 @@ ${v.enabled ? `<table style="max-width:340px;margin-inline-start:auto">
 
 <div class="due"><span class="l">الإجمالي المستحق${v.enabled ? " (شامل الضريبة)" : ""}</span><span class="v">${sar(x.total)} ريال</span></div>
 
+${v.enabled && issuer.vat_number ? zatcaQrBlock(who, issuer.vat_number, x.total, x.vat) : ""}
+
 ${v.enabled && !issuer.vat_number ? `<div class="note" style="border-inline-start-color:#D0453F;background:#FBE9E7;color:#a5322c">
-  <b>تنبيه:</b> الضريبة مفعّلة لكن الرقم الضريبي للمُصدِر غير مسجَّل. أضِفه في إعدادات الحساب قبل اعتماد الفاتورة رسميًّا.
+  <b>تنبيه:</b> الضريبة مفعّلة لكن الرقم الضريبي للمُصدِر غير مسجَّل، لذا صدرت الوثيقة بعنوان «فاتورة» لا «فاتورة ضريبية».
+  أضِف الرقم الضريبي في الإعدادات لتصدر فاتورة ضريبية مبسطة برمز QR.
 </div>` : ""}
 
 <div class="note">
@@ -1247,8 +1293,8 @@ export function subscriptionInvoiceHTML(inv: SubInvoice) {
   const paid = inv.paid_at || today();
 
   const body = `
-${header(hasVat ? "فاتورة ضريبية" : "فاتورة اشتراك", inv.invoice_no)}
-<h1>${hasVat ? "فاتورة ضريبية — اشتراك وثيق" : "فاتورة اشتراك وثيق"}</h1>
+${header(hasVat ? "فاتورة ضريبية مبسطة" : "فاتورة اشتراك", inv.invoice_no)}
+<h1>${hasVat ? "فاتورة ضريبية مبسطة — اشتراك وثيق" : "فاتورة اشتراك وثيق"}</h1>
 <div class="sub">الفترة: ${inv.from_date} حتى ${inv.to_date} · ${inv.months} ${inv.months === 1 ? "شهر" : "شهرًا"}</div>
 
 <div class="grid">
@@ -1289,6 +1335,8 @@ ${hasVat ? `<table style="max-width:340px;margin-inline-start:auto">
 </table>` : ""}
 
 <div class="due"><span class="l">الإجمالي المدفوع${hasVat ? " (شامل الضريبة)" : ""}</span><span class="v">${sar(total)} ريال</span></div>
+
+${hasVat ? zatcaQrBlock("وثيق", String(inv.vat_number), total, vat) : ""}
 
 <div class="note">
   ${methodAr(inv.method) !== "—" ? `وسيلة السداد: <b>${methodAr(inv.method)}</b> · ` : ""}تاريخ السداد: <b>${paid}</b>.
