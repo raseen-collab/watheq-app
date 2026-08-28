@@ -13,8 +13,16 @@ export default async function AdvisorRedirect() {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect("/login");
 
-  const { data: profile } = await supabase
+  const { data: profile, error: profileErr } = await supabase
     .from("profiles").select("account_type, role, last_dashboard").eq("id", user.id).maybeSingle();
+
+  /**
+   * لا تبتلع خطأ الاستعلام — نفس حماية /dashboard الرئيسية.
+   * فشل القراءة العابر (شبكة، جلسة باردة، انحراف ساعة) بدون هذا
+   * الفحص يُقرأ «حساب بلا نوع» فيُرمى صاحب الحساب المكتمل إلى
+   * شاشة الترحيب. الخطأ الصريح أهون: تحديث الصفحة يحلّه، ويصلنا أثره.
+   */
+  if (profileErr) throw new Error(`تعذّر قراءة ملف الحساب: ${profileErr.message}`);
 
   const type = normalizeAccountType(profile || {});
   if (!type) redirect("/onboarding");
