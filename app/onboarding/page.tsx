@@ -19,6 +19,7 @@ export default function OnboardingPage() {
    * ثم تنقّل صلب للوحة (نفس درس router.push أعلاه).
    */
   async function joinByCode() {
+    const supabase = createClient();
     const code = inviteCode.trim().toUpperCase();
     if (code.length < 6) { setInviteMsg("أدخل الرمز كما وصلك — ٨ أحرف وأرقام."); return; }
     setSaving(true); setInviteMsg(null);
