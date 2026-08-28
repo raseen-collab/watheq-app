@@ -25,18 +25,34 @@ export default async function DashboardLayout({ children }: { children: React.Re
    */
   if (profileErr) throw new Error(`تعذّر قراءة ملف الحساب: ${profileErr.message}`);
 
-  const accountType = normalizeAccountType(profile || {});
+  let accountType = normalizeAccountType(profile || {});
+  /**
+   * لا نوع في ملفه ≠ حساب جديد بالضرورة: قد يكون موظفًا في مكتب (v9).
+   * نسأل «أين أعمل؟» قبل رميه لشاشة الترحيب — فيدخل لوحة مكتبه
+   * بنوع حساب المكتب، وسياسات القاعدة تحدّ ما يفعله هناك.
+   */
+  let subProfile: any = profile || {};
+  let name = profile?.org_name || profile?.full_name || (user.user_metadata?.name as string) || user.email || "";
+  if (!accountType) {
+    const { data: office } = await supabase.rpc("watheq_my_office");
+    const m = Array.isArray(office) ? office[0] : office;
+    accountType = normalizeAccountType({ account_type: m?.account_type } as any);
+    if (m?.owner_id) {
+      // موظف: اللوحة تُفتح وتُغلق باشتراك مكتبه لا بملفه الشخصي الفارغ،
+      // ويظهر اسم المكتب في الترويسة ليعرف أين هو
+      subProfile = m;
+      name = m.org_name || name;
+    }
+  }
   if (!accountType) redirect("/onboarding");
-
-  const name = profile?.org_name || profile?.full_name || (user.user_metadata?.name as string) || user.email || "";
 
   return (
     <DashboardShell
       userName={name}
       accountType={accountType}
       showSwitcher={canSwitch(accountType)}
-      trialEndsAt={profile?.trial_ends_at}
-      sub={subState(profile || {})}
+      trialEndsAt={subProfile?.trial_ends_at}
+      sub={subState(subProfile)}
     >
       {children}
     </DashboardShell>

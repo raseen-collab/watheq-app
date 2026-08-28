@@ -23,7 +23,17 @@ export default async function Dashboard() {
     throw new Error(`تعذّر قراءة ملف الحساب: ${error.message}`);
   }
 
-  const type = normalizeAccountType(profile || {});
+  let type = normalizeAccountType(profile || {});
+  /**
+   * لا نوع في ملفه ≠ حساب جديد بالضرورة: قد يكون موظفًا في مكتب (v9).
+   * نسأل «أين أعمل؟» قبل رميه لشاشة الترحيب — فيدخل لوحة مكتبه
+   * بنوع حساب المكتب، وسياسات القاعدة تحدّ ما يفعله هناك.
+   */
+  if (!type) {
+    const { data: office } = await supabase.rpc("watheq_my_office");
+    const m = Array.isArray(office) ? office[0] : office;
+    type = normalizeAccountType({ account_type: m?.account_type } as any);
+  }
   if (!type) redirect("/onboarding");
 
   redirect(dashboardPath(defaultDashboard(type, profile?.last_dashboard)));
