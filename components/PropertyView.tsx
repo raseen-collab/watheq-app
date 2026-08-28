@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase-client";
+import { officeId } from "@/lib/office";
 import { sar, waLink, today } from "@/lib/utils";
 import { contractState, buildSchedule, FREQUENCIES, freqLabel, freqShort, derivedEndDate, renewContract, needsRenewal, applyPayment, splitVat, isCommercial, isVacant, settleDeposit,
   vacancyDays, TURNOVER_CHECKLIST, type Frequency } from "@/lib/contracts";
@@ -153,7 +154,10 @@ export default function PropertyView({ initial, orgName, issuer, compliance }: {
 
 
   /** هوية المستخدم الحالي — تشترطها سياسة الصلاحيات (RLS) عند الإدراج */
+  /** معرّف المكتب لا المستخدم — دفعة الموظف تُحفظ تحت مكتبه (v9) */
   async function currentUserId(): Promise<string | null> {
+    const oid = await officeId(supabase);
+    if (oid) return oid;
     const { data, error } = await supabase.auth.getUser();
     if (error || !data?.user) return null;
     return data.user.id;
@@ -397,11 +401,11 @@ export default function PropertyView({ initial, orgName, issuer, compliance }: {
 
     // ترقيم متسلسل من قاعدة البيانات
     let invoiceNo = `INV-${new Date().getFullYear()}-0001`;
-    const { data } = await supabase.rpc("next_invoice_no", { p_user: (await supabase.auth.getUser()).data.user?.id });
+    const { data } = await supabase.rpc("next_invoice_no", { p_user: await officeId(supabase) });
     if (typeof data === "string") invoiceNo = data;
 
     await supabase.from("invoices").insert({
-      user_id: (await supabase.auth.getUser()).data.user?.id,
+      user_id: await officeId(supabase),
       tenant_id: t.id, property_id: active.id,
       invoice_no: invoiceNo, due_date: dueDate, period_label: period, amount,
     });

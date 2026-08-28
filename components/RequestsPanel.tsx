@@ -7,6 +7,7 @@
  */
 import { useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase-client";
+import { officeId } from "@/lib/office";
 import { sar, waLink } from "@/lib/utils";
 import { KIND_META, OFFER_LABEL, pricePerMeter, shortDesc, type Listing, type ListingKind, type OfferType } from "@/lib/listings";
 import { matchesForRequest, requestDesc, isActiveRequest, type SeekerRequest } from "@/lib/requests";
@@ -36,7 +37,7 @@ export default function RequestsPanel({ initial, listings }: { initial: SeekerRe
   async function save(d: Partial<SeekerRequest>) {
     setBusy(true);
     try {
-      const uid = (await supabase.auth.getUser()).data.user?.id;
+      const uid = await officeId(supabase);
       if (!uid) throw new Error("انتهت الجلسة — سجّل الدخول مجددًا");
       const { data, error } = await supabase.from("seeker_requests")
         .insert({ ...d, user_id: uid }).select("*").single();

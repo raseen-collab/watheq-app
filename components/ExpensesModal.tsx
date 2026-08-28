@@ -7,6 +7,7 @@
  */
 import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase-client";
+import { officeId } from "@/lib/office";
 import { sar, today } from "@/lib/utils";
 import { arDate } from "@/lib/documents";
 import { EXPENSE_CATS, catIcon, catLabel, sumExpenses, type ExpenseRow, type ExpenseCategory } from "@/lib/expenses";
@@ -55,7 +56,7 @@ export default function ExpensesModal({ propertyId, propertyName, unitWord, onCl
   async function save(d: Partial<ExpenseRow>) {
     setBusy(true);
     try {
-      const uid = (await supabase.auth.getUser()).data.user?.id;
+      const uid = await officeId(supabase);
       if (!uid) throw new Error("انتهت الجلسة — سجّل الدخول مجددًا");
       const { data, error } = await supabase.from("expenses")
         .insert({ ...d, property_id: propertyId, user_id: uid }).select("*").single();

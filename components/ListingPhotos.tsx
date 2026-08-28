@@ -9,6 +9,7 @@
  */
 import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase-client";
+import { officeId } from "@/lib/office";
 
 const BUCKET = "listing-photos";
 const MAX_PHOTOS = 12;
@@ -51,7 +52,7 @@ export default function ListingPhotos({ listingId, code }: { listingId: string; 
   async function load() {
     setErr(null);
     try {
-      const uid = (await supabase.auth.getUser()).data.user?.id;
+      const uid = await officeId(supabase);
       if (!uid) throw new Error("انتهت الجلسة — سجّل الدخول مجددًا");
       const dir = `${uid}/${listingId}`;
       const { data: files, error } = await supabase.storage.from(BUCKET)
@@ -72,7 +73,7 @@ export default function ListingPhotos({ listingId, code }: { listingId: string; 
     if (!files || !files.length) return;
     setErr(null); setBusy("رفع");
     try {
-      const uid = (await supabase.auth.getUser()).data.user?.id;
+      const uid = await officeId(supabase);
       if (!uid) throw new Error("انتهت الجلسة — سجّل الدخول مجددًا");
       const room = MAX_PHOTOS - (photos?.length || 0);
       const list = Array.from(files).slice(0, Math.max(0, room));

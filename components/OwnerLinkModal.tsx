@@ -7,6 +7,7 @@
  */
 import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase-client";
+import { officeId } from "@/lib/office";
 import { waLink } from "@/lib/utils";
 import { arDate } from "@/lib/documents";
 
@@ -53,7 +54,7 @@ export default function OwnerLinkModal({ propertyId, propertyName, ownerPhoneHin
   async function createLink() {
     setBusy(true);
     try {
-      const uid = (await supabase.auth.getUser()).data.user?.id;
+      const uid = await officeId(supabase);
       if (!uid) throw new Error("انتهت الجلسة — سجّل الدخول مجددًا");
       const token = randomToken();
       const { data, error } = await supabase.from("owner_links")

@@ -2,6 +2,7 @@
 import { useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase-client";
+import { officeId } from "@/lib/office";
 import { sar, daysLeft, waLink, WATHEQ_WA, today } from "@/lib/utils";
 import { ownerStatementHTML, associationStatementHTML, budgetHTML, foundingMinutesHTML,
   renewalMinutesHTML, DEFAULT_BUDGET_ITEMS, openDoc, type BudgetItem } from "@/lib/documents";
@@ -271,7 +272,10 @@ export default function AssociationView({ initial, issuer }: { initial: Associat
   }
   // ---------- جمعية ----------
   /** هوية المستخدم الحالي — تشترطها سياسة الصلاحيات (RLS) عند الإدراج */
+  /** معرّف المكتب لا المستخدم — قيود الموظف تُسجَّل تحت مكتبه (v9) */
   async function currentUserId(): Promise<string | null> {
+    const oid = await officeId(supabase);
+    if (oid) return oid;
     const { data, error } = await supabase.auth.getUser();
     if (error || !data?.user) return null;
     return data.user.id;

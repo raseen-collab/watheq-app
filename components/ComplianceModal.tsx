@@ -11,6 +11,7 @@
  */
 import { useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase-client";
+import { officeId } from "@/lib/office";
 import { sar, today } from "@/lib/utils";
 import {
   complianceState, brokerageEnd, commissionWindowEnd, expectedCommission,
@@ -74,7 +75,7 @@ export default function ComplianceModal({ initial, properties, orgName, issuer, 
         commit(items.map((x) => (x.id === editing.id ? (data as ComplianceItem) : x)));
         flash("ok", "تم حفظ التعديل");
       } else {
-        const uid = (await supabase.auth.getUser()).data.user?.id;
+        const uid = await officeId(supabase);
         if (!uid) throw new Error("انتهت الجلسة — سجّل الدخول مجددًا");
         const { data, error } = await supabase.from("compliance_items")
           .insert({ ...d, user_id: uid }).select("*").single();

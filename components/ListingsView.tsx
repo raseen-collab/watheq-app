@@ -9,6 +9,7 @@
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase-client";
+import { officeId } from "@/lib/office";
 import { sar, today, waLink } from "@/lib/utils";
 import { openDoc, listingsRegisterHTML, arDate } from "@/lib/documents";
 import {
@@ -83,7 +84,7 @@ export default function ListingsView({ initial, brokerages, requests, orgName, i
         setItems(items.map((x) => (x.id === editing.id ? (data as Listing) : x)));
         flash("ok", "تم حفظ التعديل");
       } else {
-        const uid = (await supabase.auth.getUser()).data.user?.id;
+        const uid = await officeId(supabase);
         if (!uid) throw new Error("انتهت الجلسة — سجّل الدخول مجددًا");
         const { data, error } = await supabase.from("listings").insert({ ...payload, user_id: uid }).select("*").single();
         if (error) throw error;
