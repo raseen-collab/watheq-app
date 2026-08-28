@@ -86,10 +86,48 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
     URL.revokeObjectURL(a.href);
   }
 
+  /**
+   * قراءة ملف إكسل مباشرة — بلا خطوة «احفظ CSV».
+   * SheetJS يُحمَّل عند الحاجة فقط (import ديناميكي) فلا يثقل الصفحة
+   * على من يرفع CSV. ورقة «الوحدات» تُقرأ إن وُجدت — وهي ورقة قالبنا —
+   * وإلا فأول ورقة، حتى يعمل ملف المستخدم القديم أيضًا.
+   *
+   * raw:false + dateNF: نأخذ النص المعروض لا القيمة الخام، فتخرج
+   * تواريخ إكسل الحقيقية بصيغة yyyy-mm-dd التي يفهمها المحلل أدناه،
+   * ويبقى تاريخ قالبنا النصي كما هو. جوال حُفظ رقمًا (سقط صفره) يُعاد
+   * صفره هنا — أشهر تلف يصيب الجوالات في إكسل.
+   */
+  async function readGrid(f: File): Promise<string[][]> {
+    if (/\.(xlsx|xls)$/i.test(f.name)) {
+      const XLSX = await import("xlsx");
+      const wb = XLSX.read(await f.arrayBuffer(), { cellDates: true });
+      const sheet = wb.Sheets["الوحدات"] || wb.Sheets[wb.SheetNames[0]];
+      /**
+       * raw:true عمدًا: raw:false يُخرج التاريخ بصيغة الخلية الأصلية
+       * (مثل 1/1/26) وهي ملتبسة يوم/شهر — فنأخذ القيم الخام ونحوّل
+       * كائن التاريخ بأنفسنا إلى yyyy-mm-dd بلا لبس، بالمكوّنات
+       * المحلية لا toISOString حتى لا ينزاح يومًا مع فارق التوقيت.
+       */
+      const rows = XLSX.utils.sheet_to_json<any[]>(sheet, {
+        header: 1, raw: true, defval: "", blankrows: false,
+      }) as any[][];
+      const pad = (n: number) => String(n).padStart(2, "0");
+      return rows.map((r) => r.map((c, i) => {
+        if (c instanceof Date && !isNaN(c.getTime()))
+          return `${c.getFullYear()}-${pad(c.getMonth() + 1)}-${pad(c.getDate())}`;
+        let v = String(c ?? "").trim();
+        if (i === 6 && /^5\d{8}$/.test(v.replace(/\D/g, ""))) v = "0" + v.replace(/\D/g, "");
+        return v;
+      }));
+    }
+    return parseCSV(await f.text());
+  }
+
   async function handleFile(f: File) {
     setFileName(f.name); setDone(null);
-    const text = await f.text();
-    const grid = parseCSV(text);
+    let grid: string[][] = [];
+    try { grid = await readGrid(f); }
+    catch { setFileName(f.name + " — تعذّرت قراءته، جرّب حفظه CSV UTF-8 ثم ارفعه"); return; }
     if (!grid.length) return;
 
     // تخطّي صف العناوين إن وُجد
@@ -159,7 +197,7 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
                 <button onClick={downloadTemplate} className="btn btn-ghost text-xs">⬇ قالب CSV مجرّد</button>
               </div>
             </StepCard>
-            <StepCard n="٢" title="املأ بياناتك" desc="افتحه بـ Excel أو Numbers، واملأ صفًّا لكل وحدة، ثم احفظه بصيغة CSV." />
+            <StepCard n="٢" title="املأ بياناتك" desc="افتحه بـ Excel واملأ صفًّا لكل وحدة — القوائم المنسدلة تمنع الخطأ." />
             <StepCard n="٣" title="ارفعه هنا" desc="سنتحقق من البيانات ونعرضها لك قبل الحفظ." />
           </div>
 
@@ -170,11 +208,11 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
             </select>
 
             <label className="block border-2 border-dashed border-line rounded-xl p-8 text-center cursor-pointer hover:border-goldSoft transition">
-              <input type="file" accept=".csv,.txt" className="hidden"
+              <input type="file" accept=".csv,.txt,.xlsx,.xls" className="hidden"
                 onChange={(e) => e.target.files?.[0] && handleFile(e.target.files[0])} />
               <div className="text-3xl mb-2">📄</div>
-              <div className="font-semibold text-deep">{fileName || "اضغط لاختيار ملف CSV"}</div>
-              <div className="text-xs text-muted mt-1">من Excel: ملف ← حفظ باسم ← CSV UTF-8</div>
+              <div className="font-semibold text-deep">{fileName || "اضغط لاختيار ملف Excel أو CSV"}</div>
+              <div className="text-xs text-muted mt-1">‎.xlsx يُقرأ مباشرة — لا حاجة لتحويله. Numbers: صدّره Excel أو CSV أولًا</div>
             </label>
           </div>
 
