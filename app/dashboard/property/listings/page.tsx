@@ -12,10 +12,18 @@ export default async function ListingsPage() {
   if (!user) redirect("/login");
 
   // نفس حماية لوحة الأملاك — السجل جزء منها لا صفحة مستقلة
-  const { data: profile } = await supabase
+  const { data: profile, error: profileErr } = await supabase
     .from("profiles")
     .select("account_type, role, org_name, billing_name, vat_number, cr_number, billing_phone, plan, trial_ends_at, subscribed_until")
     .eq("id", user.id).maybeSingle();
+
+  /**
+   * لا تبتلع خطأ الاستعلام — نفس حماية /dashboard الرئيسية.
+   * فشل القراءة العابر (شبكة، جلسة باردة، انحراف ساعة) بدون هذا
+   * الفحص يُقرأ «حساب بلا نوع» فيُرمى صاحب الحساب المكتمل إلى
+   * شاشة الترحيب. الخطأ الصريح أهون: تحديث الصفحة يحلّه، ويصلنا أثره.
+   */
+  if (profileErr) throw new Error(`تعذّر قراءة ملف الحساب: ${profileErr.message}`);
 
   const type = normalizeAccountType(profile || {});
   if (!type) redirect("/onboarding");
