@@ -70,7 +70,9 @@ export default function ExpensesModal({ propertyId, propertyName, unitWord, onCl
 
   async function remove(x: Row) {
     if (!confirm(`حذف مصروف «${catLabel(x.category)} — ${sar(Number(x.amount))} ريال»؟`)) return;
-    const { error } = await supabase.from("expenses").delete().eq("id", x.id);
+    const { data: _del, error } = await supabase.from("expenses").delete().eq("id", x.id).select("id");
+    /* حذف رفضته السياسات يرجع بلا خطأ وبصفر صفوف — لا نوهم الموظف أنه نجح */
+    if (!error && (!_del || _del.length === 0)) { flash("err", "هذا الإجراء يحتاج صلاحية أعلى — اطلبه من صاحب المكتب."); return; }
     if (error) return flash("err", friendly(error));
     setRows((rows || []).filter((r) => r.id !== x.id));
   }

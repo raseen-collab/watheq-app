@@ -307,7 +307,9 @@ export default function AssociationView({ initial, issuer }: { initial: Associat
   }
   async function deleteAssociation() {
     if (!active || !confirm("حذف الجمعية وكل بياناتها؟")) return;
-    const { error } = await supabase.from("associations").delete().eq("id", active.id);
+    const { data: _del, error } = await supabase.from("associations").delete().eq("id", active.id).select("id");
+    /* حذف رفضته السياسات يرجع بلا خطأ وبصفر صفوف — لا نوهم الموظف أنه نجح */
+    if (!error && (!_del || _del.length === 0)) { notify("err", "هذا الإجراء يحتاج صلاحية أعلى — اطلبه من صاحب المكتب."); return; }
     if (error) { console.error("Watheq save error:", error); return notify("err", error.message); }
     const rest = items.filter((a) => a.id !== active.id);
     setItems(rest); setActiveId(rest[0]?.id || null); setModal(null);
@@ -335,7 +337,9 @@ export default function AssociationView({ initial, issuer }: { initial: Associat
   }
   async function deleteOwner(id: string) {
     if (!active || !confirm("حذف المالك؟")) return;
-    const { error } = await supabase.from("owners").delete().eq("id", id);
+    const { data: _del, error } = await supabase.from("owners").delete().eq("id", id).select("id");
+    /* حذف رفضته السياسات يرجع بلا خطأ وبصفر صفوف — لا نوهم الموظف أنه نجح */
+    if (!error && (!_del || _del.length === 0)) { notify("err", "هذا الإجراء يحتاج صلاحية أعلى — اطلبه من صاحب المكتب."); return; }
     if (error) { console.error("Watheq save error:", error); return notify("err", error.message); }
     setItems(items.map((a) => a.id === active.id ? { ...a, owners: a.owners.filter((o) => o.id !== id) } : a));
   }
@@ -351,7 +355,9 @@ export default function AssociationView({ initial, issuer }: { initial: Associat
   }
   async function deleteNote(id: string) {
     if (!active) return;
-    const { error } = await supabase.from("association_notes").delete().eq("id", id);
+    const { data: _del, error } = await supabase.from("association_notes").delete().eq("id", id).select("id");
+    /* حذف رفضته السياسات يرجع بلا خطأ وبصفر صفوف — لا نوهم الموظف أنه نجح */
+    if (!error && (!_del || _del.length === 0)) { notify("err", "هذا الإجراء يحتاج صلاحية أعلى — اطلبه من صاحب المكتب."); return; }
     if (error) { console.error("Watheq save error:", error); return notify("err", error.message); }
     setItems(items.map((a) => a.id === active.id ? { ...a, association_notes: a.association_notes.filter((n) => n.id !== id) } : a));
   }

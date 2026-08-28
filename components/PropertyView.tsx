@@ -261,7 +261,9 @@ export default function PropertyView({ initial, orgName, issuer, compliance }: {
 
   async function deleteProperty() {
     if (!active || !confirm("حذف العقار وكل وحداته؟")) return;
-    const { error } = await supabase.from("properties").delete().eq("id", active.id);
+    const { data: _del, error } = await supabase.from("properties").delete().eq("id", active.id).select("id");
+    /* حذف رفضته السياسات يرجع بلا خطأ وبصفر صفوف — لا نوهم الموظف أنه نجح */
+    if (!error && (!_del || _del.length === 0)) { notify("err", "هذا الإجراء يحتاج صلاحية أعلى — اطلبه من صاحب المكتب."); return; }
     if (error) { console.error("Watheq save error:", error); return notify("err", error.message); }
     const rest = items.filter((p) => p.id !== active.id);
     setItems(rest); setActiveId(rest[0]?.id || null); setModal(null);
@@ -315,7 +317,9 @@ export default function PropertyView({ initial, orgName, issuer, compliance }: {
 
   async function deleteTenant(id: string) {
     if (!active || !confirm("حذف هذه الوحدة؟")) return;
-    const { error } = await supabase.from("tenants").delete().eq("id", id);
+    const { data: _del, error } = await supabase.from("tenants").delete().eq("id", id).select("id");
+    /* حذف رفضته السياسات يرجع بلا خطأ وبصفر صفوف — لا نوهم الموظف أنه نجح */
+    if (!error && (!_del || _del.length === 0)) { notify("err", "هذا الإجراء يحتاج صلاحية أعلى — اطلبه من صاحب المكتب."); return; }
     if (error) { console.error("Watheq save error:", error); return notify("err", error.message); }
     setItems(items.map((p) => (p.id === active.id ? { ...p, tenants: p.tenants.filter((t) => t.id !== id) } : p)));
   }
@@ -330,7 +334,8 @@ export default function PropertyView({ initial, orgName, issuer, compliance }: {
 
   async function deleteNote(id: string) {
     if (!active) return;
-    await supabase.from("property_notes").delete().eq("id", id);
+    const { data: _delN } = await supabase.from("property_notes").delete().eq("id", id).select("id");
+    if (!_delN || _delN.length === 0) { notify("err", "هذا الإجراء يحتاج صلاحية أعلى — اطلبه من صاحب المكتب."); return; }
     setItems(items.map((p) => (p.id === active.id ? { ...p, property_notes: p.property_notes.filter((n) => n.id !== id) } : p)));
   }
 

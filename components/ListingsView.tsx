@@ -115,7 +115,9 @@ export default function ListingsView({ initial, brokerages, requests, orgName, i
 
   async function remove(l: Listing) {
     if (!confirm(`حذف ${l.code} نهائيًّا؟ الأفضل عادةً تغيير حالته إلى «مسحوب» ليبقى في السجل.`)) return;
-    const { error } = await supabase.from("listings").delete().eq("id", l.id);
+    const { data: _del, error } = await supabase.from("listings").delete().eq("id", l.id).select("id");
+    /* حذف رفضته السياسات يرجع بلا خطأ وبصفر صفوف — لا نوهم الموظف أنه نجح */
+    if (!error && (!_del || _del.length === 0)) { flash("err", "هذا الإجراء يحتاج صلاحية أعلى — اطلبه من صاحب المكتب."); return; }
     if (error) return handleErr(error);
     setItems(items.filter((x) => x.id !== l.id));
   }

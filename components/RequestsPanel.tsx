@@ -56,7 +56,9 @@ export default function RequestsPanel({ initial, listings }: { initial: SeekerRe
 
   async function remove(r: SeekerRequest) {
     if (!confirm(`حذف طلب «${r.seeker_name || "بلا اسم"}» نهائيًّا؟ الأفضل عادةً «✓ أُنجز» ليبقى في السجل.`)) return;
-    const { error } = await supabase.from("seeker_requests").delete().eq("id", r.id);
+    const { data: _del, error } = await supabase.from("seeker_requests").delete().eq("id", r.id).select("id");
+    /* حذف رفضته السياسات يرجع بلا خطأ وبصفر صفوف — لا نوهم الموظف أنه نجح */
+    if (!error && (!_del || _del.length === 0)) { flash("err", "هذا الإجراء يحتاج صلاحية أعلى — اطلبه من صاحب المكتب."); return; }
     if (error) return flash("err", friendly(error));
     setItems(items.filter((x) => x.id !== r.id));
   }

@@ -100,7 +100,9 @@ export default function ComplianceModal({ initial, properties, orgName, issuer, 
 
   async function remove(it: ComplianceItem) {
     if (!confirm(`حذف «${it.title}» نهائيًّا؟`)) return;
-    const { error } = await supabase.from("compliance_items").delete().eq("id", it.id);
+    const { data: _del, error } = await supabase.from("compliance_items").delete().eq("id", it.id).select("id");
+    /* حذف رفضته السياسات يرجع بلا خطأ وبصفر صفوف — لا نوهم الموظف أنه نجح */
+    if (!error && (!_del || _del.length === 0)) { flash("err", "هذا الإجراء يحتاج صلاحية أعلى — اطلبه من صاحب المكتب."); return; }
     if (error) return flash("err", error.message);
     commit(items.filter((x) => x.id !== it.id));
   }
