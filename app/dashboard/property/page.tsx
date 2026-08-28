@@ -12,8 +12,16 @@ export default async function PropertyPage() {
   if (!u) redirect("/login");
 
   // حماية: هل يملك هذا الحساب صلاحية لوحة الأملاك؟
-  const { data: prof } = await supabase
+  const { data: prof, error: profErr } = await supabase
     .from("profiles").select("account_type, role").eq("id", u.id).maybeSingle();
+
+  /**
+   * لا تبتلع خطأ الاستعلام — نفس حماية /dashboard الرئيسية.
+   * فشل القراءة العابر (شبكة، جلسة باردة، انحراف ساعة) بدون هذا
+   * الفحص يُقرأ «حساب بلا نوع» فيُرمى صاحب الحساب المكتمل إلى
+   * شاشة الترحيب. الخطأ الصريح أهون: تحديث الصفحة يحلّه، ويصلنا أثره.
+   */
+  if (profErr) throw new Error(`تعذّر قراءة ملف الحساب: ${profErr.message}`);
   const type = normalizeAccountType(prof || {});
   if (!type) redirect("/onboarding");
   if (!canAccess(type, "property")) redirect("/dashboard/association");
