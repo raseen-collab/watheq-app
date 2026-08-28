@@ -9,6 +9,26 @@ export default function OnboardingPage() {
   const [type, setType] = useState<AccountType | null>(null);
   const [orgName, setOrgName] = useState("");
   const [phone, setPhone] = useState("");
+  const [inviteMode, setInviteMode] = useState(false);
+  const [inviteCode, setInviteCode] = useState("");
+  const [inviteMsg, setInviteMsg] = useState<string | null>(null);
+
+  /**
+   * مسار الموظف: رمز الدعوة بدل اختيار نوع حساب — الدالة المعرَّفة
+   * أمنيًّا في القاعدة تتحقق وتُنشئ العضوية وتحرق الرمز ذرّيًّا،
+   * ثم تنقّل صلب للوحة (نفس درس router.push أعلاه).
+   */
+  async function joinByCode() {
+    const code = inviteCode.trim().toUpperCase();
+    if (code.length < 6) { setInviteMsg("أدخل الرمز كما وصلك — ٨ أحرف وأرقام."); return; }
+    setSaving(true); setInviteMsg(null);
+    const { data, error } = await supabase.rpc("watheq_redeem_invite", { invite_code: code });
+    setSaving(false);
+    if (error) { setInviteMsg("تعذّر الاتصال — حاول مرة أخرى."); return; }
+    if (data === "self") { setInviteMsg("هذا رمز مكتبك أنت — الرمز يُرسل للموظف لا لصاحب الحساب."); return; }
+    if (data !== "ok") { setInviteMsg("رمز غير صالح: إمّا خاطئ أو استُخدم أو انتهت مدته. اطلب رمزًا جديدًا من صاحب المكتب."); return; }
+    window.location.assign("/dashboard");
+  }
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -88,6 +108,28 @@ export default function OnboardingPage() {
           </div>
         </div>
 
+        {/* موظف مدعو؟ مساره أقصر من مسار المالك كله */}
+        <div className="text-center mb-6">
+          <button className="text-sm text-gold font-semibold underline underline-offset-4"
+            onClick={() => setInviteMode(!inviteMode)}>
+            {inviteMode ? "← رجوع لاختيار نوع الحساب" : "موظف في مكتب مشترك؟ عندي رمز دعوة"}
+          </button>
+        </div>
+
+        {inviteMode ? (
+          <div className="max-w-md mx-auto bg-white border border-line rounded-2xl p-6">
+            <h2 className="font-display font-bold text-deep mb-1">الانضمام لمكتب</h2>
+            <p className="text-sm text-muted mb-4">أدخل الرمز الذي أرسله لك صاحب المكتب — تدخل لوحة مكتبه مباشرة بدوره المحدد لك.</p>
+            <input className="fld font-mono tracking-widest text-center" dir="ltr" maxLength={8}
+              value={inviteCode} onChange={(e) => setInviteCode(e.target.value.toUpperCase())}
+              placeholder="XXXXXXXX" />
+            {inviteMsg && <p className="text-sm text-late mt-2">{inviteMsg}</p>}
+            <button className="btn btn-gold w-full justify-center mt-4" onClick={joinByCode} disabled={saving}>
+              {saving ? "..." : "انضمام"}
+            </button>
+          </div>
+        ) : (<>
+
         <div className="grid md:grid-cols-3 gap-4">
           {ACCOUNT_TYPES.map((a) => (
             <button key={a.value} onClick={() => setType(a.value)}
@@ -153,6 +195,7 @@ export default function OnboardingPage() {
           </button>
           <p className="text-center text-xs text-muted mt-4">يمكنك تغيير نوع حسابك ورقم جوالك لاحقًا من الإعدادات.</p>
         </div>
+        </>)}
       </div>
     </div>
   );
