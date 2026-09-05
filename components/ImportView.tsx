@@ -25,15 +25,46 @@ const HEADERS = ["اسم المستأجر", "رقم الوحدة", "قيمة ا�
 // عقارًا لا يرفع 40 مرة. الاسم يجب أن يطابق عقارًا موجودًا؛ الصف الفارغ يذهب للعقار المختار.
 
 const FREQ_MAP: Record<string, Frequency> = {
-  "يومي": "daily", "اسبوعي": "weekly", "أسبوعي": "weekly", "شهري": "monthly",
-  "ربع سنوي": "quarterly", "كل 3 اشهر": "quarterly", "كل ٣ أشهر": "quarterly",
-  "نصف سنوي": "semiannual", "كل 6 اشهر": "semiannual", "كل ٦ أشهر": "semiannual",
-  "سنوي": "annual", "daily": "daily", "weekly": "weekly", "monthly": "monthly",
-  "quarterly": "quarterly", "semiannual": "semiannual", "annual": "annual",
+  "يومي": "daily", "اسبوعي": "weekly", "شهري": "monthly",
+  "ربع سنوي": "quarterly", "كل 3 اشهر": "quarterly", "ربعي": "quarterly", "كل ثلاثة اشهر": "quarterly",
+  "نصف سنوي": "semiannual", "كل 6 اشهر": "semiannual", "نصفي": "semiannual", "كل ستة اشهر": "semiannual",
+  "سنوي": "annual", "سنويا": "annual",
+  daily: "daily", weekly: "weekly", monthly: "monthly",
+  quarterly: "quarterly", semiannual: "semiannual", annual: "annual", yearly: "annual",
 };
+
+/**
+ * توحيد الكتابة العربية قبل المطابقة. المكتب يكتب «كل 3 أشهر» و«نصف سنوى»
+ * و«شهرى» — وأي اختلاف بهمزة أو ألف مقصورة كان يسقط إلى «شهري» بصمت،
+ * فيتحوّل عقد ربع سنوي بـ18,000 إلى شهري ويظهر المستأجر متأخرًا بعشرات
+ * الآلاف. التوحيد يزيل التشكيل والتطويل ويوحّد الهمزات والياء والتاء.
+ */
+function arKey(v: string): string {
+  return String(v || "")
+    .replace(/[\u064B-\u0652\u0640]/g, "")   // تشكيل وتطويل
+    .replace(/[أإآٱ]/g, "ا")
+    .replace(/ى/g, "ي")
+    .replace(/ة/g, "ه")
+    .replace(/[٠-٩]/g, (d) => String("٠١٢٣٤٥٦٧٨٩".indexOf(d)))
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+const FREQ_LOOKUP: Record<string, Frequency> = Object.fromEntries(
+  Object.entries(FREQ_MAP).map(([k, v]) => [arKey(k).replace(/ه$/, "ه"), v]),
+) as Record<string, Frequency>;
 
 /** تحويل الأرقام العربية والتواريخ */
 const toEnDigits = (s: string) => s.replace(/[٠-٩]/g, (d) => String("٠١٢٣٤٥٦٧٨٩".indexOf(d)));
+
+/** هل التاريخ حقيقي فعلًا؟ 2026-02-31 و2026-13-45 يمرّان بالشكل ويفشلان هنا */
+function isRealDate(iso: string): boolean {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
+  if (!m) return false;
+  const [y, mo, d] = [Number(m[1]), Number(m[2]), Number(m[3])];
+  if (mo < 1 || mo > 12 || d < 1 || y < 1900 || y > 2100) return false;
+  return d <= new Date(y, mo, 0).getDate();
+}
 
 function normalizeDate(v: string): string {
   const s = toEnDigits(String(v || "").trim());
@@ -145,8 +176,9 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
     const parsed: Row[] = grid.slice(start).map((r) => {
       const [name, unit, rent, freq, startDate, periods, phone, nid, paid, propName, elecAcc, waterAcc] = r.map((x) => String(x ?? "").trim());
       const rentN = Number(toEnDigits(rent).replace(/[^\d.]/g, "")) || 0;
-      const freqKey = toEnDigits(freq).toLowerCase().trim();
-      const frequency = FREQ_MAP[freq.trim()] || FREQ_MAP[freqKey] || "monthly";
+      const fk = arKey(freq);
+      const frequency: Frequency = FREQ_LOOKUP[fk] || "monthly";
+      const freqUnknown = !!freq.trim() && !FREQ_LOOKUP[fk];
       const cs = normalizeDate(startDate);
       const pr = Number(toEnDigits(periods)) || null;
       const pd = Math.max(0, Math.floor(Number(toEnDigits(paid)) || 0));
@@ -154,6 +186,10 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
       if (!name) err = "الاسم مفقود";
       else if (!rentN) err = "قيمة الدفعة مفقودة";
       else if (startDate && !cs) err = "تاريخ غير مفهوم";
+      // لا نمرّر تاريخًا مستحيلًا (2026-13-45): كان يُحفظ كما هو ويفسد كل الحسابات
+      else if (cs && !isRealDate(cs)) err = `تاريخ غير صحيح: ${startDate}`;
+      else if (freqUnknown) err = `دورة سداد غير معروفة: «${freq.trim()}» — استخدم القائمة المنسدلة في القالب`;
+      else if (!freq.trim()) err = "دورة السداد مفقودة";
       else if (pr && pd > pr) err = "الدفعات المسدّدة أكثر من عدد دفعات العقد";
       const norm = (x: string) => x.replace(/\s+/g, " ").trim();
       const target = propName ? properties.find((p) => norm(p.name) === norm(propName)) : undefined;
