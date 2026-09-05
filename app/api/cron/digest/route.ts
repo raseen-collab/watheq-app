@@ -41,6 +41,7 @@ export async function GET(req: Request) {
 
   let sent = 0;
   for (const p of profiles || []) {
+   try {
     const { data: props } = await db
       .from("properties").select("*, tenants(*)").eq("user_id", p.id);
     if (!props?.length) continue;
@@ -119,6 +120,10 @@ export async function GET(req: Request) {
       sent++;
       await db.from("profiles").update({ last_digest_at: new Date().toISOString() }).eq("id", p.id);
     }
+   } catch (e) {
+    // حساب واحد بخطأ غير متوقع لا يُسقط ملخّصات الباقين — نسجّل ونكمل
+    console.error("digest failed for", p.id, e);
+   }
   }
 
   return NextResponse.json({ ok: true, sent });
