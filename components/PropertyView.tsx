@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase-client";
 import { officeId } from "@/lib/office";
+import { arDate } from "@/lib/documents";
 import { sar, waLink, today } from "@/lib/utils";
 import { contractState, buildSchedule, FREQUENCIES, freqLabel, freqShort, derivedEndDate, renewContract, needsRenewal, applyPayment, splitVat, isCommercial, isVacant, settleDeposit,
   vacancyDays, TURNOVER_CHECKLIST, type Frequency } from "@/lib/contracts";
@@ -469,7 +470,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance }: {
     const L: string[] = [`السلام عليكم ورحمة الله، ${t.name} 🌿`, ""];
 
     if (st.unpaid === 0) {
-      L.push(`تذكير ودّي بأن الدفعة القادمة عن ${unit} بعقار ${active.name} تستحق بتاريخ ${st.nextDueDate}.`);
+      L.push(`تذكير ودّي بأن الدفعة القادمة عن ${unit} بعقار ${active.name} تستحق بتاريخ ${arDate(st.nextDueDate)}.`);
       if (one.total) L.push(`• قيمة الدفعة: ${sar(one.total)} ريال${v.enabled ? ` (منها ${sar(one.vat)} ريال ضريبة قيمة مضافة)` : ""}`);
     } else {
       L.push(`نودّ تذكيركم بوجود مستحقّات غير مسدَّدة عن ${unit} بعقار ${active.name}، وبيانها:`);
@@ -477,7 +478,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance }: {
       if (one.total) L.push(`• قيمة الدفعة: ${sar(one.total)} ريال`);
       if (st.hasPartial) L.push(`• المسدَّد جزئيًّا: ${sar(st.partial)} ريال`);
       L.push(`• المبلغ المتبقّي: ${sar(st.amountDue)} ريال`);
-      if (st.nextDueDate) L.push(`• تاريخ أقرب دفعة مستحقة: ${st.nextDueDate}`);
+      if (st.nextDueDate) L.push(`• تاريخ أقرب دفعة مستحقة: ${arDate(st.nextDueDate)}`);
     }
 
     L.push("");
@@ -508,7 +509,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance }: {
 
     const body = [
       "إشعار بسداد أجرة متأخرة",
-      `التاريخ: ${today()}`,
+      `التاريخ: ${arDate(today())}`,
       "",
       `من: ${who}`,
       `إلى: المكرَّم ${t.name}${t.national_id ? `، هوية/سجل رقم (${t.national_id})` : ""}، شاغل ${ul} رقم (${t.unit || "—"}) بعقار ${active.name}${active.address ? ` — ${active.address}` : ""}${active.city ? `، ${active.city}` : ""}.`,
@@ -517,9 +518,9 @@ export default function PropertyView({ initial, orgName, issuer, compliance }: {
       "",
       "السلام عليكم ورحمة الله وبركاته،",
       "",
-      `بالإشارة إلى عقد الإيجار المبرم بيننا (بداية العقد: ${t.contract_start || "—"}، نهايته: ${st.endDate || "—"}، دورة السداد: ${freqLabel(t.payment_frequency)}${one.total ? `، وقيمة الدفعة ${sar(one.total)} ريال` : ""})؛`,
+      `بالإشارة إلى عقد الإيجار المبرم بيننا (بداية العقد: ${arDate(t.contract_start)}، نهايته: ${arDate(st.endDate)}، دورة السداد: ${freqLabel(t.payment_frequency)}${one.total ? `، وقيمة الدفعة ${sar(one.total)} ريال` : ""})؛`,
       "",
-      `نفيدكم بأنه قد ترصَّد بذمّتكم مبلغ (${sar(st.amountDue)}) ريال، قيمة (${st.unpaid}) دفعة مستحقة عن الفترة من (${fromDate}) إلى (${toDate})${st.hasPartial ? `، بعد خصم مبلغ (${sar(st.partial)}) ريال مسدَّد جزئيًّا` : ""}، ولم يُسدَّد حتى تاريخ هذا الإشعار.`,
+      `نفيدكم بأنه قد ترصَّد بذمّتكم مبلغ (${sar(st.amountDue)}) ريال، قيمة (${st.unpaid}) دفعة مستحقة عن الفترة من (${arDate(fromDate)}) إلى (${arDate(toDate)})${st.hasPartial ? `، بعد خصم مبلغ (${sar(st.partial)}) ريال مسدَّد جزئيًّا` : ""}، ولم يُسدَّد حتى تاريخ هذا الإشعار.`,
       ...(v.enabled && totalDue.vat > 0 ? ["", `ويشمل المبلغ المذكور ضريبة قيمة مضافة قدرها (${sar(totalDue.vat)}) ريال بنسبة (${v.rate}%).`] : []),
       "",
       "لذا نأمل المبادرة بسداد المبلغ خلال (5) أيام من تاريخ استلامكم هذا الإشعار، بالوسيلة المتفق عليها في العقد، وتزويدنا بما يفيد السداد.",
