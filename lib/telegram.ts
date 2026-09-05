@@ -29,14 +29,41 @@ async function call(method: string, payload: Record<string, any>) {
 }
 
 /** إرسال رسالة جديدة (مع أزرار اختيارية) */
+/**
+ * تليجرام يرفض أي رسالة فوق 4096 حرفًا — ويُرجع خطأً فتسقط الرسالة كلها.
+ * مكتب بـ160 وحدة يتجاوز الحد في يوم مزدحم بسهولة. نقسّم على حدود
+ * الأسطر (لا في منتصف وسم HTML) ونرسل القطع بالترتيب، والأزرار على
+ * الأخيرة فقط. الرسائل القصيرة تمرّ كما كانت تمامًا.
+ */
+const TG_MAX = 3900;
+function splitTelegram(text: string): string[] {
+  if (text.length <= TG_MAX) return [text];
+  const out: string[] = [];
+  let cur = "";
+  for (const line of text.split("\n")) {
+    const piece = line.length > TG_MAX ? line.slice(0, TG_MAX) : line;
+    if ((cur + "\n" + piece).length > TG_MAX && cur) { out.push(cur); cur = piece; }
+    else cur = cur ? cur + "\n" + piece : piece;
+  }
+  if (cur) out.push(cur);
+  return out;
+}
+
 export async function tgSend(chatId: string | number, text: string, buttons?: TgKeyboard) {
-  return call("sendMessage", {
-    chat_id: chatId,
-    text,
-    parse_mode: "HTML",
-    disable_web_page_preview: true,
-    ...(buttons ? { reply_markup: { inline_keyboard: buttons } } : {}),
-  });
+  const parts = splitTelegram(text);
+  let last: any = null;
+  for (let i = 0; i < parts.length; i++) {
+    const isLast = i === parts.length - 1;
+    last = await call("sendMessage", {
+      chat_id: chatId,
+      text: parts.length > 1 ? `${parts[i]}${isLast ? "" : "\n…"}` : parts[i],
+      parse_mode: "HTML",
+      disable_web_page_preview: true,
+      ...(buttons && isLast ? { reply_markup: { inline_keyboard: buttons } } : {}),
+    });
+    if (!last?.ok) return last;
+  }
+  return last;
 }
 
 /** تعديل رسالة قائمة (بعد ضغط زر) بدل إرسال رسالة جديدة */

@@ -1479,6 +1479,108 @@ ${footer()}`;
 }
 
 // ============================================================
+// كشف المالك المجمّع — كل عقارات المالك في كشف واحد لفترة يحددها
+// المكتب (من شهر إلى شهر). طُلب من أول مكتب فعلي (160 وحدة، ملّاك
+// متعددو العقارات) في سبتمبر 2026.
+//
+// التصميم: ملخص أعلى الكشف (كل عقار في صف: محصَّل − مصروفات − أتعاب
+// = صافي، ثم الإجمالي) لأن المالك يسأل «كم لي؟» أولًا؛ ثم تفصيل كل
+// عقار (دفعات ومصروفات) لمن يريد التحقق. الحسابات نفسها التي يستخدمها
+// تقرير العقار الواحد (ownerNet) حتى لا يختلف رقم هنا عن رقم هناك.
+// ============================================================
+
+export type OwnerStatementSection = {
+  property: Property & { tenants: (Tenant & { status?: string | null; move_out_date?: string | null })[] };
+  payments: OwnerReportPayment[];
+  expenses: ExpenseRow[];
+  fee_pct?: number | null;
+};
+
+export function ownerConsolidatedStatementHTML(
+  ownerName: string,
+  sections: OwnerStatementSection[],
+  period: { label: string; from: string; to: string },
+  issuer: Issuer = {},
+) {
+  const who = issuer.billing_name || "إدارة الأملاك";
+
+  const rows = sections.map((s) => {
+    const g = graceOf(s.property);
+    const ten = (s.property.tenants || []).map((t) => ({ t, st: contractState(t, g), vacant: isVacant(t) }));
+    const units = ten.length;
+    const vacant = ten.filter((r) => r.vacant).length;
+    const due = ten.reduce((a, r) => a + (r.vacant ? 0 : r.st.amountDue), 0);
+    const collected = s.payments.reduce((a, x) => a + (Number(x.amount) || 0), 0);
+    const fin = ownerNet(collected, s.expenses, s.fee_pct);
+    return { s, units, vacant, due, collected, fin };
+  });
+
+  const T = rows.reduce((a, r) => ({
+    units: a.units + r.units, vacant: a.vacant + r.vacant, due: a.due + r.due,
+    collected: a.collected + r.fin.collected, expenses: a.expenses + r.fin.expenses,
+    fee: a.fee + r.fin.fee, net: a.net + r.fin.net,
+  }), { units: 0, vacant: 0, due: 0, collected: 0, expenses: 0, fee: 0, net: 0 });
+  const anyFee = rows.some((r) => r.fin.feePct !== null);
+
+  const body = `
+${header("كشف حساب مالك — مجمّع", ownerName)}
+<h1>كشف حساب المالك — ${ownerName}</h1>
+<div class="sub">${rows.length} ${rows.length === 1 ? "عقار" : "عقارات"} · ${T.units} وحدة · الفترة: <b>${period.label}</b> (${arDate(period.from)} إلى ${arDate(period.to)})</div>
+
+<div class="tot">
+  <div><div class="v g">${sar(T.collected)}</div><div class="l">المُحصَّل (ريال)</div></div>
+  <div><div class="v">${sar(T.expenses)}</div><div class="l">المصروفات (ريال)</div></div>
+  ${anyFee ? `<div><div class="v">${sar(T.fee)}</div><div class="l">أتعاب الإدارة (ريال)</div></div>` : ""}
+  <div><div class="v g" style="font-size:1.35rem">${sar(T.net)}</div><div class="l"><b>صافي المالك (ريال)</b></div></div>
+</div>
+
+<h2>ملخص العقارات</h2>
+<div class="scrollx"><table>
+  <thead><tr><th>العقار</th><th>الوحدات</th><th>شاغرة</th><th>المُحصَّل</th><th>المصروفات</th>${anyFee ? "<th>الأتعاب</th>" : ""}<th>الصافي</th><th>متأخرات قائمة</th></tr></thead>
+  <tbody>
+    ${rows.map((r) => `<tr>
+      <td><b>${r.s.property.name}</b><div style="font-size:.72rem;color:#5C6B67">${typeLabel(r.s.property.property_type)}${r.s.property.city ? ` · ${r.s.property.city}` : ""}</div></td>
+      <td>${r.units}</td><td>${r.vacant || "—"}</td>
+      <td>${sar(r.fin.collected)}</td><td>${sar(r.fin.expenses)}</td>
+      ${anyFee ? `<td>${r.fin.feePct !== null ? `${sar(r.fin.fee)} <span style="font-size:.7rem;color:#5C6B67">(${r.fin.feePct}%)</span>` : "—"}</td>` : ""}
+      <td><b>${sar(r.fin.net)}</b></td>
+      <td>${r.due ? `<span class="pill l">${sar(r.due)}</span>` : "—"}</td>
+    </tr>`).join("")}
+    <tr>
+      <td><b>الإجمالي</b></td><td><b>${T.units}</b></td><td>${T.vacant || "—"}</td>
+      <td><b>${sar(T.collected)}</b></td><td><b>${sar(T.expenses)}</b></td>
+      ${anyFee ? `<td><b>${sar(T.fee)}</b></td>` : ""}
+      <td><b style="font-size:1.05rem">${sar(T.net)}</b></td>
+      <td>${T.due ? `<b>${sar(T.due)}</b>` : "—"}</td>
+    </tr>
+  </tbody>
+</table></div>
+
+${rows.map((r) => `
+<h2 style="margin-top:22px">${r.s.property.name} — التفصيل</h2>
+${r.s.payments.length ? `<div class="scrollx"><table>
+  <thead><tr><th>التاريخ</th><th>المستأجر</th><th>${unitLabel(r.s.property.property_type)}</th><th>المبلغ</th><th>الطريقة</th></tr></thead>
+  <tbody>
+    ${r.s.payments.map((x) => `<tr><td>${arDate(x.paid_on)}</td><td>${x.tenant_name || "—"}</td><td>${x.unit || "—"}</td><td><b>${sar(x.amount)}</b></td><td>${methodAr(x.method)}</td></tr>`).join("")}
+    <tr><td colspan="3"><b>إجمالي المُحصَّل</b></td><td colspan="2"><b>${sar(r.fin.collected)}</b></td></tr>
+  </tbody>
+</table></div>` : `<div class="sub">لا دفعات مسجّلة لهذا العقار خلال الفترة.</div>`}
+${r.s.expenses.length ? `<div class="scrollx" style="margin-top:8px"><table>
+  <thead><tr><th>التاريخ</th><th>التصنيف</th><th>${unitLabel(r.s.property.property_type)}</th><th>المبلغ</th><th>ملاحظة</th></tr></thead>
+  <tbody>
+    ${r.s.expenses.map((x) => `<tr><td>${arDate(x.spent_on)}</td><td>${catLabel(x.category)}</td><td>${x.unit || "—"}</td><td><b>${sar(Number(x.amount) || 0)}</b></td><td>${x.note ? String(x.note) : "—"}</td></tr>`).join("")}
+    <tr><td colspan="3"><b>إجمالي المصروفات</b></td><td colspan="2"><b>${sar(r.fin.expenses)}</b></td></tr>
+  </tbody>
+</table></div>` : ""}
+`).join("")}
+
+<div class="note">كشف استرشادي صادر آليًّا من سجل الدفعات والمصروفات المسجّلة في وثيق بتاريخ ${today()}. الأرقام تعكس ما وثّقه المكتب في النظام، وصافي كل عقار يُحسب بنفس طريقة تقرير العقار المنفرد.</div>
+<div class="sign"><div>إدارة الأملاك: ${who}<br><br>التوقيع: ________________</div><div>المالك: ${ownerName}<br><br>تاريخ الإصدار: ${today()}</div></div>
+${footer()}`;
+  return SHELL(`كشف حساب المالك — ${ownerName} — ${period.label}`, body, markOf(issuer));
+}
+
+// ============================================================
 // سجل التزامات المكتب العقاري — نسخة مطبوعة لملف المكتب:
 // رخصة فال · عقود الوساطة ونوافذ عمولتها · تراخيص الإعلانات،
 // مع الحدود النظامية بصياغة استرشادية موحّدة (UI_LEGAL).
