@@ -8,6 +8,7 @@ import { complianceDigestLines, type ComplianceItem } from "@/lib/compliance";
 import { listingsDigestLines, type Listing } from "@/lib/listings";
 import { requestsDigestLines, type SeekerRequest } from "@/lib/requests";
 import { complianceState } from "@/lib/compliance";
+import { arDate } from "@/lib/documents";
 
 /** تليجرام يقرأ الرسالة كـHTML: اسم فيه < أو & يُسقط الرسالة كلها للحساب. نهرّب النصوص الحرة */
 const esc = (v: any) => String(v ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -70,10 +71,10 @@ export async function GET(req: Request) {
           totalDue += st.amountDue;
           lateList.push(`• ${esc(t.name)} — ${ul} ${esc(t.unit || "—")} (${esc(prop.name)}) — <b>${sar(st.amountDue)}</b> ريال`);
         } else if (st.daysToNextDue !== null && st.daysToNextDue >= 0 && st.daysToNextDue <= within) {
-          dueSoon.push(`• ${esc(t.name)} — ${ul} ${esc(t.unit || "—")} — ${sar(t.rent_amount)} ريال بتاريخ ${st.nextDueDate}`);
+          dueSoon.push(`• ${esc(t.name)} — ${ul} ${esc(t.unit || "—")} — ${sar(t.rent_amount)} ريال بتاريخ ${arDate(st.nextDueDate)}`);
         }
         if (st.daysToEnd !== null && st.daysToEnd >= 0 && st.daysToEnd <= 60) {
-          expiring.push(`• ${esc(t.name)} — ${ul} ${esc(t.unit || "—")} — ينتهي خلال ${st.daysToEnd} يومًا (${st.endDate})`);
+          expiring.push(`• ${esc(t.name)} — ${ul} ${esc(t.unit || "—")} — ينتهي خلال ${st.daysToEnd} يومًا (${arDate(st.endDate)})`);
         }
       }
     }
