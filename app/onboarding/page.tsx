@@ -61,21 +61,30 @@ export default function OnboardingPage() {
      * بدونه قد ينجح الطلب شكليًّا دون أن يُحفظ شيء (سياسة RLS مثلًا)،
      * فيعود المستخدم إلى هذه الصفحة نفسها في حلقة لا تنتهي بلا رسالة خطأ.
      */
-    const { data: saved, error } = await supabase
-      .from("profiles")
-      .upsert(
-        {
-          id: user.id,
-          account_type: type,
-          org_name: orgName || null,
-          billing_phone: phoneClean,
-          // اسم الفوترة يُملأ من اسم المنشأة إن كان فارغًا — يظهر في الفواتير وكشوف الحساب
-          ...(orgName ? { billing_name: orgName } : {}),
-        },
-        { onConflict: "id" },
-      )
-      .select("account_type")
-      .maybeSingle();
+    /**
+     * update لا upsert — وهذا سبب عطل «permission denied» الذي أوقف كل تسجيل
+     * جديد لأسابيع: upsert يولّد `ON CONFLICT DO UPDATE SET id = excluded.id`،
+     * فيطلب صلاحية تعديل عمود المعرّف — وهي صلاحية لا يملكها المستخدم ولا
+     * يجوز أن يملكها. وصف المستخدم مُنشأ أصلًا لحظة التسجيل، فالتحديث يكفي.
+     */
+    const patch = {
+      account_type: type,
+      org_name: orgName || null,
+      billing_phone: phoneClean,
+      // اسم الفوترة يُملأ من اسم المنشأة إن كان فارغًا — يظهر في الفواتير وكشوف الحساب
+      ...(orgName ? { billing_name: orgName } : {}),
+    };
+
+    let { data: saved, error } = await supabase
+      .from("profiles").update(patch).eq("id", user.id)
+      .select("account_type").maybeSingle();
+
+    // شبكة أمان: لو لم يوجد الصف أصلًا (حساب قديم قبل مُشغِّل الإنشاء) نُنشئه
+    if (!error && !saved?.account_type) {
+      const ins = await supabase.from("profiles")
+        .insert({ id: user.id, ...patch }).select("account_type").maybeSingle();
+      saved = ins.data; error = ins.error;
+    }
 
     if (error) { setError(error.message); setSaving(false); return; }
     if (!saved?.account_type) {
