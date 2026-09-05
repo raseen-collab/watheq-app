@@ -54,7 +54,8 @@ export async function GET(req: Request) {
     for (const prop of props as any[]) {
       const ul = unitLabel(prop.property_type);
       for (const t of prop.tenants || []) {
-        const st = contractState(t);
+        // فترة السماح نفسها التي تعتمدها اللوحة — وإلا وصلت رسالة «متأخر» لمستأجر لوحته تقول «فترة سماح»
+        const st = contractState(t, { graceDays: Number(prop.grace_days) || 0 });
         if (st.status === "late") {
           totalDue += st.amountDue;
           lateList.push(`• ${t.name} — ${ul} ${t.unit || "—"} (${prop.name}) — <b>${sar(st.amountDue)}</b> ريال`);
@@ -103,9 +104,11 @@ export async function GET(req: Request) {
     if (!dueSoon.length && !lateList.length && !expiring.length && !compliance.length && !listings.length && !matchLines.length) continue;
 
     const parts = [`🗂️ <b>ملخّص وثيق اليومي</b>${p.org_name ? ` — ${p.org_name}` : ""}`, ""];
-    if (dueSoon.length) parts.push(`🟡 <b>تستحق خلال ${within} أيام (${dueSoon.length})</b>`, ...dueSoon.slice(0, 12), "");
-    if (lateList.length) parts.push(`🔴 <b>متأخرة (${lateList.length})</b> — إجمالي ${sar(totalDue)} ريال`, ...lateList.slice(0, 12), "");
-    if (expiring.length) parts.push(`📄 <b>عقود تنتهي قريبًا (${expiring.length})</b>`, ...expiring.slice(0, 12), "");
+    // أقصى 12 سطرًا لكل قسم مع ذكر المتبقي — مكتب كبير لا يظن أن القائمة اكتملت
+    const more = (n: number) => n > 12 ? [`… و${n - 12} أخرى في اللوحة`] : [];
+    if (dueSoon.length) parts.push(`🟡 <b>تستحق خلال ${within} أيام (${dueSoon.length})</b>`, ...dueSoon.slice(0, 12), ...more(dueSoon.length), "");
+    if (lateList.length) parts.push(`🔴 <b>متأخرة (${lateList.length})</b> — إجمالي ${sar(totalDue)} ريال`, ...lateList.slice(0, 12), ...more(lateList.length), "");
+    if (expiring.length) parts.push(`📄 <b>عقود تنتهي قريبًا (${expiring.length})</b>`, ...expiring.slice(0, 12), ...more(expiring.length), "");
     if (compliance.length) parts.push(`⚖️ <b>التزامات المكتب (${compliance.length})</b>`, ...compliance.slice(0, 12), "");
     if (listings.length) parts.push(`📋 <b>المعروضات</b>`, ...listings, "");
     if (matchLines.length) parts.push(...matchLines, "");
