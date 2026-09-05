@@ -4,7 +4,13 @@ import { KIND_META as L_KIND, OFFER_LABEL, STATUS_META, freshness, pricePerMeter
 import { ownerNet, sumByCategory, catLabel, type ExpenseRow } from "./expenses";
 import { unitLabel, typeLabel } from "./domain";
 
-const sar = (n: number) => (Number(n) || 0).toLocaleString("en-US");
+const sar = (n: number) => {
+  const v = Number(n) || 0;
+  // الكسور بمنزلتين دائمًا (2,608.70 لا 2,608.7) — والصحيح بلا كسور. والسالب بعلامة طرح حقيقية
+  const abs = Math.abs(v);
+  const txt = Number.isInteger(abs) ? abs.toLocaleString("en-US") : abs.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return v < 0 ? `−${txt}` : txt;
+};
 
 /**
  * تعقيم المدخلات قبل بناء أي مستند HTML. الأسماء والملاحظات يكتبها
@@ -64,6 +70,9 @@ const METHOD_AR: Record<string, string> = {
   transfer: "تحويل بنكي", cash: "نقدًا", pos: "شبكة", cheque: "شيك", other: "أخرى",
 };
 const methodAr = (m?: string | null) => METHOD_AR[String(m || "")] || "—";
+/** صف السجل: الدفعة السالبة تراجعٌ موثّق — تُسمّى باسمها لا «أخرى» */
+const payMethod = (x: { method?: string | null; amount?: number | null }) =>
+  Number(x.amount) < 0 ? "↩︎ تراجع عن دفعة" : methodAr(x.method);
 
 type Issuer = { billing_name?: string | null; vat_number?: string | null; cr_number?: string | null; billing_phone?: string | null;
   /** true لأي حساب بلا باقة مدفوعة — يُضاف سطر «أُنشئ عبر وثيق» في التذييل فقط.
@@ -198,7 +207,7 @@ function zatcaQrBlock(sellerName: string, vatNo: string, total: number, vat: num
 <div style="display:flex;justify-content:flex-end;margin-top:14px">
   <div style="text-align:center">
     <div id="zatca-qr" style="width:120px;height:120px;margin-inline-start:auto"></div>
-    <div style="font-size:8px;color:#8A8477;max-width:200px;word-break:break-all;margin-top:4px" id="zatca-tlv">${tlv}</div>
+    <div style="font-size:8px;color:#8A8477;max-width:200px;word-break:break-all;margin-top:4px" id="zatca-tlv" title="محتوى رمز الاستجابة السريعة (TLV/Base64) — يُرسم رمزًا عند توفر الاتصال">${tlv}</div>
   </div>
 </div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"><\/script>
@@ -317,9 +326,9 @@ ${payments.length ? `
   <tbody>
     ${payments.map((r, i) => `<tr>
       <td>${i + 1}</td>
-      <td>${r.paid_on || "—"}</td>
+      <td>${r.paid_on ? arDate(r.paid_on) : "—"}</td>
       <td>${sar(r.amount)}</td>
-      <td>${methodAr(r.method)}</td>
+      <td>${payMethod(r)}</td>
       <td>${r.note ? String(r.note).replace(/</g, "&lt;") : "—"}</td>
     </tr>`).join("")}
     <tr style="background:#F3EEE2;font-weight:700">
@@ -414,10 +423,9 @@ ${v.enabled && !issuer.vat_number ? `<div class="note" style="border-inline-star
   فاتورة إدارية صادرة عن المؤجّر لغرض التوثيق بين الطرفين. السداد يتم مباشرةً للمؤجّر بالوسيلة المتفق عليها —
   منصة وثيق لا تستلم ولا تحوّل أي مبالغ.
 </div>
-${v.enabled ? `<div class="note" style="border-inline-start-color:#D0453F;background:#FBE9E7;color:#a5322c">
-  <b>تنويه مهم:</b> هذا مستند إداري يبيّن احتساب الضريبة، وليس فاتورة إلكترونية معتمدة من هيئة الزكاة والضريبة والدخل
-  (لا يتضمّن رمز الاستجابة السريعة ولا التوقيع الإلكتروني المطلوبين في نظام الفاتورة الإلكترونية).
-  للاعتماد الضريبي الرسمي، أصدرها من حلّ فوترة معتمد أو راجع محاسبك.
+${v.enabled && issuer.vat_number ? `<div class="note">
+  <b>عن الفوترة الإلكترونية:</b> هذه فاتورة ضريبية مبسطة تتضمن رمز الاستجابة السريعة وفق متطلبات المرحلة الأولى (الإصدار) من نظام الفاتورة الإلكترونية.
+  إن كانت منشأتك مشمولة بالمرحلة الثانية (الربط والتكامل مع منصة «فاتورة»)، فوثيق لا يقوم بهذا الربط — أصدر فواتيرك الضريبية من حلّ فوترة مرتبط، واستخدم هذه للتوثيق الإداري.
 </div>` : ""}
 
 <div class="sign">
@@ -763,8 +771,8 @@ ${payments.length ? `
   <thead><tr><th>#</th><th>تاريخ الاستلام</th><th>المبلغ (ريال)</th><th>طريقة السداد</th><th>ملاحظة</th></tr></thead>
   <tbody>
     ${payments.map((r, i) => `<tr>
-      <td>${i + 1}</td><td>${r.paid_on || "—"}</td><td>${sar(r.amount)}</td>
-      <td>${methodAr(r.method)}</td><td>${r.note ? String(r.note).replace(/</g, "&lt;") : "—"}</td>
+      <td>${i + 1}</td><td>${r.paid_on ? arDate(r.paid_on) : "—"}</td><td>${sar(r.amount)}</td>
+      <td>${payMethod(r)}</td><td>${r.note ? String(r.note).replace(/</g, "&lt;") : "—"}</td>
     </tr>`).join("")}
     <tr style="background:#F3EEE2;font-weight:700">
       <td colspan="2">إجمالي المستلم</td><td>${sar(received)}</td><td colspan="2">${payments.length} عملية</td>
@@ -1506,7 +1514,7 @@ ${payments.length ? `<div class="scrollx"><table>
       <td>${x.tenant_name || "—"}</td>
       <td>${x.unit || "—"}</td>
       <td><b>${sar(x.amount)}</b></td>
-      <td>${methodAr(x.method)}</td>
+      <td>${payMethod(x)}</td>
       <td>${x.note ? String(x.note) : "—"}</td>
     </tr>`).join("")}
     <tr><td colspan="3"><b>الإجمالي</b></td><td><b>${sar(collected)}</b></td><td colspan="2">—</td></tr>
@@ -1633,7 +1641,7 @@ ${rows.map((r) => `
 ${r.s.payments.length ? `<div class="scrollx"><table>
   <thead><tr><th>التاريخ</th><th>المستأجر</th><th>${unitLabel(r.s.property.property_type)}</th><th>المبلغ</th><th>الطريقة</th></tr></thead>
   <tbody>
-    ${r.s.payments.map((x) => `<tr><td>${arDate(x.paid_on)}</td><td>${x.tenant_name || "—"}</td><td>${x.unit || "—"}</td><td><b>${sar(x.amount)}</b></td><td>${methodAr(x.method)}</td></tr>`).join("")}
+    ${r.s.payments.map((x) => `<tr><td>${arDate(x.paid_on)}</td><td>${x.tenant_name || "—"}</td><td>${x.unit || "—"}</td><td><b>${sar(x.amount)}</b></td><td>${payMethod(x)}</td></tr>`).join("")}
     <tr><td colspan="3"><b>إجمالي المُحصَّل</b></td><td colspan="2"><b>${sar(r.fin.collected)}</b></td></tr>
   </tbody>
 </table></div>` : `<div class="sub">لا دفعات مسجّلة لهذا العقار خلال الفترة.</div>`}

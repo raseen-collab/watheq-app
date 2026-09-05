@@ -6,6 +6,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { contractState, renewContract as renewFields, freqShort, applyPayment, type Frequency } from "@/lib/contracts";
+import { arDate } from "@/lib/documents";
 import { deriveState, STATE_ORDER, stateMeta, stateLabel, type StateKey } from "./contract-state";
 
 type DB = SupabaseClient<any, any, any>;
@@ -110,9 +111,9 @@ export async function todayReport(db: DB, profile: any): Promise<string> {
       if (!soon.length) return `📅 <b>استحقاقات قريبة</b>\n\nلا توجد دفعات مستحقة خلال 7 أيام ✅`;
       const total = soon.reduce((s, r) => s + (Number(r.t.rent_amount) || 0), 0);
       const lines = soon.map((r) =>
-        `• <b>${esc(rowLabel(r))}</b> — ${esc(r.t.name)} — <b>${sar(r.t.rent_amount)}</b> ﷼ — ${esc(r.st.nextDueDate)}`
+        `• <b>${esc(rowLabel(r))}</b> — ${esc(r.t.name)} — <b>${sar(r.t.rent_amount)}</b> ريال — ${arDate(r.st.nextDueDate)}`
       ).join("\n");
-      return `📅 <b>استحقاقات قريبة</b> (خلال 7 أيام)\n\n${lines}\n\n— الإجمالي: <b>${sar(total)}</b> ﷼ · ${soon.length} دفعة`;
+      return `📅 <b>استحقاقات قريبة</b> (خلال 7 أيام)\n\n${lines}\n\n— الإجمالي: <b>${sar(total)}</b> ريال · ${soon.length} دفعة`;
     }
     const { assocs, owners } = await assocContext(db, profile);
     const soon = assocs.filter((a: any) => a.cert_expiry && a.cert_expiry >= todayISO());
@@ -132,17 +133,17 @@ export async function lateReport(db: DB, profile: any): Promise<string> {
       if (!late.length) return `⚠️ <b>المتأخرات</b>\n\nلا توجد متأخرات — ممتاز 👏`;
       const total = late.reduce((s, r) => s + (r.st.amountDue || 0), 0);
       const lines = late.map((r) =>
-        `• <b>${esc(rowLabel(r))}</b> — ${esc(r.t.name)} — متأخر <b>${r.st.unpaid}</b> دفعة — <b>${sar(r.st.amountDue)}</b> ﷼`
+        `• <b>${esc(rowLabel(r))}</b> — ${esc(r.t.name)} — متأخر <b>${r.st.unpaid}</b> دفعة — <b>${sar(r.st.amountDue)}</b> ريال`
       ).join("\n");
-      return `⚠️ <b>المتأخرات</b>\n\n${lines}\n\n— إجمالي المتأخر: <b>${sar(total)}</b> ﷼ · ${late.length} عقد`;
+      return `⚠️ <b>المتأخرات</b>\n\n${lines}\n\n— إجمالي المتأخر: <b>${sar(total)}</b> ريال · ${late.length} عقد`;
     }
     const { assocById, owners } = await assocContext(db, profile);
     const late = owners.filter((o: any) => (Number(o.months_late) || 0) > 0)
       .sort((a: any, b: any) => (Number(b.months_late) || 0) - (Number(a.months_late) || 0));
     if (!late.length) return `⚠️ <b>المتأخرات</b>\n\nلا يوجد ملّاك متأخرون 👏`;
     const total = late.reduce((s: number, o: any) => s + ownerOwed(o, assocById), 0);
-    const lines = late.map((o: any) => `• <b>${esc(o.name)}</b>${o.unit ? " — وحدة " + esc(o.unit) : ""} — متأخر <b>${o.months_late}</b> شهر — <b>${sar(ownerOwed(o, assocById))}</b> ﷼`).join("\n");
-    return `⚠️ <b>المتأخرات</b>\n\n${lines}\n\n— إجمالي المتأخر: <b>${sar(total)}</b> ﷼ · ${late.length} مالك`;
+    const lines = late.map((o: any) => `• <b>${esc(o.name)}</b>${o.unit ? " — وحدة " + esc(o.unit) : ""} — متأخر <b>${o.months_late}</b> شهر — <b>${sar(ownerOwed(o, assocById))}</b> ريال`).join("\n");
+    return `⚠️ <b>المتأخرات</b>\n\n${lines}\n\n— إجمالي المتأخر: <b>${sar(total)}</b> ريال · ${late.length} مالك`;
   } catch (e: any) { return `تعذّر جلب المتأخرات.\n<code>${esc(e.message)}</code>`; }
 }
 
@@ -160,8 +161,8 @@ export async function summaryReport(db: DB, profile: any): Promise<string> {
         `📊 <b>ملخّص وثيق — العقارات</b>`, ``,
         `• العقارات: <b>${properties.length}</b> · الوحدات: <b>${rows.length}</b>`,
         `• نسبة الانتظام: <b>${pct}٪</b>`,
-        `• محصّل: <b>${sar(collected)}</b> ﷼`,
-        `• متأخرات: <b>${sar(overdue)}</b> ﷼ (${late.length} عقد)`,
+        `• محصّل: <b>${sar(collected)}</b> ريال`,
+        `• متأخرات: <b>${sar(overdue)}</b> ريال (${late.length} عقد)`,
         `• تستحق خلال 7 أيام: <b>${soon.length}</b>`,
       ].join("\n");
     }
@@ -172,8 +173,8 @@ export async function summaryReport(db: DB, profile: any): Promise<string> {
     return [
       `📊 <b>ملخّص وثيق — الجمعيات</b>`, ``,
       `• الجمعيات: <b>${assocs.length}</b> · الملّاك: <b>${owners.length}</b>`,
-      `• رصيد الصناديق: <b>${sar(fund)}</b> ﷼`,
-      `• متأخرون: <b>${late.length}</b> — <b>${sar(lateTotal)}</b> ﷼`,
+      `• رصيد الصناديق: <b>${sar(fund)}</b> ريال`,
+      `• متأخرون: <b>${late.length}</b> — <b>${sar(lateTotal)}</b> ريال`,
     ].join("\n");
   } catch (e: any) { return `تعذّر بناء الملخّص.\n<code>${esc(e.message)}</code>`; }
 }
@@ -232,9 +233,9 @@ export async function statusReport(db: DB, profile: any): Promise<string> {
     const flagged = rows.filter((r) => r.key !== "active")
       .sort((a, b) => STATE_ORDER.indexOf(a.key) - STATE_ORDER.indexOf(b.key)).slice(0, 8);
     const lines = flagged.map((r) => {
-      const extra = r.key === "arrears" ? ` — ${sar(r.st.amountDue)} ﷼`
+      const extra = r.key === "arrears" ? ` — ${sar(r.st.amountDue)} ريال`
         : r.key === "expiring" && r.st.daysToEnd != null ? ` — ينتهي خلال ${r.st.daysToEnd} يوم`
-        : (r.key === "due_soon" && r.st.nextDueDate) ? ` — ${r.st.nextDueDate}` : "";
+        : (r.key === "due_soon" && r.st.nextDueDate) ? ` — ${arDate(r.st.nextDueDate)}` : "";
       return `${stateMeta(r.key).dot} <b>${esc(rowLabel(r))}</b> — ${esc(r.t.name)}${extra}`;
     }).join("\n");
     return `📋 <b>حالة العقود</b>\n\n${head}\n\n${lines || "كل العقود منتظمة ✅"}`;
@@ -278,7 +279,7 @@ async function payTenant(db: DB, profile: any, tenantId: string): Promise<{ ok: 
   });
   if (error) return { ok: false, msg: "تعذّر الحفظ: " + error.message };
   const r = (data || {}) as { completed?: number };
-  return { ok: true, msg: `سُجّلت دفعة (${sar(rent)} ﷼)${(r.completed || 0) > 1 ? ` — اكتملت ${r.completed} دفعات` : ""}.` };
+  return { ok: true, msg: `سُجّلت دفعة (${sar(rent)} ريال)${(r.completed || 0) > 1 ? ` — اكتملت ${r.completed} دفعات` : ""}.` };
 }
 
 /** تسجيل اشتراك شهر واحد لمالك في جمعية — يحترم السداد الجزئي */
@@ -302,7 +303,7 @@ async function payOwner(db: DB, profile: any, ownerId: string): Promise<{ ok: bo
   if (error) return { ok: false, msg: "تعذّر الحفظ: " + error.message };
 
   await logPayment(db, profile, { owner_id: ownerId, association_id: assoc.id, amount: fee, periods_covered: months });
-  return { ok: true, msg: `سُجّل اشتراك (${sar(fee)} ﷼) — سُدّد ${months} شهر.` };
+  return { ok: true, msg: `سُجّل اشتراك (${sar(fee)} ريال) — سُدّد ${months} شهر.` };
 }
 
 /** موجّه واحد: يختار المسار الصحيح تلقائيًّا (كان يفشل للجمعيات) */
@@ -354,8 +355,8 @@ export async function buildNotice(db: DB, profile: any, tenantId: string, kind: 
         "",
         `نفيدكم بوجود مستحقّات غير مسدَّدة عن ${unit} بعقار ${prop.name || ""}:`,
         `• عدد الدفعات المتأخرة: ${st.unpaid}`,
-        st.hasPartial ? `• المسدَّد جزئيًّا: ${sar(st.partial)} ﷼` : "",
-        `• المبلغ المتبقّي: ${sar(st.amountDue)} ﷼`,
+        st.hasPartial ? `• المسدَّد جزئيًّا: ${sar(st.partial)} ريال` : "",
+        `• المبلغ المتبقّي: ${sar(st.amountDue)} ريال`,
         "",
         "نأمل المبادرة بالسداد خلال (5) أيام بالوسيلة المتفق عليها في العقد.",
         "وفي حال عدم السداد، سيتّخذ المؤجّر الإجراءات النظامية، ومنها إنذار رسمي عبر منصة «إيجار» ثم طلب تنفيذ عبر «ناجز».",
@@ -369,7 +370,7 @@ export async function buildNotice(db: DB, profile: any, tenantId: string, kind: 
       msg = [
         `السلام عليكم ورحمة الله، ${t.name || ""}`,
         "",
-        `نفيدكم برغبتنا بعدم تجديد عقد إيجار ${unit} بعقار ${prop.name || ""}${st.endDate ? `، المنتهي بتاريخ ${st.endDate}` : ""}.`,
+        `نفيدكم برغبتنا بعدم تجديد عقد إيجار ${unit} بعقار ${prop.name || ""}${st.endDate ? `، المنتهي بتاريخ ${arDate(st.endDate)}` : ""}.`,
         "ونأمل ترتيب الإخلاء وتسوية أي مستحقّات قبل ذلك التاريخ.",
         "",
         "شاكرين لكم حسن التعامل،",
@@ -399,13 +400,13 @@ export async function buildReminder(db: DB, profile: any, contractId: string): P
       unit = t.unit ? `الوحدة (${t.unit})` : "الوحدة";
       who = prop.manager || profile.org_name || "إدارة الأملاك";
       if (st.unpaid === 0) {
-        lines = [`تذكير ودّي بأن الدفعة القادمة عن ${unit} بعقار ${prop.name || ""} تستحق بتاريخ ${st.nextDueDate}.`];
+        lines = [`تذكير ودّي بأن الدفعة القادمة عن ${unit} بعقار ${prop.name || ""} تستحق بتاريخ ${arDate(st.nextDueDate)}.`];
       } else {
         lines = [
           `نودّ تذكيركم بوجود مستحقّات عن ${unit} بعقار ${prop.name || ""}:`,
           `• الدفعات المتأخرة: ${st.unpaid}`,
-          st.hasPartial ? `• المسدَّد جزئيًّا: ${sar(st.partial)} ﷼` : "",
-          `• المبلغ المتبقّي: ${sar(st.amountDue)} ﷼`,
+          st.hasPartial ? `• المسدَّد جزئيًّا: ${sar(st.partial)} ريال` : "",
+          `• المبلغ المتبقّي: ${sar(st.amountDue)} ريال`,
         ].filter(Boolean);
       }
     } else {
@@ -424,12 +425,12 @@ export async function buildReminder(db: DB, profile: any, contractId: string): P
         ? [
             `نودّ تذكيركم بأن اشتراك الصيانة عن ${unit} لا يزال غير مسدَّد:`,
             `• الفترات المتأخرة: ${o.months_late}`,
-            partial > 0 ? `• المسدَّد جزئيًّا: ${sar(partial)} ﷼` : "",
-            `• المبلغ المتبقّي: ${sar(due)} ﷼`,
+            partial > 0 ? `• المسدَّد جزئيًّا: ${sar(partial)} ريال` : "",
+            `• المبلغ المتبقّي: ${sar(due)} ريال`,
             "",
             "ويُسدَّد المبلغ في الحساب البنكي للجمعية.",
           ].filter(Boolean)
-        : [`تذكير ودّي بأن اشتراك الصيانة عن ${unit}${fee ? ` وقدره ${sar(fee)} ﷼` : ""} أصبح مستحقًّا.`];
+        : [`تذكير ودّي بأن اشتراك الصيانة عن ${unit}${fee ? ` وقدره ${sar(fee)} ريال` : ""} أصبح مستحقًّا.`];
     }
 
     if (!phone) return { ok: false, text: `لا يوجد رقم جوال مسجّل لـ ${esc(name)}.` };
