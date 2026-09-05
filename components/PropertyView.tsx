@@ -11,6 +11,7 @@ import { PROPERTY_TYPES, typeLabel, unitLabel, typeIcon } from "@/lib/domain";
 import { statementHTML, invoiceHTML, propertyStatementHTML, moveOutSettlementHTML, quotationHTML, ownerReportHTML, DEFAULT_CHARGES, openDoc, type ChargeRow, type OwnerReportPayment } from "@/lib/documents";
 import { alertCount, type ComplianceItem } from "@/lib/compliance";
 import ComplianceModal from "@/components/ComplianceModal";
+import OwnerStatementModal from "@/components/OwnerStatementModal";
 import ExpensesModal from "@/components/ExpensesModal";
 import OwnerLinkModal from "@/components/OwnerLinkModal";
 import type { ExpenseRow } from "@/lib/expenses";
@@ -40,6 +41,7 @@ type Property = {
   grace_days?: number | null;
   vat_enabled?: boolean | null; vat_rate?: number | null; vat_inclusive?: boolean | null;
   mgmt_fee_pct?: number | null;
+  owner_name?: string | null;
   tenants: Tenant[]; property_notes: Note[];
 };
 
@@ -87,6 +89,8 @@ export default function PropertyView({ initial, orgName, issuer, compliance }: {
   const [comp, setComp] = useState<ComplianceItem[]>(compliance || []);
   useEffect(() => { setComp(compliance || []); }, [compliance]);
   const [compOpen, setCompOpen] = useState(false);
+  const [ownerStmtOpen, setOwnerStmtOpen] = useState(false);
+  const ownerNames = Array.from(new Set(items.map((p) => (p.owner_name || "").trim()).filter(Boolean))).sort();
   const [reporting, setReporting] = useState(false);
   const [expensesOpen, setExpensesOpen] = useState(false);
   const [ownerLinkOpen, setOwnerLinkOpen] = useState(false);
@@ -242,6 +246,8 @@ export default function PropertyView({ initial, orgName, issuer, compliance }: {
       vat_inclusive: d.vat_inclusive !== false,
       // نسبة أتعاب الإدارة: تُخصم من المحصَّل في تقرير المالك (فارغة = لا أتعاب)
       mgmt_fee_pct: Number(d.mgmt_fee_pct) > 0 && Number(d.mgmt_fee_pct) <= 100 ? Number(d.mgmt_fee_pct) : null,
+      // اسم المالك يجمع عقاراته في كشف واحد (schema-v10) — يُقصّ حتى لا تتشتت الأسماء بمسافات
+      owner_name: (d.owner_name || "").trim() || null,
     };
     if (id) {
       const { error } = await supabase.from("properties").update(payload).eq("id", id);
@@ -611,6 +617,8 @@ export default function PropertyView({ initial, orgName, issuer, compliance }: {
             <span className="mr-1.5 inline-grid place-items-center min-w-[20px] h-5 px-1 rounded-full bg-[#FBE9E7] text-[#a5322c] text-[.68rem] font-bold">{alertCount(comp)}</span>
           )}
         </button>
+        <button type="button" className="btn btn-ghost text-sm" onClick={() => setOwnerStmtOpen(true)}
+          title="كل عقارات المالك في كشف واحد لفترة تحددها">📑 كشف مالك</button>
         <button type="button" className="btn btn-ghost text-sm" onClick={() => setModal({ kind: "editProp" })}>الإعدادات</button>
         <button className="btn btn-gold text-sm" onClick={() => setModal({ kind: "newProp" })}>+ عقار</button>
       </div>
@@ -791,10 +799,10 @@ export default function PropertyView({ initial, orgName, issuer, compliance }: {
           كان يبقى مركَّبًا ويكتفي بإخفاء نفسه، فتبقى بيانات آخر إدخال ظاهرة
           في المرة التالية — لأن useState لا يُعاد تشغيله إلا عند التركيب. */}
       {modal?.kind === "newProp" && (
-        <PropertyModal open orgName={orgName} onClose={() => setModal(null)} onSubmit={(d) => saveProperty(d)} />
+        <PropertyModal open orgName={orgName} ownerNames={ownerNames} onClose={() => setModal(null)} onSubmit={(d) => saveProperty(d)} />
       )}
       {modal?.kind === "editProp" && active && (
-        <PropertyModal open initial={active} orgName={orgName}
+        <PropertyModal open initial={active} orgName={orgName} ownerNames={ownerNames}
           onClose={() => setModal(null)} onSubmit={(d) => saveProperty(d, active.id)} onDelete={deleteProperty} />
       )}
       {modal?.kind === "tenant" && (
@@ -805,6 +813,8 @@ export default function PropertyView({ initial, orgName, issuer, compliance }: {
       {quoteOpen && active && (
         <QuoteModal property={active} unitWord={ul} issuer={issuer || {}} onClose={() => setQuoteOpen(false)} />
       )}
+
+      {ownerStmtOpen && <OwnerStatementModal properties={items} issuer={issuer} onClose={() => setOwnerStmtOpen(false)} />}
 
       {compOpen && (
         <ComplianceModal initial={comp} orgName={orgName} issuer={issuer || {}}
@@ -1170,8 +1180,8 @@ function Shell({ children, onClose, wide }: { children: React.ReactNode; onClose
   );
 }
 
-function PropertyModal({ open, initial, orgName, onClose, onSubmit, onDelete }: {
-  open: boolean; initial?: Property; orgName: string; onClose: () => void;
+function PropertyModal({ open, initial, orgName, ownerNames = [], onClose, onSubmit, onDelete }: {
+  open: boolean; initial?: Property; orgName: string; ownerNames?: string[]; onClose: () => void;
   onSubmit: (d: any) => void; onDelete?: () => void;
 }) {
   const [d, setD] = useState<any>(initial || { property_type: "residential", manager: orgName });
@@ -1197,6 +1207,10 @@ function PropertyModal({ open, initial, orgName, onClose, onSubmit, onDelete }: 
           <Field label="الحي / العنوان"><input className="fld" value={d.address || ""} onChange={(e) => setD({ ...d, address: e.target.value })} placeholder="حي الياسمين" /></Field>
         </div>
         <Field label="اسم المالك أو المكتب" hint="يظهر في الخطابات"><input className="fld" value={d.manager || ""} onChange={(e) => setD({ ...d, manager: e.target.value })} placeholder={orgName || "مكتب اليمامة"} /></Field>
+        <Field label="المالك" hint="يجمع عقاراته في كشف حساب واحد — اختر اسمًا موجودًا أو اكتب جديدًا">
+          <input className="fld" list="watheq-owner-names" value={d.owner_name || ""} onChange={(e) => setD({ ...d, owner_name: e.target.value })} placeholder="مثال: عبدالله بن سعد" />
+          <datalist id="watheq-owner-names">{ownerNames.map((n) => <option key={n} value={n} />)}</datalist>
+        </Field>
 
         <div className="block">
           <span className="block text-sm font-semibold mb-1">فترة السماح (أيام) <span className="text-muted font-normal text-xs">— لا تُحتسب الدفعة متأخرة خلالها</span></span>

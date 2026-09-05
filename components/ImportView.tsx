@@ -10,10 +10,14 @@ type Prop = { id: string; name: string; property_type: string | null };
 type Row = {
   name: string; unit: string; rent_amount: number; phone: string; national_id: string;
   contract_start: string; payment_frequency: Frequency; contract_periods: number | null;
+  paid_periods: number;
   _error?: string;
 };
 
-const HEADERS = ["اسم المستأجر", "رقم الوحدة", "قيمة الدفعة", "دورة السداد", "بداية العقد", "عدد الدفعات", "الجوال", "رقم الهوية"];
+// العمود التاسع «الدفعات المسدّدة» اختياري: بدونه يُعدّ العقد لم يُسدَّد منه شيء —
+// وهذا كارثة لمكتب ينقل عقودًا قائمة (عقد من يناير يُرفع في سبتمبر = 8 «متأخرات» وهمية).
+// القوالب القديمة بثمانية أعمدة تبقى تعمل: الغائب = 0.
+const HEADERS = ["اسم المستأجر", "رقم الوحدة", "قيمة الدفعة", "دورة السداد", "بداية العقد", "عدد الدفعات", "الجوال", "رقم الهوية", "الدفعات المسدّدة"];
 
 const FREQ_MAP: Record<string, Frequency> = {
   "يومي": "daily", "اسبوعي": "weekly", "أسبوعي": "weekly", "شهري": "monthly",
@@ -73,9 +77,9 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
   function downloadTemplate() {
     const sample = [
       HEADERS,
-      ["عبدالله الحربي", "101", "2500", "شهري", "2026-01-01", "12", "0501234567", "1012345678"],
-      ["مؤسسة النور التجارية", "معرض 2", "18000", "كل 3 اشهر", "2026-02-15", "4", "0559876543", "7001234567"],
-      ["خالد القحطاني", "أرض A", "60000", "سنوي", "2025-06-01", "3", "0533334444", ""],
+      ["عبدالله الحربي", "101", "2500", "شهري", "2026-01-01", "12", "0501234567", "1012345678", "8"],
+      ["مؤسسة النور التجارية", "معرض 2", "18000", "كل 3 اشهر", "2026-02-15", "4", "0559876543", "7001234567", "2"],
+      ["خالد القحطاني", "أرض A", "60000", "سنوي", "2025-06-01", "3", "0533334444", "", "1"],
     ];
     const csv = "\uFEFF" + sample.map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(",")).join("\n");
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
@@ -134,19 +138,21 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
     const start = grid[0].some((c) => String(c).includes("اسم") || String(c).toLowerCase().includes("name")) ? 1 : 0;
 
     const parsed: Row[] = grid.slice(start).map((r) => {
-      const [name, unit, rent, freq, startDate, periods, phone, nid] = r.map((x) => String(x ?? "").trim());
+      const [name, unit, rent, freq, startDate, periods, phone, nid, paid] = r.map((x) => String(x ?? "").trim());
       const rentN = Number(toEnDigits(rent).replace(/[^\d.]/g, "")) || 0;
       const freqKey = toEnDigits(freq).toLowerCase().trim();
       const frequency = FREQ_MAP[freq.trim()] || FREQ_MAP[freqKey] || "monthly";
       const cs = normalizeDate(startDate);
       const pr = Number(toEnDigits(periods)) || null;
+      const pd = Math.max(0, Math.floor(Number(toEnDigits(paid)) || 0));
       let err = "";
       if (!name) err = "الاسم مفقود";
       else if (!rentN) err = "قيمة الدفعة مفقودة";
       else if (startDate && !cs) err = "تاريخ غير مفهوم";
+      else if (pr && pd > pr) err = "الدفعات المسدّدة أكثر من عدد دفعات العقد";
       return {
         name, unit, rent_amount: rentN, phone: toEnDigits(phone), national_id: toEnDigits(nid),
-        contract_start: cs, payment_frequency: frequency, contract_periods: pr,
+        contract_start: cs, payment_frequency: frequency, contract_periods: pr, paid_periods: pd,
         _error: err || undefined,
       };
     });
@@ -164,7 +170,7 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
       rent_amount: r.rent_amount, contract_start: r.contract_start || null,
       payment_frequency: r.payment_frequency, contract_periods: r.contract_periods,
       contract_end: r.contract_start ? derivedEndDate(r.contract_start, r.payment_frequency, r.contract_periods) : null,
-      paid_periods: 0,
+      paid_periods: r.paid_periods,
     }));
     const { error } = await supabase.from("tenants").insert(payload);
     setBusy(false);
@@ -269,7 +275,7 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
           )}
 
           <div className="bg-paper2 border border-line rounded-xl p-4 text-sm text-muted leading-relaxed">
-            <b className="text-deep">ملاحظات:</b> الأعمدة المطلوبة: {HEADERS.join(" · ")}.
+            <b className="text-deep">ملاحظات:</b> الأعمدة: {HEADERS.join(" · ")}. <b>«الدفعات المسدّدة»</b> مهمّة للعقود القائمة: كم دفعة سُدّدت منذ بداية العقد حتى اليوم — بدونها يُعدّ العقد غير مسدَّد بالكامل.
             دورة السداد تقبل: يومي، أسبوعي، شهري، كل ٣ أشهر، كل ٦ أشهر، سنوي.
             التواريخ تُقبل بصيغة 2026-01-01 أو 01/01/2026. الأرقام العربية مدعومة.
           </div>
