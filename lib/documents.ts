@@ -1101,6 +1101,7 @@ export function moveOutSettlementHTML(
     deposit_amount?: number | null; deposit_deductions?: number | null; deposit_notes?: string | null;
     meter_elec_in?: string | null; meter_elec_out?: string | null;
     meter_water_in?: string | null; meter_water_out?: string | null;
+    elec_account?: string | null; water_account?: string | null;
     turnover_checklist?: { label: string; done?: boolean; note?: string | null }[] | null;
   },
   p: Property, issuer: Issuer = {}
@@ -1141,6 +1142,7 @@ ${header("مخالصة إخلاء", t.name)}
 </div>
 
 <h1 style="font-size:1rem">أولًا: قراءات العدادات</h1>
+${(t.elec_account || t.water_account) ? `<div class="sub" style="margin-bottom:6px">حساب الكهرباء: <b dir="ltr">${t.elec_account || "—"}</b> · حساب الماء: <b dir="ltr">${t.water_account || "—"}</b> — على المستأجر سداد ما استُهلك حتى قراءة الإخلاء وعلى الطرفين إتمام نقل الخدمة.</div>` : ""}
 <table>
   <thead><tr><th>العدّاد</th><th>عند التسليم</th><th>عند الإخلاء</th><th>الفرق</th></tr></thead>
   <tbody>
