@@ -42,7 +42,10 @@ export default async function PropertyPage() {
   const { data: properties } = await supabase
     .from("properties")
     .select("*, tenants(*), property_notes(*)")
-    .order("created_at", { ascending: false });
+    .order("created_at", { ascending: false })
+    // الملاحظات تتراكم سنين؛ اللوحة تحتاج آخر 100 لكل عقار لا الأرشيف كله
+    .order("note_date", { ascending: false, referencedTable: "property_notes" })
+    .limit(100, { referencedTable: "property_notes" });
 
   const { data: { user } } = await supabase.auth.getUser();
   const { data: profile } = await supabase
