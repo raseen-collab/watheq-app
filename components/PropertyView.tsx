@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase-client";
-import { officeId } from "@/lib/office";
+import { officeId, getOffice, ROLE_LABEL } from "@/lib/office";
 import { arDate } from "@/lib/documents";
 import { sar, waLink, today } from "@/lib/utils";
 import { contractState, buildSchedule, FREQUENCIES, freqLabel, freqShort, derivedEndDate, renewContract, needsRenewal, applyPayment, splitVat, isCommercial, isVacant, settleDeposit,
@@ -94,6 +94,16 @@ export default function PropertyView({ initial, orgName, issuer, compliance }: {
   const [compOpen, setCompOpen] = useState(false);
   const [ownerStmtOpen, setOwnerStmtOpen] = useState(false);
   const [logOpen, setLogOpen] = useState(false);
+  /**
+   * دور المستخدم في هذا المكتب. القاعدة تمنع ما لا يحق له (v9) — لكن عرض
+   * أزرار سترفضها القاعدة تجربة سيئة، وإظهار أرقام المكتب (أتعاب الإدارة،
+   * صافي المالك، روابط الملّاك) لمحصّلٍ ليس من شأنه. نخفيها عرضًا،
+   * والحماية الحقيقية تبقى في القاعدة لا هنا.
+   */
+  const [role, setRole] = useState<string | null>(null);   // null = المالك نفسه
+  useEffect(() => { getOffice(supabase).then((o) => setRole(o?.isOwner ? null : o?.role || null)); }, [supabase]);
+  const isManager = role === null || role === "manager";   // المالك أو المدير
+  const canCollect = isManager || role === "collector";
   const ownerNames = Array.from(new Set(items.map((p) => (p.owner_name || "").trim()).filter(Boolean))).sort();
   const [reporting, setReporting] = useState(false);
   const [expensesOpen, setExpensesOpen] = useState(false);
@@ -672,17 +682,19 @@ export default function PropertyView({ initial, orgName, issuer, compliance }: {
           title="تحديث البيانات من السيرفر (بعد تسجيل دفعة من البوت مثلًا)">
           {refreshing ? "…" : "↻ تحديث"}
         </button>
-        <button type="button" className="btn btn-ghost text-sm" onClick={() => setCompOpen(true)}
+        {isManager && <button type="button" className="btn btn-ghost text-sm" onClick={() => setCompOpen(true)}
           title="عقود الوساطة ومددها، تراخيص الإعلانات، ورخصة فال — بتنبيهات قبل فوات وقتها">
           ⚖️ الالتزامات{alertCount(comp) > 0 && (
             <span className="mr-1.5 inline-grid place-items-center min-w-[20px] h-5 px-1 rounded-full bg-[#FBE9E7] text-[#a5322c] text-[.68rem] font-bold">{alertCount(comp)}</span>
           )}
-        </button>
-        <button type="button" className="btn btn-ghost text-sm" onClick={() => setLogOpen(true)}
-          title="كل دفعة وتراجع: من سجّلها ولمن وبأي ساعة">🕘 سجل العمليات</button>
+        </button>}
+        {isManager && (<>
         <button type="button" className="btn btn-ghost text-sm" onClick={() => setOwnerStmtOpen(true)}
           title="كل عقارات المالك في كشف واحد لفترة تحددها">📑 كشف مالك</button>
-        <button type="button" className="btn btn-ghost text-sm" onClick={() => setModal({ kind: "editProp" })}>الإعدادات</button>
+        </>)}
+        <button type="button" className="btn btn-ghost text-sm" onClick={() => setLogOpen(true)}
+          title="كل دفعة وتراجع: من سجّلها ولمن وبأي ساعة">🕘 سجل العمليات</button>
+        {isManager && <button type="button" className="btn btn-ghost text-sm" onClick={() => setModal({ kind: "editProp" })}>الإعدادات</button>}
         <button className="btn btn-gold text-sm" onClick={() => setModal({ kind: "newProp" })}>+ عقار</button>
       </div>
 
@@ -705,14 +717,20 @@ export default function PropertyView({ initial, orgName, issuer, compliance }: {
       <div className="grid md:grid-cols-[1.65fr_1fr] gap-5 items-start">
         <div className="bg-white border border-line rounded-2xl shadow-sm">
           <div className="flex items-center justify-between border-b border-line px-5 py-4 gap-2 flex-wrap">
-            <h2 className="font-semibold">الوحدات والمستأجرون</h2>
+            <h2 className="font-semibold">الوحدات والمستأجرون
+              {role && <span className="ms-2 text-[11px] font-normal bg-paper2 border border-line rounded-full px-2 py-0.5 text-muted">
+                دورك: {ROLE_LABEL[role] || role}
+              </span>}
+            </h2>
             <div className="flex gap-2 flex-wrap">
+              {isManager && (<>
               <button className="btn btn-ghost text-xs" onClick={() => setExpensesOpen(true)}
                 title="ما دفعه المكتب نيابة عن المالك — يُخصم تلقائيًّا في تقرير المالك">💸 المصروفات</button>
               <button className="btn btn-ghost text-xs" onClick={() => setOwnerLinkOpen(true)}
                 title="رابط قراءة حي يرسله المكتب للمالك — يرى تقريره بلا حساب">🔗 رابط المالك</button>
               <button className="btn btn-ghost text-xs" onClick={() => setReporting(true)}
                 title="تقرير فترة للمالك: الإشغال والمحصَّل والمصروفات والصافي — من السجلات">📊 تقرير المالك</button>
+              </>)}
               <button className="btn btn-ghost text-xs" onClick={openPropertyStatement}>كشف حساب العقار</button>
               <button className="btn btn-ghost text-xs" onClick={() => setQuoteOpen(true)}
                 title="إصدار عرض سعر تأجير لمستأجر محتمل قبل التعاقد">📋 عرض سعر</button>
@@ -721,8 +739,8 @@ export default function PropertyView({ initial, orgName, issuer, compliance }: {
                 <button className="btn btn-wa text-xs" onClick={() => setRemindAll(true)}
                   title="إرسال تذكير واتساب لكل المتأخرين واحدًا تلو الآخر">💬 تذكير جماعي ({lateCount})</button>
               )}
-              <Link href="/dashboard/property/import" className="btn btn-ghost text-xs">رفع Excel</Link>
-              <button className="btn btn-gold text-xs" onClick={() => setModal({ kind: "tenant" })}>+ {ul}</button>
+              {isManager && <Link href="/dashboard/property/import" className="btn btn-ghost text-xs">رفع Excel</Link>}
+              {isManager && <button className="btn btn-gold text-xs" onClick={() => setModal({ kind: "tenant" })}>+ {ul}</button>}
             </div>
           </div>
 

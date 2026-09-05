@@ -11,8 +11,9 @@
 // ويبني الملف بـ SheetJS الموجودة أصلًا لقراءة ملفات الرفع.
 // ============================================================
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase-client";
+import { getOffice } from "@/lib/office";
 
 const FREQ_AR: Record<string, string> = {
   daily: "يومي", weekly: "اسبوعي", monthly: "شهري", quarterly: "كل 3 اشهر",
@@ -25,6 +26,12 @@ export default function ExportData() {
   const supabase = createClient();
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  /**
+   * التصدير يُخرج المحفظة كاملة: أسماء المستأجرين وجوالاتهم وهوياتهم وكل
+   * الدفعات. حقٌّ لصاحب المكتب ومديره — لا لمحصّل قد يغادر غدًا ومعه الملف.
+   */
+  const [allowed, setAllowed] = useState(true);
+  useEffect(() => { getOffice(supabase).then((o) => setAllowed(!o || o.isOwner || o.role === "manager")); }, [supabase]);
 
   /** Supabase يقصّ عند 1000 صف بصمت — نجلب حتى ينتهي الجدول فعلًا */
   async function all(table: string, select = "*", order = "created_at"): Promise<any[]> {
@@ -148,6 +155,12 @@ export default function ExportData() {
       setMsg(`تعذّر التصدير: ${e?.message || e}`);
     } finally { setBusy(false); }
   }
+
+  if (!allowed) return (
+    <div className="bg-white border border-line rounded-2xl p-5 text-sm text-muted">
+      📦 تصدير بيانات المكتب متاح لصاحب المكتب ومديره.
+    </div>
+  );
 
   return (
     <div className="bg-white border border-line rounded-2xl p-5">

@@ -8,14 +8,18 @@
 // «حذف» يدويًّا — لا زر واحد يُضغط بالخطأ.
 // ============================================================
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase-client";
+import { getOffice } from "@/lib/office";
 
 export default function DeleteAccount() {
   const [open, setOpen] = useState(false);
   const [word, setWord] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  // الموظف يحذف حسابه الشخصي فقط؛ بيانات المكتب ليست ملكه — نوضّحها قبل أن يظنّ العكس
+  const [isEmployee, setIsEmployee] = useState(false);
+  useEffect(() => { getOffice(createClient()).then((o) => setIsEmployee(!!o && !o.isOwner)); }, []);
 
   async function run() {
     setBusy(true); setErr(null);
@@ -44,6 +48,7 @@ export default function DeleteAccount() {
         <br />
         قبل الحذف، نزّل نسختك الكاملة من قسم <b>«📦 تصدير بياناتي»</b> أعلاه — تفتحها بـExcel وتعمل عليها،
         ولو رجعت يومًا ترفعها كما هي.
+        {isEmployee && <><br /><b>أنت موظف في مكتب:</b> الحذف يزيل حسابك الشخصي ووصولك للمكتب فقط — بيانات المكتب تبقى لصاحبه، وما سجّلته يبقى في سجل العمليات.</>}
       </p>
 
       {!open ? (
