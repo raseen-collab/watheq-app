@@ -61,7 +61,10 @@ export default function TeamSection() {
   }
 
   async function copyInvite(code: string) {
-    const text = `تمت دعوتك للانضمام لمكتبنا على وثيق.\n\n١. سجّل حسابًا: https://watheqapp.com/login\n٢. في شاشة الترحيب اختر «عندي رمز دعوة» وأدخل: ${code}\n\nالرمز يعمل مرة واحدة وينتهي خلال ٧ أيام.`;
+    // رابط التطبيق من العنوان الحالي لا من نص ثابت — الموقع التسويقي
+    // (watheqapp.com) لا يحوي صفحة دخول، وكان الموظف يصل إلى 404
+    const appOrigin = typeof window !== "undefined" ? window.location.origin : "https://app.watheqapp.com";
+    const text = `تمت دعوتك للانضمام لمكتبنا على وثيق.\n\n١. سجّل حسابًا جديدًا من هنا: ${appOrigin}/login\n٢. بعد التسجيل ستظهر شاشة الترحيب — اضغط «موظف في مكتب مشترك؟ عندي رمز دعوة» وأدخل الرمز: ${code}\n\nالرمز يعمل مرة واحدة وينتهي خلال ٧ أيام.`;
     try { await navigator.clipboard.writeText(text); setCopied(code); setTimeout(() => setCopied(null), 1800); } catch {}
   }
 
