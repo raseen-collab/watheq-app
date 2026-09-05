@@ -12,6 +12,7 @@ import { statementHTML, invoiceHTML, propertyStatementHTML, moveOutSettlementHTM
 import { alertCount, type ComplianceItem } from "@/lib/compliance";
 import ComplianceModal from "@/components/ComplianceModal";
 import OwnerStatementModal from "@/components/OwnerStatementModal";
+import ActivityLog from "@/components/ActivityLog";
 import ExpensesModal from "@/components/ExpensesModal";
 import OwnerLinkModal from "@/components/OwnerLinkModal";
 import type { ExpenseRow } from "@/lib/expenses";
@@ -90,6 +91,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance }: {
   useEffect(() => { setComp(compliance || []); }, [compliance]);
   const [compOpen, setCompOpen] = useState(false);
   const [ownerStmtOpen, setOwnerStmtOpen] = useState(false);
+  const [logOpen, setLogOpen] = useState(false);
   const ownerNames = Array.from(new Set(items.map((p) => (p.owner_name || "").trim()).filter(Boolean))).sort();
   const [reporting, setReporting] = useState(false);
   const [expensesOpen, setExpensesOpen] = useState(false);
@@ -188,6 +190,29 @@ export default function PropertyView({ initial, orgName, issuer, compliance }: {
     notify("ok", r.completed > 0
       ? `سُجّل ${sar(amt)} ريال — اكتملت ${r.completed} دفعة`
       : `سُجّل ${sar(amt)} ريال كسداد جزئي`);
+  }
+
+  /**
+   * التراجع عن آخر دفعة. النسخة القديمة كانت تُنقص العدّاد فقط وتترك سطر
+   * الدفعة في السجل كما هو — فيبقى كشف الحساب وتقرير المالك يحتسبان
+   * مبلغًا تراجعنا عنه. الآن: تأكيد صريح، ثم عدّاد −1 وسطر سالب في
+   * السجل باسم من تراجع — الأثر محفوظ والمجاميع صحيحة.
+   */
+  async function undoPayment(t: Tenant) {
+    if (!active) return;
+    const amt = Number(t.rent_amount) || 0;
+    if (!confirm(`التراجع عن آخر دفعة مسجّلة؟\n\n${t.name} — ${ul} ${t.unit || "—"} — ${active.name}\nسيُخصم ${sar(amt)} ريال من المحصَّل ويُسجَّل التراجع باسمك في سجل العمليات.`)) return;
+    await patchTenant(t.id, { paid_periods: Math.max(0, (t.paid_periods || 0) - 1) }, -amt);
+    const uid = await currentUserId();
+    if (uid) {
+      const { error } = await supabase.from("payments").insert({
+        user_id: uid, tenant_id: t.id, property_id: active.id,
+        paid_on: today(), amount: -amt, method: "other",
+        periods_covered: -1, note: "تراجع عن دفعة",
+      });
+      if (error) console.error("Watheq reversal log error:", error);
+    }
+    notify("ok", `تم التراجع — خُصم ${sar(amt)} ريال وسُجّل في سجل العمليات`);
   }
 
   /** تسجيل الإخلاء: تتحوّل الوحدة إلى «شاغرة» ويُوثَّق التسليم */
@@ -619,6 +644,8 @@ export default function PropertyView({ initial, orgName, issuer, compliance }: {
             <span className="mr-1.5 inline-grid place-items-center min-w-[20px] h-5 px-1 rounded-full bg-[#FBE9E7] text-[#a5322c] text-[.68rem] font-bold">{alertCount(comp)}</span>
           )}
         </button>
+        <button type="button" className="btn btn-ghost text-sm" onClick={() => setLogOpen(true)}
+          title="كل دفعة وتراجع: من سجّلها ولمن وبأي ساعة">🕘 سجل العمليات</button>
         <button type="button" className="btn btn-ghost text-sm" onClick={() => setOwnerStmtOpen(true)}
           title="كل عقارات المالك في كشف واحد لفترة تحددها">📑 كشف مالك</button>
         <button type="button" className="btn btn-ghost text-sm" onClick={() => setModal({ kind: "editProp" })}>الإعدادات</button>
@@ -751,7 +778,11 @@ export default function PropertyView({ initial, orgName, issuer, compliance }: {
                     </>
                   ) : (
                     <>
-                      <QuickBtn title="تأكيد استلام الدفعة كاملة" cls="btn-primary" onClick={() => recordPayment(t, Number(t.rent_amount) || 0)}>&#10004;</QuickBtn>
+                      <QuickBtn title="تأكيد استلام الدفعة كاملة" cls="btn-primary" onClick={() => {
+                        /* دفعة بضغطة واحدة بلا تأكيد = أخطاء لا تُكتشف إلا في كشف المالك. نسمّي المبلغ والمستأجر والوحدة قبل التسجيل */
+                        const amt = Number(t.rent_amount) || 0;
+                        if (confirm(`تسجيل استلام دفعة كاملة؟\n\n${sar(amt)} ريال من ${t.name} — ${ul} ${t.unit || "—"} — ${active?.name}\n\n(تُسجَّل باسمك في سجل العمليات)`)) recordPayment(t, amt);
+                      }}>&#10004;</QuickBtn>
                       <QuickBtn title="سداد جزئي" cls="btn-ghost" onClick={() => setPaying(t)}>&#189;</QuickBtn>
                       <a href={remindLink(t)} target="_blank" rel="noreferrer" className="btn btn-wa text-xs px-2.5" title="إرسال تذكير واتساب">&#128172;</a>
                       {t.phone && <a href={`tel:${String(t.phone).replace(/[^0-9+]/g, "")}`} className="btn btn-ghost text-xs px-2.5 sm:hidden" title="اتصال مباشر">&#128222;</a>}
@@ -765,7 +796,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance }: {
                       { label: "📅 جدول الدفعات", run: () => setSchedule(t) },
                       { label: "🧮 سجل المدفوعات", run: () => openHistory(t) },
                       { label: "🧾 كشف حساب", run: () => openStatement(t) },
-                      ...((t.paid_periods || 0) > 0 ? [{ label: "↩︎ تراجع عن دفعة", run: () => patchTenant(t.id, { paid_periods: Math.max(0, (t.paid_periods || 0) - 1) }) }] : []),
+                      ...((t.paid_periods || 0) > 0 ? [{ label: "↩︎ تراجع عن دفعة", run: () => undoPayment(t) }] : []),
                       ...(!t.litigation && st.unpaid > 0 ? [{ label: "⚖️ رفع للتنفيذ", run: () => setEnforcing(t) }] : []),
                       ...(!isVacant(t) ? [{ label: "🔑 إنهاء العقد وإخلاء", run: () => setTurnover(t) }] : []),
                       { label: "✎ تعديل البيانات", run: () => setModal({ kind: "tenant", id: t.id }) },
@@ -817,6 +848,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance }: {
       )}
 
       {ownerStmtOpen && <OwnerStatementModal properties={items} issuer={issuer} onClose={() => setOwnerStmtOpen(false)} />}
+      {logOpen && <ActivityLog properties={items} onClose={() => setLogOpen(false)} />}
 
       {compOpen && (
         <ComplianceModal initial={comp} orgName={orgName} issuer={issuer || {}}
