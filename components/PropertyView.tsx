@@ -606,7 +606,8 @@ export default function PropertyView({ initial, orgName, issuer, compliance }: {
           <div className="text-sm text-muted">{typeLabel(p.property_type)}{p.city ? ` · ${p.city}` : ""} · {tenants.length} {ul}</div>
         </div>
         <select value={p.id} onChange={(e) => setActiveId(e.target.value)} className="fld max-w-[220px] font-semibold text-deep">
-          {items.map((x) => <option key={x.id} value={x.id}>{typeIcon(x.property_type)} {x.name}</option>)}
+          {[...items].sort((a, b) => a.name.localeCompare(b.name, "ar")).map((x) =>
+            <option key={x.id} value={x.id}>{typeIcon(x.property_type)} {x.name} · {x.tenants.length}</option>)}
         </select>
         <button type="button" className="btn btn-ghost text-sm" onClick={refreshNow} disabled={refreshing}
           title="تحديث البيانات من السيرفر (بعد تسجيل دفعة من البوت مثلًا)">

@@ -11,13 +11,17 @@ type Row = {
   name: string; unit: string; rent_amount: number; phone: string; national_id: string;
   contract_start: string; payment_frequency: Frequency; contract_periods: number | null;
   paid_periods: number;
+  prop_name?: string;
+  prop_id?: string;
   _error?: string;
 };
 
 // العمود التاسع «الدفعات المسدّدة» اختياري: بدونه يُعدّ العقد لم يُسدَّد منه شيء —
 // وهذا كارثة لمكتب ينقل عقودًا قائمة (عقد من يناير يُرفع في سبتمبر = 8 «متأخرات» وهمية).
 // القوالب القديمة بثمانية أعمدة تبقى تعمل: الغائب = 0.
-const HEADERS = ["اسم المستأجر", "رقم الوحدة", "قيمة الدفعة", "دورة السداد", "بداية العقد", "عدد الدفعات", "الجوال", "رقم الهوية", "الدفعات المسدّدة"];
+const HEADERS = ["اسم المستأجر", "رقم الوحدة", "قيمة الدفعة", "دورة السداد", "بداية العقد", "عدد الدفعات", "الجوال", "رقم الهوية", "الدفعات المسدّدة", "العقار"];
+// عمود عاشر اختياري «العقار»: ملف واحد لكل المحفظة بدل ملف لكل عقار — مكتب بـ40
+// عقارًا لا يرفع 40 مرة. الاسم يجب أن يطابق عقارًا موجودًا؛ الصف الفارغ يذهب للعقار المختار.
 
 const FREQ_MAP: Record<string, Frequency> = {
   "يومي": "daily", "اسبوعي": "weekly", "أسبوعي": "weekly", "شهري": "monthly",
@@ -77,9 +81,9 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
   function downloadTemplate() {
     const sample = [
       HEADERS,
-      ["عبدالله الحربي", "101", "2500", "شهري", "2026-01-01", "12", "0501234567", "1012345678", "8"],
-      ["مؤسسة النور التجارية", "معرض 2", "18000", "كل 3 اشهر", "2026-02-15", "4", "0559876543", "7001234567", "2"],
-      ["خالد القحطاني", "أرض A", "60000", "سنوي", "2025-06-01", "3", "0533334444", "", "1"],
+      ["عبدالله الحربي", "101", "2500", "شهري", "2026-01-01", "12", "0501234567", "1012345678", "8", ""],
+      ["مؤسسة النور التجارية", "معرض 2", "18000", "كل 3 اشهر", "2026-02-15", "4", "0559876543", "7001234567", "2", ""],
+      ["خالد القحطاني", "أرض A", "60000", "سنوي", "2025-06-01", "3", "0533334444", "", "1", ""],
     ];
     const csv = "\uFEFF" + sample.map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(",")).join("\n");
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
@@ -138,7 +142,7 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
     const start = grid[0].some((c) => String(c).includes("اسم") || String(c).toLowerCase().includes("name")) ? 1 : 0;
 
     const parsed: Row[] = grid.slice(start).map((r) => {
-      const [name, unit, rent, freq, startDate, periods, phone, nid, paid] = r.map((x) => String(x ?? "").trim());
+      const [name, unit, rent, freq, startDate, periods, phone, nid, paid, propName] = r.map((x) => String(x ?? "").trim());
       const rentN = Number(toEnDigits(rent).replace(/[^\d.]/g, "")) || 0;
       const freqKey = toEnDigits(freq).toLowerCase().trim();
       const frequency = FREQ_MAP[freq.trim()] || FREQ_MAP[freqKey] || "monthly";
@@ -150,9 +154,13 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
       else if (!rentN) err = "قيمة الدفعة مفقودة";
       else if (startDate && !cs) err = "تاريخ غير مفهوم";
       else if (pr && pd > pr) err = "الدفعات المسدّدة أكثر من عدد دفعات العقد";
+      const norm = (x: string) => x.replace(/\s+/g, " ").trim();
+      const target = propName ? properties.find((p) => norm(p.name) === norm(propName)) : undefined;
+      if (propName && !target && !err) err = `العقار «${propName}» غير موجود — أنشئه أولًا أو صحّح الاسم`;
       return {
         name, unit, rent_amount: rentN, phone: toEnDigits(phone), national_id: toEnDigits(nid),
         contract_start: cs, payment_frequency: frequency, contract_periods: pr, paid_periods: pd,
+        prop_name: propName || undefined, prop_id: target?.id,
         _error: err || undefined,
       };
     });
@@ -160,42 +168,44 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
   }
 
   async function importRows() {
-    if (!propId) return alert("اختر العقار أولًا");
-    let valid = rows.filter((r) => !r._error);
-    if (!valid.length) return alert("لا توجد صفوف صالحة");
+    const valid0 = rows.filter((r) => !r._error);
+    if (!valid0.length) return alert("لا توجد صفوف صالحة");
+    // كل صف يذهب لعقاره المذكور في الملف، وإلا للعقار المختار في القائمة
+    const groups = new Map<string, Row[]>();
+    for (const r of valid0) {
+      const pid = r.prop_id || propId;
+      if (!pid) return alert("اختر العقار أولًا — أو اكتب اسم العقار في عمود «العقار» لكل صف");
+      groups.set(pid, [...(groups.get(pid) || []), r]);
+    }
     setBusy(true);
-
-    /**
-     * حماية من الرفع المكرر: الملف نفسه يُرفع مرتين بالخطأ = كل الوحدات مكررة.
-     * نقارن (رقم الوحدة + اسم المستأجر) مع الموجود في العقار ونتخطى المطابق،
-     * ونخبر المستخدم بعدد ما تُخطّي — لا حذف ولا دمج، فقط لا تكرار.
-     */
-    const { data: existing } = await supabase.from("tenants")
-      .select("unit, name").eq("property_id", propId).limit(1000);
     const key = (u: string, n: string) => `${(u || "").trim()}|${(n || "").trim()}`;
-    const seen = new Set((existing || []).map((t: any) => key(t.unit, t.name)));
-    const before = valid.length;
-    valid = valid.filter((r) => !seen.has(key(r.unit, r.name)));
-    const skipped = before - valid.length;
-    if (!valid.length) {
-      setBusy(false);
-      return alert(`كل الصفوف (${before}) موجودة أصلًا في هذا العقار — لم يُضف شيء.`);
+    let inserted = 0, skipped = 0;
+    for (const [pid, list] of groups) {
+      /**
+       * حماية من الرفع المكرر: نفس الملف مرتين = كل الوحدات مكررة. نقارن
+       * (رقم الوحدة + الاسم) مع الموجود في العقار ونتخطى المطابق — لا حذف ولا دمج.
+       */
+      const { data: existing } = await supabase.from("tenants").select("unit, name").eq("property_id", pid).limit(1000);
+      const seen = new Set((existing || []).map((t: any) => key(t.unit, t.name)));
+      const fresh = list.filter((r) => !seen.has(key(r.unit, r.name)));
+      skipped += list.length - fresh.length;
+      if (!fresh.length) continue;
+      const payload = fresh.map((r) => ({
+        property_id: pid,
+        name: r.name, unit: r.unit || null, phone: r.phone || null, national_id: r.national_id || null,
+        rent_amount: r.rent_amount, contract_start: r.contract_start || null,
+        payment_frequency: r.payment_frequency, contract_periods: r.contract_periods,
+        contract_end: r.contract_start ? derivedEndDate(r.contract_start, r.payment_frequency, r.contract_periods) : null,
+        paid_periods: r.paid_periods,
+      }));
+      const { error } = await supabase.from("tenants").insert(payload);
+      if (error) { setBusy(false); return alert(`تعذّر الحفظ في أحد العقارات: ${error.message}\nأُضيف ${inserted} قبل التوقف — راجع اللوحة قبل إعادة الرفع.`); }
+      inserted += fresh.length;
     }
-    if (skipped > 0 && !confirm(`${skipped} من ${before} موجودة أصلًا في هذا العقار وستُتخطّى. إضافة الـ${valid.length} الباقية؟`)) {
-      setBusy(false); return;
-    }
-    const payload = valid.map((r) => ({
-      property_id: propId,
-      name: r.name, unit: r.unit || null, phone: r.phone || null, national_id: r.national_id || null,
-      rent_amount: r.rent_amount, contract_start: r.contract_start || null,
-      payment_frequency: r.payment_frequency, contract_periods: r.contract_periods,
-      contract_end: r.contract_start ? derivedEndDate(r.contract_start, r.payment_frequency, r.contract_periods) : null,
-      paid_periods: r.paid_periods,
-    }));
-    const { error } = await supabase.from("tenants").insert(payload);
     setBusy(false);
-    if (error) return alert(error.message);
-    setDone(valid.length); setRows([]);
+    if (!inserted) return alert(`كل الصفوف (${skipped}) موجودة أصلًا — لم يُضف شيء.`);
+    if (skipped) alert(`أُضيفت ${inserted} وحدة، وتُخطّيت ${skipped} موجودة أصلًا.`);
+    setDone(inserted); setRows([]);
     router.refresh();
   }
 
@@ -278,7 +288,7 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
                   <tbody>
                     {rows.map((r, i) => (
                       <tr key={i} className={`border-t border-line ${r._error ? "bg-[#FBE9E7]" : ""}`}>
-                        <td className="p-2 font-medium">{r.name || "—"}</td>
+                        <td className="p-2 font-medium">{r.name || "—"}{r.prop_name && <div className="text-[11px] text-muted">🏢 {r.prop_name}</div>}</td>
                         <td className="p-2">{r.unit || "—"}</td>
                         <td className="p-2">{sar(r.rent_amount)}</td>
                         <td className="p-2">{FREQUENCIES.find((f) => f.value === r.payment_frequency)?.label}</td>
@@ -295,7 +305,7 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
           )}
 
           <div className="bg-paper2 border border-line rounded-xl p-4 text-sm text-muted leading-relaxed">
-            <b className="text-deep">ملاحظات:</b> الأعمدة: {HEADERS.join(" · ")}. <b>«الدفعات المسدّدة»</b> مهمّة للعقود القائمة: كم دفعة سُدّدت منذ بداية العقد حتى اليوم — بدونها يُعدّ العقد غير مسدَّد بالكامل.
+            <b className="text-deep">ملاحظات:</b> الأعمدة: {HEADERS.join(" · ")} · <b>العقار</b> (اختياري — لرفع كل المحفظة من ملف واحد؛ الاسم كما هو في اللوحة). <b>«الدفعات المسدّدة»</b> مهمّة للعقود القائمة: كم دفعة سُدّدت منذ بداية العقد حتى اليوم — بدونها يُعدّ العقد غير مسدَّد بالكامل. <b>«العقار»</b> اختياري: اكتب اسم العقار كما هو في وثيق ليذهب الصف إليه — فترفع كل عقاراتك من ملف واحد؛ والفارغ يذهب للعقار المختار أعلاه.
             دورة السداد تقبل: يومي، أسبوعي، شهري، كل ٣ أشهر، كل ٦ أشهر، سنوي.
             التواريخ تُقبل بصيغة 2026-01-01 أو 01/01/2026. الأرقام العربية مدعومة.
           </div>
