@@ -66,7 +66,8 @@ export default function ExportData() {
         "بداية العقد": t.contract_start || "", "عدد الدفعات": t.contract_periods || "",
         "الجوال": t.phone || "", "رقم الهوية": t.national_id || "",
         "الدفعات المسدّدة": t.paid_periods || 0, "العقار": pName[t.property_id] || "",
-      })), [22, 12, 12, 12, 12, 10, 14, 14, 12, 22]);
+        "حساب الكهرباء": t.elec_account || "", "حساب الماء": t.water_account || "",
+      })), [22, 12, 12, 12, 12, 10, 14, 14, 12, 22, 14, 14]);
 
       add("العقارات", props.map((p) => ({
         "العقار": p.name, "النوع": p.property_type || "", "المدينة": p.city || "", "الحي/العنوان": p.address || "",
@@ -81,7 +82,10 @@ export default function ExportData() {
         "بداية العقد": t.contract_start || "", "نهاية العقد": t.contract_end || "", "عدد الدفعات": t.contract_periods || "",
         "المسدَّد (دفعات)": t.paid_periods || 0, "مبلغ جزئي": t.partial_amount || 0, "الحالة": STATUS_AR[t.status] || t.status || "نشط",
         "تاريخ الإخلاء": t.move_out_date || "", "التأمين": t.deposit_amount || "", "خصومات التأمين": t.deposit_deductions || "",
-      })), [22, 10, 22, 14, 14, 12, 10, 12, 12, 10, 10, 10, 12, 12, 10, 12]);
+        "حساب الكهرباء": t.elec_account || "", "حساب الماء": t.water_account || "",
+        "قراءة كهرباء (تسليم)": t.meter_elec_in || "", "قراءة كهرباء (إخلاء)": t.meter_elec_out || "",
+        "قراءة ماء (تسليم)": t.meter_water_in || "", "قراءة ماء (إخلاء)": t.meter_water_out || "",
+      })), [22, 10, 22, 14, 14, 12, 10, 12, 12, 10, 10, 10, 12, 12, 10, 12, 14, 14, 12, 12, 12, 12]);
 
       add("الدفعات", payments.map((x) => ({
         "التاريخ": x.paid_on, "العقار": pName[x.property_id] || pName[tById[x.tenant_id]?.property_id] || "",

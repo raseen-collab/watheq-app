@@ -11,6 +11,7 @@ type Row = {
   name: string; unit: string; rent_amount: number; phone: string; national_id: string;
   contract_start: string; payment_frequency: Frequency; contract_periods: number | null;
   paid_periods: number;
+  elec_account?: string; water_account?: string;
   prop_name?: string;
   prop_id?: string;
   _error?: string;
@@ -19,7 +20,7 @@ type Row = {
 // العمود التاسع «الدفعات المسدّدة» اختياري: بدونه يُعدّ العقد لم يُسدَّد منه شيء —
 // وهذا كارثة لمكتب ينقل عقودًا قائمة (عقد من يناير يُرفع في سبتمبر = 8 «متأخرات» وهمية).
 // القوالب القديمة بثمانية أعمدة تبقى تعمل: الغائب = 0.
-const HEADERS = ["اسم المستأجر", "رقم الوحدة", "قيمة الدفعة", "دورة السداد", "بداية العقد", "عدد الدفعات", "الجوال", "رقم الهوية", "الدفعات المسدّدة", "العقار"];
+const HEADERS = ["اسم المستأجر", "رقم الوحدة", "قيمة الدفعة", "دورة السداد", "بداية العقد", "عدد الدفعات", "الجوال", "رقم الهوية", "الدفعات المسدّدة", "العقار", "حساب الكهرباء", "حساب الماء"];
 // عمود عاشر اختياري «العقار»: ملف واحد لكل المحفظة بدل ملف لكل عقار — مكتب بـ40
 // عقارًا لا يرفع 40 مرة. الاسم يجب أن يطابق عقارًا موجودًا؛ الصف الفارغ يذهب للعقار المختار.
 
@@ -142,7 +143,7 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
     const start = grid[0].some((c) => String(c).includes("اسم") || String(c).toLowerCase().includes("name")) ? 1 : 0;
 
     const parsed: Row[] = grid.slice(start).map((r) => {
-      const [name, unit, rent, freq, startDate, periods, phone, nid, paid, propName] = r.map((x) => String(x ?? "").trim());
+      const [name, unit, rent, freq, startDate, periods, phone, nid, paid, propName, elecAcc, waterAcc] = r.map((x) => String(x ?? "").trim());
       const rentN = Number(toEnDigits(rent).replace(/[^\d.]/g, "")) || 0;
       const freqKey = toEnDigits(freq).toLowerCase().trim();
       const frequency = FREQ_MAP[freq.trim()] || FREQ_MAP[freqKey] || "monthly";
@@ -160,6 +161,7 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
       return {
         name, unit, rent_amount: rentN, phone: toEnDigits(phone), national_id: toEnDigits(nid),
         contract_start: cs, payment_frequency: frequency, contract_periods: pr, paid_periods: pd,
+        elec_account: (elecAcc || "").trim() || undefined, water_account: (waterAcc || "").trim() || undefined,
         prop_name: propName || undefined, prop_id: target?.id,
         _error: err || undefined,
       };

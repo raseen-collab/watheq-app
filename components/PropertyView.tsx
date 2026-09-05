@@ -33,6 +33,7 @@ type Tenant = {
   status?: string | null; notice_date?: string | null; move_out_date?: string | null;
   deposit_amount?: number | null; deposit_deductions?: number | null; deposit_notes?: string | null;
   meter_elec_in?: string | null; meter_elec_out?: string | null;
+  elec_account?: string | null; water_account?: string | null;
   meter_water_in?: string | null; meter_water_out?: string | null;
   turnover_checklist?: { label: string; done?: boolean; note?: string | null }[] | null;
 };
@@ -315,6 +316,12 @@ export default function PropertyView({ initial, orgName, issuer, compliance }: {
       contract_periods: periods,
       contract_end: d.contract_start ? derivedEndDate(d.contract_start, freq, periods) : null,
       billing_anchor_day: d.contract_start ? new Date(d.contract_start).getDate() : null,
+      // المرافق: رقما حساب الكهرباء والماء ثابتان للوحدة ويبقيان مع تغيّر المستأجر؛
+      // وقراءتا التسليم تُثبتان في مخالصة الإخلاء لاحقًا
+      elec_account: (d.elec_account || "").trim() || null,
+      water_account: (d.water_account || "").trim() || null,
+      meter_elec_in: (d.meter_elec_in || "").trim() || null,
+      meter_water_in: (d.meter_water_in || "").trim() || null,
     };
     if (id) {
       // إن كانت الوحدة شاغرة فهذا تأجير جديد: تُصفَّر عدّادات المدة السابقة
@@ -1358,6 +1365,23 @@ function TenantModal({ open, initial, unitWord, onClose, onSubmit }: {
             <input className="fld" type="number" min={0} value={d.paid_periods ?? ""} onChange={(e) => setD({ ...d, paid_periods: e.target.value })} placeholder="0" />
           </Field>
         )}
+        <details className="mt-3 border border-line rounded-xl p-3 bg-paper">
+          <summary className="cursor-pointer text-sm font-semibold text-deep">⚡ المرافق — حساب الكهرباء والماء وقراءات التسليم</summary>
+          <div className="grid sm:grid-cols-2 gap-3 mt-3">
+            <Field label="رقم حساب الكهرباء" hint="ثابت للوحدة — يُستخدم في الاستعلام ونقل الخدمة">
+              <input className="fld" dir="ltr" value={d.elec_account || ""} onChange={(e) => setD({ ...d, elec_account: e.target.value })} placeholder="رقم الحساب في شركة الكهرباء" />
+            </Field>
+            <Field label="رقم حساب الماء" hint="ثابت للوحدة">
+              <input className="fld" dir="ltr" value={d.water_account || ""} onChange={(e) => setD({ ...d, water_account: e.target.value })} placeholder="رقم الحساب في المياه الوطنية" />
+            </Field>
+            <Field label="قراءة عدّاد الكهرباء عند التسليم" hint="تظهر في مخالصة الإخلاء مقابل قراءة الخروج">
+              <input className="fld" dir="ltr" value={d.meter_elec_in || ""} onChange={(e) => setD({ ...d, meter_elec_in: e.target.value })} />
+            </Field>
+            <Field label="قراءة عدّاد الماء عند التسليم">
+              <input className="fld" dir="ltr" value={d.meter_water_in || ""} onChange={(e) => setD({ ...d, meter_water_in: e.target.value })} />
+            </Field>
+          </div>
+        </details>
         {preview && (
           <div className="bg-paper border border-line rounded-xl p-3 text-sm">
             <div className="font-semibold text-deep mb-1.5">استنتاج تلقائي</div>
