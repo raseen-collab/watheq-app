@@ -46,27 +46,41 @@ export default function OwnerStatementModal({ properties, issuer, onClose }: {
     const props = properties.filter((p) => (p.owner_name || "").trim() === owner);
     const ids = props.map((p) => p.id);
 
-    // استعلامان لكل الفترة والعقارات معًا — لا استعلام لكل عقار
+    /**
+     * Supabase يقصّ أي استجابة عند 1000 صف بصمت مهما كان limit —
+     * ومالك بـ400 وحدة على فترة سنة يتجاوزها، فيخرج كشفٌ ناقصٌ بلا
+     * أي تحذير. نجلب على دفعات حتى تنتهي فعلًا.
+     */
+    async function fetchAll(table: string, select: string, dateCol: string): Promise<{ rows: any[]; error: string | null }> {
+      const out: any[] = []; const PAGE = 1000;
+      for (let from0 = 0; ; from0 += PAGE) {
+        const { data, error } = await supabase.from(table).select(select)
+          .in("property_id", ids).gte(dateCol, fromD).lte(dateCol, toD)
+          .order(dateCol, { ascending: true }).order("id", { ascending: true })
+          .range(from0, from0 + PAGE - 1);
+        if (error) return { rows: out, error: error.message };
+        out.push(...(data || []));
+        if (!data || data.length < PAGE) break;
+        if (out.length > 50000) break; // صمام أمان
+      }
+      return { rows: out, error: null };
+    }
     const [pay, ex] = await Promise.all([
-      supabase.from("payments").select("id,paid_on,amount,method,periods_covered,note,tenant_id,property_id")
-        .in("property_id", ids).gte("paid_on", fromD).lte("paid_on", toD)
-        .order("paid_on", { ascending: true }).limit(5000),
-      supabase.from("expenses").select("*")
-        .in("property_id", ids).gte("spent_on", fromD).lte("spent_on", toD)
-        .order("spent_on", { ascending: true }).limit(5000),
+      fetchAll("payments", "id,paid_on,amount,method,periods_covered,note,tenant_id,property_id", "paid_on"),
+      fetchAll("expenses", "*", "spent_on"),
     ]);
     setLoading(false);
-    if (pay.error) { setErr(pay.error.message); return; }
+    if (pay.error) { setErr(pay.error); return; }
 
     const sections: OwnerStatementSection[] = props.map((p) => {
       const byId: Record<string, any> = {};
       (p.tenants || []).forEach((t: any) => { byId[t.id] = t; });
-      const payments: OwnerReportPayment[] = (pay.data || []).filter((x: any) => x.property_id === p.id).map((x: any) => ({
+      const payments: OwnerReportPayment[] = pay.rows.filter((x: any) => x.property_id === p.id).map((x: any) => ({
         id: x.id, paid_on: x.paid_on, amount: x.amount, method: x.method,
         periods_covered: x.periods_covered, note: x.note,
         tenant_name: byId[x.tenant_id]?.name || null, unit: byId[x.tenant_id]?.unit || null,
       }));
-      const expenses = (ex.error ? [] : (ex.data || [])).filter((x: any) => x.property_id === p.id) as ExpenseRow[];
+      const expenses = (ex.error ? [] : ex.rows).filter((x: any) => x.property_id === p.id) as ExpenseRow[];
       return { property: p, payments, expenses, fee_pct: p.mgmt_fee_pct };
     });
 

@@ -161,9 +161,29 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
 
   async function importRows() {
     if (!propId) return alert("اختر العقار أولًا");
-    const valid = rows.filter((r) => !r._error);
+    let valid = rows.filter((r) => !r._error);
     if (!valid.length) return alert("لا توجد صفوف صالحة");
     setBusy(true);
+
+    /**
+     * حماية من الرفع المكرر: الملف نفسه يُرفع مرتين بالخطأ = كل الوحدات مكررة.
+     * نقارن (رقم الوحدة + اسم المستأجر) مع الموجود في العقار ونتخطى المطابق،
+     * ونخبر المستخدم بعدد ما تُخطّي — لا حذف ولا دمج، فقط لا تكرار.
+     */
+    const { data: existing } = await supabase.from("tenants")
+      .select("unit, name").eq("property_id", propId).limit(1000);
+    const key = (u: string, n: string) => `${(u || "").trim()}|${(n || "").trim()}`;
+    const seen = new Set((existing || []).map((t: any) => key(t.unit, t.name)));
+    const before = valid.length;
+    valid = valid.filter((r) => !seen.has(key(r.unit, r.name)));
+    const skipped = before - valid.length;
+    if (!valid.length) {
+      setBusy(false);
+      return alert(`كل الصفوف (${before}) موجودة أصلًا في هذا العقار — لم يُضف شيء.`);
+    }
+    if (skipped > 0 && !confirm(`${skipped} من ${before} موجودة أصلًا في هذا العقار وستُتخطّى. إضافة الـ${valid.length} الباقية؟`)) {
+      setBusy(false); return;
+    }
     const payload = valid.map((r) => ({
       property_id: propId,
       name: r.name, unit: r.unit || null, phone: r.phone || null, national_id: r.national_id || null,

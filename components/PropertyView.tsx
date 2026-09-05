@@ -302,7 +302,8 @@ export default function PropertyView({ initial, orgName, issuer, compliance }: {
       setItems(items.map((p) => p.id === active.id
         ? { ...p, tenants: p.tenants.map((t) => (t.id === id ? { ...t, ...full } as Tenant : t)) } : p));
     } else {
-      const { data, error } = await supabase.from("tenants").insert({ ...payload, paid_periods: 0 }).select("*").single();
+      const paidSoFar = Math.max(0, Math.min(Math.floor(Number(d.paid_periods) || 0), periods || 9999));
+      const { data, error } = await supabase.from("tenants").insert({ ...payload, paid_periods: paidSoFar }).select("*").single();
       if (error) { console.error("Watheq save error:", error); return notify("err", error.message); }
       setItems(items.map((p) => (p.id === active.id ? { ...p, tenants: [...p.tenants, data as Tenant] } : p)));
     }
@@ -1310,6 +1311,13 @@ function TenantModal({ open, initial, unitWord, onClose, onSubmit }: {
           </Field>
         </div>
         <Field label="رقم الهوية / السجل" hint="للخطابات"><input className="fld" value={d.national_id || ""} onChange={(e) => setD({ ...d, national_id: e.target.value })} /></Field>
+        {!initial && (
+          /* عقد قائم يُضاف اليوم: بدون هذا الرقم يُعدّ لم يُسدَّد منه شيء منذ بدايته،
+             فيظهر «متأخرًا» بكل دفعاته الماضية — أشهر صدمة عند نقل محفظة كاملة */
+          <Field label="دفعات سُدّدت حتى اليوم" hint="للعقد القائم فقط — عقد شهري من يناير مدفوع حتى أغسطس = 8. عقد جديد = 0">
+            <input className="fld" type="number" min={0} value={d.paid_periods ?? ""} onChange={(e) => setD({ ...d, paid_periods: e.target.value })} placeholder="0" />
+          </Field>
+        )}
         {preview && (
           <div className="bg-paper border border-line rounded-xl p-3 text-sm">
             <div className="font-semibold text-deep mb-1.5">استنتاج تلقائي</div>
