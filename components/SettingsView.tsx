@@ -4,6 +4,7 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase-client";
 import TeamSection from "@/components/TeamSection";
 import ExportData from "@/components/ExportData";
+import DeleteAccount from "@/components/DeleteAccount";
 import { useRouter } from "next/navigation";
 import { ACCOUNT_TYPES, normalizeAccountType } from "@/lib/roles";
 
@@ -216,6 +217,7 @@ export default function SettingsView({ profile }: { profile: any }) {
 
       <div className="mb-6"><TeamSection /></div>
       <div className="mb-6"><ExportData /></div>
+      <div className="mb-6"><DeleteAccount /></div>
 
       <button onClick={save} disabled={saving} className="btn btn-gold w-full justify-center">
         {saving ? "..." : "حفظ الإعدادات"}
