@@ -83,10 +83,9 @@ async function FloatingLinks() {
   }
 
   return (
-    <div style={{
-      position: "fixed", bottom: "18px", insetInlineStart: "18px", zIndex: 40,
-      display: "flex", flexDirection: "column", gap: "8px", alignItems: "flex-start",
-    }}>
+    // الموضع والحجم في globals.css (.wq-fab): على الجوال صفٌّ واحد صغير فوق منطقة
+    // الحافة الآمنة، حتى لا تغطي الأزرار الثلاثة أسطر المستأجرين ولا يخفيها مؤشر آيفون
+    <div className="wq-fab">
       {isAdmin && (
         <Link href="/admin" title="لوحة الإدارة"
           style={{ ...pill, background: "#0E3A37", color: "#E7C877", border: "1px solid rgba(231,200,119,.35)" }}>

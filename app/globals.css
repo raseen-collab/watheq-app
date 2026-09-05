@@ -129,3 +129,28 @@ html[data-theme="dark"] [class*="border-[#EBD9AA]"] { border-color: #55441F !imp
 html[data-theme="dark"] .wq-theme-btn {
   background: var(--d-card); color: var(--d-gold); border-color: var(--d-line);
 }
+
+
+/* ===== الأزرار العائمة (ليلي · المستشار · الإدارة) ===== */
+.wq-fab {
+  position: fixed; z-index: 40;
+  inset-inline-start: 18px;
+  bottom: calc(18px + env(safe-area-inset-bottom, 0px));
+  display: flex; flex-direction: column; gap: 8px; align-items: flex-start;
+}
+@media (max-width: 640px) {
+  .wq-fab { flex-direction: row; gap: 6px; inset-inline-start: 10px; bottom: calc(10px + env(safe-area-inset-bottom, 0px)); }
+  .wq-fab a, .wq-fab button { padding: 7px 11px !important; font-size: .72rem !important; }
+  /* مساحة أسفل الصفحة حتى يمكن تمرير آخر صف فوق الأزرار */
+  body { padding-bottom: calc(64px + env(safe-area-inset-bottom, 0px)); }
+}
+/* آيفون بالوضع المثبَّت: الترويسة لا تدخل تحت شريط الحالة */
+@media (display-mode: standalone) {
+  .wq-safe-top { padding-top: env(safe-area-inset-top, 0px); }
+}
+
+/* آيفون يكبّر الصفحة تلقائيًّا عند التركيز على أي حقل خطه أصغر من 16px —
+   مزعج جدًا في التطبيق المثبَّت. على الجوال نثبّت 16px للحقول والقوائم */
+@media (max-width: 640px) {
+  .fld, input.fld, select.fld, textarea.fld { font-size: 16px !important; }
+}
