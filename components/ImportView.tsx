@@ -235,6 +235,9 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
         payment_frequency: r.payment_frequency, contract_periods: r.contract_periods,
         contract_end: r.contract_start ? derivedEndDate(r.contract_start, r.payment_frequency, r.contract_periods) : null,
         paid_periods: r.paid_periods,
+        // يوم المرساة كما يفعل الإدخال اليدوي: يُشتق من البداية عند غيابه،
+        // لكن حفظه صراحةً يبقي المواعيد ثابتة لو عُدّل تاريخ البداية لاحقًا
+        billing_anchor_day: r.contract_start ? new Date(r.contract_start).getDate() : null,
       }));
       const { error } = await supabase.from("tenants").insert(payload);
       if (error) { setBusy(false); return alert(`تعذّر الحفظ في أحد العقارات: ${error.message}\nأُضيف ${inserted} قبل التوقف — راجع اللوحة قبل إعادة الرفع.`); }
