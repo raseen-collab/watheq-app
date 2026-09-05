@@ -45,7 +45,7 @@ export default function DashboardShell({
 
   return (
     <div className="min-h-screen bg-paper">
-      <header className="bg-deep text-[#EAF1EE]">
+      <header className="bg-deep text-[#EAF1EE] wq-safe-top">
         <div className="max-w-6xl mx-auto flex flex-wrap items-center justify-between gap-3 px-4 py-3">
           <a href="https://watheqapp.com" className="flex items-center gap-2.5 font-display font-bold hover:opacity-90" title="العودة إلى موقع وثيق">
             <span className="w-8 h-8 rounded-lg bg-deep2 grid place-items-center text-goldSoft">و</span>
