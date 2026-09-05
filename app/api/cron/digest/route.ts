@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import * as Sentry from "@sentry/nextjs";
 import { createClient as createAdmin } from "@supabase/supabase-js";
 import { sendTelegram } from "@/lib/telegram";
 import { contractState } from "@/lib/contracts";
@@ -132,6 +133,7 @@ export async function GET(req: Request) {
    } catch (e) {
     // حساب واحد بخطأ غير متوقع لا يُسقط ملخّصات الباقين — نسجّل ونكمل
     console.error("digest failed for", p.id, e);
+    Sentry.captureException(e, { tags: { job: "digest" }, extra: { profile: p.id } });
     return false;
    }
   };
