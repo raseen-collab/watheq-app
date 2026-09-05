@@ -22,8 +22,8 @@ function randomToken(): string {
   return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-export default function OwnerLinkModal({ propertyId, propertyName, ownerPhoneHint, onClose }: {
-  propertyId: string; propertyName: string; ownerPhoneHint?: string | null; onClose: () => void;
+export default function OwnerLinkModal({ propertyId, propertyName, ownerPhoneHint, ownerName, onClose }: {
+  propertyId: string; propertyName: string; ownerPhoneHint?: string | null; ownerName?: string | null; onClose: () => void;
 }) {
   const supabase = createClient();
   const [rows, setRows] = useState<LinkRow[] | null>(null);
@@ -42,9 +42,10 @@ export default function OwnerLinkModal({ propertyId, propertyName, ownerPhoneHin
   }
 
   async function load() {
-    const { data, error } = await supabase.from("owner_links")
-      .select("id, token, label, revoked, expires_at, created_at")
-      .eq("property_id", propertyId).order("created_at", { ascending: false }).limit(50);
+    // روابط هذا العقار + الروابط المجمّعة لمالكه (property_id فارغ، owner_name مطابق) حتى تُبطَل من هنا أيضًا
+    let q = supabase.from("owner_links").select("id, token, label, revoked, expires_at, created_at");
+    q = ownerName ? q.or(`property_id.eq.${propertyId},owner_name.eq.${JSON.stringify(ownerName)}`) : q.eq("property_id", propertyId);
+    const { data, error } = await q.order("created_at", { ascending: false }).limit(50);
     if (error) { flash("err", friendly(error)); setRows([]); }
     else setRows((data || []) as LinkRow[]);
   }

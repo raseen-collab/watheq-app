@@ -868,7 +868,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance }: {
         <ExpensesModal propertyId={active.id} propertyName={active.name} unitWord={ul} onClose={() => setExpensesOpen(false)} />
       )}
       {ownerLinkOpen && active && (
-        <OwnerLinkModal propertyId={active.id} propertyName={active.name} onClose={() => setOwnerLinkOpen(false)} />
+        <OwnerLinkModal propertyId={active.id} propertyName={active.name} ownerName={active.owner_name} onClose={() => setOwnerLinkOpen(false)} />
       )}
 
       {schedule && <ScheduleModal tenant={schedule} unitWord={ul} onClose={() => setSchedule(null)} />}

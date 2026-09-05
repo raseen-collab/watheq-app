@@ -10,6 +10,7 @@
 
 import { useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase-client";
+import { officeId } from "@/lib/office";
 import { openDoc, ownerConsolidatedStatementHTML, type OwnerReportPayment, type OwnerStatementSection } from "@/lib/documents";
 import type { ExpenseRow } from "@/lib/expenses";
 
@@ -32,6 +33,27 @@ export default function OwnerStatementModal({ properties, issuer, onClose }: {
   const [to, setTo] = useState(thisMonth());
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [link, setLink] = useState<string | null>(null);
+  const [linkBusy, setLinkBusy] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  /**
+   * رابط مالك مجمّع (schema-v13): رابط واحد يفتح فيه المالك كل عقاراته حيًّا
+   * لأي فترة يختارها من الرابط نفسه (?from=YYYY-MM&to=YYYY-MM). مالك بعشرة
+   * عقارات كان يستلم عشرة روابط — الآن واحد.
+   */
+  async function makeLink() {
+    if (!owner) return;
+    setLinkBusy(true); setErr(null);
+    const uid = await officeId(supabase);
+    const bytes = new Uint8Array(24); crypto.getRandomValues(bytes);
+    const token = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+    const { error } = await supabase.from("owner_links")
+      .insert({ user_id: uid, property_id: null, owner_name: owner, token, label: `مجمّع — ${owner}` });
+    setLinkBusy(false);
+    if (error) { setErr(/owner_name|scope|null value/.test(error.message) ? "شغّل schema-v13 في القاعدة أولًا." : error.message); return; }
+    setLink(`${window.location.origin}/r/${token}?from=${from}&to=${to}`);
+  }
 
   const valid = /^\d{4}-\d{2}$/.test(from) && /^\d{4}-\d{2}$/.test(to) && from <= to && !!owner;
   const label = from === to ? ymLabel(from) : `${ymLabel(from)} — ${ymLabel(to)}`;
@@ -121,6 +143,23 @@ export default function OwnerStatementModal({ properties, issuer, onClose }: {
                 {loading ? "جارٍ التجهيز…" : `إصدار الكشف — ${label}`}
               </button>
               <button className="btn btn-ghost" onClick={onClose}>إلغاء</button>
+            </div>
+            <div className="mt-4 pt-4 border-t border-line">
+              <div className="text-xs font-bold text-muted mb-2">أو رابط حيّ يفتحه المالك بنفسه — كل عقاراته في صفحة واحدة</div>
+              {link ? (
+                <div className="flex flex-wrap items-center gap-2">
+                  <code className="text-[11px] bg-paper2 border border-line rounded-lg px-2 py-1.5 break-all flex-1" dir="ltr">{link}</code>
+                  <button className="btn btn-ghost text-xs" onClick={async () => { try { await navigator.clipboard.writeText(link); setCopied(true); setTimeout(() => setCopied(false), 1800); } catch {} }}>
+                    {copied ? "✓ نُسخ" : "نسخ"}
+                  </button>
+                  <a className="btn btn-ghost text-xs" href={`https://wa.me/?text=${encodeURIComponent(`كشف حساب عقاراتك — يتحدّث تلقائيًّا:\n${link}`)}`} target="_blank" rel="noreferrer">واتساب</a>
+                </div>
+              ) : (
+                <button className="btn btn-ghost text-sm" onClick={makeLink} disabled={!owner || linkBusy}>
+                  {linkBusy ? "…" : "🔗 إنشاء رابط مجمّع للمالك"}
+                </button>
+              )}
+              <p className="text-[11px] text-muted mt-2">الرابط يُبطَل من نافذة «رابط المالك» في أي عقار للمالك (يظهر باسم «مجمّع»). الفترة في الرابط تُعدَّل من عنوانه.</p>
             </div>
           </>
         )}
