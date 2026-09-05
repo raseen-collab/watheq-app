@@ -169,50 +169,51 @@ export default function PropertyView({ initial, orgName, issuer, compliance }: {
     return data.user.id;
   }
 
-  /** تسجيل مبلغ مستلم — يحوّل الجزئي إلى دفعات كاملة تلقائيًّا */
+  /**
+   * تسجيل مبلغ مستلم — عملية ذرّية واحدة في القاعدة (schema-v12):
+   * قفل صف المستأجر، تحقق الصلاحية، تحديث العدّاد والمحصَّل وسطر السجل
+   * معًا أو لا شيء. لا حساب في المتصفح ولا كتابات متفرقة — فلا سباق
+   * بين موظفين ولا رفض صامت للمحصّل. القيم المعروضة تأتي من القاعدة.
+   */
   async function recordPayment(t: Tenant, amount: number, method = "transfer", note?: string) {
     const amt = Math.max(0, Number(amount) || 0);
     if (!amt || !active) return;
-    const r = applyPayment(t, amt);
-    await patchTenant(t.id, { paid_periods: r.paid_periods, partial_amount: r.partial_amount }, amt);
-
-    // سجل الدفعة — يحفظ التاريخ والمبلغ والطريقة للإثبات لاحقًا
-    const uid = await currentUserId();
-    if (uid) {
-      const { error } = await supabase.from("payments").insert({
-        user_id: uid, tenant_id: t.id, property_id: active.id,
-        paid_on: today(), amount: amt, method,
-        periods_covered: r.completed, note: note || null,
-      });
-      if (error) console.error("Watheq payment log error:", error);
+    const { data, error } = await supabase.rpc("watheq_record_payment", {
+      p_tenant: t.id, p_amount: amt, p_method: method, p_note: note || null, p_paid_on: today(),
+    });
+    if (error) {
+      const m = String(error.message || "");
+      return notify("err", /not authorized/.test(m) ? "هذا الإجراء يحتاج صلاحية أعلى — اطلبه من صاحب المكتب."
+        : /does not exist|function/.test(m) ? "شغّل schema-v12 في قاعدة البيانات أولًا." : m);
     }
-
+    const r = data as { paid_periods: number; partial_amount: number; completed: number };
+    setItems(items.map((p) => p.id === active.id ? {
+      ...p,
+      collected: (p.collected || 0) + amt,
+      tenants: p.tenants.map((x) => (x.id === t.id ? { ...x, paid_periods: r.paid_periods, partial_amount: r.partial_amount } : x)),
+    } : p));
     notify("ok", r.completed > 0
       ? `سُجّل ${sar(amt)} ريال — اكتملت ${r.completed} دفعة`
       : `سُجّل ${sar(amt)} ريال كسداد جزئي`);
   }
 
-  /**
-   * التراجع عن آخر دفعة. النسخة القديمة كانت تُنقص العدّاد فقط وتترك سطر
-   * الدفعة في السجل كما هو — فيبقى كشف الحساب وتقرير المالك يحتسبان
-   * مبلغًا تراجعنا عنه. الآن: تأكيد صريح، ثم عدّاد −1 وسطر سالب في
-   * السجل باسم من تراجع — الأثر محفوظ والمجاميع صحيحة.
-   */
+  /** التراجع عن آخر دفعة — ذرّي في القاعدة، للمدير فقط، بصف سالب في السجل */
   async function undoPayment(t: Tenant) {
     if (!active) return;
     const amt = Number(t.rent_amount) || 0;
     if (!confirm(`التراجع عن آخر دفعة مسجّلة؟\n\n${t.name} — ${ul} ${t.unit || "—"} — ${active.name}\nسيُخصم ${sar(amt)} ريال من المحصَّل ويُسجَّل التراجع باسمك في سجل العمليات.`)) return;
-    await patchTenant(t.id, { paid_periods: Math.max(0, (t.paid_periods || 0) - 1) }, -amt);
-    const uid = await currentUserId();
-    if (uid) {
-      const { error } = await supabase.from("payments").insert({
-        user_id: uid, tenant_id: t.id, property_id: active.id,
-        paid_on: today(), amount: -amt, method: "other",
-        periods_covered: -1, note: "تراجع عن دفعة",
-      });
-      if (error) console.error("Watheq reversal log error:", error);
+    const { data, error } = await supabase.rpc("watheq_undo_payment", { p_tenant: t.id });
+    if (error) {
+      const m = String(error.message || "");
+      return notify("err", /not authorized/.test(m) ? "التراجع عن الدفعات للمدير أو صاحب المكتب." : m);
     }
-    notify("ok", `تم التراجع — خُصم ${sar(amt)} ريال وسُجّل في سجل العمليات`);
+    const r = data as { paid_periods: number; reversed: number };
+    setItems(items.map((p) => p.id === active.id ? {
+      ...p,
+      collected: (p.collected || 0) - (r.reversed || amt),
+      tenants: p.tenants.map((x) => (x.id === t.id ? { ...x, paid_periods: r.paid_periods } : x)),
+    } : p));
+    notify("ok", `تم التراجع — خُصم ${sar(r.reversed || amt)} ريال وسُجّل في سجل العمليات`);
   }
 
   /** تسجيل الإخلاء: تتحوّل الوحدة إلى «شاغرة» ويُوثَّق التسليم */
@@ -275,8 +276,9 @@ export default function PropertyView({ initial, orgName, issuer, compliance }: {
       owner_name: (d.owner_name || "").trim() || null,
     };
     if (id) {
-      const { error } = await supabase.from("properties").update(payload).eq("id", id);
+      const { data: _u1, error } = await supabase.from("properties").update(payload).eq("id", id).select("id");
       if (error) { console.error("Watheq save error:", error); return notify("err", error.message); }
+      if (!_u1 || _u1.length === 0) return notify("err", "هذا الإجراء يحتاج صلاحية أعلى — اطلبه من صاحب المكتب.");
       setItems(items.map((p) => (p.id === id ? { ...p, ...payload } as Property : p)));
     } else {
       const uid = await currentUserId();
@@ -322,8 +324,9 @@ export default function PropertyView({ initial, orgName, issuer, compliance }: {
             notice_date: null, move_out_date: null, deposit_deductions: 0,
             meter_elec_out: null, meter_water_out: null, turnover_checklist: [] }
         : payload;
-      const { error } = await supabase.from("tenants").update(full).eq("id", id);
+      const { data: _u2, error } = await supabase.from("tenants").update(full).eq("id", id).select("id");
       if (error) { console.error("Watheq save error:", error); return notify("err", error.message); }
+      if (!_u2 || _u2.length === 0) return notify("err", "هذا الإجراء يحتاج صلاحية أعلى — اطلبه من صاحب المكتب.");
       setItems(items.map((p) => p.id === active.id
         ? { ...p, tenants: p.tenants.map((t) => (t.id === id ? { ...t, ...full } as Tenant : t)) } : p));
     } else {
@@ -337,8 +340,10 @@ export default function PropertyView({ initial, orgName, issuer, compliance }: {
 
   async function patchTenant(id: string, patch: any, collectedDelta = 0) {
     if (!active) return;
-    const { error } = await supabase.from("tenants").update(patch).eq("id", id);
+    const { data: _upd, error } = await supabase.from("tenants").update(patch).eq("id", id).select("id");
     if (error) { console.error("Watheq save error:", error); return notify("err", error.message); }
+    /* تعديل رفضته السياسات يرجع بلا خطأ وبصفر صفوف — لا نُحدّث الشاشة كأنه نجح */
+    if (!_upd || _upd.length === 0) return notify("err", "هذا الإجراء يحتاج صلاحية أعلى — اطلبه من صاحب المكتب.");
     if (collectedDelta) await supabase.from("properties").update({ collected: (active.collected || 0) + collectedDelta }).eq("id", active.id);
     setItems(items.map((p) => p.id === active.id ? {
       ...p,
@@ -374,8 +379,9 @@ export default function PropertyView({ initial, orgName, issuer, compliance }: {
   async function doRenew(t: Tenant, opts: { periods: number; newAmount: number | null; newFrequency: Frequency }) {
     if (!active) return;
     const fields = renewContract(t, { periods: opts.periods, newAmount: opts.newAmount, newFrequency: opts.newFrequency });
-    const { error } = await supabase.from("tenants").update(fields).eq("id", t.id);
+    const { data: _u3, error } = await supabase.from("tenants").update(fields).eq("id", t.id).select("id");
     if (error) { console.error("Watheq save error:", error); return notify("err", error.message); }
+    if (!_u3 || _u3.length === 0) return notify("err", "هذا الإجراء يحتاج صلاحية أعلى — اطلبه من صاحب المكتب.");
     // توثيق التجديد في سجل العقار
     await supabase.from("property_notes").insert({
       property_id: active.id, note_date: today(),
