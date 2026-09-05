@@ -1,5 +1,5 @@
 import { createClient as createAdmin } from "@supabase/supabase-js";
-import { ownerReportHTML } from "@/lib/documents";
+import { ownerReportHTML, ownerConsolidatedStatementHTML, type OwnerStatementSection } from "@/lib/documents";
 import { issuerMarks } from "@/lib/subscription";
 
 export const dynamic = "force-dynamic";
@@ -37,21 +37,79 @@ export async function GET(_req: Request, { params }: { params: { token: string }
   const db = createAdmin(url, key, { auth: { persistSession: false } });
 
   const { data: link } = await db.from("owner_links")
-    .select("id, user_id, property_id, revoked, expires_at")
+    .select("id, user_id, property_id, owner_name, revoked, expires_at")
     .eq("token", token).maybeSingle();
   if (!link || link.revoked) return deny("هذا الرابط لم يعد فعّالًا");
   if (link.expires_at && String(link.expires_at) < new Date().toISOString().slice(0, 10)) {
     return deny("انتهت صلاحية هذا الرابط");
   }
 
+  // فترة التقرير: الشهر الحالي حتى اليوم — «حي» يعني أرقام لحظة الفتح.
+  // الرابط المجمّع يقبل ?from=YYYY-MM&to=YYYY-MM ليرى المالك أي فترة يشاء.
+  const now = new Date();
+  const p2 = (n: number) => String(n).padStart(2, "0");
+  const ymNow = `${now.getFullYear()}-${p2(now.getMonth() + 1)}`;
+
+  // ---------- الرابط المجمّع: كل عقارات المالك (schema-v13) ----------
+  if (!link.property_id && link.owner_name) {
+    const q = new URL(_req.url).searchParams;
+    const ymOk = (v: string | null) => (v && /^\d{4}-(0[1-9]|1[0-2])$/.test(v) ? v : null);
+    const fromYm = ymOk(q.get("from")) || ymNow;
+    const toYm = ymOk(q.get("to")) || ymNow;
+    if (fromYm > toYm) return deny("الفترة غير صحيحة");
+    const from = `${fromYm}-01`;
+    const [ty, tm] = [Number(toYm.slice(0, 4)), Number(toYm.slice(5, 7))];
+    const toFull = `${toYm}-${p2(new Date(ty, tm, 0).getDate())}`;
+    const to = toYm === ymNow ? `${ymNow}-${p2(now.getDate())}` : toFull;
+    const lab = (ym: string) => `${AR_MONTHS[Number(ym.slice(5, 7)) - 1]} ${ym.slice(0, 4)}`;
+    const label = (fromYm === toYm ? lab(fromYm) : `${lab(fromYm)} — ${lab(toYm)}`) + (toYm === ymNow ? " (حتى اليوم)" : "");
+
+    const { data: props } = await db.from("properties").select("*, tenants(*)")
+      .eq("user_id", link.user_id).eq("owner_name", link.owner_name);
+    if (!props?.length) return deny("لا عقارات مسجّلة لهذا المالك");
+    const ids = props.map((p: any) => p.id);
+
+    const fetchAll = async (table: string, select: string, dateCol: string) => {
+      const out: any[] = [];
+      for (let i = 0; ; i += 1000) {
+        const { data } = await db.from(table).select(select).in("property_id", ids)
+          .gte(dateCol, from).lte(dateCol, to).order(dateCol, { ascending: true }).order("id", { ascending: true }).range(i, i + 999);
+        out.push(...(data || []));
+        if (!data || data.length < 1000 || out.length > 50000) break;
+      }
+      return out;
+    };
+    const [pays, exps, { data: profile }] = await Promise.all([
+      fetchAll("payments", "id,paid_on,amount,method,periods_covered,note,tenant_id,property_id", "paid_on"),
+      fetchAll("expenses", "*", "spent_on"),
+      db.from("profiles").select("org_name, billing_name, vat_number, cr_number, billing_phone, plan, trial_ends_at, subscribed_until")
+        .eq("id", link.user_id).maybeSingle(),
+    ]);
+    const sections: OwnerStatementSection[] = props.map((p: any) => {
+      const byId: Record<string, any> = {};
+      (p.tenants || []).forEach((t: any) => { byId[t.id] = t; });
+      return {
+        property: p,
+        payments: pays.filter((x) => x.property_id === p.id).map((x) => ({
+          ...x, tenant_name: byId[x.tenant_id]?.name || null, unit: byId[x.tenant_id]?.unit || null,
+        })),
+        expenses: exps.filter((x) => x.property_id === p.id),
+        fee_pct: p.mgmt_fee_pct,
+      };
+    });
+    const marks = issuerMarks(profile || {});
+    const html = ownerConsolidatedStatementHTML(link.owner_name, sections, { label, from, to },
+      { ...(profile || {}), trial: marks.trial, expired: marks.expired });
+    return new Response(html, { headers: {
+      "content-type": "text/html; charset=utf-8", "x-robots-tag": "noindex, nofollow", "cache-control": "no-store",
+    } });
+  }
+
   const { data: property } = await db.from("properties")
     .select("*, tenants(*)").eq("id", link.property_id).maybeSingle();
   if (!property) return deny("العقار لم يعد موجودًا");
 
-  // فترة التقرير: الشهر الحالي حتى اليوم — «حي» يعني أرقام لحظة الفتح
-  const now = new Date();
-  const p2 = (n: number) => String(n).padStart(2, "0");
-  const ym = `${now.getFullYear()}-${p2(now.getMonth() + 1)}`;
+  const ym = ymNow;
   const from = `${ym}-01`;
   const to = `${ym}-${p2(now.getDate())}`;
   const label = `${AR_MONTHS[now.getMonth()]} ${now.getFullYear()} (حتى اليوم)`;
