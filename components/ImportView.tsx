@@ -202,6 +202,21 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
         _error: err || undefined,
       };
     });
+    /**
+     * تكرار داخل الملف نفسه: 160 صفًّا مكتوبة يدويًّا فيها عادةً وحدة مكرّرة.
+     * نعلّمها قبل الحفظ لا بعده — الاكتشاف بعد الرفع يعني بحثًا يدويًّا في اللوحة.
+     */
+    const seenInFile = new Map<string, number>();
+    parsed.forEach((r) => {
+      const k = `${(r.prop_name || "").trim()}|${(r.unit || "").trim()}`;
+      if (!r.unit) return;
+      seenInFile.set(k, (seenInFile.get(k) || 0) + 1);
+    });
+    parsed.forEach((r) => {
+      if (r._error || !r.unit) return;
+      const k = `${(r.prop_name || "").trim()}|${(r.unit || "").trim()}`;
+      if ((seenInFile.get(k) || 0) > 1) r._error = `رقم الوحدة «${r.unit}» مكرّر في الملف`;
+    });
     setRows(parsed);
   }
 

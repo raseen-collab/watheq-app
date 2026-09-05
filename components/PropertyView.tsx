@@ -295,7 +295,17 @@ export default function PropertyView({ initial, orgName, issuer, compliance }: {
   }
 
   async function deleteProperty() {
-    if (!active || !confirm("حذف العقار وكل وحداته؟")) return;
+    if (!active) return;
+    /**
+     * الحذف يمسح الوحدات والدفعات والمصروفات معه (cascade في القاعدة).
+     * مع عقار فيه 100 وحدة، سؤال «حذف العقار وكل وحداته؟» لا يكفي —
+     * نسمّي ما سيضيع بالأرقام ونطلب كتابة اسم العقار حرفيًّا.
+     */
+    const n = active.tenants.length;
+    const warn = `⚠️ حذف نهائي لا رجعة فيه\n\nالعقار: ${active.name}\nسيُحذف معه: ${n} ${n === 1 ? ul : ul + " (وكل عقودها)"}, وكل الدفعات والمصروفات والملاحظات المرتبطة به.\n\nإن كنت تريد نسخة، صدّرها أولًا من الإعدادات.\n\nاكتب اسم العقار للتأكيد:`;
+    const typed = prompt(warn);
+    if (typed === null) return;
+    if (typed.trim() !== active.name.trim()) return notify("err", "الاسم غير مطابق — أُلغي الحذف.");
     const { data: _del, error } = await supabase.from("properties").delete().eq("id", active.id).select("id");
     /* حذف رفضته السياسات يرجع بلا خطأ وبصفر صفوف — لا نوهم الموظف أنه نجح */
     if (!error && (!_del || _del.length === 0)) { notify("err", "هذا الإجراء يحتاج صلاحية أعلى — اطلبه من صاحب المكتب."); return; }
@@ -306,6 +316,16 @@ export default function PropertyView({ initial, orgName, issuer, compliance }: {
 
   async function saveTenant(d: any, id?: string) {
     if (!active) return;
+    /**
+     * تحذير التكرار: مع 100+ وحدة يسهل إدخال نفس رقم الوحدة مرتين، فتظهر
+     * وحدتان بالرقم نفسه وتنقسم بينهما الدفعات. لا نمنع (قد يكون تأجيرًا
+     * جديدًا لوحدة أُخليت) — لكن لا نتركه يمرّ بصمت.
+     */
+    const unitTxt = String(d.unit || "").trim();
+    if (unitTxt) {
+      const clash = active.tenants.find((t) => t.id !== id && String(t.unit || "").trim() === unitTxt && !isVacant(t));
+      if (clash && !confirm(`${ul} ${unitTxt} مشغولة حاليًّا بـ«${clash.name}».\n\nإن كان مستأجرًا جديدًا، سجّل إخلاء السابق أولًا حتى لا تظهر الوحدة مرتين.\n\nمتابعة الإضافة على أي حال؟`)) return;
+    }
     const freq = (d.payment_frequency || "monthly") as Frequency;
     const periods = d.contract_periods ? Number(d.contract_periods) : null;
     const payload = {
