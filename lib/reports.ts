@@ -262,25 +262,23 @@ async function logPayment(db: DB, profile: any, row: Record<string, any>) {
   if (error) console.error("Watheq bot payment log error:", error);
 }
 
-/** تسجيل دفعة كاملة لمستأجر — يحترم السداد الجزئي تمامًا كاللوحة */
+/** تسجيل دفعة كاملة لمستأجر — نفس الدالة الذرّية التي تستخدمها اللوحة (schema-v12) */
 async function payTenant(db: DB, profile: any, tenantId: string): Promise<{ ok: boolean; msg: string }> {
-  const { data: t } = await db.from("tenants").select("*").eq("id", tenantId).maybeSingle();
+  const { data: t } = await db.from("tenants").select("id, rent_amount, property_id").eq("id", tenantId).maybeSingle();
   if (!t) return { ok: false, msg: "العقد غير موجود." };
-  const { data: prop } = await db.from("properties").select("id,user_id,collected").eq("id", t.property_id).maybeSingle();
+  const { data: prop } = await db.from("properties").select("id,user_id").eq("id", t.property_id).maybeSingle();
   if (!prop || String(prop.user_id) !== String(profile.id)) return { ok: false, msg: "غير مصرّح." };
-
   const rent = Number(t.rent_amount) || 0;
   if (rent <= 0) return { ok: false, msg: "قيمة الدفعة غير محدّدة لهذا العقد." };
 
-  // نفس منطق اللوحة: يضمّ المدفوع جزئيًّا إلى المبلغ الجديد
-  const r = applyPayment(t, rent);
-  const { error } = await db.from("tenants")
-    .update({ paid_periods: r.paid_periods, partial_amount: r.partial_amount }).eq("id", tenantId);
+  // البوت يعمل بمفتاح الخدمة بلا جلسة، فيمرّر صاحب الحساب كمُسجِّل — والدالة تتحقق أنه المالك فعلًا
+  const { data, error } = await db.rpc("watheq_record_payment", {
+    p_tenant: tenantId, p_amount: rent, p_method: "other", p_note: "سُجّلت عبر بوت تليجرام",
+    p_paid_on: todayISO(), p_actor: profile.id,
+  });
   if (error) return { ok: false, msg: "تعذّر الحفظ: " + error.message };
-
-  await db.from("properties").update({ collected: (Number(prop.collected) || 0) + rent }).eq("id", prop.id);
-  await logPayment(db, profile, { tenant_id: tenantId, property_id: prop.id, amount: rent, periods_covered: r.completed });
-  return { ok: true, msg: `سُجّلت دفعة (${sar(rent)} ﷼)${r.completed > 1 ? ` — اكتملت ${r.completed} دفعات` : ""}.` };
+  const r = (data || {}) as { completed?: number };
+  return { ok: true, msg: `سُجّلت دفعة (${sar(rent)} ﷼)${(r.completed || 0) > 1 ? ` — اكتملت ${r.completed} دفعات` : ""}.` };
 }
 
 /** تسجيل اشتراك شهر واحد لمالك في جمعية — يحترم السداد الجزئي */

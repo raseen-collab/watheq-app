@@ -106,7 +106,8 @@ export function requestsDigestLines(requests: SeekerRequest[], listings: Listing
   );
   if (!withMatch.length) return [];
   const sample = withMatch.slice(0, 3)
-    .map((r) => `${r.seeker_name || "طلب"}: ${matchesForRequest(r, listings).map((l) => l.code).slice(0, 3).join("، ")}`)
+    // تليجرام يقرأ HTML: اسم طالب فيه < يُسقط ملخّص المكتب كله
+    .map((r) => `${String(r.seeker_name || "طلب").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")}: ${matchesForRequest(r, listings).map((l) => l.code).slice(0, 3).join("، ")}`)
     .join(" · ");
   return [`🔎 ${withMatch.length} ${withMatch.length === 1 ? "طلب له معروض مطابق" : "طلبات لها معروضات مطابقة"} (${sample}${withMatch.length > 3 ? "…" : ""})`];
 }

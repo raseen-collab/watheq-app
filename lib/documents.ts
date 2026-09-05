@@ -5,6 +5,24 @@ import { ownerNet, sumByCategory, catLabel, type ExpenseRow } from "./expenses";
 import { unitLabel, typeLabel } from "./domain";
 
 const sar = (n: number) => (Number(n) || 0).toLocaleString("en-US");
+
+/**
+ * تعقيم المدخلات قبل بناء أي مستند HTML. الأسماء والملاحظات يكتبها
+ * موظفون، والمستند قد يُفتح في نافذة طباعة أو يُقدَّم علنًا عبر رابط
+ * المالك — فأي وسم في اسم مستأجر يصير سكربتًا يعمل عند من يفتح الصفحة.
+ * نُهرّب < > & " في كل حقل نصي (عميقًا) ونترك الأرقام والتواريخ كما هي.
+ */
+function scrub<T>(v: T): T {
+  if (typeof v === "string") return v.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;") as any;
+  if (Array.isArray(v)) return v.map(scrub) as any;
+  if (v && typeof v === "object" && !(v instanceof Date)) {
+    const o: any = {};
+    for (const k of Object.keys(v as any)) o[k] = scrub((v as any)[k]);
+    return o;
+  }
+  return v;
+}
+
 const MONTHS_AR = ["يناير","فبراير","مارس","أبريل","مايو","يونيو",
                    "يوليو","أغسطس","سبتمبر","أكتوبر","نوفمبر","ديسمبر"];
 
@@ -209,6 +227,11 @@ const footer = () => `
 
 /** كشف حساب مستأجر — كامل الدفعات والأرصدة */
 export function statementHTML(t: Tenant, p: Property, issuer: Issuer = {}, payments: PaymentRow[] = []) {
+  // تعقيم المدخلات (انظر scrub أعلاه)
+  t = scrub(t);
+  p = scrub(p);
+  issuer = scrub(issuer);
+  payments = scrub(payments);
   const st = contractState(t, graceOf(p));
   const rows = buildSchedule(t);
   const ul = unitLabel(p.property_type);
@@ -327,6 +350,11 @@ export function invoiceHTML(
   inv: { invoice_no: string; amount: number; due_date: string; period_label: string },
   issuer: Issuer = {}
 ) {
+  // تعقيم المدخلات (انظر scrub أعلاه)
+  t = scrub(t);
+  p = scrub(p);
+  inv = scrub(inv);
+  issuer = scrub(issuer);
   const ul = unitLabel(p.property_type);
   const who = issuer.billing_name || p.manager || "إدارة الأملاك";
   const v = vatOf(p);
@@ -430,6 +458,10 @@ export type QuoteInput = {
 
 /** عرض سعر تأجير — يُرسل لمستأجر محتمل قبل التعاقد */
 export function quotationHTML(p: Property, q: QuoteInput, issuer: Issuer = {}) {
+  // تعقيم المدخلات (انظر scrub أعلاه)
+  p = scrub(p);
+  q = scrub(q);
+  issuer = scrub(issuer);
   const ul = unitLabel(p.property_type);
   const who = issuer.billing_name || p.manager || "إدارة الأملاك";
   const v = vatOf(p);
@@ -532,6 +564,9 @@ ${footer()}`;
 
 /** كشف حساب عقار كامل — كل الوحدات */
 export function propertyStatementHTML(p: Property & { tenants: Tenant[] }, issuer: Issuer = {}) {
+  // تعقيم المدخلات (انظر scrub أعلاه)
+  p = scrub(p);
+  issuer = scrub(issuer);
   const ul = unitLabel(p.property_type);
   const who = issuer.billing_name || p.manager || "إدارة الأملاك";
   const v = vatOf(p);
@@ -680,6 +715,11 @@ const owed = (o: OwnerRow, fee: number) =>
 export function ownerStatementHTML(
   o: OwnerRow, a: AssociationDoc, issuer: Issuer = {}, payments: PaymentRow[] = []
 ) {
+  // تعقيم المدخلات (انظر scrub أعلاه)
+  o = scrub(o);
+  a = scrub(a);
+  issuer = scrub(issuer);
+  payments = scrub(payments);
   const fee = Number(a.fee) || 0;
   const who = issuer.billing_name || `إدارة ${a.name}`;
   const due = owed(o, fee);
@@ -747,6 +787,9 @@ ${footer()}`;
 
 /** كشف حساب الجمعية كاملة — كل الملّاك */
 export function associationStatementHTML(a: AssociationDoc, issuer: Issuer = {}) {
+  // تعقيم المدخلات (انظر scrub أعلاه)
+  a = scrub(a);
+  issuer = scrub(issuer);
   const fee = Number(a.fee) || 0;
   const who = issuer.billing_name || `إدارة ${a.name}`;
   const rows = a.owners || [];
@@ -836,6 +879,10 @@ export function budgetHTML(
   budget: { year: number; items: BudgetItem[]; reserve_pct?: number; notes?: string | null },
   issuer: Issuer = {}
 ) {
+  // تعقيم المدخلات (انظر scrub أعلاه)
+  a = scrub(a);
+  budget = scrub(budget);
+  issuer = scrub(issuer);
   const who = issuer.billing_name || `إدارة ${a.name}`;
   const items = (budget.items || []).filter((i) => i && i.label);
   const monthlyTotal = items.reduce((s, i) => s + (Number(i.monthly) || 0), 0);
@@ -949,6 +996,10 @@ export function foundingMinutesHTML(
   },
   issuer: Issuer = {}
 ) {
+  // تعقيم المدخلات (انظر scrub أعلاه)
+  a = scrub(a);
+  d = scrub(d);
+  issuer = scrub(issuer);
   const who = issuer.billing_name || `إدارة ${a.name}`;
   const date = d.meeting_date || today();
   const units = Number(d.total_units) || Number(a.units) || (a.owners || []).length || 0;
@@ -1046,6 +1097,10 @@ export function moveOutSettlementHTML(
   },
   p: Property, issuer: Issuer = {}
 ) {
+  // تعقيم المدخلات (انظر scrub أعلاه)
+  t = scrub(t);
+  p = scrub(p);
+  issuer = scrub(issuer);
   const st = contractState(t as any, { graceDays: Number(p.grace_days) || 0 });
   const ul = unitLabel(p.property_type);
   const who = issuer.billing_name || p.manager || "إدارة الأملاك";
@@ -1157,6 +1212,10 @@ export function renewalMinutesHTML(
   },
   issuer: Issuer = {}
 ) {
+  // تعقيم المدخلات (انظر scrub أعلاه)
+  a = scrub(a);
+  d = scrub(d);
+  issuer = scrub(issuer);
   const esc = (s: any) => String(s ?? "").replace(/</g, "&lt;");
   const date = d.meeting_date || today();
   const units = Number(d.total_units) || Number(a.units) || (a.owners || []).length || 0;
@@ -1285,6 +1344,8 @@ export type SubInvoice = {
  * لا علامة مائية ولا سطر «أُنشئ عبر وثيق» — المُصدِر هنا وثيق نفسه.
  */
 export function subscriptionInvoiceHTML(inv: SubInvoice) {
+  // تعقيم المدخلات (انظر scrub أعلاه)
+  inv = scrub(inv);
   const rate = Number(inv.vat_rate ?? 15);
   const hasVat = !!inv.vat_number;
   const total = Number(inv.amount) || 0;
@@ -1375,6 +1436,12 @@ export function ownerReportHTML(
   // المصروفات وأتعاب الإدارة اختيارية — بدونها يبقى التقرير كما كان (توافق خلفي)
   extra: { expenses?: ExpenseRow[]; fee_pct?: number | null } = {},
 ) {
+  // تعقيم المدخلات (انظر scrub أعلاه)
+  p = scrub(p);
+  period = scrub(period);
+  payments = scrub(payments);
+  issuer = scrub(issuer);
+  extra = scrub(extra);
   const ul = unitLabel(p.property_type);
   const who = issuer.billing_name || p.manager || "إدارة الأملاك";
   const v = vatOf(p);
@@ -1502,6 +1569,11 @@ export function ownerConsolidatedStatementHTML(
   period: { label: string; from: string; to: string },
   issuer: Issuer = {},
 ) {
+  // تعقيم المدخلات (انظر scrub أعلاه)
+  ownerName = scrub(ownerName);
+  sections = scrub(sections);
+  period = scrub(period);
+  issuer = scrub(issuer);
   const who = issuer.billing_name || "إدارة الأملاك";
 
   const rows = sections.map((s) => {
@@ -1591,6 +1663,10 @@ const phasePill = (tone: "ok" | "warn" | "bad" | "muted", label: string) =>
   `<span class="pill ${tone === "ok" ? "p" : tone === "bad" ? "l" : "u"}">${label}</span>`;
 
 export function complianceRegisterHTML(items: ComplianceItem[], orgName: string, issuer: Issuer = {}) {
+  // تعقيم المدخلات (انظر scrub أعلاه)
+  items = scrub(items);
+  orgName = scrub(orgName);
+  issuer = scrub(issuer);
   const who = issuer.billing_name || orgName || "المكتب العقاري";
   const fal = items.filter((x) => x.kind === "fal_license");
   const bro = items.filter((x) => x.kind === "brokerage");
@@ -1678,6 +1754,10 @@ ${footer()}`;
 // ============================================================
 
 export function listingsRegisterHTML(items: Listing[], orgName: string, issuer: Issuer = {}) {
+  // تعقيم المدخلات (انظر scrub أعلاه)
+  items = scrub(items);
+  orgName = scrub(orgName);
+  issuer = scrub(issuer);
   const who = issuer.billing_name || orgName || "المكتب العقاري";
   const rows = sortListings(items || []);
   const s = summarize(rows);
