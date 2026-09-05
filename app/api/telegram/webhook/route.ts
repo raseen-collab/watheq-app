@@ -108,7 +108,7 @@ async function showPayList(db: DB, chatId: number, messageId: number, p: any, sc
   const rows = await getUnpaid(db, p, scope);
   if (!rows.length) return tgEdit(chatId, messageId, "لا توجد دفعات غير مسدّدة في هذا القسم ✅", reportButtons(scope));
   const buttons: TgKeyboard = rows.slice(0, 15).map((r) => [
-    { text: `${r.unit} — ${sar(r.amount)}﷼ — ${r.due}`, callback_data: `pay:${scope}:${r.id}` },
+    { text: `${r.unit} — ${sar(r.amount)} ريال — ${r.due}`, callback_data: `pay:${scope}:${r.id}` },
   ]);
   buttons.push(backBtn(scope));
   return tgEdit(chatId, messageId, "اختر الدفعة لتسجيلها <b>كمدفوعة</b>:", buttons);
@@ -122,7 +122,7 @@ async function confirmPay(db: DB, chatId: number, messageId: number, p: any, sco
     [{ text: "✅ نعم، سجّلها مدفوعة", callback_data: `payok:${scope}:${id}` }],
     backBtn(scope),
   ];
-  return tgEdit(chatId, messageId, `تأكيد تسجيل دفعة:\n\n<b>${row.unit}</b> — ${row.tenant}\nالمبلغ: <b>${sar(row.amount)}</b> ﷼ · الاستحقاق: ${row.due}`, buttons);
+  return tgEdit(chatId, messageId, `تأكيد تسجيل دفعة:\n\n<b>${row.unit}</b> — ${row.tenant}\nالمبلغ: <b>${sar(row.amount)}</b> ريال · الاستحقاق: ${row.due}`, buttons);
 }
 
 /** تنفيذ التسجيل ثم تحديث التقرير */
@@ -231,7 +231,7 @@ function statusButtons(): TgKeyboard {
 function cardText(c: any): string {
   const s = c.state;
   const L = [`${s.dot} <b>${escHtml(c.label)}</b>`, `المستأجر: ${escHtml(c.tenant)}`, `الحالة: <b>${s.label}</b>`];
-  if (s.key === "arrears") L.push(`المتأخر المتراكم: <b>${sar(s.owed)}</b> ﷼`);
+  if (s.key === "arrears") L.push(`المتأخر المتراكم: <b>${sar(s.owed)}</b> ريال`);
   if (s.key === "due_soon") L.push(s.nextDue ? `الدفعة القادمة: ${s.nextDue}` : "");
   if (s.key === "expiring" && s.daysToEnd != null) L.push(`ينتهي خلال ${s.daysToEnd} يوم (${s.endDate})`);
   if (s.key === "active") L.push(s.nextDue ? `الدفعة القادمة: ${s.nextDue}` : "الدفعات منتظمة ✅");
