@@ -3,6 +3,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase-client";
 import TeamSection from "@/components/TeamSection";
+import ExportData from "@/components/ExportData";
 import { useRouter } from "next/navigation";
 import { ACCOUNT_TYPES, normalizeAccountType } from "@/lib/roles";
 
@@ -214,6 +215,7 @@ export default function SettingsView({ profile }: { profile: any }) {
       </section>
 
       <div className="mb-6"><TeamSection /></div>
+      <div className="mb-6"><ExportData /></div>
 
       <button onClick={save} disabled={saving} className="btn btn-gold w-full justify-center">
         {saving ? "..." : "حفظ الإعدادات"}
