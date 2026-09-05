@@ -8,6 +8,9 @@ import { listingsDigestLines, type Listing } from "@/lib/listings";
 import { requestsDigestLines, type SeekerRequest } from "@/lib/requests";
 import { complianceState } from "@/lib/compliance";
 
+/** تليجرام يقرأ الرسالة كـHTML: اسم فيه < أو & يُسقط الرسالة كلها للحساب. نهرّب النصوص الحرة */
+const esc = (v: any) => String(v ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
@@ -40,11 +43,16 @@ export async function GET(req: Request) {
     .eq("notify_enabled", true);
 
   let sent = 0;
-  for (const p of profiles || []) {
+  /**
+   * كل حساب دالة مستقلة، وتُعالَج الحسابات خمسةً خمسة بالتوازي:
+   * 40 مكتبًا متسلسلة (استعلام + تليجرام لكل واحد) تقترب من مهلة الستين
+   * ثانية؛ بالتوازي تنتهي في ربعها. وخطأ حساب واحد لا يمسّ الباقين.
+   */
+  const processProfile = async (p: any): Promise<boolean> => {
    try {
     const { data: props } = await db
       .from("properties").select("*, tenants(*)").eq("user_id", p.id);
-    if (!props?.length) continue;
+    if (!props?.length) return false;
 
     const within = p.notify_days_before ?? 5;
     const dueSoon: string[] = [];
@@ -59,12 +67,12 @@ export async function GET(req: Request) {
         const st = contractState(t, { graceDays: Number(prop.grace_days) || 0 });
         if (st.status === "late") {
           totalDue += st.amountDue;
-          lateList.push(`• ${t.name} — ${ul} ${t.unit || "—"} (${prop.name}) — <b>${sar(st.amountDue)}</b> ريال`);
+          lateList.push(`• ${esc(t.name)} — ${ul} ${esc(t.unit || "—")} (${esc(prop.name)}) — <b>${sar(st.amountDue)}</b> ريال`);
         } else if (st.daysToNextDue !== null && st.daysToNextDue >= 0 && st.daysToNextDue <= within) {
-          dueSoon.push(`• ${t.name} — ${ul} ${t.unit || "—"} — ${sar(t.rent_amount)} ريال بتاريخ ${st.nextDueDate}`);
+          dueSoon.push(`• ${esc(t.name)} — ${ul} ${esc(t.unit || "—")} — ${sar(t.rent_amount)} ريال بتاريخ ${st.nextDueDate}`);
         }
         if (st.daysToEnd !== null && st.daysToEnd >= 0 && st.daysToEnd <= 60) {
-          expiring.push(`• ${t.name} — ${ul} ${t.unit || "—"} — ينتهي خلال ${st.daysToEnd} يومًا (${st.endDate})`);
+          expiring.push(`• ${esc(t.name)} — ${ul} ${esc(t.unit || "—")} — ينتهي خلال ${st.daysToEnd} يومًا (${st.endDate})`);
         }
       }
     }
@@ -102,9 +110,9 @@ export async function GET(req: Request) {
       } catch { /* جدول الطلبات غير منشأ بعد */ }
     } catch { /* الجدول غير منشأ بعد — نتجاهل القسم */ }
 
-    if (!dueSoon.length && !lateList.length && !expiring.length && !compliance.length && !listings.length && !matchLines.length) continue;
+    if (!dueSoon.length && !lateList.length && !expiring.length && !compliance.length && !listings.length && !matchLines.length) return false;
 
-    const parts = [`🗂️ <b>ملخّص وثيق اليومي</b>${p.org_name ? ` — ${p.org_name}` : ""}`, ""];
+    const parts = [`🗂️ <b>ملخّص وثيق اليومي</b>${p.org_name ? ` — ${esc(p.org_name)}` : ""}`, ""];
     // أقصى 12 سطرًا لكل قسم مع ذكر المتبقي — مكتب كبير لا يظن أن القائمة اكتملت
     const more = (n: number) => n > 12 ? [`… و${n - 12} أخرى في اللوحة`] : [];
     if (dueSoon.length) parts.push(`🟡 <b>تستحق خلال ${within} أيام (${dueSoon.length})</b>`, ...dueSoon.slice(0, 12), ...more(dueSoon.length), "");
@@ -117,14 +125,22 @@ export async function GET(req: Request) {
 
     const r = await sendTelegram(p.telegram_chat_id as string, parts.join("\n"));
     if (r.ok) {
-      sent++;
       await db.from("profiles").update({ last_digest_at: new Date().toISOString() }).eq("id", p.id);
+      return true;
     }
+    return false;
    } catch (e) {
     // حساب واحد بخطأ غير متوقع لا يُسقط ملخّصات الباقين — نسجّل ونكمل
     console.error("digest failed for", p.id, e);
+    return false;
    }
+  };
+
+  const list = profiles || [];
+  for (let i = 0; i < list.length; i += 5) {
+    const results = await Promise.all(list.slice(i, i + 5).map(processProfile));
+    sent += results.filter(Boolean).length;
   }
 
-  return NextResponse.json({ ok: true, sent });
+  return NextResponse.json({ ok: true, sent, total: list.length });
 }
