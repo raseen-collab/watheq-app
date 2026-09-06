@@ -98,6 +98,24 @@ export default function PropertyView({ initial, orgName, issuer, compliance }: {
   const [ownerStmtOpen, setOwnerStmtOpen] = useState(false);
   const [logOpen, setLogOpen] = useState(false);
   /**
+   * عرض الوحدات: بطاقات (الجوال دائمًا) أو جدول (الكمبيوتر). الجدول يعرض
+   * 25 وحدة في شاشة بدل 5، والعين تمسح عمود الحالة في ثانية — وهو ما
+   * يحتاجه مكتب بمئات الوحدات. الاختيار يُحفظ في المتصفح. الترقيم 50/صفحة
+   * حتى لا يثقل عقار بـ400 وحدة الصفحة.
+   */
+  const [view, setView] = useState<"cards" | "table">("cards");
+  const [tSort, setTSort] = useState<"urgent" | "due" | "amount" | "unit" | "name">("urgent");
+  const [tPage, setTPage] = useState(0);
+  const PAGE = 50;
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("watheq.units.view");
+      const wide = window.matchMedia("(min-width: 1024px)").matches;
+      setView(saved === "table" || saved === "cards" ? (saved as any) : wide ? "table" : "cards");
+    } catch { /* */ }
+  }, []);
+  function pickView(v: "cards" | "table") { setView(v); try { localStorage.setItem("watheq.units.view", v); } catch { /* */ } }
+  /**
    * دور المستخدم في هذا المكتب. القاعدة تمنع ما لا يحق له (v9) — لكن عرض
    * أزرار سترفضها القاعدة تجربة سيئة، وإظهار أرقام المكتب (أتعاب الإدارة،
    * صافي المالك، روابط الملّاك) لمحصّلٍ ليس من شأنه. نخفيها عرضًا،
@@ -123,6 +141,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance }: {
   // ---------- أدوات العرض: بحث / تصفية / فرز / إشعار ----------
   const [q, setQ] = useState("");
   const [filter, setFilter] = useState<"all" | RowKey>("all");
+  useEffect(() => { setTPage(0); }, [filter, q, tSort, activeId]);
   const [sort, setSort] = useState<"urgent" | "due" | "amount" | "name">("urgent");
   const [toast, setToast] = useState<null | { k: "ok" | "err"; m: string }>(null);
   // الحسابات تعتمد على تاريخ اليوم، وتوقيت السيرفر يختلف عن توقيت الجهاز.
@@ -721,6 +740,10 @@ export default function PropertyView({ initial, orgName, issuer, compliance }: {
       <div className="grid md:grid-cols-[1.65fr_1fr] gap-5 items-start">
         <div className="bg-white border border-line rounded-2xl shadow-sm">
           <div className="flex items-center justify-between border-b border-line px-5 py-4 gap-2 flex-wrap">
+            <div className="hidden lg:inline-flex items-center gap-0.5 border border-line rounded-lg p-0.5 me-2 align-middle text-[11px]">
+              <button type="button" onClick={() => pickView("table")} className={`px-2.5 py-1 rounded-md ${view === "table" ? "bg-deep text-goldSoft" : "text-muted hover:text-deep"}`} title="جدول: صف لكل وحدة">☰ جدول</button>
+              <button type="button" onClick={() => pickView("cards")} className={`px-2.5 py-1 rounded-md ${view === "cards" ? "bg-deep text-goldSoft" : "text-muted hover:text-deep"}`} title="بطاقات">▦ بطاقات</button>
+            </div>
             <h2 className="font-semibold">الوحدات والمستأجرون
               {role && <span className="ms-2 text-[11px] font-normal bg-paper2 border border-line rounded-full px-2 py-0.5 text-muted">
                 دورك: {ROLE_LABEL[role] || role}
@@ -785,7 +808,117 @@ export default function PropertyView({ initial, orgName, issuer, compliance }: {
                 لا نتائج مطابقة.
                 <button className="btn btn-ghost text-xs mt-3 mx-auto" onClick={() => { setQ(""); setFilter("all"); }}>مسح البحث والتصفية</button>
               </div>
-            ) : rows.map(({ t, st, key }) => (
+            ) : view === "table" ? (() => {
+              const sorted = [...rows].sort((a, b) => {
+                if (tSort === "due") return String(a.st.nextDueDate || "9999").localeCompare(String(b.st.nextDueDate || "9999"));
+                if (tSort === "amount") return b.st.amountDue - a.st.amountDue;
+                if (tSort === "unit") return String(a.t.unit || "").localeCompare(String(b.t.unit || ""), "ar", { numeric: true });
+                if (tSort === "name") return String(a.t.name || "").localeCompare(String(b.t.name || ""), "ar");
+                const d = URGENCY[a.key] - URGENCY[b.key]; return d !== 0 ? d : b.st.amountDue - a.st.amountDue;
+              });
+              const pages = Math.max(1, Math.ceil(sorted.length / PAGE));
+              const page = Math.min(tPage, pages - 1);
+              const slice = sorted.slice(page * PAGE, page * PAGE + PAGE);
+              const totalDue = rows.reduce((a, r) => a + (r.st.amountDue || 0), 0);
+              const nearest = rows.map((r) => r.st.nextDueDate).filter(Boolean).sort()[0];
+              const Th = ({ k, label, cls = "" }: { k: typeof tSort; label: string; cls?: string }) => (
+                <th className={`px-3 py-2.5 text-right font-semibold text-xs text-muted select-none cursor-pointer whitespace-nowrap ${cls}`}
+                  onClick={() => setTSort(k)} title="اضغط للفرز">
+                  {label}{tSort === k ? " ▾" : ""}
+                </th>
+              );
+              const badge = (key: RowKey) => ({
+                late: "bg-[#FBE9E7] text-[#a5322c] border-[#F5C6C2]", partial: "bg-[#FDF6E3] text-[#7a5c12] border-[#EAD9A8]",
+                soon: "bg-[#FDF6E3] text-[#7a5c12] border-[#EAD9A8]", expiring: "bg-[#EEE9FB] text-[#4B3AA6] border-[#D9CEF6]",
+                litigation: "bg-[#F1F5F9] text-[#334155] border-[#CBD5E1]", vacant: "bg-[#EEF2F7] text-[#475569] border-[#CBD5E1]",
+                ok: "bg-[#E6F4EC] text-[#137a50] border-[#B7DFC7]",
+              })[key];
+              const label = (key: RowKey) => ({ late: "متأخر", partial: "سداد جزئي", soon: "قريب", expiring: "ينتهي قريبًا", litigation: "تنفيذ", vacant: "شاغرة", ok: "منتظم" })[key];
+              return (
+                <div className="border border-line rounded-xl overflow-hidden">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead className="bg-paper">
+                        <tr>
+                          <Th k="unit" label={ul} cls="w-16" />
+                          <Th k="name" label="المستأجر" />
+                          <th className="px-3 py-2.5 text-right font-semibold text-xs text-muted whitespace-nowrap">الإيجار</th>
+                          <Th k="due" label="الاستحقاق القادم" />
+                          <Th k="urgent" label="الحالة" />
+                          <Th k="amount" label="المستحق" cls="text-left" />
+                          <th className="px-3 py-2.5"></th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {slice.map(({ t, st, key }) => (
+                          <tr key={t.id} className={`border-t border-line ${key === "late" ? "bg-[#FFF5F4]" : key === "litigation" ? "bg-[#F8FAFC]" : ""}`}>
+                            <td className="px-3 py-2 font-semibold tabular-nums">{t.unit || "—"}</td>
+                            <td className="px-3 py-2">
+                              <div className="font-medium">{t.name}</div>
+                              {t.contract_no && <div className="text-[11px] text-muted" dir="ltr">عقد {t.contract_no}</div>}
+                            </td>
+                            <td className="px-3 py-2 text-muted whitespace-nowrap tabular-nums">{sar(t.rent_amount)} / {freqShort(t.payment_frequency)}</td>
+                            <td className="px-3 py-2 whitespace-nowrap tabular-nums">
+                              {key === "vacant" ? <span className="text-muted">—</span> : st.nextDueDate ? (<>
+                                <div>{st.nextDueDate}</div>
+                                <div className="text-[11px] text-muted">{hijriShort(st.nextDueDate)}</div>
+                              </>) : <span className="text-muted">—</span>}
+                            </td>
+                            <td className="px-3 py-2"><span className={`inline-block text-[11px] font-semibold px-2.5 py-0.5 rounded-full border ${badge(key)}`}>{label(key)}</span></td>
+                            <td className={`px-3 py-2 text-left tabular-nums whitespace-nowrap ${st.amountDue > 0 ? "font-bold text-late" : "text-muted"}`}>{st.amountDue > 0 ? sar(st.amountDue) : "—"}</td>
+                            <td className="px-2 py-1.5 text-left whitespace-nowrap">
+                              <div className="inline-flex items-center gap-1">
+                                {key === "vacant" ? (
+                                  <button type="button" className="btn btn-primary text-xs" onClick={() => reLet(t)}>🔑 تأجير جديد</button>
+                                ) : key === "litigation" ? (
+                                  <button className="btn btn-ghost text-xs" onClick={() => setEnforcing(t)}>متابعة التنفيذ</button>
+                                ) : (<>
+                                  {canCollect && <QuickBtn title="تأكيد استلام الدفعة كاملة" cls="btn-primary" onClick={() => {
+                                    const amt = Number(t.rent_amount) || 0;
+                                    if (confirm(`تسجيل استلام دفعة كاملة؟\n\n${sar(amt)} ريال من ${t.name} — ${ul} ${t.unit || "—"} — ${active?.name}\n\n(تُسجَّل باسمك في سجل العمليات)`)) recordPayment(t, amt);
+                                  }}>&#10004;</QuickBtn>}
+                                  {canCollect && <QuickBtn title="سداد جزئي" cls="btn-ghost" onClick={() => setPaying(t)}>&#189;</QuickBtn>}
+                                  <a href={remindLink(t)} target="_blank" rel="noreferrer" className="btn btn-wa text-xs px-2.5" title="إرسال تذكير واتساب">&#128172;</a>
+                                </>)}
+                                <RowMenu items={[
+                                  { label: "🧾 كشف حساب", run: () => openStatement(t) },
+                                  { label: "📄 فاتورة", run: () => openInvoice(t) },
+                                  { label: "📅 جدول الدفعات", run: () => setSchedule(t) },
+                                  { label: "🧮 سجل المدفوعات", run: () => openHistory(t) },
+                                  ...(st.unpaid > 0 ? [{ label: "📨 نموذج إشعار", run: () => makeNotice(t) }] : []),
+                                  ...(needsRenewal(t) ? [{ label: "🔁 تجديد", run: () => setRenewing(t) }] : []),
+                                  ...(isManager && (t.paid_periods || 0) > 0 ? [{ label: "↩︎ تراجع عن دفعة", run: () => undoPayment(t) }] : []),
+                                  ...(isManager && !t.litigation && st.unpaid > 0 ? [{ label: "⚖️ رفع للتنفيذ", run: () => setEnforcing(t) }] : []),
+                                  ...(isManager && !isVacant(t) ? [{ label: "🔑 إنهاء العقد وإخلاء", run: () => setTurnover(t) }] : []),
+                                  ...(isVacant(t) ? [{ label: "📄 مخالصة الإخلاء", run: () => openSettlement(t) }] : []),
+                                  ...(isManager ? [{ label: "✎ تعديل البيانات", run: () => setModal({ kind: "tenant", id: t.id }) }, { label: "🗑 حذف", run: () => deleteTenant(t.id), danger: true }] : []),
+                                ]} />
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                      <tfoot className="bg-paper border-t border-line text-xs text-muted">
+                        <tr>
+                          <td className="px-3 py-2" colSpan={2}>{rows.length} {ul} · عرض {slice.length} من {rows.length}</td>
+                          <td className="px-3 py-2 whitespace-nowrap">الدخل الشهري ≈ {sar(Math.round(rows.reduce((a, r) => a + (isVacant(r.t) ? 0 : (Number(r.t.rent_amount) || 0) / ({ daily: 1 / 30, weekly: 7 / 30, monthly: 1, quarterly: 3, semiannual: 6, annual: 12 } as any)[r.t.payment_frequency || "monthly"]), 0)))}</td>
+                          <td className="px-3 py-2 whitespace-nowrap" colSpan={2}>{nearest ? `أقرب استحقاق: ${nearest}` : "—"}</td>
+                          <td className={`px-3 py-2 text-left font-bold ${totalDue > 0 ? "text-late" : ""}`}>{totalDue > 0 ? sar(totalDue) : "—"}</td>
+                          <td></td>
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
+                  {pages > 1 && (
+                    <div className="flex items-center justify-center gap-2 py-2 border-t border-line text-xs">
+                      <button className="btn btn-ghost text-xs" disabled={page === 0} onClick={() => setTPage(page - 1)}>‹ السابق</button>
+                      <span className="text-muted">صفحة {page + 1} من {pages}</span>
+                      <button className="btn btn-ghost text-xs" disabled={page >= pages - 1} onClick={() => setTPage(page + 1)}>التالي ›</button>
+                    </div>
+                  )}
+                </div>
+              );
+            })() : rows.map(({ t, st, key }) => (
               <div key={t.id} className={`rounded-xl border p-3 ${key === "litigation" ? "border-[#CBD5E1] bg-[#F8FAFC]" : "border-line bg-paper"}`}>
                 <div className="flex flex-col sm:flex-row sm:items-center gap-2.5 sm:gap-3">
                   <div className="flex items-center gap-3 min-w-0 flex-1">
@@ -864,7 +997,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance }: {
               </div>
             ))}
 
-            {tenants.length > 0 && rows.length > 0 && (
+            {view === "cards" && tenants.length > 0 && rows.length > 0 && (
               <div className="text-center text-xs text-muted pt-1">عرض {rows.length} من {allRows.length} {ul}</div>
             )}
           </div>
