@@ -3,6 +3,8 @@ import ListingsView from "@/components/ListingsView";
 import { redirect } from "next/navigation";
 import { normalizeAccountType, canAccess } from "@/lib/roles";
 import { issuerMarks } from "@/lib/subscription";
+import { withClockSkewRetry, isClockSkew } from "@/lib/db-retry";
+import RetryScreen from "@/components/RetryScreen";
 
 export const dynamic = "force-dynamic";
 
@@ -12,10 +14,8 @@ export default async function ListingsPage() {
   if (!user) redirect("/login");
 
   // نفس حماية لوحة الأملاك — السجل جزء منها لا صفحة مستقلة
-  const { data: profile, error: profileErr } = await supabase
-    .from("profiles")
-    .select("account_type, role, org_name, billing_name, vat_number, cr_number, billing_phone, plan, trial_ends_at, subscribed_until")
-    .eq("id", user.id).maybeSingle();
+  const { data: profile, error: profileErr } = await withClockSkewRetry(() =>
+    supabase.from("profiles").select("account_type, role, org_name, billing_name, vat_number, cr_number, billing_phone, plan, trial_ends_at, subscribed_until").eq("id", user.id).maybeSingle());
 
   /**
    * لا تبتلع خطأ الاستعلام — نفس حماية /dashboard الرئيسية.
@@ -23,6 +23,8 @@ export default async function ListingsPage() {
    * الفحص يُقرأ «حساب بلا نوع» فيُرمى صاحب الحساب المكتمل إلى
    * شاشة الترحيب. الخطأ الصريح أهون: تحديث الصفحة يحلّه، ويصلنا أثره.
    */
+  /* انحراف الساعة بعد المحاولات: شاشة لطيفة تعيد التحميل تلقائيًّا بدل صفحة خطأ */
+  if (profileErr && isClockSkew(profileErr.message)) return <RetryScreen detail={profileErr.message} />;
   if (profileErr) throw new Error(`تعذّر قراءة ملف الحساب: ${profileErr.message}`);
 
   let type = normalizeAccountType(profile || {});
