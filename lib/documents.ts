@@ -3,6 +3,7 @@ import { complianceState, brokerageEnd, expectedCommission, UI_LEGAL, LEGAL_DISC
 import { KIND_META as L_KIND, OFFER_LABEL, STATUS_META, freshness, pricePerMeter, shortDesc, sortListings, summarize, STALE_DAYS, type Listing } from "./listings";
 import { ownerNet, sumByCategory, catLabel, type ExpenseRow } from "./expenses";
 import { unitLabel, typeLabel } from "./domain";
+import { hijriText } from "@/lib/hijri";
 
 const sar = (n: number) => {
   const v = Number(n) || 0;
@@ -45,6 +46,14 @@ export function arDate(v?: string | null): string {
   if (mo < 0 || mo > 11) return String(v);
   return `${Number(m[3])} ${MONTHS_AR[mo]} ${m[1]}`;
 }
+/** التاريخ بالميلادي والهجري معًا — كما يقرأه المكتب السعودي في عقوده */
+export function arDateH(v?: string | null): string {
+  const g = arDate(v);
+  if (!g || g === "—") return g;
+  const h = hijriText(String(v).slice(0, 10));
+  return h ? `${g} (${h})` : g;
+}
+
 
 const today = () => {
   const d = new Date(), p = (n: number) => String(n).padStart(2, "0");
@@ -55,7 +64,7 @@ type Tenant = {
   id: string; name: string; unit: string | null; phone: string | null; national_id: string | null;
   rent_amount: number; contract_start: string | null; contract_end: string | null;
   payment_frequency: string | null; paid_periods: number | null; contract_periods: number | null;
-  partial_amount?: number | null;
+  partial_amount?: number | null; contract_no?: string | null;
 };
 type Property = {
   name: string; address: string | null; city: string | null; manager: string | null; property_type: string | null;
@@ -276,8 +285,9 @@ ${header("كشف حساب", `${t.name}`)}
 <div class="grid">
   <div class="box">
     <h3>بيانات العقد</h3>
-    <div class="r"><span>بداية العقد</span><span>${arDate(t.contract_start)}</span></div>
-    <div class="r"><span>نهاية العقد</span><span>${arDate(st.endDate)}</span></div>
+    ${t.contract_no ? `<div class="r"><span>رقم العقد</span><span dir="ltr"><b>${t.contract_no}</b></span></div>` : ""}
+    <div class="r"><span>بداية العقد</span><span>${arDateH(t.contract_start)}</span></div>
+    <div class="r"><span>نهاية العقد</span><span>${arDateH(st.endDate)}</span></div>
     <div class="r"><span>دورة السداد</span><span>${freqLabel(t.payment_frequency)}</span></div>
     <div class="r"><span>قيمة الدفعة${v.enabled ? " (شاملة الضريبة)" : ""}</span><span>${sar(unit.total)} ريال</span></div>
     ${v.enabled ? `<div class="r"><span>منها إيجار أساسي</span><span>${sar(unit.base)} ريال</span></div>
@@ -1133,8 +1143,9 @@ ${header("مخالصة إخلاء", t.name)}
   </div>
   <div class="box">
     <h3>بيانات الإخلاء</h3>
-    <div class="r"><span>بداية العقد</span><span>${arDate(t.contract_start)}</span></div>
-    <div class="r"><span>نهاية العقد</span><span>${arDate(st.endDate)}</span></div>
+    ${t.contract_no ? `<div class="r"><span>رقم العقد</span><span dir="ltr"><b>${t.contract_no}</b></span></div>` : ""}
+    <div class="r"><span>بداية العقد</span><span>${arDateH(t.contract_start)}</span></div>
+    <div class="r"><span>نهاية العقد</span><span>${arDateH(st.endDate)}</span></div>
     ${t.notice_date ? `<div class="r"><span>تاريخ الإشعار</span><span>${arDate(t.notice_date)}</span></div>` : ""}
     <div class="r"><span>تاريخ الإخلاء الفعلي</span><span>${arDate(t.move_out_date)}</span></div>
     ${vac !== null ? `<div class="r"><span>أيام الشغور حتى تاريخه</span><span>${vac}</span></div>` : ""}
