@@ -1,6 +1,8 @@
 import { createClient } from "@/lib/supabase-server";
 import { redirect } from "next/navigation";
 import { normalizeAccountType, defaultDashboard, dashboardPath } from "@/lib/roles";
+import { withClockSkewRetry, isClockSkew } from "@/lib/db-retry";
+import RetryScreen from "@/components/RetryScreen";
 
 export const dynamic = "force-dynamic";
 
@@ -10,8 +12,8 @@ export default async function Dashboard() {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect("/login");
 
-  const { data: profile, error } = await supabase
-    .from("profiles").select("account_type, role, last_dashboard").eq("id", user.id).maybeSingle();
+  const { data: profile, error } = await withClockSkewRetry(() =>
+    supabase.from("profiles").select("account_type, role, last_dashboard").eq("id", user.id).maybeSingle());
 
   /**
    * لا تبتلع خطأ الاستعلام. بدون هذا الفحص يتحوّل أي فشل قراءة
@@ -19,6 +21,8 @@ export default async function Dashboard() {
    * كأن الحساب بلا نوع ويُطرد المستخدم إلى /onboarding بلا أي رسالة —
    * وهو ما يبدو للمستخدم حلقة لا نهاية لها.
    */
+  /* انحراف الساعة بعد المحاولات: شاشة لطيفة تعيد التحميل تلقائيًّا بدل صفحة خطأ */
+  if (error && isClockSkew(error.message)) return <RetryScreen detail={error.message} />;
   if (error) {
     throw new Error(`تعذّر قراءة ملف الحساب: ${error.message}`);
   }

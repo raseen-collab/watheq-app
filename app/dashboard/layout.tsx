@@ -3,6 +3,8 @@ import { redirect } from "next/navigation";
 import DashboardShell from "@/components/DashboardShell";
 import { normalizeAccountType, canSwitch } from "@/lib/roles";
 import { subState } from "@/lib/subscription";
+import { withClockSkewRetry, isClockSkew } from "@/lib/db-retry";
+import RetryScreen from "@/components/RetryScreen";
 
 export const dynamic = "force-dynamic";
 
@@ -11,11 +13,8 @@ export default async function DashboardLayout({ children }: { children: React.Re
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect("/login");
 
-  const { data: profile, error: profileErr } = await supabase
-    .from("profiles")
-    .select("account_type, role, full_name, org_name, plan, trial_ends_at, subscribed_until, last_dashboard")
-    .eq("id", user.id)
-    .maybeSingle();
+  const { data: profile, error: profileErr } = await withClockSkewRetry(() =>
+    supabase.from("profiles").select("account_type, role, full_name, org_name, plan, trial_ends_at, subscribed_until, last_dashboard").eq("id", user.id).maybeSingle());
 
   /**
    * لا تبتلع خطأ الاستعلام — نفس حماية /dashboard الرئيسية.
@@ -23,6 +22,8 @@ export default async function DashboardLayout({ children }: { children: React.Re
    * الفحص يُقرأ «حساب بلا نوع» فيُرمى صاحب الحساب المكتمل إلى
    * شاشة الترحيب. الخطأ الصريح أهون: تحديث الصفحة يحلّه، ويصلنا أثره.
    */
+  /* انحراف الساعة بعد المحاولات: شاشة لطيفة تعيد التحميل تلقائيًّا بدل صفحة خطأ */
+  if (profileErr && isClockSkew(profileErr.message)) return <RetryScreen detail={profileErr.message} />;
   if (profileErr) throw new Error(`تعذّر قراءة ملف الحساب: ${profileErr.message}`);
 
   let accountType = normalizeAccountType(profile || {});
