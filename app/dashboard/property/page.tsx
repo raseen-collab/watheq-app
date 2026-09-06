@@ -3,6 +3,8 @@ import PropertyView from "@/components/PropertyView";
 import { redirect } from "next/navigation";
 import { normalizeAccountType, canAccess } from "@/lib/roles";
 import { issuerMarks } from "@/lib/subscription";
+import { withClockSkewRetry, isClockSkew } from "@/lib/db-retry";
+import RetryScreen from "@/components/RetryScreen";
 
 export const dynamic = "force-dynamic";
 
@@ -12,8 +14,8 @@ export default async function PropertyPage() {
   if (!u) redirect("/login");
 
   // حماية: هل يملك هذا الحساب صلاحية لوحة الأملاك؟
-  const { data: prof, error: profErr } = await supabase
-    .from("profiles").select("account_type, role").eq("id", u.id).maybeSingle();
+  const { data: prof, error: profErr } = await withClockSkewRetry(() =>
+    supabase.from("profiles").select("account_type, role").eq("id", u.id).maybeSingle());
 
   /**
    * لا تبتلع خطأ الاستعلام — نفس حماية /dashboard الرئيسية.
@@ -21,6 +23,8 @@ export default async function PropertyPage() {
    * الفحص يُقرأ «حساب بلا نوع» فيُرمى صاحب الحساب المكتمل إلى
    * شاشة الترحيب. الخطأ الصريح أهون: تحديث الصفحة يحلّه، ويصلنا أثره.
    */
+  /* انحراف الساعة بعد المحاولات: شاشة لطيفة تعيد التحميل تلقائيًّا بدل صفحة خطأ */
+  if (profErr && isClockSkew(profErr.message)) return <RetryScreen detail={profErr.message} />;
   if (profErr) throw new Error(`تعذّر قراءة ملف الحساب: ${profErr.message}`);
   let type = normalizeAccountType(prof || {});
   /**
