@@ -22,6 +22,7 @@ import { matchesForListing, type SeekerRequest } from "@/lib/requests";
 import RequestsPanel from "@/components/RequestsPanel";
 import ListingPhotos from "@/components/ListingPhotos";
 import AdComposer from "@/components/AdComposer";
+import DateField from "@/components/DateField";
 
 const TONE_CLS: Record<string, string> = {
   ok:    "bg-[#E6F4EC] text-[#137a50]",
@@ -508,7 +509,7 @@ function ListingForm({ editing, all, brokerages, busy, onSave, onCancel }: {
 
         <div className="grid grid-cols-2 gap-3">
           <F label="آخر تأكيد للتوفر" hint="متى سألت المالك آخر مرة">
-            <input className="fld" type="date" value={d.last_confirmed_at || ""} onChange={(e) => setD({ ...d, last_confirmed_at: e.target.value })} />
+            <DateField value={d.last_confirmed_at || ""} onChange={(v) => setD({ ...d, last_confirmed_at: v })} />
           </F>
           <F label="عقد الوساطة المرتبط" hint="اختياري">
             <select className="fld" value={d.brokerage_id || ""} onChange={(e) => setD({ ...d, brokerage_id: e.target.value })}>

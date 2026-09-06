@@ -6,6 +6,7 @@ import { officeId } from "@/lib/office";
 import { sar, daysLeft, waLink, WATHEQ_WA, today } from "@/lib/utils";
 import { ownerStatementHTML, associationStatementHTML, budgetHTML, foundingMinutesHTML,
   renewalMinutesHTML, DEFAULT_BUDGET_ITEMS, openDoc, type BudgetItem } from "@/lib/documents";
+import DateField from "@/components/DateField";
 
 type Owner = { id: string; name: string; unit: string | null; phone: string | null; months_late: number; last_paid: string | null; partial_amount?: number | null };
 type Note = { id: string; note_date: string; text: string };
@@ -1206,7 +1207,7 @@ function MinutesModal({ assoc, onClose, onPrint }: {
         <div className="space-y-3">
           <div className="grid grid-cols-2 gap-3">
             <Field label="تاريخ الاجتماع">
-              <input className="fld" type="date" value={d.meeting_date} onChange={(e) => set("meeting_date", e.target.value)} />
+              <DateField value={d.meeting_date} onChange={(v) => set("meeting_date", v)} />
             </Field>
             <Field label="طريقة الانعقاد">
               <select className="fld" value={d.mode} onChange={(e) => set("mode", e.target.value)}>
@@ -1587,7 +1588,7 @@ function RenewalModal({ assoc, annualBudget, onClose, onEditBudget, onPrintBudge
           <div className="space-y-3">
             <div className="grid grid-cols-2 gap-3">
               <Field label="تاريخ الاجتماع">
-                <input className="fld" type="date" value={d.meeting_date} onChange={(e) => set("meeting_date", e.target.value)} />
+                <DateField value={d.meeting_date} onChange={(v) => set("meeting_date", v)} />
               </Field>
               <Field label="طريقة الانعقاد">
                 <select className="fld" value={d.mode} onChange={(e) => set("mode", e.target.value)}>

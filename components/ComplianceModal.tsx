@@ -19,6 +19,7 @@ import {
   type ComplianceItem, type ComplianceKind,
 } from "@/lib/compliance";
 import { complianceRegisterHTML, openDoc, arDate } from "@/lib/documents";
+import DateField from "@/components/DateField";
 
 type PropOpt = { id: string; name: string };
 
@@ -372,10 +373,10 @@ function ItemForm({ kind, editing, properties, busy, onSave, onCancel }: {
 
         <div className="grid grid-cols-2 gap-3">
           <F label={kind === "brokerage" ? "تاريخ الإبرام" : "تاريخ البداية"}>
-            <input className="fld" type="date" value={d.start_date} onChange={(e) => setD({ ...d, start_date: e.target.value })} />
+            <DateField value={d.start_date} onChange={(v) => setD({ ...d, start_date: v })} />
           </F>
           <F label="تاريخ الانتهاء" hint={kind === "brokerage" ? "اتركه فارغًا = 90 يومًا نظامًا" : undefined}>
-            <input className="fld" type="date" value={d.end_date} onChange={(e) => setD({ ...d, end_date: e.target.value })} />
+            <DateField value={d.end_date} onChange={(v) => setD({ ...d, end_date: v })} />
           </F>
         </div>
 

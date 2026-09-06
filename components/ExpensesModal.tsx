@@ -11,6 +11,7 @@ import { officeId } from "@/lib/office";
 import { sar, today } from "@/lib/utils";
 import { arDate } from "@/lib/documents";
 import { EXPENSE_CATS, catIcon, catLabel, sumExpenses, type ExpenseRow, type ExpenseCategory } from "@/lib/expenses";
+import DateField from "@/components/DateField";
 
 const AR_MONTHS = ["يناير","فبراير","مارس","أبريل","مايو","يونيو","يوليو","أغسطس","سبتمبر","أكتوبر","نوفمبر","ديسمبر"];
 const ymLabel = (ym: string) => /^\d{4}-\d{2}$/.test(ym) ? `${AR_MONTHS[Number(ym.slice(5, 7)) - 1] || ym} ${ym.slice(0, 4)}` : ym;
@@ -158,7 +159,7 @@ function ExpenseForm({ unitWord, busy, onSave, onCancel }: {
         <label className="block"><span className="block text-sm font-semibold mb-1">المبلغ (ريال)</span>
           <input className="fld" type="number" min={1} value={d.amount} onChange={(e) => setD({ ...d, amount: e.target.value })} placeholder="350" /></label>
         <label className="block"><span className="block text-sm font-semibold mb-1">التاريخ</span>
-          <input className="fld" type="date" value={d.spent_on} onChange={(e) => setD({ ...d, spent_on: e.target.value })} /></label>
+          <DateField value={d.spent_on} onChange={(v) => setD({ ...d, spent_on: v })} /></label>
         <label className="block"><span className="block text-sm font-semibold mb-1">{unitWord} <span className="text-muted text-xs font-normal">— اختياري</span></span>
           <input className="fld" value={d.unit} onChange={(e) => setD({ ...d, unit: e.target.value })} /></label>
       </div>

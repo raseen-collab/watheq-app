@@ -18,6 +18,7 @@ import ActivityLog from "@/components/ActivityLog";
 import ExpensesModal from "@/components/ExpensesModal";
 import OwnerLinkModal from "@/components/OwnerLinkModal";
 import type { ExpenseRow } from "@/lib/expenses";
+import DateField from "@/components/DateField";
 
 /** تحويل كل دورة إلى مكافئ شهري لحساب الدخل التقريبي */
 const PERIODS_PER_MONTH: Record<Frequency, number> = {
@@ -814,7 +815,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance }: {
                         : key === "late" ? <span className="text-late font-bold">متأخر {sar(st.amountDue)}</span>
                         : key === "expiring" && st.daysToEnd !== null ? <span className="text-[#5B21B6] font-semibold">ينتهي بعد {st.daysToEnd} يوم</span>
                         : key === "litigation" ? <span className="text-[#475569]">{t.enforcement_no ? `طلب ${t.enforcement_no}` : "متابعة نظامية"}</span>
-                        : st.nextDueDate ? <span className="text-muted">القادمة {st.nextDueDate}</span> : null}
+                        : st.nextDueDate ? <span className="text-muted">القادمة {st.nextDueDate}{st.nextDueDate ? ` · ${hijriShort(st.nextDueDate)}` : ""}</span> : null}
                     </div>
                   </div>
                 </div>
@@ -1081,10 +1082,10 @@ function TurnoverModal({ tenant, unitWord, onClose, onSubmit }: {
 
       <div className="grid grid-cols-2 gap-3">
         <Field label="تاريخ الإشعار" hint="اختياري">
-          <input className="fld" type="date" value={d.notice_date} onChange={(e) => set("notice_date", e.target.value)} />
+          <DateField value={d.notice_date} onChange={(v) => set("notice_date", v)} />
         </Field>
         <Field label="تاريخ الإخلاء الفعلي">
-          <input className="fld" type="date" value={d.move_out_date} onChange={(e) => set("move_out_date", e.target.value)} />
+          <DateField value={d.move_out_date} onChange={(v) => set("move_out_date", v)} />
         </Field>
       </div>
 
@@ -1394,7 +1395,8 @@ function TenantModal({ open, initial, unitWord, onClose, onSubmit }: {
           </div>
         </Field>
         <div className="grid grid-cols-2 gap-3">
-          <Field label="بداية العقد"><input className="fld" type="date" value={d.contract_start || ""} onChange={(e) => setD({ ...d, contract_start: e.target.value })} /></Field>
+          <Field label="بداية العقد">
+          <DateField value={d.contract_start || ""} onChange={(v) => setD({ ...d, contract_start: v })} /></Field>
           <Field label="عدد الدفعات" hint="فارغ = سنة">
             <input className="fld" type="number" value={d.contract_periods || ""} onChange={(e) => setD({ ...d, contract_periods: e.target.value })} placeholder="12" />
           </Field>
@@ -1621,13 +1623,13 @@ function QuoteModal({ property, unitWord, issuer, onClose }: {
 
         <div className="grid grid-cols-3 gap-3">
           <Field label="بداية العقد">
-            <input className="fld" type="date" value={d.start_date} onChange={(e) => setD({ ...d, start_date: e.target.value })} />
+            <DateField value={d.start_date} onChange={(v) => setD({ ...d, start_date: v })} />
           </Field>
           <Field label="التأمين (ريال)" hint="مسترد">
             <input className="fld" type="number" value={d.deposit} onChange={(e) => setD({ ...d, deposit: e.target.value })} placeholder="5000" />
           </Field>
           <Field label="العرض صالح حتى">
-            <input className="fld" type="date" value={d.valid_until} onChange={(e) => setD({ ...d, valid_until: e.target.value })} />
+            <DateField value={d.valid_until} onChange={(v) => setD({ ...d, valid_until: v })} />
           </Field>
         </div>
 
