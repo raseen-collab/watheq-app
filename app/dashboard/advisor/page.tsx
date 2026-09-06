@@ -1,6 +1,8 @@
 import { createClient } from "@/lib/supabase-server";
 import { redirect } from "next/navigation";
 import { normalizeAccountType, defaultDashboard } from "@/lib/roles";
+import { withClockSkewRetry, isClockSkew } from "@/lib/db-retry";
+import RetryScreen from "@/components/RetryScreen";
 
 export const dynamic = "force-dynamic";
 
@@ -13,8 +15,8 @@ export default async function AdvisorRedirect() {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect("/login");
 
-  const { data: profile, error: profileErr } = await supabase
-    .from("profiles").select("account_type, role, last_dashboard").eq("id", user.id).maybeSingle();
+  const { data: profile, error: profileErr } = await withClockSkewRetry(() =>
+    supabase.from("profiles").select("account_type, role, last_dashboard").eq("id", user.id).maybeSingle());
 
   /**
    * لا تبتلع خطأ الاستعلام — نفس حماية /dashboard الرئيسية.
@@ -22,6 +24,8 @@ export default async function AdvisorRedirect() {
    * الفحص يُقرأ «حساب بلا نوع» فيُرمى صاحب الحساب المكتمل إلى
    * شاشة الترحيب. الخطأ الصريح أهون: تحديث الصفحة يحلّه، ويصلنا أثره.
    */
+  /* انحراف الساعة بعد المحاولات: شاشة لطيفة تعيد التحميل تلقائيًّا بدل صفحة خطأ */
+  if (profileErr && isClockSkew(profileErr.message)) return <RetryScreen detail={profileErr.message} />;
   if (profileErr) throw new Error(`تعذّر قراءة ملف الحساب: ${profileErr.message}`);
 
   let type = normalizeAccountType(profile || {});
