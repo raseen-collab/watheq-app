@@ -5,6 +5,7 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase-client";
 import { officeId, getOffice, ROLE_LABEL } from "@/lib/office";
 import { arDate } from "@/lib/documents";
+import { hijriShort, hijriText, parseHijriInput } from "@/lib/hijri";
 import { sar, waLink, today } from "@/lib/utils";
 import { contractState, buildSchedule, FREQUENCIES, freqLabel, freqShort, derivedEndDate, renewContract, needsRenewal, applyPayment, splitVat, isCommercial, isVacant, settleDeposit,
   vacancyDays, TURNOVER_CHECKLIST, type Frequency } from "@/lib/contracts";
@@ -34,6 +35,7 @@ type Tenant = {
   deposit_amount?: number | null; deposit_deductions?: number | null; deposit_notes?: string | null;
   meter_elec_in?: string | null; meter_elec_out?: string | null;
   elec_account?: string | null; water_account?: string | null;
+  contract_no?: string | null;
   meter_water_in?: string | null; meter_water_out?: string | null;
   turnover_checklist?: { label: string; done?: boolean; note?: string | null }[] | null;
 };
@@ -156,7 +158,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance }: {
     let out = allRowsForFilter.filter((r) => {
       if (filter !== "all" && r.key !== filter) return false;
       if (!needle) return true;
-      return [r.t.name, r.t.unit, r.t.phone].filter(Boolean)
+      return [r.t.name, r.t.unit, r.t.phone, r.t.contract_no].filter(Boolean)
         .some((v) => String(v).toLowerCase().includes(needle));
     });
     out = [...out].sort((a, b) => {
@@ -348,6 +350,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance }: {
       billing_anchor_day: d.contract_start ? new Date(d.contract_start).getDate() : null,
       // المرافق: رقما حساب الكهرباء والماء ثابتان للوحدة ويبقيان مع تغيّر المستأجر؛
       // وقراءتا التسليم تُثبتان في مخالصة الإخلاء لاحقًا
+      contract_no: (d.contract_no || "").trim() || null,
       elec_account: (d.elec_account || "").trim() || null,
       water_account: (d.water_account || "").trim() || null,
       meter_elec_in: (d.meter_elec_in || "").trim() || null,
@@ -555,7 +558,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance }: {
       "",
       "السلام عليكم ورحمة الله وبركاته،",
       "",
-      `بالإشارة إلى عقد الإيجار المبرم بيننا (بداية العقد: ${arDate(t.contract_start)}، نهايته: ${arDate(st.endDate)}، دورة السداد: ${freqLabel(t.payment_frequency)}${one.total ? `، وقيمة الدفعة ${sar(one.total)} ريال` : ""})؛`,
+      `بالإشارة إلى عقد الإيجار المبرم بيننا${t.contract_no ? ` رقم (${t.contract_no})` : ""} (بداية العقد: ${arDate(t.contract_start)}${t.contract_start ? ` — ${hijriText(t.contract_start)}` : ""}، نهايته: ${arDate(st.endDate)}، دورة السداد: ${freqLabel(t.payment_frequency)}${one.total ? `، وقيمة الدفعة ${sar(one.total)} ريال` : ""})؛`,
       "",
       `نفيدكم بأنه قد ترصَّد بذمّتكم مبلغ (${sar(st.amountDue)}) ريال، قيمة (${st.unpaid}) دفعة مستحقة عن الفترة من (${arDate(fromDate)}) إلى (${arDate(toDate)})${st.hasPartial ? `، بعد خصم مبلغ (${sar(st.partial)}) ريال مسدَّد جزئيًّا` : ""}، ولم يُسدَّد حتى تاريخ هذا الإشعار.`,
       ...(v.enabled && totalDue.vat > 0 ? ["", `ويشمل المبلغ المذكور ضريبة قيمة مضافة قدرها (${sar(totalDue.vat)}) ريال بنسبة (${v.rate}%).`] : []),
@@ -790,6 +793,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance }: {
                       <div className="font-semibold truncate">{t.name}</div>
                       <div className="text-xs text-muted">
                         {ul} {t.unit || "—"} · {sar(t.rent_amount)} ريال / {freqShort(t.payment_frequency)}
+                        {t.contract_no && <> · عقد <span dir="ltr">{t.contract_no}</span></>}
                       </div>
                       {vat.enabled && (() => { const v = splitVat(Number(t.rent_amount) || 0, vat); return (
                         <div className="text-[.7rem] text-muted mt-0.5">
@@ -1396,6 +1400,7 @@ function TenantModal({ open, initial, unitWord, onClose, onSubmit }: {
           </Field>
         </div>
         <Field label="رقم الهوية / السجل" hint="للخطابات"><input className="fld" value={d.national_id || ""} onChange={(e) => setD({ ...d, national_id: e.target.value })} /></Field>
+        <Field label="رقم العقد" hint="رقمه لديكم أو في «إيجار» — يظهر في كشوف الحساب والخطابات"><input className="fld" dir="ltr" value={d.contract_no || ""} onChange={(e) => setD({ ...d, contract_no: e.target.value })} /></Field>
         {!initial && (
           /* عقد قائم يُضاف اليوم: بدون هذا الرقم يُعدّ لم يُسدَّد منه شيء منذ بدايته،
              فيظهر «متأخرًا» بكل دفعاته الماضية — أشهر صدمة عند نقل محفظة كاملة */

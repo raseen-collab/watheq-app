@@ -5,13 +5,14 @@ import { createClient } from "@/lib/supabase-client";
 import { derivedEndDate, FREQUENCIES, type Frequency } from "@/lib/contracts";
 import { typeIcon, unitLabel } from "@/lib/domain";
 import { sar } from "@/lib/utils";
+import { parseHijriInput, hijriShort } from "@/lib/hijri";
 
 type Prop = { id: string; name: string; property_type: string | null };
 type Row = {
   name: string; unit: string; rent_amount: number; phone: string; national_id: string;
   contract_start: string; payment_frequency: Frequency; contract_periods: number | null;
   paid_periods: number;
-  elec_account?: string; water_account?: string;
+  elec_account?: string; water_account?: string; contract_no?: string;
   prop_name?: string;
   prop_id?: string;
   _error?: string;
@@ -20,7 +21,7 @@ type Row = {
 // العمود التاسع «الدفعات المسدّدة» اختياري: بدونه يُعدّ العقد لم يُسدَّد منه شيء —
 // وهذا كارثة لمكتب ينقل عقودًا قائمة (عقد من يناير يُرفع في سبتمبر = 8 «متأخرات» وهمية).
 // القوالب القديمة بثمانية أعمدة تبقى تعمل: الغائب = 0.
-const HEADERS = ["اسم المستأجر", "رقم الوحدة", "قيمة الدفعة", "دورة السداد", "بداية العقد", "عدد الدفعات", "الجوال", "رقم الهوية", "الدفعات المسدّدة", "العقار", "حساب الكهرباء", "حساب الماء"];
+const HEADERS = ["اسم المستأجر", "رقم الوحدة", "قيمة الدفعة", "دورة السداد", "بداية العقد", "عدد الدفعات", "الجوال", "رقم الهوية", "الدفعات المسدّدة", "العقار", "حساب الكهرباء", "حساب الماء", "رقم العقد"];
 // عمود عاشر اختياري «العقار»: ملف واحد لكل المحفظة بدل ملف لكل عقار — مكتب بـ40
 // عقارًا لا يرفع 40 مرة. الاسم يجب أن يطابق عقارًا موجودًا؛ الصف الفارغ يذهب للعقار المختار.
 
@@ -174,12 +175,14 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
     const start = grid[0].some((c) => String(c).includes("اسم") || String(c).toLowerCase().includes("name")) ? 1 : 0;
 
     const parsed: Row[] = grid.slice(start).map((r) => {
-      const [name, unit, rent, freq, startDate, periods, phone, nid, paid, propName, elecAcc, waterAcc] = r.map((x) => String(x ?? "").trim());
+      const [name, unit, rent, freq, startDate, periods, phone, nid, paid, propName, elecAcc, waterAcc, contractNo] = r.map((x) => String(x ?? "").trim());
       const rentN = Number(toEnDigits(rent).replace(/[^\d.]/g, "")) || 0;
       const fk = arKey(freq);
       const frequency: Frequency = FREQ_LOOKUP[fk] || "monthly";
       const freqUnknown = !!freq.trim() && !FREQ_LOOKUP[fk];
-      const cs = normalizeDate(startDate);
+      /* المكاتب السعودية تكتب العقود بالهجري. نجرّب الهجري أولًا (السنة
+         1300–1600 تحسمه بلا لبس) ثم الميلادي — فيقبل الملف الصيغتين معًا. */
+      const cs = parseHijriInput(startDate) || normalizeDate(startDate);
       const pr = Number(toEnDigits(periods)) || null;
       const pd = Math.max(0, Math.floor(Number(toEnDigits(paid)) || 0));
       let err = "";
@@ -198,6 +201,7 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
         name, unit, rent_amount: rentN, phone: toEnDigits(phone), national_id: toEnDigits(nid),
         contract_start: cs, payment_frequency: frequency, contract_periods: pr, paid_periods: pd,
         elec_account: (elecAcc || "").trim() || undefined, water_account: (waterAcc || "").trim() || undefined,
+        contract_no: (contractNo || "").trim() || undefined,
         prop_name: propName || undefined, prop_id: target?.id,
         _error: err || undefined,
       };
@@ -348,7 +352,7 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
                         <td className="p-2">{r.unit || "—"}</td>
                         <td className="p-2">{sar(r.rent_amount)}</td>
                         <td className="p-2">{FREQUENCIES.find((f) => f.value === r.payment_frequency)?.label}</td>
-                        <td className="p-2">{r.contract_start || "—"}</td>
+                        <td className="p-2">{r.contract_start || "—"}{r.contract_start && <div className="text-[11px] text-muted">{hijriShort(r.contract_start)}</div>}</td>
                         <td className="p-2">{r._error
                           ? <span className="text-late font-semibold">{r._error}</span>
                           : <span className="text-paid font-semibold">جاهزة</span>}</td>
