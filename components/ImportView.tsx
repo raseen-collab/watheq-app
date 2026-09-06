@@ -140,7 +140,7 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
    */
   async function readGrid(f: File): Promise<string[][]> {
     if (/\.(xlsx|xls)$/i.test(f.name)) {
-      const XLSX = await import("xlsx");
+      const XLSX = await loadXlsx();
       const wb = XLSX.read(await f.arrayBuffer(), { cellDates: true });
       const sheet = wb.Sheets["الوحدات"] || wb.Sheets[wb.SheetNames[0]];
       /**
@@ -149,7 +149,7 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
        * كائن التاريخ بأنفسنا إلى yyyy-mm-dd بلا لبس، بالمكوّنات
        * المحلية لا toISOString حتى لا ينزاح يومًا مع فارق التوقيت.
        */
-      const rows = XLSX.utils.sheet_to_json<any[]>(sheet, {
+      const rows = XLSX.utils.sheet_to_json(sheet, {
         header: 1, raw: true, defval: "", blankrows: false,
       }) as any[][];
       const pad = (n: number) => String(n).padStart(2, "0");
@@ -164,11 +164,36 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
     return parseCSV(await f.text());
   }
 
+  /**
+   * تحميل قارئ Excel: الحزمة المضمّنة أولًا، وإن تعذّر تحميل جزئها (تحديث
+   * نشر، ذاكرة متصفح قديمة) نجلب النسخة نفسها من CDN — الفشل هنا كان يظهر
+   * للمستخدم كـ«تعذّرت قراءته» بلا سبب، والملف سليم.
+   */
+  async function loadXlsx(): Promise<any> {
+    try { return await import("xlsx"); }
+    catch (e) {
+      console.warn("xlsx chunk failed, loading from CDN", e);
+      if (!(window as any).XLSX) {
+        await new Promise<void>((res, rej) => {
+          const sc = document.createElement("script");
+          sc.src = "https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js";
+          sc.onload = () => res(); sc.onerror = () => rej(new Error("تعذّر تحميل قارئ Excel — تحقق من الاتصال"));
+          document.head.appendChild(sc);
+        });
+      }
+      return (window as any).XLSX;
+    }
+  }
+
   async function handleFile(f: File) {
     setFileName(f.name); setDone(null);
     let grid: string[][] = [];
     try { grid = await readGrid(f); }
-    catch { setFileName(f.name + " — تعذّرت قراءته، جرّب حفظه CSV UTF-8 ثم ارفعه"); return; }
+    catch (e: any) {
+      // السبب الفعلي يظهر للمستخدم — لا رسالة عامة تخفي المشكلة
+      setFileName(`${f.name} — تعذّرت قراءته: ${e?.message || e}`);
+      return;
+    }
     if (!grid.length) return;
 
     // تخطّي صف العناوين إن وُجد
