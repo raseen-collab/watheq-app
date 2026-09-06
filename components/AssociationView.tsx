@@ -111,28 +111,34 @@ export default function AssociationView({ initial, issuer }: { initial: Associat
   async function recordOwnerPayment(o: Owner, fee: number, amount: number, method = "transfer", note?: string) {
     const amt = Math.max(0, Number(amount) || 0);
     if (!amt || fee <= 0 || !active) return;
-    const pool = (Number(o.partial_amount) || 0) + amt;
-    const months = Math.floor(pool / fee);
-    const rest = +(pool - months * fee).toFixed(2);
-    const newLate = Math.max(0, o.months_late - months);
-    await ownerPatch(o.id, {
-      months_late: newLate,
-      partial_amount: rest,
-      ...(months > 0 ? { last_paid: today() } : {}),
-    }, amt);
-    // سجل الدفعة — التاريخ والمبلغ والطريقة
-    const uid = await currentUserId();
-    if (uid) {
-      const { error } = await supabase.from("payments").insert({
-        user_id: uid, owner_id: o.id, association_id: active.id,
-        paid_on: today(), amount: amt, method,
-        periods_covered: months, note: note || null,
-      });
-      if (error) console.error("Watheq payment log error:", error);
-    }
 
-    notify("ok", months > 0
-      ? `سُجّل ${sar(amt)} ريال — سُدّد ${months} شهر`
+    /**
+     * عملية ذرّية واحدة في القاعدة (schema-v18): قفل صفّ المالك، تحقق
+     * الصلاحية، تحديث المتأخرات والجزئي وسطر السجل معًا — أو لا شيء.
+     * قبلها كانت كتابتين منفصلتين تتضاربان بين موظفين وتتركان العدّاد
+     * مخالفًا للسجل إن فشلت إحداهما.
+     */
+    const { data, error } = await supabase.rpc("watheq_record_owner_payment", {
+      p_owner: o.id, p_amount: amt, p_method: method, p_note: note || null,
+    });
+    if (error) {
+      const m = String(error.message || "");
+      return notify("err", /not authorized/.test(m) ? "هذا الإجراء يحتاج صلاحية أعلى — اطلبه من صاحب المكتب."
+        : /does not exist|function/.test(m) ? "شغّل schema-v18 في قاعدة البيانات أولًا." : m);
+    }
+    const r = data as { months_late: number; partial_amount: number; months: number };
+    // رصيد الصندوق يزيد بالمبلغ المستلم كما كان يفعل ownerPatch
+    await supabase.from("associations").update({ fund_balance: (active.fund_balance || 0) + amt }).eq("id", active.id);
+    setItems(items.map((a) => a.id === active.id ? {
+      ...a,
+      fund_balance: (a.fund_balance || 0) + amt,
+      owners: a.owners.map((x) => (x.id === o.id
+        ? { ...x, months_late: r.months_late, partial_amount: r.partial_amount, ...(r.months > 0 ? { last_paid: today() } : {}) }
+        : x)),
+    } : a));
+
+    notify("ok", r.months > 0
+      ? `سُجّل ${sar(amt)} ريال — سُدّد ${r.months} شهر`
       : `سُجّل ${sar(amt)} ريال كسداد جزئي`);
   }
 
