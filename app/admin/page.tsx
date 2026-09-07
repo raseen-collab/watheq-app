@@ -3,6 +3,9 @@ import { createClient as createServiceClient } from "@supabase/supabase-js";
 import { redirect, notFound } from "next/navigation";
 import Link from "next/link";
 import { subState } from "@/lib/subscription";
+import AdminBrief from "@/components/AdminBrief";
+import AdminMessage from "@/components/AdminMessage";
+import type { MsgKind } from "@/lib/admin-messages";
 
 export const dynamic = "force-dynamic";
 
@@ -186,16 +189,22 @@ export default async function AdminPage({ searchParams }: { searchParams?: { vie
       {sub && <div className="text-[11px] text-muted mt-0.5">{sub}</div>}
     </div>
   );
-  const Person = ({ r, note }: { r: Row; note: string }) => {
+  const Person = ({ r, note, kind }: { r: Row; note: string; kind: MsgKind }) => {
     const wa = waNumber(r.p.billing_phone);
+    const name = r.p.org_name || r.p.full_name || emailOf[r.p.id] || "أستاذي";
     return (
       <div className="flex items-center justify-between gap-3 bg-white/10 rounded-lg px-3 py-2 text-sm">
         <div className="min-w-0">
-          <b className="truncate block">{r.p.org_name || r.p.full_name || emailOf[r.p.id] || "—"}</b>
+          <b className="truncate block">{name}</b>
           <span className="text-[11px] opacity-80">{note}</span>
         </div>
-        {wa ? <a href={`https://wa.me/${wa}`} target="_blank" rel="noreferrer" className="text-[11px] bg-[#25D366] text-white rounded-md px-2 py-1 shrink-0">واتساب</a>
-          : <span className="text-[11px] opacity-60 shrink-0">لا جوال</span>}
+        <AdminMessage kind={kind} phone={wa} ctx={{
+          name, units: r.units, props: r.props, pays: r.pays,
+          daysLeft: r.sub.paid ? r.sub.subDaysLeft : r.trialLeft,
+          endDate: fmt(r.sub.paid ? r.p.subscribed_until : r.p.trial_ends_at),
+          sinceJoin: r.sinceJoin, sinceLast: r.sinceLast,
+          plan: r.p.plan, price: PLAN_PRICE[String(r.p.plan)] || (r.units > 30 ? 199 : 99),
+        }} />
       </div>
     );
   };
@@ -226,16 +235,18 @@ export default async function AdminPage({ searchParams }: { searchParams?: { vie
         <Metric v={`${funnel[2].n}/${rows.length}`} l="حسابات أضافت بيانات فعلًا" sub={`${rows.length ? Math.round((funnel[2].n / rows.length) * 100) : 0}% تفعيل`} tone={rows.length && funnel[2].n / rows.length < 0.3 ? "bad" : undefined} />
       </div>
 
+      <AdminBrief />
+
       {/* ═══ يحتاج تصرّفًا اليوم ═══ */}
       <section className="bg-deep text-[#EAF1EE] rounded-2xl p-5 mb-6">
         <div className="font-display font-bold text-goldSoft mb-3">يحتاج تصرّفًا اليوم</div>
         {nothingUrgent ? <div className="text-sm opacity-80">لا شيء عاجل — يوم هادئ.</div> : (
           <div className="grid md:grid-cols-2 gap-4">
-            {subEnding.length > 0 && <div><div className="text-xs opacity-70 mb-1.5">💳 اشتراك ينتهي خلال أسبوع — رسالة تجديد</div><div className="space-y-1.5">{subEnding.map((r) => <Person key={r.p.id} r={r} note={`${PLAN_AR[String(r.p.plan)] || r.p.plan} · ينتهي ${fmt(r.p.subscribed_until)} · ${r.units} وحدة`} />)}</div></div>}
-            {hotTrials.length > 0 && <div><div className="text-xs opacity-70 mb-1.5">🔥 تجربة تنتهي خلال أسبوع وقد أدخل بيانات — أقرب اشتراك محتمل</div><div className="space-y-1.5">{hotTrials.map((r) => <Person key={r.p.id} r={r} note={`${r.trialLeft === 0 ? "ينتهي اليوم" : `بقي ${r.trialLeft} يوم`} · ${r.props} عقار · ${r.units} وحدة · ${r.pays} دفعة`} />)}</div></div>}
-            {justExpired.length > 0 && <div><div className="text-xs opacity-70 mb-1.5">⏰ انتهت تجربته خلال أسبوعين وكان نشطًا — لم يشترك</div><div className="space-y-1.5">{justExpired.map((r) => <Person key={r.p.id} r={r} note={`انتهت ${fmt(r.p.trial_ends_at)} · ${r.units} وحدة · آخر نشاط ${agoLabel(r.sinceLast)}`} />)}</div></div>}
-            {silentNew.length > 0 && <div><div className="text-xs opacity-70 mb-1.5">👋 سجّل ولم يضف شيئًا — اعرض التجهيز اليدوي</div><div className="space-y-1.5">{silentNew.slice(0, 6).map((r) => <Person key={r.p.id} r={r} note={`سجّل ${agoLabel(r.sinceJoin)} · ${sourceLabel(r.p.signup_source)}${r.p.account_type ? "" : " · لم يكمل الترحيب"}`} />)}</div></div>}
-            {goneQuiet.length > 0 && <div><div className="text-xs opacity-70 mb-1.5">😶 أضاف بيانات ثم صمت أسبوعين — اسأله ما أوقفه</div><div className="space-y-1.5">{goneQuiet.slice(0, 6).map((r) => <Person key={r.p.id} r={r} note={`آخر نشاط ${agoLabel(r.sinceLast)} · ${r.units} وحدة`} />)}</div></div>}
+            {subEnding.length > 0 && <div><div className="text-xs opacity-70 mb-1.5">💳 اشتراك ينتهي خلال أسبوع — رسالة تجديد</div><div className="space-y-1.5">{subEnding.map((r) => <Person key={r.p.id} r={r} kind="renew" note={`${PLAN_AR[String(r.p.plan)] || r.p.plan} · ينتهي ${fmt(r.p.subscribed_until)} · ${r.units} وحدة`} />)}</div></div>}
+            {hotTrials.length > 0 && <div><div className="text-xs opacity-70 mb-1.5">🔥 تجربة تنتهي خلال أسبوع وقد أدخل بيانات — أقرب اشتراك محتمل</div><div className="space-y-1.5">{hotTrials.map((r) => <Person key={r.p.id} r={r} kind="hot_trial" note={`${r.trialLeft === 0 ? "ينتهي اليوم" : `بقي ${r.trialLeft} يوم`} · ${r.props} عقار · ${r.units} وحدة · ${r.pays} دفعة`} />)}</div></div>}
+            {justExpired.length > 0 && <div><div className="text-xs opacity-70 mb-1.5">⏰ انتهت تجربته خلال أسبوعين وكان نشطًا — لم يشترك</div><div className="space-y-1.5">{justExpired.map((r) => <Person key={r.p.id} r={r} kind="expired" note={`انتهت ${fmt(r.p.trial_ends_at)} · ${r.units} وحدة · آخر نشاط ${agoLabel(r.sinceLast)}`} />)}</div></div>}
+            {silentNew.length > 0 && <div><div className="text-xs opacity-70 mb-1.5">👋 سجّل ولم يضف شيئًا — اعرض التجهيز اليدوي</div><div className="space-y-1.5">{silentNew.slice(0, 6).map((r) => <Person key={r.p.id} r={r} kind="silent_new" note={`سجّل ${agoLabel(r.sinceJoin)} · ${sourceLabel(r.p.signup_source)}${r.p.account_type ? "" : " · لم يكمل الترحيب"}`} />)}</div></div>}
+            {goneQuiet.length > 0 && <div><div className="text-xs opacity-70 mb-1.5">😶 أضاف بيانات ثم صمت أسبوعين — اسأله ما أوقفه</div><div className="space-y-1.5">{goneQuiet.slice(0, 6).map((r) => <Person key={r.p.id} r={r} kind="gone_quiet" note={`آخر نشاط ${agoLabel(r.sinceLast)} · ${r.units} وحدة`} />)}</div></div>}
           </div>
         )}
       </section>
