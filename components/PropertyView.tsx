@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase-client";
-import { officeId, getOffice, ROLE_LABEL } from "@/lib/office";
+import { officeId, getOffice, ROLE_LABEL, OWNER_PERMS } from "@/lib/office";
 import { arDate } from "@/lib/documents";
 import { hijriShort, hijriText, parseHijriInput } from "@/lib/hijri";
 import { sar, waLink, today } from "@/lib/utils";
@@ -16,6 +16,7 @@ import ComplianceModal from "@/components/ComplianceModal";
 import OwnerStatementModal from "@/components/OwnerStatementModal";
 import ActivityLog from "@/components/ActivityLog";
 import StatusLegend from "@/components/StatusLegend";
+import OfficeChat from "@/components/OfficeChat";
 import ExpensesModal from "@/components/ExpensesModal";
 import OwnerLinkModal from "@/components/OwnerLinkModal";
 import type { ExpenseRow } from "@/lib/expenses";
@@ -124,6 +125,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
   const [compOpen, setCompOpen] = useState(false);
   const [ownerStmtOpen, setOwnerStmtOpen] = useState(false);
   const [logOpen, setLogOpen] = useState(false);
+  const [chatTenant, setChatTenant] = useState<Tenant | null>(null);
   const [incPeriod, setIncPeriod] = useState<"year" | "12m" | "month">("year");
   const [collectedInPeriod, setCollectedInPeriod] = useState<number | null>(null);
   /* الدخل الشهري في البطاقة = ما قُبض فعلًا هذا الشهر (طلب مكتب تميز)، والمتوقع بجانبه */
@@ -175,9 +177,14 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
    * والحماية الحقيقية تبقى في القاعدة لا هنا.
    */
   const [role, setRole] = useState<string | null>(null);   // null = المالك نفسه
-  useEffect(() => { getOffice(supabase).then((o) => setRole(o?.isOwner ? null : o?.role || null)); }, [supabase]);
+  const [perms, setPerms] = useState<Record<string, boolean>>(OWNER_PERMS);
+  useEffect(() => { getOffice(supabase).then((o) => {
+    setRole(o?.isOwner ? null : o?.role || null);
+    setPerms(o?.isOwner === false ? (o.perms || {}) : OWNER_PERMS);
+  }); }, [supabase]);
+  const may = (k: string) => perms[k] !== false;           // صلاحية دقيقة
   const isManager = role === null || role === "manager";   // المالك أو المدير
-  const canCollect = isManager || role === "collector";
+  const canCollect = may("record_payments");
   const ownerNames = Array.from(new Set(items.map((p) => (p.owner_name || "").trim()).filter(Boolean))).sort();
   const [reporting, setReporting] = useState(false);
   const [expensesOpen, setExpensesOpen] = useState(false);
@@ -776,13 +783,13 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
           title="تحديث البيانات من السيرفر (بعد تسجيل دفعة من البوت مثلًا)">
           {refreshing ? "…" : "↻ تحديث"}
         </button>
-        {isManager && <button type="button" className="btn btn-ghost text-sm" onClick={() => setCompOpen(true)}
+        {may("manage_compliance") && <button type="button" className="btn btn-ghost text-sm" onClick={() => setCompOpen(true)}
           title="عقود الوساطة ومددها، تراخيص الإعلانات، ورخصة فال — بتنبيهات قبل فوات وقتها">
           ⚖️ الالتزامات{alertCount(comp) > 0 && (
             <span className="mr-1.5 inline-grid place-items-center min-w-[20px] h-5 px-1 rounded-full bg-[#FBE9E7] text-[#a5322c] text-[.68rem] font-bold">{alertCount(comp)}</span>
           )}
         </button>}
-        {isManager && (<>
+        {may("view_financials") && (<>
         <button type="button" className="btn btn-ghost text-sm" onClick={() => setOwnerStmtOpen(true)}
           title="كل عقارات المالك في كشف واحد لفترة تحددها">📑 كشف مالك</button>
         </>)}
@@ -863,9 +870,9 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
               </span>}
             </h2>
             <div className="flex gap-2 flex-wrap">
-              {isManager && (<>
-              <button className="btn btn-ghost text-xs" onClick={() => setExpensesOpen(true)}
-                title="ما دفعه المكتب نيابة عن المالك — يُخصم تلقائيًّا في تقرير المالك">💸 المصروفات</button>
+              {may("manage_expenses") && <button className="btn btn-ghost text-xs" onClick={() => setExpensesOpen(true)}
+                title="ما دفعه المكتب نيابة عن المالك — يُخصم تلقائيًّا في تقرير المالك">💸 المصروفات</button>}
+              {may("view_financials") && (<>
               <button className="btn btn-ghost text-xs" onClick={() => setOwnerLinkOpen(true)}
                 title="رابط قراءة حي يرسله المكتب للمالك — يرى تقريره بلا حساب">🔗 رابط المالك</button>
               <button className="btn btn-ghost text-xs" onClick={() => setReporting(true)}
@@ -879,8 +886,8 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                 <button className="btn btn-wa text-xs" onClick={() => setRemindAll(true)}
                   title="إرسال تذكير واتساب لكل المتأخرين واحدًا تلو الآخر">💬 تذكير جماعي ({lateCount})</button>
               )}
-              {isManager && <Link href="/dashboard/property/import" className="btn btn-ghost text-xs">رفع Excel</Link>}
-              {isManager && <button className="btn btn-gold text-xs" onClick={() => setModal({ kind: "tenant" })}>+ {ul}</button>}
+              {may("edit_tenants") && <Link href="/dashboard/property/import" className="btn btn-ghost text-xs">رفع Excel</Link>}
+              {may("edit_tenants") && <button className="btn btn-gold text-xs" onClick={() => setModal({ kind: "tenant" })}>+ {ul}</button>}
             </div>
           </div>
 
@@ -1001,16 +1008,18 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                                 <RowMenu items={[
                                   { label: "🧾 كشف حساب شامل", run: () => openStatement(t, "full") },
                                   { label: "🧾 كشف حساب مختصر", run: () => openStatement(t, "brief") },
-                                  { label: "📄 فاتورة", run: () => openInvoice(t) },
+                                  ...(may("issue_invoices") ? [{ label: "📄 فاتورة", run: () => openInvoice(t) }] : []),
                                   { label: "📅 جدول الدفعات", run: () => setSchedule(t) },
+                                  { label: "💬 ناقش مع الفريق", run: () => { setChatTenant(t); setTimeout(() => (document.querySelector("[title=\"تواصل الفريق\"]") as HTMLButtonElement)?.click(), 0); } },
                                   { label: "🧮 سجل المدفوعات", run: () => openHistory(t) },
-                                  ...(st.unpaid > 0 ? [{ label: "📨 نموذج إشعار", run: () => makeNotice(t) }] : []),
-                                  ...(needsRenewal(t) ? [{ label: "🔁 تجديد", run: () => setRenewing(t) }] : []),
-                                  ...(isManager && (t.paid_periods || 0) > 0 ? [{ label: "↩︎ تراجع عن دفعة", run: () => undoPayment(t) }] : []),
+                                  ...(st.unpaid > 0 && may("send_reminders") ? [{ label: "📨 نموذج إشعار", run: () => makeNotice(t) }] : []),
+                                  ...(needsRenewal(t) && may("renew_contracts") ? [{ label: "🔁 تجديد", run: () => setRenewing(t) }] : []),
+                                  ...(may("undo_actions") && (t.paid_periods || 0) > 0 ? [{ label: "↩︎ تراجع عن دفعة", run: () => undoPayment(t) }] : []),
                                   ...(isManager && !t.litigation && st.unpaid > 0 ? [{ label: "⚖️ رفع للتنفيذ", run: () => setEnforcing(t) }] : []),
-                                  ...(isManager && !isVacant(t) ? [{ label: "🔑 إنهاء العقد وإخلاء", run: () => setTurnover(t) }] : []),
+                                  ...(may("move_out") && !isVacant(t) ? [{ label: "🔑 إنهاء العقد وإخلاء", run: () => setTurnover(t) }] : []),
                                   ...(isVacant(t) ? [{ label: "📄 مخالصة الإخلاء", run: () => openSettlement(t) }] : []),
-                                  ...(isManager ? [{ label: "✎ تعديل البيانات", run: () => setModal({ kind: "tenant", id: t.id }) }, { label: "🗑 حذف", run: () => deleteTenant(t.id), danger: true }] : []),
+                                  ...(may("edit_tenants") ? [{ label: "✎ تعديل البيانات", run: () => setModal({ kind: "tenant", id: t.id }) }] : []),
+                                  ...(may("undo_actions") ? [{ label: "🗑 حذف", run: () => deleteTenant(t.id), danger: true }] : []),
                                 ]} />
                               </div>
                             </td>
@@ -1105,6 +1114,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                   <RowMenu
                     items={[
                       { label: "📅 جدول الدفعات", run: () => setSchedule(t) },
+                                  { label: "💬 ناقش مع الفريق", run: () => { setChatTenant(t); setTimeout(() => (document.querySelector("[title=\"تواصل الفريق\"]") as HTMLButtonElement)?.click(), 0); } },
                       { label: "🧮 سجل المدفوعات", run: () => openHistory(t) },
                       { label: "🧾 كشف حساب شامل", run: () => openStatement(t, "full") },
                                   { label: "🧾 كشف حساب مختصر", run: () => openStatement(t, "brief") },
@@ -1161,6 +1171,10 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
 
       {ownerStmtOpen && <OwnerStatementModal properties={items} issuer={issuer} onClose={() => setOwnerStmtOpen(false)} />}
       {logOpen && <ActivityLog properties={items} onClose={() => setLogOpen(false)} />}
+
+      {/* تواصل الفريق — السياق هو العقار المفتوح (والوحدة إن فُتحت من قائمتها) */}
+      <OfficeChat context={{ propertyId: active?.id, propertyName: active?.name,
+        tenantId: chatTenant?.id || null, tenantName: chatTenant?.name || null, unit: chatTenant?.unit || null }} />
 
       {compOpen && (
         <ComplianceModal initial={comp} orgName={orgName} issuer={issuer || {}}

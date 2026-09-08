@@ -31,7 +31,7 @@ export default function ExportData() {
    * الدفعات. حقٌّ لصاحب المكتب ومديره — لا لمحصّل قد يغادر غدًا ومعه الملف.
    */
   const [allowed, setAllowed] = useState(true);
-  useEffect(() => { getOffice(supabase).then((o) => setAllowed(!o || o.isOwner || o.role === "manager")); }, [supabase]);
+  useEffect(() => { getOffice(supabase).then((o) => setAllowed(!o || o.isOwner || o.perms?.export_data !== false)); }, [supabase]);
 
   /** Supabase يقصّ عند 1000 صف بصمت — نجلب حتى ينتهي الجدول فعلًا */
   async function all(table: string, select = "*", order = "created_at"): Promise<any[]> {

@@ -14,7 +14,39 @@ import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase-client";
 import { getOffice, makeInviteCode, ROLE_LABEL } from "@/lib/office";
 
-type Member = { owner_id: string; member_id: string; role: string; member_name: string | null; created_at: string };
+type Member = { owner_id: string; member_id: string; role: string; member_name: string | null; created_at: string; perms?: Record<string, boolean> | null };
+
+/**
+ * الصلاحيات الدقيقة: الدور يحدد الافتراضي، وهذه استثناءات صريحة لكل موظف.
+ * محصّل يسجّل الدفعات ولا يُصدر الفواتير؟ أطفئ «إصدار الفواتير» له وحده.
+ */
+const PERMS: { k: string; label: string; hint: string; def: Record<string, boolean>; group: string; locked?: boolean }[] = [
+  { group: "التحصيل اليومي", k: "record_payments", label: "تسجيل الدفعات", hint: "زرّا ✔ و½ في اللوحة", def: { manager: true, collector: true, viewer: false } },
+  { group: "التحصيل اليومي", k: "issue_invoices",  label: "إصدار الفواتير", hint: "الفاتورة الضريبية المرقّمة", def: { manager: true, collector: true, viewer: false } },
+  { group: "التحصيل اليومي", k: "send_reminders",  label: "التذكيرات والخطابات", hint: "تذكير واتساب ونموذج الإشعار", def: { manager: true, collector: true, viewer: false } },
+  { group: "التحصيل اليومي", k: "add_notes",       label: "إضافة ملاحظات", hint: "سجل العقار", def: { manager: true, collector: true, viewer: false } },
+  { group: "التحصيل اليومي", k: "view_activity",   label: "سجل العمليات", hint: "من سجّل ماذا ومتى", def: { manager: true, collector: true, viewer: true } },
+
+  { group: "العقود والوحدات", k: "edit_tenants",    label: "إضافة وتعديل الوحدات", hint: "العقود والرفع من Excel", def: { manager: true, collector: false, viewer: false } },
+  { group: "العقود والوحدات", k: "renew_contracts", label: "تجديد العقود", hint: "تمديد المدة وتعديل الإيجار", def: { manager: true, collector: false, viewer: false } },
+  { group: "العقود والوحدات", k: "move_out",        label: "الإخلاء والمخالصة", hint: "إنهاء العقد وتسوية التأمين", def: { manager: true, collector: false, viewer: false } },
+
+  { group: "أرقام المكتب والمالك", k: "manage_expenses",   label: "تسجيل المصروفات", hint: "ما يُدفع نيابة عن المالك", def: { manager: true, collector: false, viewer: false } },
+  { group: "أرقام المكتب والمالك", k: "view_financials",   label: "أرقام المالك", hint: "تقرير المالك وكشفه وأتعاب الإدارة", def: { manager: true, collector: false, viewer: false } },
+  { group: "أرقام المكتب والمالك", k: "owner_links",       label: "روابط الملّاك", hint: "إنشاؤها وإبطالها", def: { manager: true, collector: false, viewer: false } },
+  { group: "أرقام المكتب والمالك", k: "export_data",       label: "تصدير بيانات المكتب", hint: "ملف Excel بكل شيء", def: { manager: true, collector: false, viewer: false } },
+
+  { group: "المكتب", k: "manage_listings",   label: "المعروضات والطلبات", hint: "سجل المعروضات ومطابقة الباحثين", def: { manager: true, collector: false, viewer: false } },
+  { group: "المكتب", k: "manage_compliance", label: "التزامات المكتب", hint: "رخصة فال وعقود الوساطة والتراخيص", def: { manager: true, collector: false, viewer: false } },
+
+  { group: "إدارية — للمدير فقط", k: "undo_actions", label: "التراجع والحذف", hint: "إلغاء دفعة، حذف وحدة أو مصروف أو ملاحظة", def: { manager: true, collector: false, viewer: false }, locked: true },
+];
+const GROUPS = ["التحصيل اليومي", "العقود والوحدات", "أرقام المكتب والمالك", "المكتب", "إدارية — للمدير فقط"];
+const permOn = (m: Member, k: string) => {
+  const ex = (m.perms || {})[k];
+  if (typeof ex === "boolean") return ex;
+  return PERMS.find((p) => p.k === k)?.def[m.role] ?? false;
+};
 type Invite = { id: string; code: string; role: string; expires_at: string; used_at: string | null };
 
 const ROLE_HELP: Record<string, string> = {
@@ -69,7 +101,8 @@ export default function TeamSection() {
   }
 
   async function revokeInvite(id: string) {
-    await supabase.from("team_invites").delete().eq("id", id);
+    const { data: d1 } = await supabase.from("team_invites").delete().eq("id", id).select("id");
+    if (!d1?.length) { alert("هذا الإجراء يحتاج صلاحية صاحب المكتب."); return; }
     await load();
   }
 
@@ -79,10 +112,27 @@ export default function TeamSection() {
     if (!error) await load();
   }
 
+  async function togglePerm(m: Member, k: string) {
+    const meta = PERMS.find((p) => p.k === k);
+    if (meta?.locked) { alert("التراجع والحذف صلاحية إدارية — تُمنح بترقية الموظف إلى «مدير» لا باستثناء."); return; }
+    const next = { ...(m.perms || {}), [k]: !permOn(m, k) };
+    // إن عاد الاستثناء لمطابقة افتراضي الدور نحذفه — نُبقي الاستثناءات الصريحة فقط
+    const def = PERMS.find((p) => p.k === k)?.def[m.role];
+    if (next[k] === def) delete next[k];
+    const { data, error } = await supabase.from("team_members").update({ perms: next })
+      .eq("owner_id", m.owner_id).eq("member_id", m.member_id).select("member_id");
+    if (error) return alert(error.message);
+    if (!data?.length) return alert("هذا الإجراء يحتاج صلاحية صاحب المكتب.");
+    setMembers((cur) => cur.map((x) => x.member_id === m.member_id ? { ...x, perms: next } : x));
+  }
+
   async function removeMember(m: Member) {
     if (!confirm(`إزالة «${m.member_name || "الموظف"}» من المكتب؟ يفقد الوصول فورًا، وكل ما سجّله يبقى محفوظًا باسمه.`)) return;
-    await supabase.from("team_members").delete()
-      .eq("owner_id", m.owner_id).eq("member_id", m.member_id);
+    // حذف رفضته السياسات يرجع بلا خطأ وبصفر صفوف — لا نوهم صاحب المكتب بالنجاح
+    const { data, error } = await supabase.from("team_members").delete()
+      .eq("owner_id", m.owner_id).eq("member_id", m.member_id).select("member_id");
+    if (error) return alert(error.message);
+    if (!data?.length) return alert("هذا الإجراء يحتاج صلاحية صاحب المكتب.");
     await load();
   }
 
@@ -158,6 +208,36 @@ export default function TeamSection() {
               <span className="ms-auto">
                 <button className="btn btn-ghost text-xs text-late" onClick={() => removeMember(m)}>إزالة</button>
               </span>
+              <details className="w-full mt-1">
+                <summary className="cursor-pointer text-xs text-muted">صلاحيات مخصّصة {Object.keys(m.perms || {}).length > 0 && <span className="text-gold font-semibold">({Object.keys(m.perms || {}).length} استثناء)</span>}</summary>
+                <div className="mt-2 bg-paper border border-line rounded-lg p-2 space-y-2">
+                  {GROUPS.map((g) => (
+                    <div key={g}>
+                      <div className="text-[11px] font-bold text-deep mb-1">{g}</div>
+                      <div className="grid sm:grid-cols-2 gap-1.5">
+                        {PERMS.filter((x) => x.group === g).map((perm) => {
+                          const on = permOn(m, perm.k);
+                          const custom = typeof (m.perms || {})[perm.k] === "boolean";
+                          return (
+                            <label key={perm.k} className={`flex items-start gap-2 text-sm ${perm.locked ? "opacity-70" : "cursor-pointer"}`}
+                              title={perm.locked ? "تُمنح بترقية الموظف إلى مدير" : undefined}>
+                              <input type="checkbox" className="w-4 h-4 mt-0.5" checked={on} disabled={perm.locked}
+                                onChange={() => togglePerm(m, perm.k)} />
+                              <span>
+                                {perm.label}
+                                {perm.locked && <span className="text-[10px] text-muted"> 🔒</span>}
+                                {custom && <span className="text-[10px] text-gold"> · مخصّص</span>}
+                                <span className="block text-[11px] text-muted">{perm.hint}</span>
+                              </span>
+                            </label>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <p className="text-[11px] text-muted mt-1">بلا تخصيص تتبع صلاحياتُه دورَه. أي تغيير هنا يسري فورًا، وتحرسه قاعدة البيانات لا الواجهة.</p>
+              </details>
             </div>
           ))}
         </div>
