@@ -219,7 +219,9 @@ export default async function AdminPage({ searchParams }: { searchParams?: { vie
           <p className="text-xs text-muted">{new Date().toLocaleDateString("ar-SA-u-ca-gregory-nu-latn", { weekday: "long", day: "numeric", month: "long" })} · {rows.length} حساب · {employees} موظف · قراءة فقط</p>
         </div>
         <div className="flex gap-2 flex-wrap">
-          <Link href="/admin/subs" className="btn btn-gold text-xs">💳 الاشتراكات والتحصيل</Link>
+          <Link href="/admin/ads" className="btn btn-gold text-xs">📣 الإعلانات والنمو</Link>
+          <Link href="/admin/ads" className="btn btn-gold text-xs">📣 الإعلانات والنمو</Link>
+          <Link href="/admin/subs" className="btn btn-ghost text-xs">💳 الاشتراكات</Link>
           <a href="https://sentry.io/" target="_blank" rel="noreferrer" className="btn btn-ghost text-xs">🐞 الأخطاء (Sentry)</a>
           <Link href="/dashboard" className="btn btn-ghost text-xs">← اللوحة</Link>
         </div>
