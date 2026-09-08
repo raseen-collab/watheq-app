@@ -36,7 +36,7 @@ type Tenant = {
   deposit_amount?: number | null; deposit_deductions?: number | null; deposit_notes?: string | null;
   meter_elec_in?: string | null; meter_elec_out?: string | null;
   elec_account?: string | null; water_account?: string | null;
-  contract_no?: string | null;
+  contract_no?: string | null; calendar?: string | null;
   meter_water_in?: string | null; meter_water_out?: string | null;
   turnover_checklist?: { label: string; done?: boolean; note?: string | null }[] | null;
 };
@@ -76,7 +76,8 @@ function rowKey(t: Tenant, st: ReturnType<typeof contractState>): RowKey {
 
 const URGENCY: Record<RowKey, number> = { late: 0, partial: 1, soon: 2, expiring: 3, litigation: 4, vacant: 5, ok: 6 };
 
-export default function PropertyView({ initial, orgName, issuer, compliance }: { initial: Property[]; orgName: string; issuer?: any; compliance?: ComplianceItem[] }) {
+export default function PropertyView({ initial, orgName, issuer, compliance, dueSoonDays }: { initial: Property[]; orgName: string; issuer?: any; compliance?: ComplianceItem[]; dueSoonDays?: number | null }) {
+  const soonDays = Math.max(1, Math.min(60, Number(dueSoonDays) || 7));
   const supabase = createClient();
   const router = useRouter();
   /** يضمن أن كل عقار يحمل مصفوفتيه — يمنع انكسار العرض عند صفٍّ جديد */
@@ -169,7 +170,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance }: {
     if (!prop) return [];
     const g = { graceDays: Number(prop.grace_days) || 0 };
     const list = Array.isArray(prop.tenants) ? prop.tenants : [];
-    return list.map((t) => { const st = contractState(t, g); return { t, st, key: rowKey(t, st) }; });
+    return list.map((t) => { const st = contractState(t, { ...g, soonDays }); return { t, st, key: rowKey(t, st) }; });
   }, [active]);
 
   // الصفوف المعروضة: بحث ← تصفية ← فرز
@@ -371,6 +372,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance }: {
       // المرافق: رقما حساب الكهرباء والماء ثابتان للوحدة ويبقيان مع تغيّر المستأجر؛
       // وقراءتا التسليم تُثبتان في مخالصة الإخلاء لاحقًا
       contract_no: (d.contract_no || "").trim() || null,
+      calendar: d.calendar === "hijri" ? "hijri" : "gregorian",
       elec_account: (d.elec_account || "").trim() || null,
       water_account: (d.water_account || "").trim() || null,
       meter_elec_in: (d.meter_elec_in || "").trim() || null,
@@ -479,7 +481,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance }: {
     const head = ["الاسم", ul, "الجوال", "الهوية/السجل", "الإيجار", "الدورة",
       "بداية العقد", "نهاية العقد", "الحالة", "المتأخر (ريال)", "الدفعة القادمة"];
     const lines = (active.tenants || []).map((t) => {
-      const st = contractState(t, g);
+      const st = contractState(t, { ...g, soonDays });
       const key = rowKey(t, st);
       return [t.name, t.unit || "", t.phone || "", t.national_id || "",
         Number(t.rent_amount) || 0, freqShort(t.payment_frequency),
@@ -646,7 +648,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance }: {
   // ملخّص المحفظة كاملة (كل العقارات)
   const portfolio = items.reduce((acc, prop) => {
     (Array.isArray(prop.tenants) ? prop.tenants : []).forEach((t) => {
-      const st = contractState(t, { graceDays: Number(prop.grace_days) || 0 });
+      const st = contractState(t, { graceDays: Number(prop.grace_days) || 0, soonDays });
       acc.units++;
       if (st.status === "late") { acc.late++; acc.overdue += st.amountDue; }
       if (st.status === "soon") acc.soon++;
@@ -1530,6 +1532,12 @@ function TenantModal({ open, initial, unitWord, onClose, onSubmit }: {
         <div className="grid grid-cols-2 gap-3">
           <Field label="بداية العقد">
           <DateField value={d.contract_start || ""} onChange={(v) => setD({ ...d, contract_start: v })} /></Field>
+        <Field label="تُحسب الأقساط بالتقويم" hint="عقد مكتوب بالهجري (كل 6 أشهر هجرية) اختر هجري — وإلا يزحف الاستحقاق أيامًا كل قسط">
+          <select className="fld" value={d.calendar || "gregorian"} onChange={(e) => setD({ ...d, calendar: e.target.value })}>
+            <option value="gregorian">ميلادي — الأشهر الميلادية</option>
+            <option value="hijri">هجري — الأشهر الهجرية (أم القرى)</option>
+          </select>
+        </Field>
           <Field label="عدد الدفعات" hint="فارغ = سنة">
             <input className="fld" type="number" value={d.contract_periods || ""} onChange={(e) => setD({ ...d, contract_periods: e.target.value })} placeholder="12" />
           </Field>

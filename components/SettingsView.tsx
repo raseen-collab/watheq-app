@@ -53,6 +53,7 @@ export default function SettingsView({ profile }: { profile: any }) {
       vat_number: p.vat_number || null,
       notify_enabled: p.notify_enabled ?? true,
       notify_days_before: Number(p.notify_days_before) || 5,
+      due_soon_days: Math.max(1, Math.min(60, Number(p.due_soon_days) || 7)),
     }).eq("id", p.id);
     setSaving(false);
     if (error) { setMsg({ t: "err", m: error.message }); return; }
@@ -171,9 +172,27 @@ export default function SettingsView({ profile }: { profile: any }) {
           </div>
         )}
 
+        {/* حدود الحالات — كل مكتب يختار ما يناسب أسلوبه */}
+        <div className="border border-line rounded-xl p-3 bg-paper mb-3">
+          <div className="text-sm font-bold text-deep mb-2">متى يُعدّ الاستحقاق «قريبًا» ومتى يُعدّ المستأجر «متأخرًا»</div>
+          <div className="grid sm:grid-cols-2 gap-3">
+            <label className="block">
+              <span className="block text-sm font-semibold mb-1">يُعدّ «قريبًا» قبل الاستحقاق بـ</span>
+              <select className="fld" value={p.due_soon_days ?? 7} onChange={(e) => setP({ ...p, due_soon_days: e.target.value })}>
+                {[3, 5, 7, 10, 14, 21, 30].map((d) => <option key={d} value={d}>{d} يوم</option>)}
+              </select>
+              <span className="block text-[11px] text-muted mt-1">يظهر بلون ذهبي في اللوحة ضمن فلتر «قريب».</span>
+            </label>
+            <div className="text-sm text-muted leading-relaxed">
+              <b className="text-deep">«متأخر»</b> يبدأ من اليوم التالي لتاريخ الاستحقاق — للمستأجر يومه كاملًا.
+              وإن أردت مهلة أطول، حدّد <b>«فترة السماح»</b> في إعدادات كل عقار (مثلًا 3 أيام) فتظهر الوحدة «فترة سماح» قبل أن تصير متأخرة.
+            </div>
+          </div>
+        </div>
+
         <div className="grid sm:grid-cols-2 gap-3">
           <label className="block">
-            <span className="block text-sm font-semibold mb-1">التنبيه قبل الاستحقاق بـ</span>
+            <span className="block text-sm font-semibold mb-1">تنبيه تليجرام قبل الاستحقاق بـ</span>
             <select className="fld" value={p.notify_days_before ?? 5}
               onChange={(e) => setP({ ...p, notify_days_before: e.target.value })}>
               {[1, 3, 5, 7, 10, 14].map((d) => <option key={d} value={d}>{d} أيام</option>)}

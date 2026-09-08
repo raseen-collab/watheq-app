@@ -12,7 +12,7 @@ type Row = {
   name: string; unit: string; rent_amount: number; phone: string; national_id: string;
   contract_start: string; payment_frequency: Frequency; contract_periods: number | null;
   paid_periods: number;
-  elec_account?: string; water_account?: string; contract_no?: string;
+  elec_account?: string; water_account?: string; contract_no?: string; calendar?: string;
   prop_name?: string;
   prop_id?: string;
   _error?: string;
@@ -207,7 +207,10 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
       const freqUnknown = !!freq.trim() && !FREQ_LOOKUP[fk];
       /* المكاتب السعودية تكتب العقود بالهجري. نجرّب الهجري أولًا (السنة
          1300–1600 تحسمه بلا لبس) ثم الميلادي — فيقبل الملف الصيغتين معًا. */
-      const cs = parseHijriInput(startDate) || normalizeDate(startDate);
+      const hijriStart = parseHijriInput(startDate);
+      const cs = hijriStart || normalizeDate(startDate);
+      // كُتب التاريخ بالهجري؟ إذن العقد هجري وأقساطه تُحسب بالأشهر الهجرية
+      const calendar = hijriStart ? "hijri" : "gregorian";
       const pr = Number(toEnDigits(periods)) || null;
       const pd = Math.max(0, Math.floor(Number(toEnDigits(paid)) || 0));
       let err = "";
@@ -226,7 +229,7 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
         name, unit, rent_amount: rentN, phone: toEnDigits(phone), national_id: toEnDigits(nid),
         contract_start: cs, payment_frequency: frequency, contract_periods: pr, paid_periods: pd,
         elec_account: (elecAcc || "").trim() || undefined, water_account: (waterAcc || "").trim() || undefined,
-        contract_no: (contractNo || "").trim() || undefined,
+        contract_no: (contractNo || "").trim() || undefined, calendar,
         prop_name: propName || undefined, prop_id: target?.id,
         _error: err || undefined,
       };
