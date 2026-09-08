@@ -40,7 +40,7 @@ export async function GET(req: Request) {
 
   const { data: profiles } = await db
     .from("profiles")
-    .select("id, telegram_chat_id, notify_enabled, notify_days_before, due_soon_days, due_imminent_days, org_name")
+    .select("id, telegram_chat_id, notify_enabled, notify_days_before, due_soon_days, due_imminent_days, expiring_days, org_name")
     .not("telegram_chat_id", "is", null)
     .eq("notify_enabled", true);
 
@@ -66,14 +66,14 @@ export async function GET(req: Request) {
       const ul = unitLabel(prop.property_type);
       for (const t of prop.tenants || []) {
         // فترة السماح نفسها التي تعتمدها اللوحة — وإلا وصلت رسالة «متأخر» لمستأجر لوحته تقول «فترة سماح»
-        const st = contractState(t, { graceDays: Number(prop.grace_days) || 0, soonDays: Number(prop.soon_days) || p.due_soon_days, imminentDays: Number(prop.imminent_days) || p.due_imminent_days });
+        const st = contractState(t, { graceDays: Number(prop.grace_days) || 0, soonDays: Number(prop.soon_days) || p.due_soon_days, imminentDays: Number(prop.imminent_days) || p.due_imminent_days, expiringDays: Number(prop.expiring_days) || p.expiring_days });
         if (st.status === "late") {
           totalDue += st.amountDue;
           lateList.push(`• ${esc(t.name)} — ${ul} ${esc(t.unit || "—")} (${esc(prop.name)}) — <b>${sar(st.amountDue)}</b> ريال`);
         } else if (st.daysToNextDue !== null && st.daysToNextDue >= 0 && st.daysToNextDue <= within) {
           dueSoon.push(`• ${esc(t.name)} — ${ul} ${esc(t.unit || "—")} — ${sar(t.rent_amount)} ريال بتاريخ ${arDate(st.nextDueDate)}`);
         }
-        if (st.daysToEnd !== null && st.daysToEnd >= 0 && st.daysToEnd <= 60) {
+        if (st.expiringSoon) {
           expiring.push(`• ${esc(t.name)} — ${ul} ${esc(t.unit || "—")} — ينتهي خلال ${st.daysToEnd} يومًا (${arDate(st.endDate)})`);
         }
       }
