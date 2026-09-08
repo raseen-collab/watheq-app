@@ -8,7 +8,7 @@
 // إلى مارس»)، والتحويل إلى أول يوم/آخر يوم يتم هنا.
 // ============================================================
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase-client";
 import { officeId } from "@/lib/office";
 import { openDoc, ownerConsolidatedStatementHTML, type OwnerReportPayment, type OwnerStatementSection } from "@/lib/documents";
@@ -36,6 +36,21 @@ export default function OwnerStatementModal({ properties, issuer, onClose }: {
   const [link, setLink] = useState<string | null>(null);
   const [linkBusy, setLinkBusy] = useState(false);
   const [copied, setCopied] = useState(false);
+  /* اختيار العقارات: فارغ = كل عقارات المالك. ومستوى التفصيل: شامل يضم
+     جدول الوحدات وحالتها وبيانات كل وحدة، والمختصر يبقى كما كان. */
+  const [picked, setPicked] = useState<string[]>([]);
+  const [detail, setDetail] = useState<"full" | "brief">("full");
+  const ownerProps = useMemo(() => properties.filter((p) => (p.owner_name || "").trim() === owner), [properties, owner]);
+  useEffect(() => { setPicked([]); }, [owner]);
+  const toggleProp = (id: string) => setPicked((cur) => cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]);
+  function preset(kind: "thisMonth" | "quarter" | "half" | "year" | "last12") {
+    const now = new Date(); const p2 = (n: number) => String(n).padStart(2, "0");
+    const ym = (d: Date) => `${d.getFullYear()}-${p2(d.getMonth() + 1)}`;
+    if (kind === "thisMonth") { setFrom(ym(now)); setTo(ym(now)); return; }
+    if (kind === "year") { setFrom(`${now.getFullYear()}-01`); setTo(ym(now)); return; }
+    const back = kind === "quarter" ? 2 : kind === "half" ? 5 : 11;
+    setFrom(ym(new Date(now.getFullYear(), now.getMonth() - back, 1))); setTo(ym(now));
+  }
 
   /**
    * رابط مالك مجمّع (schema-v13): رابط واحد يفتح فيه المالك كل عقاراته حيًّا
@@ -65,7 +80,7 @@ export default function OwnerStatementModal({ properties, issuer, onClose }: {
     const [ty, tm] = [Number(to.slice(0, 4)), Number(to.slice(5, 7))];
     const toD = `${to}-${String(new Date(ty, tm, 0).getDate()).padStart(2, "0")}`;
 
-    const props = properties.filter((p) => (p.owner_name || "").trim() === owner);
+    const props = picked.length ? ownerProps.filter((p) => picked.includes(p.id)) : ownerProps;
     const ids = props.map((p) => p.id);
 
     /**
@@ -106,7 +121,7 @@ export default function OwnerStatementModal({ properties, issuer, onClose }: {
       return { property: p, payments, expenses, fee_pct: p.mgmt_fee_pct };
     });
 
-    openDoc(ownerConsolidatedStatementHTML(owner, sections, { label, from: fromD, to: toD }, issuer || {}));
+    openDoc(ownerConsolidatedStatementHTML(owner, sections, { label, from: fromD, to: toD }, issuer || {}, detail));
     onClose();
   }
 
@@ -126,6 +141,32 @@ export default function OwnerStatementModal({ properties, issuer, onClose }: {
             <select className="fld mb-3" value={owner} onChange={(e) => setOwner(e.target.value)}>
               {owners.map(([n, c]) => <option key={n} value={n}>{n} — {c} {c === 1 ? "عقار" : "عقارات"}</option>)}
             </select>
+            {ownerProps.length > 1 && (
+              <div className="mb-3">
+                <label className="block text-sm font-semibold mb-1">العقارات المشمولة</label>
+                <div className="border border-line rounded-xl p-2 max-h-40 overflow-auto bg-paper">
+                  <label className="flex items-center gap-2 text-sm py-1">
+                    <input type="checkbox" className="w-4 h-4" checked={picked.length === 0} onChange={() => setPicked([])} />
+                    <b>كل عقارات المالك ({ownerProps.length})</b>
+                  </label>
+                  {ownerProps.map((p) => (
+                    <label key={p.id} className="flex items-center gap-2 text-sm py-1 ps-4">
+                      <input type="checkbox" className="w-4 h-4" checked={picked.includes(p.id)} onChange={() => toggleProp(p.id)} />
+                      <span>{p.name}<span className="text-muted text-xs"> · {(p.tenants || []).length} وحدة</span></span>
+                    </label>
+                  ))}
+                </div>
+                <p className="text-[11px] text-muted mt-1">اختر عقارًا أو أكثر، أو اترك «كل العقارات».</p>
+              </div>
+            )}
+
+            <label className="block text-sm font-semibold mb-1">الفترة</label>
+            <div className="flex flex-wrap gap-1.5 mb-2">
+              {([["thisMonth", "هذا الشهر"], ["quarter", "آخر 3 أشهر"], ["half", "آخر 6 أشهر"], ["year", "هذه السنة"], ["last12", "آخر 12 شهرًا"]] as const).map(([k, l]) => (
+                <button key={k} type="button" onClick={() => preset(k)} className="text-[11px] px-2.5 py-1 rounded-full border border-line text-muted hover:text-deep hover:border-deep">{l}</button>
+              ))}
+            </div>
+
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="block text-sm font-semibold mb-1">من شهر</label>
@@ -137,6 +178,18 @@ export default function OwnerStatementModal({ properties, issuer, onClose }: {
               </div>
             </div>
             {from > to && <p className="text-xs text-late mt-1">شهر البداية بعد شهر النهاية.</p>}
+            <div className="mt-3">
+              <label className="block text-sm font-semibold mb-1">مستوى التفصيل</label>
+              <div className="inline-flex border border-line rounded-lg p-0.5 text-xs">
+                <button type="button" onClick={() => setDetail("full")} className={`px-3 py-1.5 rounded-md ${detail === "full" ? "bg-deep text-goldSoft" : "text-muted"}`}>شامل</button>
+                <button type="button" onClick={() => setDetail("brief")} className={`px-3 py-1.5 rounded-md ${detail === "brief" ? "bg-deep text-goldSoft" : "text-muted"}`}>مختصر</button>
+              </div>
+              <p className="text-[11px] text-muted mt-1">
+                {detail === "full"
+                  ? "الشامل: ملخص العقارات + جدول وحدات كل عقار (المستأجر، الإيجار، الحالة، المتأخر، نهاية العقد) + الدفعات والمصروفات."
+                  : "المختصر: ملخص العقارات وصافي كل عقار والدفعات والمصروفات — بلا جدول الوحدات."}
+              </p>
+            </div>
             {err && <p className="text-sm text-late mt-2">{err}</p>}
             <div className="flex gap-2 mt-5">
               <button className="btn btn-gold flex-1 justify-center" onClick={issue} disabled={!valid || loading}>
