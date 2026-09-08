@@ -42,21 +42,14 @@ if(t==="dark")document.documentElement.setAttribute("data-theme","dark");
 
 const THEME_TOGGLE = `(function(){
 var K="watheq_theme";
-function dark(){return document.documentElement.getAttribute("data-theme")==="dark";}
-function paint(){document.querySelectorAll("[data-wq-theme]").forEach(function(b){
-  b.textContent=dark()?"\\u2600 نهاري":"\\u263E ليلي";
-  b.setAttribute("aria-label",dark()?"التبديل للوضع النهاري":"التبديل للوضع الليلي");});}
 document.addEventListener("click",function(e){
   var b=e.target.closest&&e.target.closest("[data-wq-theme]");
   if(!b)return; e.preventDefault();
-  var d=dark();
+  var d=document.documentElement.getAttribute("data-theme")==="dark";
   if(d)document.documentElement.removeAttribute("data-theme");
   else document.documentElement.setAttribute("data-theme","dark");
   try{localStorage.setItem(K,d?"light":"dark");}catch(err){}
-  paint();});
-// التأجيل حتى بعد ترطيب React: التغيير أثناءه يُنتج تعارضًا
-if(document.readyState==="complete")setTimeout(paint,0);
-else window.addEventListener("load",function(){setTimeout(paint,0);});
+});
 })();`;
 
 /**
@@ -99,10 +92,9 @@ async function FloatingLinks() {
         </Link>
       )}
       {/* نصّ الزر وaria يعيد paint() كتابتهما قبل الترطيب حسب الوضع المحفوظ */}
-      <button type="button" className="wq-theme-btn" data-wq-theme
-        aria-label="التبديل للوضع الليلي" suppressHydrationWarning>
-        ☾ ليلي
-      </button>
+      {/* التسمية تُرسم بـCSS من data-theme (انظر .wq-theme-btn في globals.css):
+          لا نصّ يكتبه سكربت على عقدة يملكها React، فلا تعارض ترطيب أصلًا. */}
+      <button type="button" className="wq-theme-btn" data-wq-theme aria-label="تبديل الوضع الليلي/النهاري" />
     </div>
   );
 }
