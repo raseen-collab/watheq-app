@@ -55,6 +55,7 @@ export default function SettingsView({ profile }: { profile: any }) {
       notify_days_before: Number(p.notify_days_before) || 5,
       due_soon_days: Math.max(1, Math.min(60, Number(p.due_soon_days) || 10)),
       due_imminent_days: Math.max(1, Math.min(60, Number(p.due_imminent_days) || 5)),
+      expiring_days: Math.max(1, Math.min(180, Number(p.expiring_days) || 60)),
     }).eq("id", p.id);
     setSaving(false);
     if (error) { setMsg({ t: "err", m: error.message }); return; }
@@ -176,19 +177,20 @@ export default function SettingsView({ profile }: { profile: any }) {
         {/* حدود الحالات — كل مكتب يختار ما يناسب أسلوبه */}
         <div className="border border-line rounded-xl p-3 bg-paper mb-3">
           <div className="text-sm font-bold text-deep mb-2">متى يُعدّ الاستحقاق «قريبًا» ومتى يُعدّ المستأجر «متأخرًا»</div>
-          <div className="grid sm:grid-cols-2 gap-3">
+          <div className="grid sm:grid-cols-3 gap-3">
             <label className="block">
               <span className="block text-sm font-semibold mb-1"><span className="inline-block w-2.5 h-2.5 rounded-full bg-gold me-1" />«قريب» — قبل الاستحقاق بـ</span>
-              <select className="fld" value={p.due_soon_days ?? 10} onChange={(e) => setP({ ...p, due_soon_days: e.target.value })}>
-                {[5, 7, 10, 14, 21, 30].map((d) => <option key={d} value={d}>{d} يوم</option>)}
-              </select>
+              <input className="fld" type="number" min={1} max={60} value={p.due_soon_days ?? 10} onChange={(e) => setP({ ...p, due_soon_days: e.target.value })} />
               <span className="block text-[11px] text-muted mt-1">للمتابعة الهادئة.</span>
             </label>
             <label className="block">
+              <span className="block text-sm font-semibold mb-1"><span className="inline-block w-2.5 h-2.5 rounded-full bg-[#DC2626] me-1" />«ينتهي قريبًا» — قبل انتهاء العقد بـ</span>
+              <input className="fld" type="number" min={1} max={180} value={p.expiring_days ?? 60} onChange={(e) => setP({ ...p, expiring_days: e.target.value })} />
+              <span className="block text-[11px] text-muted mt-1">يظهر بالأحمر في فلتر «تجديد». مثلًا 49 يومًا.</span>
+            </label>
+            <label className="block">
               <span className="block text-sm font-semibold mb-1"><span className="inline-block w-2.5 h-2.5 rounded-full bg-[#D97706] me-1" />«مستحق» — قبل الاستحقاق بـ</span>
-              <select className="fld" value={p.due_imminent_days ?? 5} onChange={(e) => setP({ ...p, due_imminent_days: e.target.value })}>
-                {[1, 2, 3, 5, 7, 10].map((d) => <option key={d} value={d}>{d} يوم</option>)}
-              </select>
+              <input className="fld" type="number" min={1} max={60} value={p.due_imminent_days ?? 5} onChange={(e) => setP({ ...p, due_imminent_days: e.target.value })} />
               <span className="block text-[11px] text-muted mt-1">وقت التذكير. يجب أن تكون أقل من «قريب».</span>
             </label>
           </div>

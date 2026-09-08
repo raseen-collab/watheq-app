@@ -5,8 +5,8 @@
 // ============================================================
 import { useState } from "react";
 
-export default function StatusLegend({ soonDays, imminentDays, graceDays, scope }: {
-  soonDays: number; imminentDays: number; graceDays?: number | null; scope: string;
+export default function StatusLegend({ soonDays, imminentDays, expiringDays = 60, graceDays, scope }: {
+  soonDays: number; imminentDays: number; expiringDays?: number; graceDays?: number | null; scope: string;
 }) {
   const [open, setOpen] = useState(false);
   const g = Number(graceDays) || 0;
@@ -18,7 +18,7 @@ export default function StatusLegend({ soonDays, imminentDays, graceDays, scope 
     ...(g > 0 ? [{ dot: "bg-[#8a5a11]", name: "فترة سماح", when: `مرّ يوم الاستحقاق ولم يسدّد، وله ${g} أيام مهلة قبل أن يُعدّ متأخرًا.` }] : []),
     { dot: "bg-late", name: "متأخر", when: g > 0 ? `انتهت المهلة (${g} أيام بعد الاستحقاق) ولم يسدّد.` : "مرّ يوم الاستحقاق ولم يسدّد — يبدأ من اليوم التالي." },
     { dot: "bg-[#EA8C00]", name: "سداد جزئي", when: "سدّد جزءًا من الدفعة المستحقة والباقي متأخر." },
-    { dot: "bg-[#7C3AED]", name: "تجديد", when: "العقد ينتهي خلال 60 يومًا — وقت التفاوض على التجديد." },
+    { dot: "bg-[#DC2626]", name: "ينتهي قريبًا", when: `العقد ينتهي خلال ${expiringDays} يومًا — وقت التفاوض على التجديد.` },
     { dot: "bg-[#137a50]", name: "✓ مسدَّد كاملًا", when: "سدّد كل دفعات العقد مقدّمًا — القسط القادم مع التجديد." },
     { dot: "bg-[#64748B]", name: "في التنفيذ", when: "أُحيل إلى محكمة التنفيذ — يُتابَع نظاميًّا لا بالتذكير." },
     { dot: "bg-[#94A3B8]", name: "شاغرة", when: "لا مستأجر — لا تدخل في الحسابات ولا التنبيهات." },

@@ -13,6 +13,7 @@ type Row = {
   contract_start: string; payment_frequency: Frequency; contract_periods: number | null;
   paid_periods: number;
   elec_account?: string; water_account?: string; contract_no?: string; calendar?: string;
+  unit_type?: string; rooms?: number; baths?: number; acs?: number; first_due?: string;
   prop_name?: string;
   prop_id?: string;
   _error?: string;
@@ -21,7 +22,7 @@ type Row = {
 // العمود التاسع «الدفعات المسدّدة» اختياري: بدونه يُعدّ العقد لم يُسدَّد منه شيء —
 // وهذا كارثة لمكتب ينقل عقودًا قائمة (عقد من يناير يُرفع في سبتمبر = 8 «متأخرات» وهمية).
 // القوالب القديمة بثمانية أعمدة تبقى تعمل: الغائب = 0.
-const HEADERS = ["اسم المستأجر", "رقم الوحدة", "قيمة الدفعة", "دورة السداد", "بداية العقد", "عدد الدفعات", "الجوال", "رقم الهوية", "الدفعات المسدّدة", "العقار", "حساب الكهرباء", "حساب الماء", "رقم العقد"];
+const HEADERS = ["اسم المستأجر", "رقم الوحدة", "قيمة الدفعة", "دورة السداد", "بداية العقد", "عدد الدفعات", "الجوال", "رقم الهوية", "الدفعات المسدّدة", "العقار", "حساب الكهرباء", "حساب الماء", "رقم العقد", "نوع الوحدة", "الغرف", "دورات المياه", "المكيفات", "أول استحقاق"];
 // عمود عاشر اختياري «العقار»: ملف واحد لكل المحفظة بدل ملف لكل عقار — مكتب بـ40
 // عقارًا لا يرفع 40 مرة. الاسم يجب أن يطابق عقارًا موجودًا؛ الصف الفارغ يذهب للعقار المختار.
 
@@ -51,6 +52,10 @@ function arKey(v: string): string {
     .trim()
     .toLowerCase();
 }
+const UNIT_TYPE_KEY: Record<string, string> = Object.fromEntries(Object.entries({
+  "شقه": "apartment", "شقة": "apartment", "شقه ملحق": "annex", "ملحق": "annex", "استديو": "studio", "ستوديو": "studio",
+  "غرفه": "room", "محل": "shop", "مكتب": "office", "مستودع": "warehouse", "ارض": "land", "فيلا": "villa",
+}).map(([k, v]) => [k.replace(/[أإآ]/g, "ا").replace(/ة/g, "ه"), v]));
 const FREQ_LOOKUP: Record<string, Frequency> = Object.fromEntries(
   Object.entries(FREQ_MAP).map(([k, v]) => [arKey(k).replace(/ه$/, "ه"), v]),
 ) as Record<string, Frequency>;
@@ -200,7 +205,7 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
     const start = grid[0].some((c) => String(c).includes("اسم") || String(c).toLowerCase().includes("name")) ? 1 : 0;
 
     const parsed: Row[] = grid.slice(start).map((r) => {
-      const [name, unit, rent, freq, startDate, periods, phone, nid, paid, propName, elecAcc, waterAcc, contractNo] = r.map((x) => String(x ?? "").trim());
+      const [name, unit, rent, freq, startDate, periods, phone, nid, paid, propName, elecAcc, waterAcc, contractNo, unitTypeTxt, roomsTxt, bathsTxt, acsTxt, firstDueTxt] = r.map((x) => String(x ?? "").trim());
       const rentN = Number(toEnDigits(rent).replace(/[^\d.]/g, "")) || 0;
       const fk = arKey(freq);
       const frequency: Frequency = FREQ_LOOKUP[fk] || "monthly";
@@ -230,6 +235,11 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
         contract_start: cs, payment_frequency: frequency, contract_periods: pr, paid_periods: pd,
         elec_account: (elecAcc || "").trim() || undefined, water_account: (waterAcc || "").trim() || undefined,
         contract_no: (contractNo || "").trim() || undefined, calendar,
+        unit_type: UNIT_TYPE_KEY[arKey(unitTypeTxt)] || undefined,
+        rooms: roomsTxt ? Number(toEnDigits(roomsTxt)) || 0 : undefined,
+        baths: bathsTxt ? Number(toEnDigits(bathsTxt)) || 0 : undefined,
+        acs: acsTxt ? Number(toEnDigits(acsTxt)) || 0 : undefined,
+        first_due: firstDueTxt ? (parseHijriInput(firstDueTxt) || normalizeDate(firstDueTxt) || undefined) : undefined,
         prop_name: propName || undefined, prop_id: target?.id,
         _error: err || undefined,
       };
