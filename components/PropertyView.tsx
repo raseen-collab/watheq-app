@@ -106,6 +106,16 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
 
   const [items, setItems] = useState<Property[]>(() => normalize(initial));
   const [activeId, setActiveId] = useState<string | null>(initial[0]?.id || null);
+  // وصول مباشر من صفحة النظرة العامة: ?p=<معرّف العقار>&q=<نص بحث>
+  useEffect(() => {
+    try {
+      const sp = new URLSearchParams(window.location.search);
+      const pid = sp.get("p"); const qq = sp.get("q");
+      if (pid && initial.some((x) => x.id === pid)) setActiveId(pid);
+      if (qq) setQ(qq);
+    } catch { /* */ }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [modal, setModal] = useState<null | { kind: "newProp" | "editProp" | "tenant"; id?: string }>(null);
   const [quoteOpen, setQuoteOpen] = useState(false);
   // ⚖️ التزامات المكتب: تُدار محليًّا وتُزامَن مع بيانات السيرفر عند كل refresh
@@ -509,14 +519,14 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
     router.refresh();
   }
 
-  async function openStatement(t: Tenant) {
+  async function openStatement(t: Tenant, mode: "brief" | "full" = "full") {
     if (!active) return;
     // نجلب سجل المدفوعات الموثّق ليظهر في الكشف بتواريخه وطرقه
     const { data, error } = await supabase.from("payments")
       .select("id,paid_on,amount,method,periods_covered,note")
       .eq("tenant_id", t.id).order("paid_on", { ascending: true }).limit(500);
     if (error) console.error("Watheq statement payments error:", error);
-    openDoc(statementHTML(t as any, active as any, issuer || {}, (data || []) as any));
+    openDoc(statementHTML(t as any, active as any, issuer || {}, (data || []) as any, mode));
   }
 
   function openPropertyStatement() {
@@ -779,7 +789,8 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
         <button type="button" className="btn btn-ghost text-sm" onClick={() => setLogOpen(true)}
           title="كل دفعة وتراجع: من سجّلها ولمن وبأي ساعة">🕘 سجل العمليات</button>
         {isManager && <button type="button" className="btn btn-ghost text-sm" onClick={() => setModal({ kind: "editProp" })}>الإعدادات</button>}
-        <button className="btn btn-gold text-sm" onClick={() => setModal({ kind: "newProp" })}>+ عقار</button>
+        {items.length > 1 && <Link href="/dashboard/property/overview" className="btn btn-ghost text-sm" title="كل العقارات في صفحة واحدة">🗂️ نظرة عامة</Link>}
+        {isManager && <button className="btn btn-gold text-sm" onClick={() => setModal({ kind: "newProp" })}>+ عقار</button>}
       </div>
 
       {expiringSoon && (
@@ -988,7 +999,8 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                                   <a href={remindLink(t)} target="_blank" rel="noreferrer" className="btn btn-wa text-xs px-2.5" title="إرسال تذكير واتساب">&#128172;</a>
                                 </>)}
                                 <RowMenu items={[
-                                  { label: "🧾 كشف حساب", run: () => openStatement(t) },
+                                  { label: "🧾 كشف حساب شامل", run: () => openStatement(t, "full") },
+                                  { label: "🧾 كشف حساب مختصر", run: () => openStatement(t, "brief") },
                                   { label: "📄 فاتورة", run: () => openInvoice(t) },
                                   { label: "📅 جدول الدفعات", run: () => setSchedule(t) },
                                   { label: "🧮 سجل المدفوعات", run: () => openHistory(t) },
@@ -1094,7 +1106,8 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                     items={[
                       { label: "📅 جدول الدفعات", run: () => setSchedule(t) },
                       { label: "🧮 سجل المدفوعات", run: () => openHistory(t) },
-                      { label: "🧾 كشف حساب", run: () => openStatement(t) },
+                      { label: "🧾 كشف حساب شامل", run: () => openStatement(t, "full") },
+                                  { label: "🧾 كشف حساب مختصر", run: () => openStatement(t, "brief") },
                       ...((t.paid_periods || 0) > 0 ? [{ label: "↩︎ تراجع عن دفعة", run: () => undoPayment(t) }] : []),
                       ...(!t.litigation && st.unpaid > 0 ? [{ label: "⚖️ رفع للتنفيذ", run: () => setEnforcing(t) }] : []),
                       ...(!isVacant(t) ? [{ label: "🔑 إنهاء العقد وإخلاء", run: () => setTurnover(t) }] : []),
