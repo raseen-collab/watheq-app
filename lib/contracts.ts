@@ -97,7 +97,9 @@ export function addPeriods(date: Date, freq: Frequency, n: number, anchorDay?: n
   const d = new Date(date.getTime());
   if (cal === "hijri" && freq !== "daily" && freq !== "weekly") {
     const months = freq === "monthly" ? 1 : freq === "quarterly" ? 3 : freq === "semiannual" ? 6 : 12;
-    return n === 0 ? d : addHijriMonths(d, months * n, anchorDay);
+    /* يوم المرساة الميلادي (7 في 2025-09-07) لا معنى له في الهجري — اليوم الهجري
+       للتاريخ نفسه (15 في 1447/03/15) هو المرساة. كان هذا يزحف الاستحقاق 8 أيام. */
+    return n === 0 ? d : addHijriMonths(d, months * n, null);
   }
   switch (freq) {
     case "daily":  d.setDate(d.getDate() + n); break;

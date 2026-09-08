@@ -269,7 +269,13 @@ const footer = () => `
 </div>`;
 
 /** كشف حساب مستأجر — كامل الدفعات والأرصدة */
-export function statementHTML(t: Tenant, p: Property, issuer: Issuer = {}, payments: PaymentRow[] = []) {
+/**
+ * كشف حساب المستأجر بنمطين:
+ *  - brief  (مختصر): بيانات العقد الأساسية + الملخص المالي + الرصيد + المدفوعات المستلمة.
+ *  - full   (شامل): كل ذلك + مواصفات الوحدة والعدادات وحسابات المرافق + جدول كل الدفعات
+ *    بحالاتها + استخدام العقار والمالك. بعض الملّاك يريدونه كاملًا للتوثيق، وبعضهم صفحة واحدة.
+ */
+export function statementHTML(t: Tenant, p: Property, issuer: Issuer = {}, payments: PaymentRow[] = [], mode: "brief" | "full" = "full") {
   // تعقيم المدخلات (انظر scrub أعلاه)
   t = scrub(t);
   p = scrub(p);
@@ -286,7 +292,7 @@ export function statementHTML(t: Tenant, p: Property, issuer: Issuer = {}, payme
   const dueSplit = splitVat(st.amountDue, v);                 // تفصيل الرصيد المستحق
 
   const body = `
-${header("كشف حساب", `${t.name}`)}
+${header(mode === "full" ? "كشف حساب شامل" : "كشف حساب مختصر", `${t.name}`)}
 <h1>كشف حساب ${ul} رقم (${t.unit || "—"})</h1>
 <div class="sub">${p.name}${p.address ? ` — ${p.address}` : ""}${p.city ? `، ${p.city}` : ""} · ${typeLabel(p.property_type)}</div>
 
@@ -341,6 +347,26 @@ ${header("كشف حساب", `${t.name}`)}
 
 ${st.amountDue > 0 ? `<div class="due"><span class="l">الرصيد المستحق حتى تاريخه</span><span class="v">${sar(st.amountDue)} ريال</span></div>` : ""}
 
+${mode === "full" ? `
+<h1 style="font-size:1rem">بيانات الوحدة</h1>
+<div class="grid">
+  <div class="box">
+    <div class="r"><span>الوحدة</span><span>${unitDesc(t, p)}</span></div>
+    ${(t as any).elec_account ? `<div class="r"><span>حساب الكهرباء</span><span dir="ltr">${(t as any).elec_account}</span></div>` : ""}
+    ${(t as any).water_account ? `<div class="r"><span>حساب الماء</span><span dir="ltr">${(t as any).water_account}</span></div>` : ""}
+    ${(t as any).meter_elec_in ? `<div class="r"><span>قراءة الكهرباء عند التسليم</span><span dir="ltr">${(t as any).meter_elec_in}</span></div>` : ""}
+    ${(t as any).meter_water_in ? `<div class="r"><span>قراءة الماء عند التسليم</span><span dir="ltr">${(t as any).meter_water_in}</span></div>` : ""}
+    ${(t as any).deposit_amount ? `<div class="r"><span>مبلغ التأمين</span><span>${sar(Number((t as any).deposit_amount) || 0)} ريال</span></div>` : ""}
+  </div>
+  <div class="box">
+    <div class="r"><span>العقار</span><span>${p.name}${p.city ? ` — ${p.city}` : ""}</span></div>
+    ${p.address ? `<div class="r"><span>العنوان</span><span>${p.address}</span></div>` : ""}
+    ${(p as any).owner_name ? `<div class="r"><span>المالك</span><span>${(p as any).owner_name}</span></div>` : ""}
+    ${p.usage ? `<div class="r"><span>الاستخدام</span><span>${USAGE_AR[String(p.usage)] || p.usage}</span></div>` : ""}
+    <div class="r"><span>التقويم المعتمد للأقساط</span><span>${(t as any).calendar === "hijri" ? "هجري (أم القرى)" : "ميلادي"}</span></div>
+  </div>
+</div>
+
 <h1 style="font-size:1rem">تفصيل الدفعات</h1>
 <table>
   <thead><tr><th>#</th><th>تاريخ الاستحقاق</th>${v.enabled ? "<th>الأساس</th><th>الضريبة</th>" : ""}<th>الإجمالي (ريال)</th><th>الحالة</th></tr></thead>
@@ -355,7 +381,7 @@ ${st.amountDue > 0 ? `<div class="due"><span class="l">الرصيد المستح
           : '<span class="pill u">قادمة</span>'}</td>
     </tr>`; }).join("")}
   </tbody>
-</table>
+</table>` : ""}
 
 ${payments.length ? `
 <h1 style="font-size:1rem">المدفوعات المستلمة</h1>
