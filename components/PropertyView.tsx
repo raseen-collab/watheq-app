@@ -98,6 +98,20 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
   const [compOpen, setCompOpen] = useState(false);
   const [ownerStmtOpen, setOwnerStmtOpen] = useState(false);
   const [logOpen, setLogOpen] = useState(false);
+  const [incPeriod, setIncPeriod] = useState<"year" | "12m" | "month">("year");
+  const [collectedInPeriod, setCollectedInPeriod] = useState<number | null>(null);
+  useEffect(() => {
+    if (!activeId) return;
+    const now = new Date(); const p2 = (n: number) => String(n).padStart(2, "0");
+    const iso = (d: Date) => `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`;
+    const from = incPeriod === "year" ? `${now.getFullYear()}-01-01`
+      : incPeriod === "month" ? `${now.getFullYear()}-${p2(now.getMonth() + 1)}-01`
+      : iso(new Date(now.getFullYear() - 1, now.getMonth(), now.getDate() + 1));
+    let alive = true;
+    supabase.from("payments").select("amount").eq("property_id", activeId).gte("paid_on", from).lte("paid_on", iso(now)).limit(5000)
+      .then(({ data }) => { if (alive) setCollectedInPeriod((data || []).reduce((a: number, x: any) => a + (Number(x.amount) || 0), 0)); });
+    return () => { alive = false; };
+  }, [activeId, incPeriod, items, supabase]);
   /**
    * عرض الوحدات: بطاقات (الجوال دائمًا) أو جدول (الكمبيوتر). الجدول يعرض
    * 25 وحدة في شاشة بدل 5، والعين تمسح عمود الحالة في ثانية — وهو ما
@@ -637,6 +651,13 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
   const monthlyIncome = tenants.reduce((sum, t) =>
     sum + (Number(t.rent_amount) || 0) * PERIODS_PER_MONTH[(t.payment_frequency || "monthly") as Frequency], 0);
   const overdue = lateRows.reduce((s, r) => s + r.st.amountDue, 0);
+  /**
+   * الدخل السنوي للعقار = مجموع إيجارات الوحدات المشغولة مُقيَّسًا على سنة
+   * (شهري ×12، ربع سنوي ×4...). و«المحصَّل منه» يُقرأ من سجل الدفعات
+   * للفترة التي يختارها المكتب — هذه السنة أو آخر 12 شهرًا أو هذا الشهر.
+   */
+  const annualIncome = tenants.reduce((sum, t) =>
+    sum + (isVacant(t) ? 0 : (Number(t.rent_amount) || 0) * PERIODS_PER_MONTH[(t.payment_frequency || "monthly") as Frequency] * 12), 0);
   const pct = allRows.length ? Math.round(((allRows.length - lateRows.length) / allRows.length) * 100) : 100;
 
 
@@ -738,6 +759,45 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
         <Stat v={String(counts.soon || 0)} l="تستحق خلال 7 أيام" kpi="soon" icon="●" onClick={() => setFilter("soon")} active={filter === "soon"} />
         <Stat v={String(counts.expiring || 0)} l="عقود تنتهي قريبًا" kpi="expiring" icon="↻" onClick={() => setFilter("expiring")} active={filter === "expiring"} />
       </div>
+
+      {/* الدخل السنوي والمحصَّل منه — سؤال المالك الأول: «كم يدخل هذا العقار في السنة، وكم قبضنا منه؟» */}
+      {tenants.length > 0 && (() => {
+        const expectedSoFar = incPeriod === "year"
+          ? annualIncome * ((Date.now() - new Date(new Date().getFullYear(), 0, 1).getTime()) / (365 * 86400000))
+          : incPeriod === "month" ? annualIncome / 12 : annualIncome;
+        const col = collectedInPeriod ?? 0;
+        const pctOfAnnual = annualIncome > 0 ? Math.min(100, Math.round((col / annualIncome) * 100)) : 0;
+        const label = incPeriod === "year" ? `هذه السنة (${new Date().getFullYear()})` : incPeriod === "month" ? "هذا الشهر" : "آخر 12 شهرًا";
+        return (
+          <div className="bg-white border border-line rounded-2xl p-4 mb-5">
+            <div className="flex items-center justify-between gap-3 flex-wrap mb-2">
+              <div>
+                <div className="text-xs text-muted">الدخل السنوي المتوقع للعقار</div>
+                <div className="text-2xl font-bold text-deep tabular-nums">{sar(Math.round(annualIncome))} <span className="text-sm font-normal text-muted">ريال / سنة</span></div>
+              </div>
+              <div className="inline-flex items-center gap-0.5 border border-line rounded-lg p-0.5 text-[11px]">
+                {([["year", "هذه السنة"], ["12m", "آخر 12 شهرًا"], ["month", "هذا الشهر"]] as const).map(([k, l]) => (
+                  <button key={k} type="button" onClick={() => setIncPeriod(k)}
+                    className={`px-2.5 py-1 rounded-md ${incPeriod === k ? "bg-deep text-goldSoft" : "text-muted hover:text-deep"}`}>{l}</button>
+                ))}
+              </div>
+            </div>
+            <div className="flex items-baseline justify-between text-sm mb-1">
+              <span>المحصَّل {label}: <b className="tabular-nums text-[#137a50]">{collectedInPeriod === null ? "…" : sar(Math.round(col))}</b> ريال</span>
+              <span className="text-xs text-muted tabular-nums">{pctOfAnnual}% من الدخل السنوي</span>
+            </div>
+            <div className="h-2.5 bg-paper2 rounded-full overflow-hidden">
+              <div className="h-full bg-[#1E9E6A] rounded-full transition-all" style={{ width: `${pctOfAnnual}%` }} />
+            </div>
+            <div className="text-[11px] text-muted mt-1.5">
+              {incPeriod === "year"
+                ? <>المتوقع حتى اليوم بنسبة الأيام المنقضية: <b className="tabular-nums">{sar(Math.round(expectedSoFar))}</b> — {col >= expectedSoFar ? <span className="text-[#137a50]">التحصيل في موعده أو أفضل ✓</span> : <span className="text-late">متأخر عن المتوقع بـ {sar(Math.round(expectedSoFar - col))} ريال</span>}</>
+                : <>المتوقع للفترة: <b className="tabular-nums">{sar(Math.round(expectedSoFar))}</b> ريال</>}
+              · يُحسب من الوحدات المشغولة فقط ومن الدفعات المسجّلة في وثيق.
+            </div>
+          </div>
+        );
+      })()}
 
       <div className="grid md:grid-cols-[1.65fr_1fr] gap-5 items-start">
         <div className="bg-white border border-line rounded-2xl shadow-sm">
@@ -903,7 +963,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                       <tfoot className="bg-paper border-t border-line text-xs text-muted">
                         <tr>
                           <td className="px-3 py-2" colSpan={2}>{rows.length} {ul} · عرض {slice.length} من {rows.length}</td>
-                          <td className="px-3 py-2 whitespace-nowrap">الدخل الشهري ≈ {sar(Math.round(rows.reduce((a, r) => a + (isVacant(r.t) ? 0 : (Number(r.t.rent_amount) || 0) / ({ daily: 1 / 30, weekly: 7 / 30, monthly: 1, quarterly: 3, semiannual: 6, annual: 12 } as any)[r.t.payment_frequency || "monthly"]), 0)))}</td>
+                          <td className="px-3 py-2 whitespace-nowrap">سنوي ≈ {sar(Math.round(annualIncome))} · شهري ≈ {sar(Math.round(monthlyIncome))}</td>
                           <td className="px-3 py-2 whitespace-nowrap" colSpan={2}>{nearest ? `أقرب استحقاق: ${nearest}` : "—"}</td>
                           <td className={`px-3 py-2 text-left font-bold ${totalDue > 0 ? "text-late" : ""}`}>{totalDue > 0 ? sar(totalDue) : "—"}</td>
                           <td></td>
