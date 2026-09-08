@@ -80,6 +80,20 @@ const METHOD_AR: Record<string, string> = {
 };
 const methodAr = (m?: string | null) => METHOD_AR[String(m || "")] || "—";
 /** صف السجل: الدفعة السالبة تراجعٌ موثّق — تُسمّى باسمها لا «أخرى» */
+/**
+ * الدخل السنوي المتوقع للعقار: إيجارات الوحدات المشغولة مُقيَّسة على سنة.
+ * يجيب سؤال المالك الأول — «كم يُدخل هذا العقار في السنة؟» — ويجعل المحصَّل
+ * خلال الفترة رقمًا له مرجع بدل أن يكون معلّقًا في الهواء.
+ */
+const PER_YEAR: Record<string, number> = { daily: 365, weekly: 52, monthly: 12, quarterly: 4, semiannual: 2, annual: 1 };
+function annualExpected(tenants: any[]): number {
+  return (tenants || []).reduce((a, t) => {
+    if (isVacant(t)) return a;
+    const per = PER_YEAR[String(t.payment_frequency || "monthly")] ?? 12;
+    return a + (Number(t.rent_amount) || 0) * per;
+  }, 0);
+}
+
 const payMethod = (x: { method?: string | null; amount?: number | null }) =>
   Number(x.amount) < 0 ? "↩︎ تراجع عن دفعة" : methodAr(x.method);
 
@@ -1553,7 +1567,9 @@ ${exp.length ? `<div class="scrollx"><table>
 <h2>الحساب الختامي للمالك</h2>
 <table>
   <tbody>
-    <tr><td>المحصَّل خلال الفترة</td><td style="text-align:left"><b>${sar(fin.collected)}</b></td></tr>
+    ${(() => { const y = annualExpected(p.tenants as any[]); return y > 0
+      ? `<tr><td>الدخل السنوي المتوقع للعقار <span style="font-size:.72rem;color:#5C6B67">(الوحدات المشغولة)</span></td><td style="text-align:left">${sar(y)}</td></tr>` : ""; })()}
+    <tr><td>المحصَّل خلال الفترة</td><td style="text-align:left"><b>${sar(fin.collected)}</b>${(() => { const y = annualExpected(p.tenants as any[]); return y > 0 ? ` <span style="font-size:.72rem;color:#5C6B67">(${Math.min(100, Math.round((fin.collected / y) * 100))}% من السنوي)</span>` : ""; })()}</td></tr>
     <tr><td>(−) مصروفات الفترة</td><td style="text-align:left">${sar(fin.expenses)}</td></tr>
     ${fin.feePct !== null ? `<tr><td>(−) أتعاب الإدارة (${fin.feePct}% من المحصَّل)</td><td style="text-align:left">${sar(fin.fee)}</td></tr>` : ""}
     <tr><td><b>صافي المالك عن ${period.label}</b></td><td style="text-align:left"><b style="font-size:1.1rem">${sar(fin.net)} ريال</b></td></tr>
@@ -1621,6 +1637,7 @@ ${header("كشف حساب مالك — مجمّع", ownerName)}
 <div class="sub">${rows.length} ${rows.length === 1 ? "عقار" : "عقارات"} · ${T.units} وحدة · الفترة: <b>${period.label}</b> (${arDate(period.from)} إلى ${arDate(period.to)})</div>
 
 <div class="tot">
+  <div><div class="v">${sar(rows.reduce((a, r) => a + annualExpected(r.s.property.tenants as any[]), 0))}</div><div class="l">الدخل السنوي المتوقع (ريال)</div></div>
   <div><div class="v g">${sar(T.collected)}</div><div class="l">المُحصَّل (ريال)</div></div>
   <div><div class="v">${sar(T.expenses)}</div><div class="l">المصروفات (ريال)</div></div>
   ${anyFee ? `<div><div class="v">${sar(T.fee)}</div><div class="l">أتعاب الإدارة (ريال)</div></div>` : ""}
@@ -1629,11 +1646,12 @@ ${header("كشف حساب مالك — مجمّع", ownerName)}
 
 <h2>ملخص العقارات</h2>
 <div class="scrollx"><table>
-  <thead><tr><th>العقار</th><th>الوحدات</th><th>شاغرة</th><th>المُحصَّل</th><th>المصروفات</th>${anyFee ? "<th>الأتعاب</th>" : ""}<th>الصافي</th><th>متأخرات قائمة</th></tr></thead>
+  <thead><tr><th>العقار</th><th>الوحدات</th><th>شاغرة</th><th>الدخل السنوي المتوقع</th><th>المُحصَّل</th><th>المصروفات</th>${anyFee ? "<th>الأتعاب</th>" : ""}<th>الصافي</th><th>متأخرات قائمة</th></tr></thead>
   <tbody>
     ${rows.map((r) => `<tr>
       <td><b>${r.s.property.name}</b><div style="font-size:.72rem;color:#5C6B67">${typeLabel(r.s.property.property_type)}${r.s.property.city ? ` · ${r.s.property.city}` : ""}</div></td>
       <td>${r.units}</td><td>${r.vacant || "—"}</td>
+      <td>${sar(annualExpected(r.s.property.tenants as any[]))}</td>
       <td>${sar(r.fin.collected)}</td><td>${sar(r.fin.expenses)}</td>
       ${anyFee ? `<td>${r.fin.feePct !== null ? `${sar(r.fin.fee)} <span style="font-size:.7rem;color:#5C6B67">(${r.fin.feePct}%)</span>` : "—"}</td>` : ""}
       <td><b>${sar(r.fin.net)}</b></td>
@@ -1641,6 +1659,7 @@ ${header("كشف حساب مالك — مجمّع", ownerName)}
     </tr>`).join("")}
     <tr>
       <td><b>الإجمالي</b></td><td><b>${T.units}</b></td><td>${T.vacant || "—"}</td>
+      <td><b>${sar(rows.reduce((a, r) => a + annualExpected(r.s.property.tenants as any[]), 0))}</b></td>
       <td><b>${sar(T.collected)}</b></td><td><b>${sar(T.expenses)}</b></td>
       ${anyFee ? `<td><b>${sar(T.fee)}</b></td>` : ""}
       <td><b style="font-size:1.05rem">${sar(T.net)}</b></td>
