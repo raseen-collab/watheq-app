@@ -167,6 +167,8 @@ export type ContractState = {
   daysToEnd: number | null;
   status: "late" | "soon" | "ok";  // أحمر / أصفر / أخضر — لم يتغيّر (يعتمد عليه البوت)
   statusLabel: string;
+  /** داخل نافذة «قريب»: near = قريب، due = مستحق (النافذة الأقرب)، today = يستحق اليوم */
+  soonTier: "near" | "due" | "today" | null;
   /** سدّد كل دفعات العقد — لا استحقاق قادم قبل انتهائه، والقادم يكون مع التجديد */
   fullyPaid: boolean;
   inGrace: boolean;        // مرّ الاستحقاق لكن ضمن فترة السماح — لا يُعدّ متأخرًا
@@ -193,13 +195,15 @@ export function contractState(t: {
   status?: string | null;
   move_out_date?: string | null;
   calendar?: string | null;
-}, opts: { graceDays?: number | null; soonDays?: number | null } = {}): ContractState {
+}, opts: { graceDays?: number | null; soonDays?: number | null; imminentDays?: number | null } = {}): ContractState {
   const anchor = anchorOf(t);
   // الوحدة المُخلاة تتوقّف عن تراكم المتأخرات من تاريخ الإخلاء — لا تبقى "متأخرة" للأبد
   const vacated = isVacant(t) && !!t.move_out_date;
   const grace = Math.max(0, Math.min(30, Number(opts.graceDays) || 0));
   // نافذة «يستحق قريبًا» — يختارها كل مكتب (افتراضيًّا 7 أيام)
-  const soon = Math.max(1, Math.min(60, Number(opts.soonDays) || 7));
+  const soon = Math.max(1, Math.min(60, Number(opts.soonDays) || 10));
+  // «مستحق»: نافذة أقرب داخل «قريب» — إن ضُبطت أكبر من «قريب» تُقصّ إليها
+  const imminent = Math.min(soon, Math.max(1, Number(opts.imminentDays) || 5));
   const cal = (t.calendar === "hijri" ? "hijri" : "gregorian") as ContractCalendar;
   const freq = (t.payment_frequency || "monthly") as Frequency;
   const rent = Number(t.rent_amount) || 0;
@@ -210,7 +214,7 @@ export function contractState(t: {
 
   if (!t.contract_start) {
     return {
-      due: 0, paid, unpaid: 0, amountDue: 0, grossDue: 0, partial, hasPartial: partial > 0, fullyPaid: false,
+      due: 0, paid, unpaid: 0, amountDue: 0, grossDue: 0, partial, hasPartial: partial > 0, fullyPaid: false, soonTier: null,
       partialPct: rent ? Math.round((partial / rent) * 100) : 0,
       nextDueDate: null, daysToNextDue: null,
       endDate: t.contract_end || null,
@@ -262,9 +266,14 @@ export function contractState(t: {
   } else if (inGrace) {
     status = "soon";
     statusLabel = graceDaysLeft > 0 ? `فترة سماح — ${graceDaysLeft} يوم` : "فترة سماح";
-  } else if (daysToNextDue !== null && daysToNextDue <= soon) {
+  }
+  let soonTier: ContractState["soonTier"] = null;
+  if (status === "ok" && daysToNextDue !== null && daysToNextDue <= soon) {
     status = "soon";
-    statusLabel = daysToNextDue <= 0 ? "يستحق اليوم" : `يستحق خلال ${daysToNextDue} يوم`;
+    soonTier = daysToNextDue <= 0 ? "today" : daysToNextDue <= imminent ? "due" : "near";
+    statusLabel = soonTier === "today" ? "يستحق اليوم"
+      : soonTier === "due" ? `مستحق — خلال ${daysToNextDue} يوم`
+      : `قريب — خلال ${daysToNextDue} يوم`;
   }
   /* سدّد العقد كله مقدّمًا (سنة كاملة مثلًا): لا «القادمة» بعد اليوم — ما يهم
      المكتب أن يرى «مسدَّد كامل العقد» ومتى ينتهي ليجدّده، لا صفًا صامتًا */
@@ -272,7 +281,7 @@ export function contractState(t: {
   if (fullyPaid && status === "ok") statusLabel = "مسدَّد كامل العقد";
 
   return {
-    due, paid, unpaid, amountDue, grossDue, partial, hasPartial, partialPct, fullyPaid,
+    due, paid, unpaid, amountDue, grossDue, partial, hasPartial, partialPct, fullyPaid, soonTier,
     nextDueDate, daysToNextDue, endDate, daysToEnd, status, statusLabel, progress,
     inGrace, graceDaysLeft,
   };
