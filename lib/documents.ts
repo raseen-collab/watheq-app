@@ -65,8 +65,10 @@ type Tenant = {
   rent_amount: number; contract_start: string | null; contract_end: string | null;
   payment_frequency: string | null; paid_periods: number | null; contract_periods: number | null;
   partial_amount?: number | null; contract_no?: string | null;
+  unit_type?: string | null; rooms?: number | null; baths?: number | null; acs?: number | null; first_due?: string | null;
 };
 type Property = {
+  usage?: string | null;
   name: string; address: string | null; city: string | null; manager: string | null; property_type: string | null;
   grace_days?: number | null;
   vat_enabled?: boolean | null; vat_rate?: number | null; vat_inclusive?: boolean | null;
@@ -85,6 +87,15 @@ const methodAr = (m?: string | null) => METHOD_AR[String(m || "")] || "—";
  * يجيب سؤال المالك الأول — «كم يُدخل هذا العقار في السنة؟» — ويجعل المحصَّل
  * خلال الفترة رقمًا له مرجع بدل أن يكون معلّقًا في الهواء.
  */
+const UNIT_TYPE_AR: Record<string, string> = { apartment: "شقة", annex: "شقة ملحق", studio: "استديو", room: "غرفة", shop: "محل", office: "مكتب", warehouse: "مستودع", land: "أرض", villa: "فيلا", other: "وحدة" };
+const USAGE_AR: Record<string, string> = { families: "سكني — عوائل", singles: "سكني — عزّاب", mixed: "سكني تجاري", commercial: "تجاري" };
+/** وصف الوحدة في المستندات: «شقة ملحق رقم 3 — 2 غرف · 1 دورة مياه · 2 مكيف» */
+function unitDesc(t: any, p: any): string {
+  const type = t.unit_type ? (UNIT_TYPE_AR[t.unit_type] || "وحدة") : unitLabel(p?.property_type);
+  const specs = [t.rooms ? `${t.rooms} غرف` : "", t.baths ? `${t.baths} دورات مياه` : "", t.acs ? `${t.acs} مكيف` : ""].filter(Boolean).join(" · ");
+  return `${type} رقم (${t.unit || "—"})${specs ? ` — ${specs}` : ""}`;
+}
+
 const PER_YEAR: Record<string, number> = { daily: 365, weekly: 52, monthly: 12, quarterly: 4, semiannual: 2, annual: 1 };
 function annualExpected(tenants: any[]): number {
   return (tenants || []).reduce((a, t) => {
@@ -300,6 +311,9 @@ ${header("كشف حساب", `${t.name}`)}
   <div class="box">
     <h3>بيانات العقد</h3>
     ${t.contract_no ? `<div class="r"><span>رقم العقد</span><span dir="ltr"><b>${t.contract_no}</b></span></div>` : ""}
+    <div class="r"><span>الوحدة</span><span>${unitDesc(t, p)}</span></div>
+    ${p.usage ? `<div class="r"><span>استخدام العقار</span><span>${USAGE_AR[String(p.usage)] || p.usage}</span></div>` : ""}
+    ${t.first_due ? `<div class="r"><span>أول استحقاق</span><span>${arDateH(t.first_due)}</span></div>` : ""}
     <div class="r"><span>بداية العقد</span><span>${arDateH(t.contract_start)}</span></div>
     <div class="r"><span>نهاية العقد</span><span>${arDateH(st.endDate)}</span></div>
     <div class="r"><span>دورة السداد</span><span>${freqLabel(t.payment_frequency)}</span></div>
@@ -1158,6 +1172,9 @@ ${header("مخالصة إخلاء", t.name)}
   <div class="box">
     <h3>بيانات الإخلاء</h3>
     ${t.contract_no ? `<div class="r"><span>رقم العقد</span><span dir="ltr"><b>${t.contract_no}</b></span></div>` : ""}
+    <div class="r"><span>الوحدة</span><span>${unitDesc(t, p)}</span></div>
+    ${p.usage ? `<div class="r"><span>استخدام العقار</span><span>${USAGE_AR[String(p.usage)] || p.usage}</span></div>` : ""}
+    ${t.first_due ? `<div class="r"><span>أول استحقاق</span><span>${arDateH(t.first_due)}</span></div>` : ""}
     <div class="r"><span>بداية العقد</span><span>${arDateH(t.contract_start)}</span></div>
     <div class="r"><span>نهاية العقد</span><span>${arDateH(st.endDate)}</span></div>
     ${t.notice_date ? `<div class="r"><span>تاريخ الإشعار</span><span>${arDate(t.notice_date)}</span></div>` : ""}

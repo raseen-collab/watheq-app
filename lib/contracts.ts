@@ -146,8 +146,15 @@ export function derivedEndDate(
 }
 
 /** يوم المرساة: المحفوظ، وإلا يوم بداية العقد */
-export const anchorOf = (t: { billing_anchor_day?: number | null; contract_start?: string | null }) =>
-  Number(t?.billing_anchor_day) || (t?.contract_start ? parseDate(t.contract_start).getDate() : null);
+export const anchorOf = (t: { billing_anchor_day?: number | null; contract_start?: string | null; first_due?: string | null }) =>
+  Number(t?.billing_anchor_day) || (t?.first_due ? parseDate(t.first_due).getDate() : t?.contract_start ? parseDate(t.contract_start).getDate() : null);
+
+/**
+ * بداية جدول الدفعات: أول استحقاق إن حُدّد (العقد يبدأ 1/1 والدفعة الأولى
+ * 5/1)، وإلا بداية العقد. كل الدفعات التالية تُعدّ منها.
+ */
+export const scheduleStart = (t: { contract_start?: string | null; first_due?: string | null }) =>
+  t?.first_due || t?.contract_start || null;
 
 /** هل الوحدة شاغرة (أُخليت)؟ */
 export const isVacant = (t: { status?: string | null }) => String(t?.status || "active") === "vacated";
@@ -169,6 +176,8 @@ export type ContractState = {
   statusLabel: string;
   /** داخل نافذة «قريب»: near = قريب، due = مستحق (النافذة الأقرب)، today = يستحق اليوم */
   soonTier: "near" | "due" | "today" | null;
+  /** العقد ينتهي خلال نافذة «تنتهي قريبًا» التي يحددها المكتب */
+  expiringSoon: boolean;
   /** سدّد كل دفعات العقد — لا استحقاق قادم قبل انتهائه، والقادم يكون مع التجديد */
   fullyPaid: boolean;
   inGrace: boolean;        // مرّ الاستحقاق لكن ضمن فترة السماح — لا يُعدّ متأخرًا
@@ -194,8 +203,8 @@ export function contractState(t: {
   billing_anchor_day?: number | null;
   status?: string | null;
   move_out_date?: string | null;
-  calendar?: string | null;
-}, opts: { graceDays?: number | null; soonDays?: number | null; imminentDays?: number | null } = {}): ContractState {
+  calendar?: string | null; first_due?: string | null;
+}, opts: { graceDays?: number | null; soonDays?: number | null; imminentDays?: number | null; expiringDays?: number | null } = {}): ContractState {
   const anchor = anchorOf(t);
   // الوحدة المُخلاة تتوقّف عن تراكم المتأخرات من تاريخ الإخلاء — لا تبقى "متأخرة" للأبد
   const vacated = isVacant(t) && !!t.move_out_date;
@@ -214,7 +223,7 @@ export function contractState(t: {
 
   if (!t.contract_start) {
     return {
-      due: 0, paid, unpaid: 0, amountDue: 0, grossDue: 0, partial, hasPartial: partial > 0, fullyPaid: false, soonTier: null,
+      due: 0, paid, unpaid: 0, amountDue: 0, grossDue: 0, partial, hasPartial: partial > 0, fullyPaid: false, soonTier: null, expiringSoon: false,
       partialPct: rent ? Math.round((partial / rent) * 100) : 0,
       nextDueDate: null, daysToNextDue: null,
       endDate: t.contract_end || null,
@@ -224,14 +233,15 @@ export function contractState(t: {
     };
   }
 
-  const start = parseDate(t.contract_start);
+  const schedStart = scheduleStart(t) as string;
+  const start = parseDate(schedStart);
   // مرجع الاحتساب: اليوم، أو تاريخ الإخلاء إن كانت الوحدة مُخلاة (أيّهما أسبق)
   const now = new Date();
   const cutoff = vacated ? new Date(Math.min(Date.parse(String(t.move_out_date)), now.getTime())) : now;
   // فترة السماح: تُحتسب الدفعة مستحقّة رسميًّا بعد مرور أيام السماح
   const graceRef = new Date(cutoff); graceRef.setDate(graceRef.getDate() - grace);
-  const due = periodsElapsed(t.contract_start, freq, graceRef, anchor, cal);
-  const dueStrict = grace > 0 ? periodsElapsed(t.contract_start, freq, cutoff, anchor, cal) : due;
+  const due = periodsElapsed(schedStart, freq, graceRef, anchor, cal);
+  const dueStrict = grace > 0 ? periodsElapsed(schedStart, freq, cutoff, anchor, cal) : due;
   const unpaid = Math.max(0, due - paid);
   const grossDue = unpaid * rent;
   const amountDue = Math.max(0, grossDue - partial);
@@ -244,7 +254,9 @@ export function contractState(t: {
   const daysToNextDue = daysBetween(nextDue, today);
 
   // نهاية العقد: يدوية أو مستنتجة
-  const endDate = t.contract_end || derivedEndDate(t.contract_start, freq, t.contract_periods, anchor, cal);
+  // نهاية العقد تُعدّ من بداية العقد بيومها هي — لا من يوم أول استحقاق
+  const endAnchor = Number(t.billing_anchor_day) || parseDate(t.contract_start).getDate();
+  const endDate = t.contract_end || derivedEndDate(t.contract_start, freq, t.contract_periods, endAnchor, cal);
   const daysToEnd = daysBetween(new Date(endDate), today);
 
   // استُحقّت دفعة فعليًّا لكنها لم تُحتسب متأخرة بعد بفضل السماح
@@ -278,10 +290,12 @@ export function contractState(t: {
   /* سدّد العقد كله مقدّمًا (سنة كاملة مثلًا): لا «القادمة» بعد اليوم — ما يهم
      المكتب أن يرى «مسدَّد كامل العقد» ومتى ينتهي ليجدّده، لا صفًا صامتًا */
   const fullyPaid = unpaid === 0 && paid >= totalPeriods;
+  const expWin = Math.max(1, Math.min(180, Number(opts.expiringDays) || 60));
+  const expiringSoon = daysToEnd !== null && daysToEnd >= 0 && daysToEnd <= expWin;
   if (fullyPaid && status === "ok") statusLabel = "مسدَّد كامل العقد";
 
   return {
-    due, paid, unpaid, amountDue, grossDue, partial, hasPartial, partialPct, fullyPaid, soonTier,
+    due, paid, unpaid, amountDue, grossDue, partial, hasPartial, partialPct, fullyPaid, soonTier, expiringSoon,
     nextDueDate, daysToNextDue, endDate, daysToEnd, status, statusLabel, progress,
     inGrace, graceDaysLeft,
   };
