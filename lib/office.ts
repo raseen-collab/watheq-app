@@ -23,7 +23,16 @@ export type Office = {
   plan: string | null;
   trialEndsAt: string | null;
   subscribedUntil: string | null;
+  /** الصلاحيات الفعّالة للموظف (الدور + استثناءاته) — للإخفاء في الواجهة فقط */
+  perms: Record<string, boolean>;
 };
+
+/** المالك يملك كل شيء؛ والموظف بحسب ما ترجعه القاعدة */
+export const PERM_KEYS = ["record_payments", "issue_invoices", "send_reminders", "add_notes",
+  "edit_tenants", "renew_contracts", "move_out", "manage_expenses", "manage_listings",
+  "manage_compliance", "view_financials", "owner_links", "export_data", "view_activity", "undo_actions"] as const;
+export const OWNER_PERMS: Record<string, boolean> = Object.fromEntries(PERM_KEYS.map((k) => [k, true]));
+export const can = (o: Office | null, k: string) => (o ? !!o.perms[k] : true);
 
 /** ذاكرة للجلسة الواحدة: سؤال «أين أعمل؟» لا يتغير أثناء التصفح */
 let cache: { uid: string; office: Office } | null = null;
@@ -36,6 +45,7 @@ export async function getOffice(supabase: SupabaseClient): Promise<Office | null
   let office: Office = {
     officeId: user.id, role: null, isOwner: true,
     accountType: null, orgName: null, plan: null, trialEndsAt: null, subscribedUntil: null,
+    perms: OWNER_PERMS,
   };
 
   // فشل الاستدعاء (قبل تشغيل v9b مثلًا) لا يكسر شيئًا: يُعامل الجميع مالكين
@@ -47,6 +57,7 @@ export async function getOffice(supabase: SupabaseClient): Promise<Office | null
         officeId: m.owner_id, role: m.role, isOwner: false,
         accountType: m.account_type, orgName: m.org_name,
         plan: m.plan, trialEndsAt: m.trial_ends_at, subscribedUntil: m.subscribed_until,
+        perms: (m.perms as Record<string, boolean>) || {},
       };
     }
   } catch { /* يبقى مالكًا */ }
