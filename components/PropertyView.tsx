@@ -15,6 +15,7 @@ import { alertCount, type ComplianceItem } from "@/lib/compliance";
 import ComplianceModal from "@/components/ComplianceModal";
 import OwnerStatementModal from "@/components/OwnerStatementModal";
 import ActivityLog from "@/components/ActivityLog";
+import StatusLegend from "@/components/StatusLegend";
 import ExpensesModal from "@/components/ExpensesModal";
 import OwnerLinkModal from "@/components/OwnerLinkModal";
 import type { ExpenseRow } from "@/lib/expenses";
@@ -44,7 +45,7 @@ type Note = { id: string; note_date: string; text: string };
 type Property = {
   id: string; name: string; address: string | null; city: string | null; manager: string | null;
   property_type: string | null; collected: number;
-  grace_days?: number | null;
+  grace_days?: number | null; soon_days?: number | null; imminent_days?: number | null;
   vat_enabled?: boolean | null; vat_rate?: number | null; vat_inclusive?: boolean | null;
   mgmt_fee_pct?: number | null;
   owner_name?: string | null;
@@ -52,7 +53,7 @@ type Property = {
 };
 
 /** حالة الصف المعروضة (تشمل «في التنفيذ») */
-type RowKey = "vacant" | "litigation" | "late" | "partial" | "soon" | "expiring" | "ok";
+type RowKey = "vacant" | "litigation" | "late" | "partial" | "due" | "soon" | "expiring" | "ok";
 type Row = { t: Tenant; st: ReturnType<typeof contractState>; key: RowKey };
 
 const ROW_META: Record<RowKey, { label: string; dot: string; cls: string }> = {
@@ -60,7 +61,8 @@ const ROW_META: Record<RowKey, { label: string; dot: string; cls: string }> = {
   litigation: { label: "في التنفيذ",  dot: "bg-[#64748B]", cls: "bg-[#EEF1F4] text-[#475569]" },
   late:       { label: "متأخر",        dot: "bg-late",      cls: "bg-[#FBE9E7] text-[#a5322c]" },
   partial:    { label: "سداد جزئي",    dot: "bg-[#EA8C00]", cls: "bg-[#FDF0DC] text-[#9A5B00]" },
-  soon:       { label: "يستحق قريبًا", dot: "bg-gold",      cls: "bg-[#FBF1DF] text-[#8a5a11]" },
+  due:        { label: "مستحق",        dot: "bg-[#D97706]", cls: "bg-[#FDECD2] text-[#9A4B00]" },
+  soon:       { label: "قريب",         dot: "bg-gold",      cls: "bg-[#FBF1DF] text-[#8a5a11]" },
   expiring:   { label: "نافذة التجديد", dot: "bg-[#7C3AED]", cls: "bg-[#F1EBFC] text-[#5B21B6]" },
   ok:         { label: "منتظم",        dot: "bg-paid",      cls: "bg-[#E6F4EC] text-[#137a50]" },
 };
@@ -69,15 +71,21 @@ function rowKey(t: Tenant, st: ReturnType<typeof contractState>): RowKey {
   if (isVacant(t)) return "vacant";
   if (t.litigation) return "litigation";
   if (st.status === "late") return st.hasPartial ? "partial" : "late";
-  if (st.status === "soon") return "soon";
+  if (st.status === "soon") return st.soonTier === "near" ? "soon" : "due";
   if (st.daysToEnd !== null && st.daysToEnd <= 60 && st.daysToEnd >= 0) return "expiring";
   return "ok";
 }
 
-const URGENCY: Record<RowKey, number> = { late: 0, partial: 1, soon: 2, expiring: 3, litigation: 4, vacant: 5, ok: 6 };
+const URGENCY: Record<RowKey, number> = { late: 0, partial: 1, due: 2, soon: 3, expiring: 4, litigation: 5, vacant: 6, ok: 7 };
 
-export default function PropertyView({ initial, orgName, issuer, compliance, dueSoonDays }: { initial: Property[]; orgName: string; issuer?: any; compliance?: ComplianceItem[]; dueSoonDays?: number | null }) {
-  const soonDays = Math.max(1, Math.min(60, Number(dueSoonDays) || 7));
+export default function PropertyView({ initial, orgName, issuer, compliance, dueSoonDays, dueImminentDays }: { initial: Property[]; orgName: string; issuer?: any; compliance?: ComplianceItem[]; dueSoonDays?: number | null; dueImminentDays?: number | null }) {
+  // نوافذ الحالة: افتراضي المكتب، وكل عقار يستطيع تجاوزه من إعداداته
+  const officeSoon = Math.max(1, Math.min(60, Number(dueSoonDays) || 10));
+  const officeImminent = Math.max(1, Math.min(60, Number(dueImminentDays) || 5));
+  const windowsOf = (p?: { soon_days?: number | null; imminent_days?: number | null } | null) => ({
+    soonDays: Number(p?.soon_days) || officeSoon,
+    imminentDays: Number(p?.imminent_days) || officeImminent,
+  });
   const supabase = createClient();
   const router = useRouter();
   /** يضمن أن كل عقار يحمل مصفوفتيه — يمنع انكسار العرض عند صفٍّ جديد */
@@ -182,16 +190,16 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
   const allRowsForFilter: Row[] = useMemo(() => {
     const prop = active;
     if (!prop) return [];
-    const g = { graceDays: Number(prop.grace_days) || 0 };
+    const g = { graceDays: Number(prop.grace_days) || 0, ...windowsOf(prop) };
     const list = Array.isArray(prop.tenants) ? prop.tenants : [];
-    return list.map((t) => { const st = contractState(t, { ...g, soonDays }); return { t, st, key: rowKey(t, st) }; });
+    return list.map((t) => { const st = contractState(t, g); return { t, st, key: rowKey(t, st) }; });
   }, [active]);
 
   // الصفوف المعروضة: بحث ← تصفية ← فرز
   const rows = useMemo(() => {
     const needle = q.trim().toLowerCase();
     let out = allRowsForFilter.filter((r) => {
-      if (filter !== "all" && r.key !== filter) return false;
+      if (filter !== "all" && r.key !== filter && !(filter === "soon" && r.key === "due")) return false;
       if (!needle) return true;
       return [r.t.name, r.t.unit, r.t.phone, r.t.contract_no].filter(Boolean)
         .some((v) => String(v).toLowerCase().includes(needle));
@@ -316,6 +324,8 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       name: d.name, address: d.address || null, city: d.city || null,
       manager: d.manager || orgName || null, property_type: d.property_type || "residential",
       grace_days: Math.max(0, Math.min(30, Number(d.grace_days) || 0)),
+      soon_days: d.soon_days ? Math.max(1, Math.min(60, Number(d.soon_days))) : null,
+      imminent_days: d.imminent_days ? Math.max(1, Math.min(60, Number(d.imminent_days))) : null,
       vat_enabled: !!d.vat_enabled,
       vat_rate: Number(d.vat_rate) || 15,
       vat_inclusive: d.vat_inclusive !== false,
@@ -495,7 +505,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
     const head = ["الاسم", ul, "الجوال", "الهوية/السجل", "الإيجار", "الدورة",
       "بداية العقد", "نهاية العقد", "الحالة", "المتأخر (ريال)", "الدفعة القادمة"];
     const lines = (active.tenants || []).map((t) => {
-      const st = contractState(t, { ...g, soonDays });
+      const st = contractState(t, g);
       const key = rowKey(t, st);
       return [t.name, t.unit || "", t.phone || "", t.national_id || "",
         Number(t.rent_amount) || 0, freqShort(t.payment_frequency),
@@ -669,22 +679,23 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
   // ملخّص المحفظة كاملة (كل العقارات)
   const portfolio = items.reduce((acc, prop) => {
     (Array.isArray(prop.tenants) ? prop.tenants : []).forEach((t) => {
-      const st = contractState(t, { graceDays: Number(prop.grace_days) || 0, soonDays });
+      const st = contractState(t, { graceDays: Number(prop.grace_days) || 0, ...windowsOf(prop) });
       acc.units++;
       if (st.status === "late") { acc.late++; acc.overdue += st.amountDue; }
-      if (st.status === "soon") acc.soon++;
+      if (st.status === "soon") { if (st.soonTier === "near") acc.soon++; else acc.due++; }
       if (st.daysToEnd !== null && st.daysToEnd <= 60 && st.daysToEnd >= 0) acc.expiring++;
       if (isVacant(t)) acc.vacant++;
       acc.monthly += (Number(t.rent_amount) || 0) * PERIODS_PER_MONTH[(t.payment_frequency || "monthly") as Frequency];
     });
     return acc;
-  }, { units: 0, late: 0, soon: 0, overdue: 0, expiring: 0, monthly: 0, vacant: 0 });
+  }, { units: 0, late: 0, soon: 0, due: 0, overdue: 0, expiring: 0, monthly: 0, vacant: 0 });
   const occupancyPct = portfolio.units
     ? Math.round(((portfolio.units - portfolio.vacant) / portfolio.units) * 100) : 100;
 
   const chips: { k: "all" | RowKey; label: string }[] = [
     { k: "all", label: `الكل ${allRows.length}` },
     { k: "late", label: `متأخر ${counts.late || 0}` },
+    { k: "due", label: `مستحق ${counts.due || 0}` },
     { k: "soon", label: `قريب ${counts.soon || 0}` },
     { k: "expiring", label: `تجديد ${counts.expiring || 0}` },
     { k: "litigation", label: `تنفيذ ${counts.litigation || 0}` },
@@ -706,7 +717,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
           <PortfolioStat v={String(portfolio.units)} l="وحدة" />
           <PortfolioStat v={String(portfolio.late)} l="متأخرة" tone={portfolio.late ? "warn" : undefined} />
           <PortfolioStat v={sar(portfolio.overdue)} l="ريال متأخر" tone={portfolio.overdue ? "warn" : undefined} />
-          <PortfolioStat v={String(portfolio.soon)} l="تستحق خلال 7 أيام" />
+          <PortfolioStat v={String(portfolio.due + portfolio.soon)} l={`تستحق خلال ${officeSoon} يوم`} />
           <PortfolioStat v={String(portfolio.expiring)} l="عقود تنتهي قريبًا" />
           <PortfolioStat v={`${occupancyPct}%`} l={`إشغال (${portfolio.vacant} شاغرة)`} tone={portfolio.vacant ? "warn" : undefined} />
           <PortfolioStat v={sar(Math.round(portfolio.monthly))} l="دخل شهري تقريبي" />
@@ -756,7 +767,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
         <Stat v={sar(Math.round(monthlyIncome))} l="الدخل الشهري التقريبي" kpi="income" icon="↑" onClick={() => setFilter("all")} active={filter === "all"} />
         <Stat v={sar(overdue)} l={`المتأخر (${lateCount} وحدة)`} kpi="overdue" icon="!" onClick={() => { setFilter("late"); setSort("amount"); }} active={filter === "late"} />
-        <Stat v={String(counts.soon || 0)} l="تستحق خلال 7 أيام" kpi="soon" icon="●" onClick={() => setFilter("soon")} active={filter === "soon"} />
+        <Stat v={String((counts.due || 0) + (counts.soon || 0))} l={`تستحق خلال ${windowsOf(active).soonDays} يوم`} kpi="soon" icon="●" onClick={() => setFilter("soon")} active={filter === "soon"} />
         <Stat v={String(counts.expiring || 0)} l="عقود تنتهي قريبًا" kpi="expiring" icon="↻" onClick={() => setFilter("expiring")} active={filter === "expiring"} />
       </div>
 
@@ -807,6 +818,8 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
               <button type="button" onClick={() => pickView("cards")} className={`px-2.5 py-1 rounded-md ${view === "cards" ? "bg-deep text-goldSoft" : "text-muted hover:text-deep"}`} title="بطاقات">▦ بطاقات</button>
             </div>
             <h2 className="font-semibold">الوحدات والمستأجرون
+              {active && <StatusLegend soonDays={windowsOf(active).soonDays} imminentDays={windowsOf(active).imminentDays} graceDays={active.grace_days}
+                scope={active.soon_days || active.imminent_days ? `هذا العقار (${active.name})` : "المكتب"} />}
               {role && <span className="ms-2 text-[11px] font-normal bg-paper2 border border-line rounded-full px-2 py-0.5 text-muted">
                 دورك: {ROLE_LABEL[role] || role}
               </span>}
@@ -891,11 +904,11 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
               );
               const badge = (key: RowKey) => ({
                 late: "bg-[#FBE9E7] text-[#a5322c] border-[#F5C6C2]", partial: "bg-[#FDF6E3] text-[#7a5c12] border-[#EAD9A8]",
-                soon: "bg-[#FDF6E3] text-[#7a5c12] border-[#EAD9A8]", expiring: "bg-[#EEE9FB] text-[#4B3AA6] border-[#D9CEF6]",
+                due: "bg-[#FDECD2] text-[#9A4B00] border-[#F5CFA0]", soon: "bg-[#FDF6E3] text-[#7a5c12] border-[#EAD9A8]", expiring: "bg-[#EEE9FB] text-[#4B3AA6] border-[#D9CEF6]",
                 litigation: "bg-[#F1F5F9] text-[#334155] border-[#CBD5E1]", vacant: "bg-[#EEF2F7] text-[#475569] border-[#CBD5E1]",
                 ok: "bg-[#E6F4EC] text-[#137a50] border-[#B7DFC7]",
               })[key];
-              const label = (key: RowKey) => ({ late: "متأخر", partial: "سداد جزئي", soon: "قريب", expiring: "ينتهي قريبًا", litigation: "تنفيذ", vacant: "شاغرة", ok: "منتظم" })[key];
+              const label = (key: RowKey) => ({ late: "متأخر", partial: "سداد جزئي", due: "مستحق", soon: "قريب", expiring: "ينتهي قريبًا", litigation: "تنفيذ", vacant: "شاغرة", ok: "منتظم" })[key];
               return (
                 <div className="border border-line rounded-xl overflow-hidden">
                   <div className="overflow-x-auto">
@@ -1013,6 +1026,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                         : st.inGrace ? <span className="text-[#8a5a11] font-semibold">فترة سماح — {st.graceDaysLeft} يوم</span>
                         : key === "partial" ? <span className="text-[#9A5B00] font-semibold">دُفع {sar(st.partial)} · متبقٍ {sar(st.amountDue)}</span>
                         : key === "late" ? <span className="text-late font-bold">متأخر {sar(st.amountDue)}</span>
+                        : key === "due" ? <span className="text-[#9A4B00] font-semibold">{st.statusLabel}{st.nextDueDate ? <span className="font-normal text-muted"> · {st.nextDueDate}</span> : null}</span>
                         : key === "expiring" && st.daysToEnd !== null ? <span className="text-[#5B21B6] font-semibold">ينتهي بعد {st.daysToEnd} يوم</span>
                         : key === "litigation" ? <span className="text-[#475569]">{t.enforcement_no ? `طلب ${t.enforcement_no}` : "متابعة نظامية"}</span>
                         : st.fullyPaid ? <span className="text-[#137a50] font-semibold">✓ سدّد كامل العقد{st.endDate ? <span className="font-normal text-muted"> · ينتهي {st.endDate}{st.daysToEnd !== null && st.daysToEnd >= 0 ? ` (بعد ${st.daysToEnd} يوم)` : ""} — القسط القادم مع التجديد</span> : null}</span>
@@ -1090,10 +1104,10 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
           كان يبقى مركَّبًا ويكتفي بإخفاء نفسه، فتبقى بيانات آخر إدخال ظاهرة
           في المرة التالية — لأن useState لا يُعاد تشغيله إلا عند التركيب. */}
       {modal?.kind === "newProp" && (
-        <PropertyModal open orgName={orgName} ownerNames={ownerNames} onClose={() => setModal(null)} onSubmit={(d) => saveProperty(d)} />
+        <PropertyModal open orgName={orgName} ownerNames={ownerNames} officeSoon={officeSoon} officeImminent={officeImminent} onClose={() => setModal(null)} onSubmit={(d) => saveProperty(d)} />
       )}
       {modal?.kind === "editProp" && active && (
-        <PropertyModal open initial={active} orgName={orgName} ownerNames={ownerNames}
+        <PropertyModal open initial={active} orgName={orgName} ownerNames={ownerNames} officeSoon={officeSoon} officeImminent={officeImminent}
           onClose={() => setModal(null)} onSubmit={(d) => saveProperty(d, active.id)} onDelete={deleteProperty} />
       )}
       {modal?.kind === "tenant" && (
@@ -1472,8 +1486,8 @@ function Shell({ children, onClose, wide }: { children: React.ReactNode; onClose
   );
 }
 
-function PropertyModal({ open, initial, orgName, ownerNames = [], onClose, onSubmit, onDelete }: {
-  open: boolean; initial?: Property; orgName: string; ownerNames?: string[]; onClose: () => void;
+function PropertyModal({ open, initial, orgName, ownerNames = [], officeSoon = 10, officeImminent = 5, onClose, onSubmit, onDelete }: {
+  open: boolean; initial?: Property; orgName: string; ownerNames?: string[]; officeSoon?: number; officeImminent?: number; onClose: () => void;
   onSubmit: (d: any) => void; onDelete?: () => void;
 }) {
   const [d, setD] = useState<any>(initial || { property_type: "residential", manager: orgName });
@@ -1499,6 +1513,18 @@ function PropertyModal({ open, initial, orgName, ownerNames = [], onClose, onSub
           <Field label="الحي / العنوان"><input className="fld" value={d.address || ""} onChange={(e) => setD({ ...d, address: e.target.value })} placeholder="حي الياسمين" /></Field>
         </div>
         <Field label="اسم المالك أو المكتب" hint="يظهر في الخطابات"><input className="fld" value={d.manager || ""} onChange={(e) => setD({ ...d, manager: e.target.value })} placeholder={orgName || "مكتب اليمامة"} /></Field>
+        <Field label="نافذة «قريب» لهذا العقار" hint={`فارغ = افتراضي المكتب (${officeSoon} يوم)`}>
+          <select className="fld" value={d.soon_days ?? ""} onChange={(e) => setD({ ...d, soon_days: e.target.value ? Number(e.target.value) : null })}>
+            <option value="">افتراضي المكتب</option>
+            {[3, 5, 7, 10, 14, 21, 30].map((n) => <option key={n} value={n}>{n} يوم</option>)}
+          </select>
+        </Field>
+        <Field label="نافذة «مستحق» لهذا العقار" hint={`فارغ = افتراضي المكتب (${officeImminent} يوم) — يجب أن تكون أقل من «قريب»`}>
+          <select className="fld" value={d.imminent_days ?? ""} onChange={(e) => setD({ ...d, imminent_days: e.target.value ? Number(e.target.value) : null })}>
+            <option value="">افتراضي المكتب</option>
+            {[1, 2, 3, 5, 7, 10].map((n) => <option key={n} value={n}>{n} يوم</option>)}
+          </select>
+        </Field>
         <Field label="المالك" hint="يجمع عقاراته في كشف حساب واحد — اختر اسمًا موجودًا أو اكتب جديدًا">
           <input className="fld" list="watheq-owner-names" value={d.owner_name || ""} onChange={(e) => setD({ ...d, owner_name: e.target.value })} placeholder="مثال: عبدالله بن سعد" />
           <datalist id="watheq-owner-names">{ownerNames.map((n) => <option key={n} value={n} />)}</datalist>

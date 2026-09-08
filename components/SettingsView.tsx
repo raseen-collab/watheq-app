@@ -53,7 +53,8 @@ export default function SettingsView({ profile }: { profile: any }) {
       vat_number: p.vat_number || null,
       notify_enabled: p.notify_enabled ?? true,
       notify_days_before: Number(p.notify_days_before) || 5,
-      due_soon_days: Math.max(1, Math.min(60, Number(p.due_soon_days) || 7)),
+      due_soon_days: Math.max(1, Math.min(60, Number(p.due_soon_days) || 10)),
+      due_imminent_days: Math.max(1, Math.min(60, Number(p.due_imminent_days) || 5)),
     }).eq("id", p.id);
     setSaving(false);
     if (error) { setMsg({ t: "err", m: error.message }); return; }
@@ -177,16 +178,23 @@ export default function SettingsView({ profile }: { profile: any }) {
           <div className="text-sm font-bold text-deep mb-2">متى يُعدّ الاستحقاق «قريبًا» ومتى يُعدّ المستأجر «متأخرًا»</div>
           <div className="grid sm:grid-cols-2 gap-3">
             <label className="block">
-              <span className="block text-sm font-semibold mb-1">يُعدّ «قريبًا» قبل الاستحقاق بـ</span>
-              <select className="fld" value={p.due_soon_days ?? 7} onChange={(e) => setP({ ...p, due_soon_days: e.target.value })}>
-                {[3, 5, 7, 10, 14, 21, 30].map((d) => <option key={d} value={d}>{d} يوم</option>)}
+              <span className="block text-sm font-semibold mb-1"><span className="inline-block w-2.5 h-2.5 rounded-full bg-gold me-1" />«قريب» — قبل الاستحقاق بـ</span>
+              <select className="fld" value={p.due_soon_days ?? 10} onChange={(e) => setP({ ...p, due_soon_days: e.target.value })}>
+                {[5, 7, 10, 14, 21, 30].map((d) => <option key={d} value={d}>{d} يوم</option>)}
               </select>
-              <span className="block text-[11px] text-muted mt-1">يظهر بلون ذهبي في اللوحة ضمن فلتر «قريب».</span>
+              <span className="block text-[11px] text-muted mt-1">للمتابعة الهادئة.</span>
             </label>
-            <div className="text-sm text-muted leading-relaxed">
-              <b className="text-deep">«متأخر»</b> يبدأ من اليوم التالي لتاريخ الاستحقاق — للمستأجر يومه كاملًا.
-              وإن أردت مهلة أطول، حدّد <b>«فترة السماح»</b> في إعدادات كل عقار (مثلًا 3 أيام) فتظهر الوحدة «فترة سماح» قبل أن تصير متأخرة.
-            </div>
+            <label className="block">
+              <span className="block text-sm font-semibold mb-1"><span className="inline-block w-2.5 h-2.5 rounded-full bg-[#D97706] me-1" />«مستحق» — قبل الاستحقاق بـ</span>
+              <select className="fld" value={p.due_imminent_days ?? 5} onChange={(e) => setP({ ...p, due_imminent_days: e.target.value })}>
+                {[1, 2, 3, 5, 7, 10].map((d) => <option key={d} value={d}>{d} يوم</option>)}
+              </select>
+              <span className="block text-[11px] text-muted mt-1">وقت التذكير. يجب أن تكون أقل من «قريب».</span>
+            </label>
+          </div>
+          <div className="text-sm text-muted leading-relaxed mt-3">
+            <b className="text-deep">النمط:</b> منتظم ← <span className="text-gold font-semibold">قريب</span> ← <span className="text-[#9A4B00] font-semibold">مستحق</span> ← يستحق اليوم ← <span className="text-late font-semibold">متأخر</span> (من اليوم التالي).
+            هذه إعدادات كل عقاراتك، ويمكن لأي عقار تجاوزها من إعداداته الخاصة. وإن أردت مهلة بعد الاستحقاق حدّد «فترة السماح» في إعدادات العقار.
           </div>
         </div>
 
