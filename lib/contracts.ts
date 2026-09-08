@@ -48,9 +48,57 @@ export function isoDate(d: Date): string {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 }
 
-/** إضافة (n) فترة إلى تاريخ — يراعي اختلاف أطوال الأشهر */
-export function addPeriods(date: Date, freq: Frequency, n: number, anchorDay?: number | null): Date {
+export type ContractCalendar = "gregorian" | "hijri";
+
+/**
+ * الدورة الهجرية: عقد يُكتب «كل 6 أشهر» بالهجري تكون أقساطه 1447/03/15 ثم
+ * 1447/09/15 — أي 177 يومًا لا 182. حسابها بالأشهر الميلادية يزحف 3–5 أيام
+ * في كل قسط، فيرى المكتب استحقاقًا لا يطابق عقده. هنا نضيف الأشهر بالتقويم
+ * الهجري (أم القرى) ونحوّل، مع قصّ اليوم 30 إلى 29 في الأشهر القصيرة.
+ */
+const H_FMT = typeof Intl !== "undefined"
+  ? new Intl.DateTimeFormat("en-u-ca-islamic-umalqura-nu-latn", { year: "numeric", month: "numeric", day: "numeric", timeZone: "UTC" })
+  : null;
+function toH(d: Date): { y: number; m: number; d: number } | null {
+  if (!H_FMT) return null;
+  const parts = H_FMT.formatToParts(new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate(), 12)));
+  const g = (t: string) => Number(parts.find((x) => x.type === t)?.value);
+  const y = g("year"), m = g("month"), dd = g("day");
+  return y && m && dd ? { y, m, d: dd } : null;
+}
+function fromH(y: number, m: number, d: number): Date | null {
+  if (!H_FMT) return null;
+  // تقدير ثم مسح ±60 يومًا — دقيق ومتسق مع المحوّل نفسه
+  const approx = Date.UTC(1882, 10, 12) + ((y - 1300) * 354.367 + (m - 1) * 29.53 + (d - 1)) * 86400000;
+  for (let off = -60; off <= 60; off++) {
+    const cand = new Date(approx + off * 86400000);
+    const local = new Date(cand.getUTCFullYear(), cand.getUTCMonth(), cand.getUTCDate());
+    const h = toH(local);
+    if (h && h.y === y && h.m === m && h.d === d) return local;
+  }
+  return null;
+}
+function addHijriMonths(date: Date, months: number, anchorDay?: number | null): Date {
+  const h = toH(date);
+  if (!h) return date;
+  const total = (h.y * 12 + (h.m - 1)) + months;
+  const y = Math.floor(total / 12), m = (total % 12) + 1;
+  const want = Math.min(30, Math.max(1, Number(anchorDay) || h.d));
+  // اليوم المطلوب، وإن لم يوجد في الشهر (30 في شهر عدّته 29) فالأقرب قبله
+  for (const d of [want, 29, 28].filter((x, i, a) => x <= want && a.indexOf(x) === i)) {
+    const r = fromH(y, m, d);
+    if (r) return r;
+  }
+  return date;
+}
+
+/** إضافة (n) فترة إلى تاريخ — يراعي اختلاف أطوال الأشهر، وبالهجري إن كان العقد هجريًّا */
+export function addPeriods(date: Date, freq: Frequency, n: number, anchorDay?: number | null, cal?: ContractCalendar | null): Date {
   const d = new Date(date.getTime());
+  if (cal === "hijri" && freq !== "daily" && freq !== "weekly") {
+    const months = freq === "monthly" ? 1 : freq === "quarterly" ? 3 : freq === "semiannual" ? 6 : 12;
+    return n === 0 ? d : addHijriMonths(d, months * n, anchorDay);
+  }
   switch (freq) {
     case "daily":  d.setDate(d.getDate() + n); break;
     case "weekly": d.setDate(d.getDate() + n * 7); break;
@@ -72,15 +120,17 @@ export function addPeriods(date: Date, freq: Frequency, n: number, anchorDay?: n
 
 /** كم فترة حان استحقاقها منذ بداية العقد حتى اليوم */
 export function periodsElapsed(
-  startISO: string | null | undefined, freq: Frequency, asOf?: Date, anchorDay?: number | null
+  startISO: string | null | undefined, freq: Frequency, asOf?: Date, anchorDay?: number | null, cal?: ContractCalendar | null
 ): number {
   if (!startISO) return 0;
   const start = parseDate(startISO);
   const today = startOfDay(asOf || new Date());
   if (today < start) return 0;
   let n = 0;
-  // الدفعة الأولى مستحقة عند البداية
-  while (addPeriods(start, freq, n, anchorDay) <= today && n < 5000) n++;
+  /* الدفعة تُعدّ متأخرة من اليوم التالي لاستحقاقها، لا في يوم الاستحقاق
+     نفسه — للمستأجر يومه كاملًا ليسدّد. (كانت تُعدّ متأخرة صباح يوم الاستحقاق،
+     فيرى المكتب «متأخر» قبل أن يتأخر أحد.) فترة السماح تُضاف فوق ذلك. */
+  while (addPeriods(start, freq, n, anchorDay, cal) < today && n < 5000) n++;
   return n;
 }
 
@@ -89,10 +139,10 @@ export const defaultTermPeriods = (freq: Frequency) => PERIODS_PER_YEAR[freq];
 
 /** تاريخ نهاية العقد المستنتج (إن لم يُدخل يدويًّا) */
 export function derivedEndDate(
-  startISO: string, freq: Frequency, periods?: number | null, anchorDay?: number | null
+  startISO: string, freq: Frequency, periods?: number | null, anchorDay?: number | null, cal?: ContractCalendar | null
 ): string {
   const n = periods && periods > 0 ? periods : defaultTermPeriods(freq);
-  return isoDate(addPeriods(parseDate(startISO), freq, n, anchorDay));
+  return isoDate(addPeriods(parseDate(startISO), freq, n, anchorDay, cal));
 }
 
 /** يوم المرساة: المحفوظ، وإلا يوم بداية العقد */
@@ -140,11 +190,15 @@ export function contractState(t: {
   billing_anchor_day?: number | null;
   status?: string | null;
   move_out_date?: string | null;
-}, opts: { graceDays?: number | null } = {}): ContractState {
+  calendar?: string | null;
+}, opts: { graceDays?: number | null; soonDays?: number | null } = {}): ContractState {
   const anchor = anchorOf(t);
   // الوحدة المُخلاة تتوقّف عن تراكم المتأخرات من تاريخ الإخلاء — لا تبقى "متأخرة" للأبد
   const vacated = isVacant(t) && !!t.move_out_date;
   const grace = Math.max(0, Math.min(30, Number(opts.graceDays) || 0));
+  // نافذة «يستحق قريبًا» — يختارها كل مكتب (افتراضيًّا 7 أيام)
+  const soon = Math.max(1, Math.min(60, Number(opts.soonDays) || 7));
+  const cal = (t.calendar === "hijri" ? "hijri" : "gregorian") as ContractCalendar;
   const freq = (t.payment_frequency || "monthly") as Frequency;
   const rent = Number(t.rent_amount) || 0;
   const paid = Math.max(0, Number(t.paid_periods) || 0);
@@ -170,8 +224,8 @@ export function contractState(t: {
   const cutoff = vacated ? new Date(Math.min(Date.parse(String(t.move_out_date)), now.getTime())) : now;
   // فترة السماح: تُحتسب الدفعة مستحقّة رسميًّا بعد مرور أيام السماح
   const graceRef = new Date(cutoff); graceRef.setDate(graceRef.getDate() - grace);
-  const due = periodsElapsed(t.contract_start, freq, graceRef, anchor);
-  const dueStrict = grace > 0 ? periodsElapsed(t.contract_start, freq, cutoff, anchor) : due;
+  const due = periodsElapsed(t.contract_start, freq, graceRef, anchor, cal);
+  const dueStrict = grace > 0 ? periodsElapsed(t.contract_start, freq, cutoff, anchor, cal) : due;
   const unpaid = Math.max(0, due - paid);
   const grossDue = unpaid * rent;
   const amountDue = Math.max(0, grossDue - partial);
@@ -179,18 +233,18 @@ export function contractState(t: {
   const partialPct = rent ? Math.round((partial / rent) * 100) : 0;
 
   // تاريخ الدفعة القادمة = بداية العقد + عدد الفترات المسدّدة
-  const nextDue = addPeriods(start, freq, paid, anchor);
+  const nextDue = addPeriods(start, freq, paid, anchor, cal);
   const nextDueDate = isoDate(nextDue);
   const daysToNextDue = daysBetween(nextDue, today);
 
   // نهاية العقد: يدوية أو مستنتجة
-  const endDate = t.contract_end || derivedEndDate(t.contract_start, freq, t.contract_periods, anchor);
+  const endDate = t.contract_end || derivedEndDate(t.contract_start, freq, t.contract_periods, anchor, cal);
   const daysToEnd = daysBetween(new Date(endDate), today);
 
   // استُحقّت دفعة فعليًّا لكنها لم تُحتسب متأخرة بعد بفضل السماح
   const inGrace = grace > 0 && dueStrict > due && dueStrict > paid;
   const graceDaysLeft = inGrace
-    ? Math.max(0, grace + daysBetween(addPeriods(start, freq, dueStrict - 1, anchor), today))
+    ? Math.max(0, grace + daysBetween(addPeriods(start, freq, dueStrict - 1, anchor, cal), today))
     : 0;
 
   const totalPeriods = t.contract_periods && t.contract_periods > 0 ? t.contract_periods : defaultTermPeriods(freq);
@@ -206,7 +260,7 @@ export function contractState(t: {
   } else if (inGrace) {
     status = "soon";
     statusLabel = graceDaysLeft > 0 ? `فترة سماح — ${graceDaysLeft} يوم` : "فترة سماح";
-  } else if (daysToNextDue !== null && daysToNextDue <= 7) {
+  } else if (daysToNextDue !== null && daysToNextDue <= soon) {
     status = "soon";
     statusLabel = daysToNextDue <= 0 ? "يستحق اليوم" : `يستحق خلال ${daysToNextDue} يوم`;
   }
@@ -226,7 +280,7 @@ export function buildSchedule(t: {
   paid_periods?: number | null;
   contract_periods?: number | null;
   partial_amount?: number | null;
-  billing_anchor_day?: number | null;
+  billing_anchor_day?: number | null; calendar?: string | null;
 }) {
   if (!t.contract_start) return [];
   const anchor = anchorOf(t);
@@ -239,7 +293,7 @@ export function buildSchedule(t: {
   const today = startOfDay(new Date());
 
   return Array.from({ length: Math.min(total, 400) }, (_, i) => {
-    const date = addPeriods(start, freq, i, anchor);
+    const date = addPeriods(start, freq, i, anchor, (t.calendar === "hijri" ? "hijri" : "gregorian"));
     const isPaid = i < paid;
     const isDue = date <= today;
     // أول دفعة غير مسدّدة هي التي يقع عليها السداد الجزئي
@@ -279,7 +333,7 @@ export function renewContract(t: {
   const amount = opts.newAmount && opts.newAmount > 0 ? opts.newAmount : (Number(t.rent_amount) || 0);
   return {
     contract_start: startISO,
-    contract_end: derivedEndDate(startISO, freq, periods, anchor),
+    contract_end: derivedEndDate(startISO, freq, periods, anchor, (t as any).calendar === "hijri" ? "hijri" : "gregorian"),
     payment_frequency: freq,
     contract_periods: periods,
     rent_amount: amount,

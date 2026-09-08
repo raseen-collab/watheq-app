@@ -59,7 +59,7 @@ async function enrichedTenants(db: DB, profile: any): Promise<{ properties: any[
   const rows: Enriched[] = [];
   properties.forEach((p: any) => {
     (p.tenants || []).forEach((t: any) => {
-      const st = contractState(t, { graceDays: Number(p.grace_days) || 0 });
+      const st = contractState(t, { graceDays: Number(p.grace_days) || 0, soonDays: profile?.due_soon_days });
       rows.push({ t, propId: p.id, propName: p.name || "عقار", st, key: deriveState(st, t) });
     });
   });
