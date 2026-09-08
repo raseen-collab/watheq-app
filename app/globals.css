@@ -154,3 +154,8 @@ html[data-theme="dark"] .wq-theme-btn {
 @media (max-width: 640px) {
   .fld, input.fld, select.fld, textarea.fld { font-size: 16px !important; }
 }
+
+
+/* زر الوضع الليلي: النص من CSS لا من JS — يمنع أي تعارض ترطيب في Next */
+.wq-theme-btn::after { content: "☾ ليلي"; }
+html[data-theme="dark"] .wq-theme-btn::after { content: "☀ نهاري"; }
