@@ -53,7 +53,7 @@ export default async function PropertyPage() {
 
   const { data: { user } } = await supabase.auth.getUser();
   const { data: profile } = await supabase
-    .from("profiles").select("org_name, billing_name, vat_number, cr_number, billing_phone, plan, trial_ends_at, subscribed_until").eq("id", user!.id).maybeSingle();
+    .from("profiles").select("org_name, billing_name, vat_number, cr_number, billing_phone, plan, trial_ends_at, subscribed_until, due_soon_days").eq("id", user!.id).maybeSingle();
 
   // ثلاث حالات: مشترك = مستند نظيف · تجربة نشطة = سطر «أُنشئ عبر وثيق» · انتهت بلا اشتراك = علامة مائية
   const { trial, expired } = issuerMarks(profile);
@@ -64,6 +64,6 @@ export default async function PropertyPage() {
     .from("compliance_items").select("*")
     .order("end_date", { ascending: true, nullsFirst: false });
 
-  return <PropertyView initial={properties || []} orgName={profile?.org_name || ""}
+  return <PropertyView dueSoonDays={(profile as any)?.due_soon_days} initial={properties || []} orgName={profile?.org_name || ""}
     issuer={{ ...(profile || {}), trial, expired }} compliance={compliance || []} />;
 }
