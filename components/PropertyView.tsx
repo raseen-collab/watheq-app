@@ -921,12 +921,17 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                             </td>
                             <td className="px-3 py-2 text-muted whitespace-nowrap tabular-nums">{sar(t.rent_amount)} / {freqShort(t.payment_frequency)}</td>
                             <td className="px-3 py-2 whitespace-nowrap tabular-nums">
-                              {key === "vacant" ? <span className="text-muted">—</span> : st.nextDueDate ? (<>
+                              {key === "vacant" ? <span className="text-muted">—</span>
+                              : st.fullyPaid && st.endDate ? (<>
+                                <div className="text-[#137a50]">ينتهي {st.endDate}</div>
+                                <div className="text-[11px] text-muted">{hijriShort(st.endDate)} · القادم مع التجديد</div>
+                              </>)
+                              : st.nextDueDate ? (<>
                                 <div>{st.nextDueDate}</div>
                                 <div className="text-[11px] text-muted">{hijriShort(st.nextDueDate)}</div>
                               </>) : <span className="text-muted">—</span>}
                             </td>
-                            <td className="px-3 py-2"><span className={`inline-block text-[11px] font-semibold px-2.5 py-0.5 rounded-full border ${badge(key)}`}>{label(key)}</span></td>
+                            <td className="px-3 py-2"><span className={`inline-block text-[11px] font-semibold px-2.5 py-0.5 rounded-full border ${badge(key)}`}>{key === "ok" && st.fullyPaid ? "✓ مسدَّد كاملًا" : label(key)}</span></td>
                             <td className={`px-3 py-2 text-left tabular-nums whitespace-nowrap ${st.amountDue > 0 ? "font-bold text-late" : "text-muted"}`}>{st.amountDue > 0 ? sar(st.amountDue) : "—"}</td>
                             <td className="px-2 py-1.5 text-left whitespace-nowrap">
                               <div className="inline-flex items-center gap-1">
@@ -1010,6 +1015,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                         : key === "late" ? <span className="text-late font-bold">متأخر {sar(st.amountDue)}</span>
                         : key === "expiring" && st.daysToEnd !== null ? <span className="text-[#5B21B6] font-semibold">ينتهي بعد {st.daysToEnd} يوم</span>
                         : key === "litigation" ? <span className="text-[#475569]">{t.enforcement_no ? `طلب ${t.enforcement_no}` : "متابعة نظامية"}</span>
+                        : st.fullyPaid ? <span className="text-[#137a50] font-semibold">✓ سدّد كامل العقد{st.endDate ? <span className="font-normal text-muted"> · ينتهي {st.endDate}{st.daysToEnd !== null && st.daysToEnd >= 0 ? ` (بعد ${st.daysToEnd} يوم)` : ""} — القسط القادم مع التجديد</span> : null}</span>
                         : st.nextDueDate ? <span className="text-muted">القادمة {st.nextDueDate}{st.nextDueDate ? ` · ${hijriShort(st.nextDueDate)}` : ""}</span> : null}
                     </div>
                   </div>
