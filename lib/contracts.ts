@@ -167,6 +167,8 @@ export type ContractState = {
   daysToEnd: number | null;
   status: "late" | "soon" | "ok";  // أحمر / أصفر / أخضر — لم يتغيّر (يعتمد عليه البوت)
   statusLabel: string;
+  /** سدّد كل دفعات العقد — لا استحقاق قادم قبل انتهائه، والقادم يكون مع التجديد */
+  fullyPaid: boolean;
   inGrace: boolean;        // مرّ الاستحقاق لكن ضمن فترة السماح — لا يُعدّ متأخرًا
   graceDaysLeft: number;   // كم يومًا تبقّى من السماح
   progress: number;       // نسبة إنجاز العقد (٪)
@@ -208,7 +210,7 @@ export function contractState(t: {
 
   if (!t.contract_start) {
     return {
-      due: 0, paid, unpaid: 0, amountDue: 0, grossDue: 0, partial, hasPartial: partial > 0,
+      due: 0, paid, unpaid: 0, amountDue: 0, grossDue: 0, partial, hasPartial: partial > 0, fullyPaid: false,
       partialPct: rent ? Math.round((partial / rent) * 100) : 0,
       nextDueDate: null, daysToNextDue: null,
       endDate: t.contract_end || null,
@@ -264,9 +266,13 @@ export function contractState(t: {
     status = "soon";
     statusLabel = daysToNextDue <= 0 ? "يستحق اليوم" : `يستحق خلال ${daysToNextDue} يوم`;
   }
+  /* سدّد العقد كله مقدّمًا (سنة كاملة مثلًا): لا «القادمة» بعد اليوم — ما يهم
+     المكتب أن يرى «مسدَّد كامل العقد» ومتى ينتهي ليجدّده، لا صفًا صامتًا */
+  const fullyPaid = unpaid === 0 && paid >= totalPeriods;
+  if (fullyPaid && status === "ok") statusLabel = "مسدَّد كامل العقد";
 
   return {
-    due, paid, unpaid, amountDue, grossDue, partial, hasPartial, partialPct,
+    due, paid, unpaid, amountDue, grossDue, partial, hasPartial, partialPct, fullyPaid,
     nextDueDate, daysToNextDue, endDate, daysToEnd, status, statusLabel, progress,
     inGrace, graceDaysLeft,
   };
