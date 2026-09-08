@@ -1648,6 +1648,7 @@ export function ownerConsolidatedStatementHTML(
   sections: OwnerStatementSection[],
   period: { label: string; from: string; to: string },
   issuer: Issuer = {},
+  detail: "full" | "brief" = "full",
 ) {
   // تعقيم المدخلات (انظر scrub أعلاه)
   ownerName = scrub(ownerName);
@@ -1713,6 +1714,27 @@ ${header("كشف حساب مالك — مجمّع", ownerName)}
 
 ${rows.map((r) => `
 <h2 style="margin-top:22px">${r.s.property.name} — التفصيل</h2>
+<div class="sub" style="margin-bottom:6px">${typeLabel(r.s.property.property_type)}${r.s.property.city ? ` · ${r.s.property.city}` : ""}${r.s.property.address ? ` · ${r.s.property.address}` : ""}${r.s.property.usage ? ` · ${USAGE_AR[String(r.s.property.usage)] || r.s.property.usage}` : ""} · ${r.units} وحدة (${r.units - r.vacant} مؤجّرة، ${r.vacant} شاغرة)</div>
+${detail === "full" ? `
+<h3 style="font-size:.85rem;margin:10px 0 4px">وحدات العقار وحالتها</h3>
+<div class="scrollx"><table>
+  <thead><tr><th>${unitLabel(r.s.property.property_type)}</th><th>النوع</th><th>المستأجر</th><th>الإيجار / الدورة</th><th>بداية العقد</th><th>نهاية العقد</th><th>الحالة</th><th>متأخر</th></tr></thead>
+  <tbody>
+    ${(r.s.property.tenants || []).map((t: any) => {
+      const g = graceOf(r.s.property); const cs = contractState(t, g); const vac = isVacant(t);
+      return `<tr>
+        <td><b>${t.unit || "—"}</b></td>
+        <td>${t.unit_type ? (UNIT_TYPE_AR[String(t.unit_type)] || "—") : unitLabel(r.s.property.property_type)}${(t.rooms || t.baths || t.acs) ? `<div style="font-size:.68rem;color:#5C6B67">${[t.rooms ? `${t.rooms} غرف` : "", t.baths ? `${t.baths} حمام` : "", t.acs ? `${t.acs} مكيف` : ""].filter(Boolean).join(" · ")}</div>` : ""}</td>
+        <td>${vac ? "<span style='color:#5C6B67'>— شاغرة —</span>" : t.name}${t.contract_no ? `<div style="font-size:.68rem;color:#5C6B67" dir="ltr">عقد ${t.contract_no}</div>` : ""}</td>
+        <td>${vac ? "—" : `${sar(t.rent_amount)} / ${freqLabel(t.payment_frequency)}`}</td>
+        <td>${vac ? "—" : arDate(t.contract_start)}</td>
+        <td>${vac ? "—" : arDate(cs.endDate)}</td>
+        <td>${vac ? '<span class="pill">شاغرة</span>' : cs.status === "late" ? '<span class="pill l">متأخر</span>' : cs.expiringSoon ? '<span class="pill u">ينتهي قريبًا</span>' : '<span class="pill p">منتظم</span>'}</td>
+        <td>${!vac && cs.amountDue > 0 ? `<b>${sar(cs.amountDue)}</b>` : "—"}</td>
+      </tr>`;
+    }).join("")}
+  </tbody>
+</table></div>` : ""}
 ${r.s.payments.length ? `<div class="scrollx"><table>
   <thead><tr><th>التاريخ</th><th>المستأجر</th><th>${unitLabel(r.s.property.property_type)}</th><th>المبلغ</th><th>الطريقة</th></tr></thead>
   <tbody>
