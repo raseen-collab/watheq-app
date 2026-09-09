@@ -55,6 +55,17 @@ export default function ExpensesModal({ propertyId, propertyName, unitWord, onCl
   const total = useMemo(() => sumExpenses(rows || []), [rows]);
 
   async function save(d: Partial<ExpenseRow>) {
+    /* حارس الازدواج: أشيع خطأ في المصروفات أن يُسجَّل المصروف مرتين —
+       مرة من المكتب ومرة من الموظف، أو نقرتان. نفس العقار والتاريخ
+       والمبلغ والتصنيف = تنبيه قبل الحفظ، لا منع (قد يتكرر فعلًا). */
+    const dup = (rows || []).find((r) =>
+      String(r.spent_on) === String(d.spent_on) &&
+      Math.abs(Number(r.amount) - Number(d.amount)) < 0.01 &&
+      String(r.category) === String(d.category));
+    if (dup && !confirm(
+      `يوجد مصروف مطابق مسجّل مسبقًا:\n${catLabel(dup.category)} — ${sar(Number(dup.amount))} ريال — ${dup.spent_on}` +
+      `${dup.vendor ? ` — ${dup.vendor}` : ""}\n\nتسجيله مرة أخرى؟`
+    )) return;
     setBusy(true);
     try {
       const uid = await officeId(supabase);
@@ -139,7 +150,8 @@ export default function ExpensesModal({ propertyId, propertyName, unitWord, onCl
 function ExpenseForm({ unitWord, busy, onSave, onCancel }: {
   unitWord: string; busy: boolean; onSave: (d: Partial<ExpenseRow>) => void; onCancel: () => void;
 }) {
-  const [d, setD] = useState<any>({ category: "maintenance", amount: "", spent_on: today(), unit: "", note: "" });
+  const [d, setD] = useState<any>({ category: "maintenance", amount: "", spent_on: today(), unit: "", note: "",
+    billable: true, paid_by: "collections", status: "paid", vendor: "", invoice_no: "" });
   const ready = Number(d.amount) > 0 && !!d.spent_on;
   return (
     <div className="mt-4 border border-line rounded-xl p-4 bg-paper space-y-3">
@@ -163,6 +175,40 @@ function ExpenseForm({ unitWord, busy, onSave, onCancel }: {
         <label className="block"><span className="block text-sm font-semibold mb-1">{unitWord} <span className="text-muted text-xs font-normal">— اختياري</span></span>
           <input className="fld" value={d.unit} onChange={(e) => setD({ ...d, unit: e.target.value })} /></label>
       </div>
+      <div className="grid grid-cols-2 gap-3">
+        <label className="block"><span className="block text-sm font-semibold mb-1">المورّد <span className="text-muted text-xs font-normal">— اختياري</span></span>
+          <input className="fld" value={d.vendor || ""} onChange={(e) => setD({ ...d, vendor: e.target.value })} placeholder="مؤسسة الصيانة السريعة" /></label>
+        <label className="block"><span className="block text-sm font-semibold mb-1">رقم الفاتورة <span className="text-muted text-xs font-normal">— اختياري</span></span>
+          <input className="fld" dir="ltr" value={d.invoice_no || ""} onChange={(e) => setD({ ...d, invoice_no: e.target.value })} placeholder="INV-2291" /></label>
+      </div>
+
+      {/* من يتحمّلها ومن دفعها: بدونهما يُخصم من المالك ما ليس عليه */}
+      <div className="grid grid-cols-2 gap-3">
+        <label className="block"><span className="block text-sm font-semibold mb-1">على من تُحسب</span>
+          <select className="fld" value={d.billable === false ? "office" : "owner"}
+            onChange={(e) => setD({ ...d, billable: e.target.value === "owner" })}>
+            <option value="owner">تُخصم من المالك</option>
+            <option value="office">على المكتب (لا تُخصم)</option>
+          </select>
+          <span className="block text-[11px] text-muted mt-1">
+            {d.billable === false ? "لن تدخل في صافي المالك — مثل مصروفات المكتب نفسه." : "تدخل في حساب صافي المالك بتقريره."}
+          </span>
+        </label>
+        <label className="block"><span className="block text-sm font-semibold mb-1">من دفعها</span>
+          <select className="fld" value={d.paid_by || "collections"} onChange={(e) => setD({ ...d, paid_by: e.target.value })}>
+            <option value="collections">من تحصيل العقار</option>
+            <option value="office">من المكتب (يُستردّ)</option>
+            <option value="owner">دفعها المالك مباشرة</option>
+          </select>
+        </label>
+      </div>
+
+      <label className="flex items-center gap-2 text-sm cursor-pointer">
+        <input type="checkbox" className="w-4 h-4" checked={d.status === "due"}
+          onChange={(e) => setD({ ...d, status: e.target.checked ? "due" : "paid" })} />
+        <span>مستحقة ولم تُدفع بعد <span className="text-[11px] text-muted">— تظهر تنبيهًا ولا تُعدّ نقدًا خارجًا</span></span>
+      </label>
+
       <label className="block"><span className="block text-sm font-semibold mb-1">ملاحظة <span className="text-muted text-xs font-normal">— اختياري</span></span>
         <input className="fld" value={d.note} onChange={(e) => setD({ ...d, note: e.target.value })} placeholder="إصلاح تسريب دورة مياه شقة 12" /></label>
       <div className="flex gap-2 justify-end">
@@ -171,6 +217,11 @@ function ExpenseForm({ unitWord, busy, onSave, onCancel }: {
           onClick={() => onSave({
             category: d.category, amount: Number(d.amount), spent_on: d.spent_on,
             unit: String(d.unit || "").trim() || null, note: String(d.note || "").trim() || null,
+            vendor: (d.vendor || "").trim() || null,
+            invoice_no: (d.invoice_no || "").trim() || null,
+            billable: d.billable !== false,
+            paid_by: d.paid_by || "collections",
+            status: d.status === "due" ? "due" : "paid",
           })}>
           {busy ? "…" : "تسجيل"}
         </button>

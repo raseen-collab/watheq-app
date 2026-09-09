@@ -14,6 +14,7 @@ import { createClient } from "@/lib/supabase-client";
 import { contractState, isVacant, type Frequency } from "@/lib/contracts";
 import { sar, waLink } from "@/lib/utils";
 import { hijriShort } from "@/lib/hijri";
+import ExpensesOverview from "@/components/ExpensesOverview";
 
 type Tenant = any; type Property = any;
 const PER_MONTH: Record<string, number> = { daily: 30, weekly: 4.33, monthly: 1, quarterly: 1 / 3, semiannual: 1 / 6, annual: 1 / 12 };
@@ -26,6 +27,7 @@ export default function PortfolioView({ properties, windows }: {
   const supabase = createClient();
   const [q, setQ] = useState("");
   const [monthCollected, setMonthCollected] = useState<Record<string, number> | null>(null);
+  const [expOpen, setExpOpen] = useState(false);
   /* جدول العقارات بلا ترقيم: مكتب بمئة عقار يرسم 100 صف دفعة واحدة ويطيل
      الصفحة بلا فائدة — الأهم أعلاها (مرتّبة بالأكثر متأخرات). */
   const [propsShown, setPropsShown] = useState(25);
@@ -117,6 +119,11 @@ export default function PortfolioView({ properties, windows }: {
   return (
     <div>
       {/* ═══ البحث الشامل ═══ */}
+      <div className="flex justify-end mb-3">
+        <button className="btn btn-ghost text-sm" onClick={() => setExpOpen(true)}
+          title="كل مصروفات المكتب بفلترة على المالك والفترة — جاهزة للطباعة">💸 مصروفات كل العقارات</button>
+      </div>
+      {expOpen && <ExpensesOverview properties={properties as any} onClose={() => setExpOpen(false)} />}
       <div className="bg-white border border-line rounded-2xl p-4 mb-4">
         <input className="fld text-base" value={q} onChange={(e) => setQ(e.target.value)} autoFocus
           placeholder="ابحث في كل العقارات: اسم المستأجر · الجوال · رقم الهوية · رقم العقد · رقم الوحدة · حساب الكهرباء أو الماء" />
