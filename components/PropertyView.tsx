@@ -739,10 +739,15 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
     const v = { enabled: !!active.vat_enabled, rate: Number(active.vat_rate) || 15, inclusive: active.vat_inclusive !== false };
     const one = splitVat(Number(t.rent_amount) || 0, active && unitVatApplies(t, active) ? v : { ...v, enabled: false });
 
-    const L: string[] = [`السلام عليكم ورحمة الله، ${t.name} 🌿`, ""];
+    const L: string[] = [`السلام عليكم ورحمة الله، ${t.name}`, ""];
 
     if (st.unpaid === 0) {
-      L.push(`تذكير ودّي بأن الدفعة القادمة عن ${unit} بعقار ${active.name} تستحق بتاريخ ${arDate(st.nextDueDate)}.`);
+      /* المستأجر يقرأ عقده بالتقويم المكتوب فيه: نضيف الهجري للعقد الهجري،
+         وعدد الأيام لأن «1 ديسمبر» وحدها لا تقول إن أمامه شهرين. */
+      const dueTxt = `${arDate(st.nextDueDate)}${t.calendar === "hijri" && st.nextDueDate ? ` (${hijriText(st.nextDueDate)})` : ""}`;
+      const inDays = st.daysToNextDue;
+      L.push(`تذكير ودّي بأن الدفعة القادمة عن ${unit} بعقار ${active.name} تستحق بتاريخ ${dueTxt}${
+        inDays !== null && inDays > 0 ? ` — بعد ${inDays === 1 ? "يوم واحد" : inDays === 2 ? "يومين" : inDays <= 10 ? `${inDays} أيام` : `${inDays} يومًا`}` : inDays === 0 ? " — اليوم" : ""}.`);
       if (one.total) L.push(`• قيمة الدفعة: ${sar(one.total)} ريال${one.vat > 0 ? ` (منها ${sar(one.vat)} ريال ضريبة قيمة مضافة)` : ""}`);
     } else {
       L.push(`نودّ تذكيركم بوجود مستحقّات غير مسدَّدة عن ${unit} بعقار ${active.name}، وبيانها:`);
@@ -750,7 +755,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       if (one.total) L.push(`• قيمة الدفعة: ${sar(one.total)} ريال`);
       if (st.hasPartial) L.push(`• المسدَّد جزئيًّا: ${sar(st.partial)} ريال`);
       L.push(`• المبلغ المتبقّي: ${sar(st.amountDue)} ريال`);
-      if (st.nextDueDate) L.push(`• تاريخ أقرب دفعة مستحقة: ${arDate(st.nextDueDate)}`);
+      if (st.nextDueDate) L.push(`• تاريخ أقرب دفعة مستحقة: ${arDate(st.nextDueDate)}${t.calendar === "hijri" ? ` (${hijriText(st.nextDueDate)})` : ""}`);
     }
 
     L.push("");

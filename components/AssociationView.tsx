@@ -385,7 +385,7 @@ export default function AssociationView({ initial, issuer }: { initial: Associat
     const unit = o.unit ? `الوحدة (${o.unit})` : "وحدتكم";
     const assoc = active.name;
 
-    const lines: string[] = [`السلام عليكم ورحمة الله، ${o.name} 🌿`, ""];
+    const lines: string[] = [`السلام عليكم ورحمة الله، ${o.name}`, ""];
 
     if (o.months_late <= 0) {
       lines.push(`تذكير ودّي بأن اشتراك الصيانة عن ${unit} في ${assoc}${fee ? ` وقدره ${sar(fee)} ريال` : ""} أصبح مستحقًّا.`);

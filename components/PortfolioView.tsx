@@ -101,7 +101,7 @@ export default function PortfolioView({ properties, windows }: {
   }).sort((a, b) => b.overdue - a.overdue || b.late - a.late || a.p.name.localeCompare(b.p.name, "ar"));
 
   const remind = (p: Property, t: Tenant, st: any) =>
-    waLink(t.phone, `السلام عليكم ${t.name} 🌿\n\nتذكير ودّي بأن الدفعة المستحقة عن ${UNIT_AR[p.property_type] || "الوحدة"} ${t.unit || ""} بعقار ${p.name} بمبلغ ${sar(st.amountDue)} ريال لم تصلنا بعد.\nنرجو السداد في أقرب وقت، وإن كان السداد قد تم فنعتذر ونرجو إرسال ما يثبته.\n\nشكرًا لتعاونكم.`);
+    waLink(t.phone, `السلام عليكم ${t.name}\n\nتذكير ودّي بأن الدفعة المستحقة عن ${UNIT_AR[p.property_type] || "الوحدة"} ${t.unit || ""} بعقار ${p.name} بمبلغ ${sar(st.amountDue)} ريال لم تصلنا بعد.\nنرجو السداد في أقرب وقت، وإن كان السداد قد تم فنعتذر ونرجو إرسال ما يثبته.\n\nشكرًا لتعاونكم.`);
 
   const Item = ({ p, t, st, note, tone }: { p: Property; t: Tenant; st: any; note: string; tone?: "late" | "due" | "exp" }) => (
     <div className="flex items-center justify-between gap-3 bg-white text-deep border border-line rounded-lg px-3 py-2 text-sm">
