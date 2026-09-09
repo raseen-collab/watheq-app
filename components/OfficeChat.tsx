@@ -31,7 +31,7 @@ const timeAr = (iso: string) => {
   } catch { return iso.slice(0, 16).replace("T", " "); }
 };
 
-export default function OfficeChat({ context }: { context?: Ctx }) {
+export default function OfficeChat({ context, lookup }: { context?: Ctx; lookup?: { props: Record<string, string>; tenants: Record<string, string> } }) {
   const supabase = useMemo(() => createClient(), []);
   const [open, setOpen] = useState(false);
   const [msgs, setMsgs] = useState<Msg[]>([]);
@@ -41,7 +41,7 @@ export default function OfficeChat({ context }: { context?: Ctx }) {
   const [body, setBody] = useState("");
   const [assign, setAssign] = useState("");
   const [attach, setAttach] = useState(true);
-  const [tab, setTab] = useState<"all" | "tasks">("all");
+  const [tab, setTab] = useState<"all" | "tasks" | "unit">("all");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [seenAt, setSeenAt] = useState<string>("");
@@ -82,6 +82,8 @@ export default function OfficeChat({ context }: { context?: Ctx }) {
   }, [supabase]);
 
   useEffect(() => { if (open) endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [open, msgs.length]);
+  // فُتحت من وحدة بعينها؟ ابدأ على تبويبها مباشرة
+  useEffect(() => { if (open && context?.tenantId) setTab("unit"); }, [open, context?.tenantId]);
 
   function markSeen() {
     const now = new Date().toISOString();
@@ -92,7 +94,17 @@ export default function OfficeChat({ context }: { context?: Ctx }) {
   const unread = msgs.filter((m) => m.author_id !== me && (!seenAt || m.created_at > seenAt)).length;
   const openTasks = msgs.filter((m) => m.assigned_to && !m.done_at);
   const myTasks = openTasks.filter((m) => m.assigned_to === me).length;
-  const shown = tab === "tasks" ? openTasks : msgs;
+  const unitMsgs = context?.tenantId ? msgs.filter((m) => m.tenant_id === context.tenantId)
+    : context?.propertyId ? msgs.filter((m) => m.property_id === context.propertyId) : [];
+  const shown = tab === "tasks" ? openTasks : tab === "unit" ? unitMsgs : msgs;
+  /* اسم العقار/الوحدة لكل رسالة من فهرس تمرّره اللوحة — لا من السياق الحالي وحده */
+  const ctxLabel = (m: Msg) => {
+    const parts = [
+      m.tenant_id ? (lookup?.tenants[m.tenant_id] || (context?.tenantId === m.tenant_id ? context?.tenantName : "")) : "",
+      m.property_id ? (lookup?.props[m.property_id] || (context?.propertyId === m.property_id ? context?.propertyName : "")) : "",
+    ].filter(Boolean);
+    return parts.length ? parts.join(" · ") : "وحدة/عقار مرتبط";
+  };
 
   async function send() {
     const text = body.trim();
@@ -149,7 +161,8 @@ export default function OfficeChat({ context }: { context?: Ctx }) {
             </div>
 
             <div className="flex gap-1 px-3 py-2 border-b border-line bg-white">
-              {([["all", `الكل ${msgs.length}`], ["tasks", `مهام مفتوحة ${openTasks.length}`]] as const).map(([k, l]) => (
+              {([["all", `الكل ${msgs.length}`], ["tasks", `مهام مفتوحة ${openTasks.length}`],
+                 ...(context?.propertyId ? [["unit", `${context.tenantName ? "هذه الوحدة" : "هذا العقار"} ${unitMsgs.length}`] as const] : [])] as const).map(([k, l]) => (
                 <button key={k} onClick={() => setTab(k)}
                   className={`text-xs px-3 py-1.5 rounded-full border ${tab === k ? "bg-deep text-goldSoft border-deep" : "border-line text-muted"}`}>{l}</button>
               ))}
@@ -174,8 +187,7 @@ export default function OfficeChat({ context }: { context?: Ctx }) {
                       </div>
                       {(m.property_id || m.tenant_id) && (
                         <div className={`text-[11px] mb-1 rounded-md px-2 py-0.5 inline-block ${mine ? "bg-white/15" : "bg-paper2 text-muted"}`}>
-                          📍 {context?.propertyId === m.property_id && context?.propertyName ? context.propertyName : "وحدة/عقار مرتبط"}
-                          {context?.tenantId === m.tenant_id && context?.tenantName ? ` · ${context.tenantName}` : ""}
+                          📍 {ctxLabel(m)}
                         </div>
                       )}
                       <div className="text-sm whitespace-pre-wrap leading-relaxed">{m.body}</div>

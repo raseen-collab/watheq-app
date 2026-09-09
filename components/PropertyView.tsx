@@ -126,6 +126,24 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
   const [ownerStmtOpen, setOwnerStmtOpen] = useState(false);
   const [logOpen, setLogOpen] = useState(false);
   const [chatTenant, setChatTenant] = useState<Tenant | null>(null);
+  /* عدد رسائل الفريق لكل وحدة — تظهر شارة على الصف فيعرف الجميع أن هناك نقاشًا */
+  const [msgCount, setMsgCount] = useState<Record<string, number>>({});
+  useEffect(() => {
+    let alive = true;
+    supabase.from("office_messages").select("tenant_id").not("tenant_id", "is", null).limit(2000)
+      .then(({ data }) => {
+        if (!alive) return;
+        const m: Record<string, number> = {};
+        (data || []).forEach((x: any) => { if (x.tenant_id) m[x.tenant_id] = (m[x.tenant_id] || 0) + 1; });
+        setMsgCount(m);
+      });
+    return () => { alive = false; };
+  }, [supabase, items]);
+  const chatLookup = useMemo(() => {
+    const props: Record<string, string> = {}; const tenants: Record<string, string> = {};
+    items.forEach((p) => { props[p.id] = p.name; (p.tenants || []).forEach((t) => { tenants[t.id] = `${unitLabel(p.property_type)} ${t.unit || "—"} — ${t.name}`; }); });
+    return { props, tenants };
+  }, [items]);
   const [incPeriod, setIncPeriod] = useState<"year" | "12m" | "month">("year");
   const [collectedInPeriod, setCollectedInPeriod] = useState<number | null>(null);
   /* الدخل الشهري في البطاقة = ما قُبض فعلًا هذا الشهر (طلب مكتب تميز)، والمتوقع بجانبه */
@@ -975,7 +993,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                           <tr key={t.id} className={`border-t border-line ${key === "late" ? "bg-[#FFF5F4]" : key === "litigation" ? "bg-[#F8FAFC]" : ""}`}>
                             <td className="px-3 py-2 font-semibold tabular-nums">{t.unit || "—"}</td>
                             <td className="px-3 py-2">
-                              <div className="font-medium">{t.name}</div>
+                              <div className="font-medium">{t.name}{msgCount[t.id] > 0 && <span className="ms-1 text-[10px] bg-deep text-goldSoft rounded-full px-1.5 py-0.5" title="رسائل الفريق على هذه الوحدة">💬 {msgCount[t.id]}</span>}</div>
                               {t.contract_no && <div className="text-[11px] text-muted" dir="ltr">عقد {t.contract_no}</div>}
                             </td>
                             <td className="px-3 py-2 text-muted whitespace-nowrap tabular-nums">{sar(t.rent_amount)} / {freqShort(t.payment_frequency)}</td>
@@ -1057,6 +1075,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                       <div className="text-xs text-muted">
                         {t.unit_type ? UNIT_TYPES[t.unit_type] || ul : ul} {t.unit || "—"} · {sar(t.rent_amount)} ريال / {freqShort(t.payment_frequency)}{(t.rooms || t.baths || t.acs) ? <span className="text-[11px]"> · {[t.rooms ? `${t.rooms} غرف` : "", t.baths ? `${t.baths} دورات مياه` : "", t.acs ? `${t.acs} مكيف` : ""].filter(Boolean).join(" · ")}</span> : null}
                         {t.contract_no && <> · عقد <span dir="ltr">{t.contract_no}</span></>}
+                        {msgCount[t.id] > 0 && <span className="ms-1 text-[10px] bg-deep text-goldSoft rounded-full px-1.5 py-0.5" title="رسائل الفريق على هذه الوحدة">💬 {msgCount[t.id]}</span>}
                       </div>
                       {active && unitVatApplies(t, active) && (() => { const v = splitVat(Number(t.rent_amount) || 0, vat); return (
                         <div className="text-[.7rem] text-muted mt-0.5">
@@ -1174,7 +1193,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       {logOpen && <ActivityLog properties={items} onClose={() => setLogOpen(false)} />}
 
       {/* تواصل الفريق — السياق هو العقار المفتوح (والوحدة إن فُتحت من قائمتها) */}
-      <OfficeChat context={{ propertyId: active?.id, propertyName: active?.name,
+      <OfficeChat lookup={chatLookup} context={{ propertyId: active?.id, propertyName: active?.name,
         tenantId: chatTenant?.id || null, tenantName: chatTenant?.name || null, unit: chatTenant?.unit || null }} />
 
       {compOpen && (

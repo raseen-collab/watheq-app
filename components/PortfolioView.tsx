@@ -99,9 +99,9 @@ export default function PortfolioView({ properties, windows }: {
     waLink(t.phone, `السلام عليكم ${t.name} 🌿\n\nتذكير ودّي بأن الدفعة المستحقة عن ${UNIT_AR[p.property_type] || "الوحدة"} ${t.unit || ""} بعقار ${p.name} بمبلغ ${sar(st.amountDue)} ريال لم تصلنا بعد.\nنرجو السداد في أقرب وقت، وإن كان السداد قد تم فنعتذر ونرجو إرسال ما يثبته.\n\nشكرًا لتعاونكم.`);
 
   const Item = ({ p, t, st, note, tone }: { p: Property; t: Tenant; st: any; note: string; tone?: "late" | "due" | "exp" }) => (
-    <div className="flex items-center justify-between gap-3 bg-white border border-line rounded-lg px-3 py-2 text-sm">
+    <div className="flex items-center justify-between gap-3 bg-white text-deep border border-line rounded-lg px-3 py-2 text-sm">
       <div className="min-w-0">
-        <div className="font-semibold truncate">{t.name} <span className="text-muted font-normal text-xs">· {UNIT_AR[p.property_type] || "وحدة"} {t.unit || "—"} · {p.name}</span></div>
+        <div className="font-semibold truncate text-deep">{t.name || <span className="text-muted font-normal">(بلا اسم مستأجر)</span>} <span className="text-muted font-normal text-xs">· {UNIT_AR[p.property_type] || "وحدة"} {t.unit || "—"} · {p.name}</span></div>
         <div className={`text-[11px] ${tone === "late" ? "text-late font-semibold" : tone === "due" ? "text-[#9A4B00]" : tone === "exp" ? "text-[#991B1B]" : "text-muted"}`}>{note}</div>
       </div>
       <div className="flex gap-1.5 shrink-0">
