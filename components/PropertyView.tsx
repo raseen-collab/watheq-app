@@ -39,6 +39,7 @@ type Tenant = {
   meter_elec_in?: string | null; meter_elec_out?: string | null;
   elec_account?: string | null; water_account?: string | null;
   contract_no?: string | null; calendar?: string | null; first_due?: string | null; vat_mode?: string | null;
+  carried_debt?: number | null; carried_debt_note?: string | null;
   unit_type?: string | null; rooms?: number | null; baths?: number | null; acs?: number | null;
   meter_water_in?: string | null; meter_water_out?: string | null;
   turnover_checklist?: { label: string; done?: boolean; note?: string | null }[] | null;
@@ -363,6 +364,16 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
 
   /** إعادة التأجير: تُفتح نافذة الوحدة ببيانات جديدة */
   function reLet(t: Tenant) {
+    /* الوحدة المُخلاة يُعاد استعمال صفّها للمستأجر الجديد — فكان دين السابق
+       يختفي بلا أثر. ننبّه ونرحّله ليبقى مطالَبًا به. */
+    const st = contractState(t, { graceDays: Number(active?.grace_days) || 0, ...windowsOf(active) });
+    const debt = (st.legacyArrears || 0) + (Number(t.carried_debt) || 0);
+    if (debt > 0) {
+      const carry = confirm(`على المستأجر السابق ${t.name} دين ${sar(debt)} ريال.\n\nموافق = يُرحَّل كدين على الوحدة ويبقى ظاهرًا للمتابعة\nإلغاء = سُوّي بالكامل ولا يُرحَّل`);
+      setModal({ kind: "tenant", id: t.id, preset: { carried_debt: carry ? Math.round(debt * 100) / 100 : 0, carried_debt_note: carry ? `دين ${t.name} قبل الإخلاء` : null } } as any);
+      notify("ok", carry ? `أدخل بيانات المستأجر الجديد — ودين ${sar(debt)} ريال مرحَّل على الوحدة.` : "أدخل بيانات المستأجر الجديد.");
+      return;
+    }
     setModal({ kind: "tenant", id: t.id });
     notify("ok", "أدخل بيانات المستأجر الجديد — ستعود الوحدة مؤجّرة عند الحفظ.");
   }
@@ -461,6 +472,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       contract_no: (d.contract_no || "").trim() || null,
       calendar: d.calendar === "hijri" ? "hijri" : "gregorian",
       vat_mode: ["on", "off"].includes(String(d.vat_mode)) ? d.vat_mode : "auto",
+      carried_debt: Math.max(0, Number(d.carried_debt) || 0),
       first_due: d.first_due || null,
       unit_type: d.unit_type || null,
       rooms: d.rooms === "" || d.rooms == null ? null : Math.max(0, Math.min(50, Number(d.rooms) || 0)),
@@ -532,12 +544,21 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
     setItems(items.map((p) => (p.id === active.id ? { ...p, property_notes: p.property_notes.filter((n) => n.id !== id) } : p)));
   }
 
-  async function doRenew(t: Tenant, opts: { periods: number; newAmount: number | null; newFrequency: Frequency }) {
+  async function doRenew(t: Tenant, opts: { periods: number; newAmount: number | null; newFrequency: Frequency; arrears?: "carry" | "settled" }) {
     if (!active) return;
-    const fields = renewContract(t, { periods: opts.periods, newAmount: opts.newAmount, newFrequency: opts.newFrequency });
+    /* متأخرات المدة المنتهية لا تختفي بالتجديد: تُرحَّل دينًا ظاهرًا ما لم
+       يؤكّد المكتب صراحةً أنها سُدّدت. كان التجديد يمحوها بلا أثر. */
+    const before = contractState(t, { graceDays: Number(active.grace_days) || 0, ...windowsOf(active) });
+    let arrears = opts.arrears;
+    if (before.amountDue > 0 && !arrears) {
+      arrears = confirm(`على ${t.name} متأخرات ${sar(before.amountDue)} ريال من المدة المنتهية.\n\nموافق = تُرحَّل كدين على العقد الجديد (تبقى ظاهرة حتى تُسدَّد)\nإلغاء = سُدّدت بالكامل ولا تُرحَّل`)
+        ? "carry" : "settled";
+    }
+    const fields = renewContract(t, { periods: opts.periods, newAmount: opts.newAmount, newFrequency: opts.newFrequency, arrears });
     const { data: _u3, error } = await supabase.from("tenants").update(fields).eq("id", t.id).select("id");
     if (error) { console.error("Watheq save error:", error); return notify("err", error.message); }
     if (!_u3 || _u3.length === 0) return notify("err", "هذا الإجراء يحتاج صلاحية أعلى — اطلبه من صاحب المكتب.");
+    if ((fields as any).carried_debt > 0) notify("ok", `جُدّد العقد — ورُحّل دين ${sar((fields as any).carried_debt)} ريال يظهر على الوحدة حتى يُسدَّد.`);
     // توثيق التجديد في سجل العقار
     /* الملاحظة توثيق لا شرط: إن رفضتها الصلاحيات نُكمل ونُعلم بلا إفشال العملية */
     const noteRes = await supabase.from("property_notes").insert({
@@ -817,7 +838,10 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
   const expiringSoon = allRows
     .filter((r) => r.st.expiringSoon && !r.t.litigation)
     .sort((a, b) => (a.st.daysToEnd || 0) - (b.st.daysToEnd || 0))[0];
-  const editing = modal?.kind === "tenant" && modal.id ? tenants.find((t) => t.id === modal.id) : undefined;
+  const editingBase = modal?.kind === "tenant" && modal.id ? tenants.find((t) => t.id === modal.id) : undefined;
+  /* عند التأجير الجديد نمرّر الدين المرحَّل مُهيّأً في النموذج فلا يُنسى */
+  const editing = editingBase && (modal as any)?.preset
+    ? { ...editingBase, ...(modal as any).preset } as Tenant : editingBase;
 
   // ملخّص المحفظة كاملة (كل العقارات)
 
@@ -1087,9 +1111,10 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                               </>) : <span className="text-muted">—</span>}
                             </td>
                             <td className="px-3 py-2"><span className={`inline-block text-[11px] font-semibold px-2.5 py-0.5 rounded-full border ${badge(key)}`}>{key === "ok" && st.fullyPaid ? "✓ مسدَّد كاملًا" : label(key)}</span></td>
-                            <td className={`px-3 py-2 text-left tabular-nums whitespace-nowrap ${st.amountDue > 0 ? "font-bold text-late" : "text-muted"}`}>
-                              {st.amountDue > 0 ? (<>
+                            <td className={`px-3 py-2 text-left tabular-nums whitespace-nowrap ${st.totalOwed > 0 ? "font-bold text-late" : "text-muted"}`}>
+                              {st.totalOwed > 0 ? (<>
                                 {sar(st.amountDue)}
+                                {st.carriedDebt > 0 && <div className="text-[10px] font-normal text-[#9A4B00]">+ {sar(st.carriedDebt)} دين مرحَّل</div>}
                                 {/* الوحدة فارغة والمبلغ على من سكنها قبل الإخلاء — تسميته «المستحق» توهم أن الشاغرة مدينة */}
                                 {key === "vacant" && <div className="text-[10px] font-normal text-muted">على المستأجر السابق</div>}
                               </>) : "—"}
@@ -1801,6 +1826,9 @@ function TenantModal({ open, initial, unitWord, onClose, onSubmit }: {
           </Field>
         </div>
         <Field label="رقم الهوية / السجل" hint="للخطابات"><input className="fld" value={d.national_id || ""} onChange={(e) => setD({ ...d, national_id: e.target.value })} /></Field>
+        <Field label="دين مرحَّل (ريال)" hint="متأخرات من عقد سابق أو مستأجر سابق — تظهر في الكشوف ولا تدخل في دفعات العقد الجاري">
+          <input className="fld" type="number" min={0} value={d.carried_debt ?? ""} onChange={(e) => setD({ ...d, carried_debt: e.target.value })} placeholder="0" />
+        </Field>
         <Field label="ضريبة القيمة المضافة لهذه الوحدة" hint="العمارة المختلطة: السكني معفى والتجاري خاضع — «تلقائي» يقرّر بحسب نوع الوحدة">
           <select className="fld" value={d.vat_mode || "auto"} onChange={(e) => setD({ ...d, vat_mode: e.target.value })}>
             <option value="auto">تلقائي — بحسب نوع الوحدة</option>
