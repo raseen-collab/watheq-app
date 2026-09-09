@@ -75,9 +75,9 @@ export default function ExportData() {
         "الدفعات المسدّدة": t.paid_periods || 0, "العقار": pName[t.property_id] || "",
         "رقم العقد": t.contract_no || "",
         "نوع الوحدة": ({ apartment: "شقة", annex: "شقة ملحق", studio: "استديو", room: "غرفة", shop: "محل", office: "مكتب", warehouse: "مستودع", land: "أرض", villa: "فيلا", other: "أخرى" } as any)[t.unit_type] || "",
-        "الغرف": t.rooms ?? "", "دورات المياه": t.baths ?? "", "المكيفات": t.acs ?? "", "أول استحقاق": t.first_due || "",
+        "الغرف": t.rooms ?? "", "دورات المياه": t.baths ?? "", "المكيفات": t.acs ?? "", "أول استحقاق": t.first_due || "", "الضريبة": t.vat_mode === "on" ? "تُطبَّق" : t.vat_mode === "off" ? "معفاة" : "تلقائي",
         "حساب الكهرباء": t.elec_account || "", "حساب الماء": t.water_account || "",
-      })), [22, 12, 12, 12, 12, 10, 14, 14, 12, 22, 16, 12, 8, 10, 10, 12, 14, 14]);
+      })), [22, 12, 12, 12, 12, 10, 14, 14, 12, 22, 16, 12, 8, 10, 10, 12, 10, 14, 14]);
 
       add("العقارات", props.map((p) => ({
         "العقار": p.name, "النوع": p.property_type || "", "المدينة": p.city || "", "الحي/العنوان": p.address || "",

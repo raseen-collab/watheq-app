@@ -13,7 +13,7 @@ type Row = {
   contract_start: string; payment_frequency: Frequency; contract_periods: number | null;
   paid_periods: number;
   elec_account?: string; water_account?: string; contract_no?: string; calendar?: string;
-  unit_type?: string; rooms?: number; baths?: number; acs?: number; first_due?: string;
+  unit_type?: string; rooms?: number; baths?: number; acs?: number; first_due?: string; vat_mode?: string;
   prop_name?: string;
   prop_id?: string;
   _error?: string;
@@ -22,7 +22,7 @@ type Row = {
 // العمود التاسع «الدفعات المسدّدة» اختياري: بدونه يُعدّ العقد لم يُسدَّد منه شيء —
 // وهذا كارثة لمكتب ينقل عقودًا قائمة (عقد من يناير يُرفع في سبتمبر = 8 «متأخرات» وهمية).
 // القوالب القديمة بثمانية أعمدة تبقى تعمل: الغائب = 0.
-const HEADERS = ["اسم المستأجر", "رقم الوحدة", "قيمة الدفعة", "دورة السداد", "بداية العقد", "عدد الدفعات", "الجوال", "رقم الهوية", "الدفعات المسدّدة", "العقار", "حساب الكهرباء", "حساب الماء", "رقم العقد", "نوع الوحدة", "الغرف", "دورات المياه", "المكيفات", "أول استحقاق"];
+const HEADERS = ["اسم المستأجر", "رقم الوحدة", "قيمة الدفعة", "دورة السداد", "بداية العقد", "عدد الدفعات", "الجوال", "رقم الهوية", "الدفعات المسدّدة", "العقار", "حساب الكهرباء", "حساب الماء", "رقم العقد", "نوع الوحدة", "الغرف", "دورات المياه", "المكيفات", "أول استحقاق", "الضريبة"];
 // عمود عاشر اختياري «العقار»: ملف واحد لكل المحفظة بدل ملف لكل عقار — مكتب بـ40
 // عقارًا لا يرفع 40 مرة. الاسم يجب أن يطابق عقارًا موجودًا؛ الصف الفارغ يذهب للعقار المختار.
 
@@ -205,7 +205,7 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
     const start = grid[0].some((c) => String(c).includes("اسم") || String(c).toLowerCase().includes("name")) ? 1 : 0;
 
     const parsed: Row[] = grid.slice(start).map((r) => {
-      const [name, unit, rent, freq, startDate, periods, phone, nid, paid, propName, elecAcc, waterAcc, contractNo, unitTypeTxt, roomsTxt, bathsTxt, acsTxt, firstDueTxt] = r.map((x) => String(x ?? "").trim());
+      const [name, unit, rent, freq, startDate, periods, phone, nid, paid, propName, elecAcc, waterAcc, contractNo, unitTypeTxt, roomsTxt, bathsTxt, acsTxt, firstDueTxt, vatTxt] = r.map((x) => String(x ?? "").trim());
       const rentN = Number(toEnDigits(rent).replace(/[^\d.]/g, "")) || 0;
       const fk = arKey(freq);
       const frequency: Frequency = FREQ_LOOKUP[fk] || "monthly";
@@ -240,6 +240,7 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
         baths: bathsTxt ? Number(toEnDigits(bathsTxt)) || 0 : undefined,
         acs: acsTxt ? Number(toEnDigits(acsTxt)) || 0 : undefined,
         first_due: firstDueTxt ? (parseHijriInput(firstDueTxt) || normalizeDate(firstDueTxt) || undefined) : undefined,
+        vat_mode: /معف|بدون|off/i.test(vatTxt || "") ? "off" : /تطبق|تُطبَّق|نعم|on/i.test(vatTxt || "") ? "on" : undefined,
         prop_name: propName || undefined, prop_id: target?.id,
         _error: err || undefined,
       };

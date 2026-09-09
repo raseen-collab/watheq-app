@@ -7,7 +7,7 @@ import { officeId, getOffice, ROLE_LABEL, OWNER_PERMS } from "@/lib/office";
 import { arDate } from "@/lib/documents";
 import { hijriShort, hijriText, parseHijriInput } from "@/lib/hijri";
 import { sar, waLink, today } from "@/lib/utils";
-import { contractState, buildSchedule, FREQUENCIES, freqLabel, freqShort, derivedEndDate, renewContract, needsRenewal, applyPayment, splitVat, isCommercial, isVacant, settleDeposit,
+import { contractState, buildSchedule, FREQUENCIES, freqLabel, freqShort, derivedEndDate, renewContract, needsRenewal, applyPayment, splitVat, isCommercial, isVacant, settleDeposit, unitVatApplies,
   vacancyDays, TURNOVER_CHECKLIST, type Frequency } from "@/lib/contracts";
 import { PROPERTY_TYPES, typeLabel, unitLabel, typeIcon } from "@/lib/domain";
 import { statementHTML, invoiceHTML, propertyStatementHTML, moveOutSettlementHTML, quotationHTML, ownerReportHTML, DEFAULT_CHARGES, openDoc, type ChargeRow, type OwnerReportPayment } from "@/lib/documents";
@@ -38,7 +38,7 @@ type Tenant = {
   deposit_amount?: number | null; deposit_deductions?: number | null; deposit_notes?: string | null;
   meter_elec_in?: string | null; meter_elec_out?: string | null;
   elec_account?: string | null; water_account?: string | null;
-  contract_no?: string | null; calendar?: string | null; first_due?: string | null;
+  contract_no?: string | null; calendar?: string | null; first_due?: string | null; vat_mode?: string | null;
   unit_type?: string | null; rooms?: number | null; baths?: number | null; acs?: number | null;
   meter_water_in?: string | null; meter_water_out?: string | null;
   turnover_checklist?: { label: string; done?: boolean; note?: string | null }[] | null;
@@ -436,6 +436,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       // وقراءتا التسليم تُثبتان في مخالصة الإخلاء لاحقًا
       contract_no: (d.contract_no || "").trim() || null,
       calendar: d.calendar === "hijri" ? "hijri" : "gregorian",
+      vat_mode: ["on", "off"].includes(String(d.vat_mode)) ? d.vat_mode : "auto",
       first_due: d.first_due || null,
       unit_type: d.unit_type || null,
       rooms: d.rooms === "" || d.rooms == null ? null : Math.max(0, Math.min(50, Number(d.rooms) || 0)),
@@ -595,13 +596,13 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
     const ul = unitLabel(active.property_type);
     const unit = `${ul} (${t.unit || "—"})`;
     const v = { enabled: !!active.vat_enabled, rate: Number(active.vat_rate) || 15, inclusive: active.vat_inclusive !== false };
-    const one = splitVat(Number(t.rent_amount) || 0, v);
+    const one = splitVat(Number(t.rent_amount) || 0, active && unitVatApplies(t, active) ? v : { ...v, enabled: false });
 
     const L: string[] = [`السلام عليكم ورحمة الله، ${t.name} 🌿`, ""];
 
     if (st.unpaid === 0) {
       L.push(`تذكير ودّي بأن الدفعة القادمة عن ${unit} بعقار ${active.name} تستحق بتاريخ ${arDate(st.nextDueDate)}.`);
-      if (one.total) L.push(`• قيمة الدفعة: ${sar(one.total)} ريال${v.enabled ? ` (منها ${sar(one.vat)} ريال ضريبة قيمة مضافة)` : ""}`);
+      if (one.total) L.push(`• قيمة الدفعة: ${sar(one.total)} ريال${one.vat > 0 ? ` (منها ${sar(one.vat)} ريال ضريبة قيمة مضافة)` : ""}`);
     } else {
       L.push(`نودّ تذكيركم بوجود مستحقّات غير مسدَّدة عن ${unit} بعقار ${active.name}، وبيانها:`);
       L.push(`• عدد الدفعات المتأخرة: ${st.unpaid}`);
@@ -628,8 +629,8 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
     const who = active.manager || orgName || "إدارة الأملاك";
     const ul = unitLabel(active.property_type);
     const v = { enabled: !!active.vat_enabled, rate: Number(active.vat_rate) || 15, inclusive: active.vat_inclusive !== false };
-    const one = splitVat(Number(t.rent_amount) || 0, v);
-    const totalDue = splitVat(st.amountDue, v);
+    const one = splitVat(Number(t.rent_amount) || 0, active && unitVatApplies(t, active) ? v : { ...v, enabled: false });
+    const totalDue = splitVat(st.amountDue, active && unitVatApplies(t, active) ? v : { ...v, enabled: false });
 
     // نطاق الفترة المتأخرة: من أول دفعة غير مسدَّدة إلى أحدث دفعة استحقّت
     const sch = buildSchedule(t);
@@ -651,7 +652,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       `بالإشارة إلى عقد الإيجار المبرم بيننا${t.contract_no ? ` رقم (${t.contract_no})` : ""} (بداية العقد: ${arDate(t.contract_start)}${t.contract_start ? ` — ${hijriText(t.contract_start)}` : ""}، نهايته: ${arDate(st.endDate)}، دورة السداد: ${freqLabel(t.payment_frequency)}${one.total ? `، وقيمة الدفعة ${sar(one.total)} ريال` : ""})؛`,
       "",
       `نفيدكم بأنه قد ترصَّد بذمّتكم مبلغ (${sar(st.amountDue)}) ريال، قيمة (${st.unpaid}) دفعة مستحقة عن الفترة من (${arDate(fromDate)}) إلى (${arDate(toDate)})${st.hasPartial ? `، بعد خصم مبلغ (${sar(st.partial)}) ريال مسدَّد جزئيًّا` : ""}، ولم يُسدَّد حتى تاريخ هذا الإشعار.`,
-      ...(v.enabled && totalDue.vat > 0 ? ["", `ويشمل المبلغ المذكور ضريبة قيمة مضافة قدرها (${sar(totalDue.vat)}) ريال بنسبة (${v.rate}%).`] : []),
+      ...(totalDue.vat > 0 ? ["", `ويشمل المبلغ المذكور ضريبة قيمة مضافة قدرها (${sar(totalDue.vat)}) ريال بنسبة (${v.rate}%).`] : []),
       "",
       "لذا نأمل المبادرة بسداد المبلغ خلال (5) أيام من تاريخ استلامكم هذا الإشعار، بالوسيلة المتفق عليها في العقد، وتزويدنا بما يفيد السداد.",
       "",
@@ -1057,7 +1058,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                         {t.unit_type ? UNIT_TYPES[t.unit_type] || ul : ul} {t.unit || "—"} · {sar(t.rent_amount)} ريال / {freqShort(t.payment_frequency)}{(t.rooms || t.baths || t.acs) ? <span className="text-[11px]"> · {[t.rooms ? `${t.rooms} غرف` : "", t.baths ? `${t.baths} دورات مياه` : "", t.acs ? `${t.acs} مكيف` : ""].filter(Boolean).join(" · ")}</span> : null}
                         {t.contract_no && <> · عقد <span dir="ltr">{t.contract_no}</span></>}
                       </div>
-                      {vat.enabled && (() => { const v = splitVat(Number(t.rent_amount) || 0, vat); return (
+                      {active && unitVatApplies(t, active) && (() => { const v = splitVat(Number(t.rent_amount) || 0, vat); return (
                         <div className="text-[.7rem] text-muted mt-0.5">
                           أساسي {sar(v.base)} + ضريبة {sar(v.vat)} = <b className="text-deep">{sar(v.total)}</b>
                         </div>
@@ -1695,6 +1696,13 @@ function TenantModal({ open, initial, unitWord, onClose, onSubmit }: {
           </Field>
         </div>
         <Field label="رقم الهوية / السجل" hint="للخطابات"><input className="fld" value={d.national_id || ""} onChange={(e) => setD({ ...d, national_id: e.target.value })} /></Field>
+        <Field label="ضريبة القيمة المضافة لهذه الوحدة" hint="العمارة المختلطة: السكني معفى والتجاري خاضع — «تلقائي» يقرّر بحسب نوع الوحدة">
+          <select className="fld" value={d.vat_mode || "auto"} onChange={(e) => setD({ ...d, vat_mode: e.target.value })}>
+            <option value="auto">تلقائي — بحسب نوع الوحدة</option>
+            <option value="on">تُطبَّق دائمًا</option>
+            <option value="off">معفاة</option>
+          </select>
+        </Field>
         <Field label="نوع الوحدة" hint="يظهر في المستندات ومخالصة الإخلاء">
           <select className="fld" value={d.unit_type || ""} onChange={(e) => setD({ ...d, unit_type: e.target.value })}>
             <option value="">— بحسب العقار —</option>
@@ -1864,7 +1872,7 @@ function QuoteModal({ property, unitWord, issuer, onClose }: {
   const gross = perPeriod * periods;
   const v = { enabled: !!property.vat_enabled, rate: Number(property.vat_rate) || 15, inclusive: property.vat_inclusive !== false };
   const x = splitVat(gross, v);
-  const xp = splitVat(perPeriod, v);
+  const xp = splitVat(perPeriod, property && unitVatApplies({ unit_type: d.unit_type, vat_mode: d.vat_mode }, property) ? v : { ...v, enabled: false });
   const upfront = xp.total + (Number(d.deposit) || 0);
   const ready = !!(d.tenant_name || "").trim() && perPeriod > 0 && !!d.start_date;
 
@@ -1873,6 +1881,7 @@ function QuoteModal({ property, unitWord, issuer, onClose }: {
       quote_no: d.quote_no || stamp(),
       tenant_name: String(d.tenant_name || "").trim(),
       unit: String(d.unit || "").trim(),
+      unit_type: d.unit_type || null, vat_mode: d.vat_mode || null,
       rent_amount: perPeriod,
       payment_frequency: d.payment_frequency,
       contract_periods: periods,
@@ -1900,10 +1909,16 @@ function QuoteModal({ property, unitWord, issuer, onClose }: {
           <Field label={`رقم ${unitWord}`}>
             <input className="fld" value={d.unit} onChange={(e) => setD({ ...d, unit: e.target.value })} placeholder="101" />
           </Field>
+          <Field label="نوع الوحدة" hint="يحدد الضريبة في العمارة المختلطة (سكني معفى · تجاري خاضع)">
+            <select className="fld" value={d.unit_type || ""} onChange={(e) => setD({ ...d, unit_type: e.target.value })}>
+              <option value="">— بحسب العقار —</option>
+              {Object.entries(UNIT_TYPES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+            </select>
+          </Field>
         </div>
 
         <div className="grid grid-cols-2 gap-3">
-          <Field label={`قيمة الدفعة (ريال)${v.enabled ? v.inclusive ? " — شاملة الضريبة" : " — قبل الضريبة" : ""}`}>
+          <Field label={`قيمة الدفعة (ريال)${property && unitVatApplies({ unit_type: d.unit_type, vat_mode: d.vat_mode }, property) ? (v.inclusive ? " — شاملة الضريبة" : " — قبل الضريبة") : ""}`}>
             <input className="fld" type="number" value={d.rent_amount}
               onChange={(e) => setD({ ...d, rent_amount: e.target.value })} placeholder="25000" />
           </Field>
@@ -1967,7 +1982,7 @@ function QuoteModal({ property, unitWord, issuer, onClose }: {
             <div className="font-semibold text-deep mb-1.5">ملخّص العرض</div>
             <div className="text-muted space-y-1 text-xs leading-relaxed">
               <div>إجمالي قيمة العقد{v.enabled ? " (شامل الضريبة)" : ""}: <b className="text-ink">{sar(x.total)} ريال</b></div>
-              {v.enabled && <div>منها ضريبة قيمة مضافة ({v.rate}%): <b className="text-ink">{sar(x.vat)} ريال</b></div>}
+              {xp.vat > 0 && <div>منها ضريبة قيمة مضافة ({v.rate}%): <b className="text-ink">{sar(xp.vat)} ريال</b></div>}
               <div>المطلوب عند التعاقد (الدفعة الأولى + التأمين): <b className="text-ink">{sar(upfront)} ريال</b></div>
               <div>عدد الدفعات: <b className="text-ink">{periods}</b> · {freqLabel(d.payment_frequency)}</div>
             </div>
