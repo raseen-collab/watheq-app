@@ -64,7 +64,7 @@ export async function GET(_req: Request, { params }: { params: { token: string }
     const lab = (ym: string) => `${AR_MONTHS[Number(ym.slice(5, 7)) - 1]} ${ym.slice(0, 4)}`;
     const label = (fromYm === toYm ? lab(fromYm) : `${lab(fromYm)} — ${lab(toYm)}`) + (toYm === ymNow ? " (حتى اليوم)" : "");
 
-    const { data: props } = await db.from("properties").select("*, tenants(*)")
+    const { data: props } = await db.from("properties").select("*, tenants(*)").limit(2000, { referencedTable: "tenants" })
       .eq("user_id", link.user_id).eq("owner_name", link.owner_name);
     if (!props?.length) return deny("لا عقارات مسجّلة لهذا المالك");
     const ids = props.map((p: any) => p.id);
@@ -106,7 +106,7 @@ export async function GET(_req: Request, { params }: { params: { token: string }
   }
 
   const { data: property } = await db.from("properties")
-    .select("*, tenants(*)").eq("id", link.property_id).maybeSingle();
+    .select("*, tenants(*)").limit(2000, { referencedTable: "tenants" }).eq("id", link.property_id).maybeSingle();
   if (!property) return deny("العقار لم يعد موجودًا");
 
   const ym = ymNow;
