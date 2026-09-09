@@ -235,6 +235,8 @@ export type ContractState = {
   expiringSoon: boolean;
   /** الوحدة مُخلاة: لا استحقاق قادم ولا تجديد؛ وما بقي من مبلغ فهو متأخرات المستأجر السابق */
   vacant: boolean;
+  /** بيانات العقد ناقصة (لا تاريخ بداية) — لا يمكن حساب أي استحقاق */
+  incomplete: boolean;
   /** متأخرات بقيت على مستأجر أخلى الوحدة — تُتابَع كدين لا كتذكير إيجار */
   legacyArrears: number;
   /** دين مرحَّل من عقد سابق أو مستأجر سابق — خارج دفعات العقد الجاري */
@@ -291,7 +293,7 @@ export function contractState(t: {
       nextDueDate: null, daysToNextDue: null,
       endDate: t.contract_end || null,
       daysToEnd: t.contract_end ? daysBetween(new Date(t.contract_end), today) : null,
-      status: "ok", statusLabel: "بانتظار بيانات العقد", progress: 0,
+      status: "ok", statusLabel: "بيانات العقد ناقصة", incomplete: true, progress: 0,
       inGrace: false, graceDaysLeft: 0,
     };
   }
@@ -390,7 +392,7 @@ export function contractState(t: {
   }
 
   return {
-    due, paid, unpaid, amountDue, grossDue, partial, hasPartial, partialPct, fullyPaid, soonTier, expiringSoon, vacant, legacyArrears,
+    due, paid, unpaid, amountDue, grossDue, partial, hasPartial, partialPct, fullyPaid, soonTier, expiringSoon, vacant, legacyArrears, incomplete: false,
     carriedDebt, totalOwed: r2(amountDue + carriedDebt),
     nextDueDate: nextDueOut, daysToNextDue: daysToNextOut, endDate, daysToEnd: daysToEndOut, status, statusLabel, progress,
     inGrace, graceDaysLeft,
