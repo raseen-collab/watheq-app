@@ -1,0 +1,2027 @@
+import { contractState, buildSchedule, freqLabel, splitVat, settleDeposit, vacancyDays, isVacant, unitVatApplies } from "./contracts";
+import { complianceState, brokerageEnd, expectedCommission, UI_LEGAL, LEGAL_DISCLAIMER, DEFAULT_COMMISSION_PCT, type ComplianceItem } from "./compliance";
+import { KIND_META as L_KIND, OFFER_LABEL, STATUS_META, freshness, pricePerMeter, shortDesc, sortListings, summarize, STALE_DAYS, type Listing } from "./listings";
+import { ownerNet, sumByCategory, catLabel, type ExpenseRow } from "./expenses";
+import { unitLabel, typeLabel } from "./domain";
+import { hijriText } from "@/lib/hijri";
+
+const sar = (n: number) => {
+  const v = Number(n) || 0;
+  // الكسور بمنزلتين دائمًا (2,608.70 لا 2,608.7) — والصحيح بلا كسور. والسالب بعلامة طرح حقيقية
+  const abs = Math.abs(v);
+  const txt = Number.isInteger(abs) ? abs.toLocaleString("en-US") : abs.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return v < 0 ? `−${txt}` : txt;
+};
+
+/**
+ * تعقيم المدخلات قبل بناء أي مستند HTML. الأسماء والملاحظات يكتبها
+ * موظفون، والمستند قد يُفتح في نافذة طباعة أو يُقدَّم علنًا عبر رابط
+ * المالك — فأي وسم في اسم مستأجر يصير سكربتًا يعمل عند من يفتح الصفحة.
+ * نُهرّب < > & " في كل حقل نصي (عميقًا) ونترك الأرقام والتواريخ كما هي.
+ */
+function scrub<T>(v: T): T {
+  if (typeof v === "string") return v.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;") as any;
+  if (Array.isArray(v)) return v.map(scrub) as any;
+  if (v && typeof v === "object" && !(v instanceof Date)) {
+    const o: any = {};
+    for (const k of Object.keys(v as any)) o[k] = scrub((v as any)[k]);
+    return o;
+  }
+  return v;
+}
+
+const MONTHS_AR = ["يناير","فبراير","مارس","أبريل","مايو","يونيو",
+                   "يوليو","أغسطس","سبتمبر","أكتوبر","نوفمبر","ديسمبر"];
+
+/**
+ * 5 مارس 2026 — ميلادي بأسماء عربية.
+ * لا يُستعمل Intl مع "ar-SA" لأنه يُخرج التاريخ **هجريًّا** على كثير من
+ * الأجهزة، فيقرأ المستأجر تاريخًا لا يطابق عقده.
+ */
+export function arDate(v?: string | null): string {
+  if (!v) return "—";
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(v));
+  if (!m) return String(v);
+  const mo = Number(m[2]) - 1;
+  if (mo < 0 || mo > 11) return String(v);
+  return `${Number(m[3])} ${MONTHS_AR[mo]} ${m[1]}`;
+}
+/** التاريخ بالميلادي والهجري معًا — كما يقرأه المكتب السعودي في عقوده */
+export function arDateH(v?: string | null): string {
+  const g = arDate(v);
+  if (!g || g === "—") return g;
+  const h = hijriText(String(v).slice(0, 10));
+  return h ? `${g} (${h})` : g;
+}
+
+
+const today = () => {
+  const d = new Date(), p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+};
+
+type Tenant = {
+  status?: string | null;
+  id: string; name: string; unit: string | null; phone: string | null; national_id: string | null;
+  rent_amount: number; contract_start: string | null; contract_end: string | null;
+  payment_frequency: string | null; paid_periods: number | null; contract_periods: number | null;
+  partial_amount?: number | null; contract_no?: string | null;
+  unit_type?: string | null; vat_mode?: string | null; rooms?: number | null; baths?: number | null; acs?: number | null; first_due?: string | null;
+};
+type Property = {
+  usage?: string | null;
+  name: string; address: string | null; city: string | null; manager: string | null; property_type: string | null;
+  grace_days?: number | null;
+  vat_enabled?: boolean | null; vat_rate?: number | null; vat_inclusive?: boolean | null;
+};
+export type PaymentRow = {
+  id?: string; paid_on: string; amount: number;
+  method?: string | null; periods_covered?: number | null; note?: string | null;
+};
+const METHOD_AR: Record<string, string> = {
+  transfer: "تحويل بنكي", cash: "نقدًا", pos: "شبكة", cheque: "شيك", other: "أخرى",
+};
+const methodAr = (m?: string | null) => METHOD_AR[String(m || "")] || "—";
+/** صف السجل: الدفعة السالبة تراجعٌ موثّق — تُسمّى باسمها لا «أخرى» */
+/**
+ * الدخل السنوي المتوقع للعقار: إيجارات الوحدات المشغولة مُقيَّسة على سنة.
+ * يجيب سؤال المالك الأول — «كم يُدخل هذا العقار في السنة؟» — ويجعل المحصَّل
+ * خلال الفترة رقمًا له مرجع بدل أن يكون معلّقًا في الهواء.
+ */
+const UNIT_TYPE_AR: Record<string, string> = { apartment: "شقة", annex: "شقة ملحق", studio: "استديو", room: "غرفة", shop: "محل", office: "مكتب", warehouse: "مستودع", land: "أرض", villa: "فيلا", other: "وحدة" };
+const USAGE_AR: Record<string, string> = { families: "سكني — عوائل", singles: "سكني — عزّاب", mixed: "سكني تجاري", commercial: "تجاري" };
+/** وصف الوحدة في المستندات: «شقة ملحق رقم 3 — 2 غرف · 1 دورة مياه · 2 مكيف» */
+function unitDesc(t: any, p: any): string {
+  const type = t.unit_type ? (UNIT_TYPE_AR[t.unit_type] || "وحدة") : unitLabel(p?.property_type);
+  const specs = [t.rooms ? `${t.rooms} غرف` : "", t.baths ? `${t.baths} دورات مياه` : "", t.acs ? `${t.acs} مكيف` : ""].filter(Boolean).join(" · ");
+  return `${type} رقم (${t.unit || "—"})${specs ? ` — ${specs}` : ""}`;
+}
+
+const PER_YEAR: Record<string, number> = { daily: 365, weekly: 52, monthly: 12, quarterly: 4, semiannual: 2, annual: 1 };
+function annualExpected(tenants: any[]): number {
+  return (tenants || []).reduce((a, t) => {
+    if (isVacant(t)) return a;
+    const per = PER_YEAR[String(t.payment_frequency || "monthly")] ?? 12;
+    return a + (Number(t.rent_amount) || 0) * per;
+  }, 0);
+}
+
+const payMethod = (x: { method?: string | null; amount?: number | null }) =>
+  Number(x.amount) < 0 ? "↩︎ تراجع عن دفعة" : methodAr(x.method);
+
+type Issuer = { billing_name?: string | null; vat_number?: string | null; cr_number?: string | null; billing_phone?: string | null;
+  /** true لأي حساب بلا باقة مدفوعة — يُضاف سطر «أُنشئ عبر وثيق» في التذييل فقط.
+   *  المستند صالح للاستعمال كاملًا، بلا علامة مائية ولا تقييد. */
+  trial?: boolean | null;
+  /** true إذا انتهت التجربة ولم يشترك — هنا فقط تعود العلامة المائية. */
+  expired?: boolean | null };
+
+/** ثلاث حالات: مشترك = نظيف · تجربة نشطة = سطر المصدر · انتهت بلا اشتراك = علامة مائية */
+type Mark = "none" | "brand" | "wm";
+const markOf = (i?: Issuer | null): Mark => (i?.expired ? "wm" : i?.trial ? "brand" : "none");
+
+const SHELL = (title: string, inner: string, mark: Mark = "none") => `<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8">
+<title>${title}</title>
+<style>
+  @page{size:A4;margin:14mm}
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{max-width:100%;overflow-x:hidden}
+  /* هوامش الجسم: بدونها يلتصق المحتوى بحافة النافذة ويُقصّ أول سطر في RTL */
+  body{font-family:"IBM Plex Sans Arabic","Segoe UI",Tahoma,sans-serif;color:#0B211F;line-height:1.7;background:#fff;-webkit-print-color-adjust:exact;print-color-adjust:exact;word-wrap:break-word;
+      padding:16px;max-width:900px;margin:0 auto}
+  @media print{body{padding:0;max-width:none;margin:0}}
+  *{box-sizing:border-box}
+  .hd{background:#0E3A37;color:#EAF1EE;padding:18px 22px;border-radius:12px;display:table;width:100%;box-sizing:border-box}
+  .hd .lg{display:table-cell;vertical-align:middle;text-align:right;white-space:nowrap}
+  .hd .lg .seal{display:inline-block;vertical-align:middle;margin-inline-end:11px}
+  .hd .lg>div:last-child{display:inline-block;vertical-align:middle}
+  .seal{width:40px;height:40px;border-radius:10px;background:#0A2C2A;text-align:center;line-height:40px;color:#E7C877;font-weight:700;font-size:1.3rem;box-shadow:inset 0 0 0 2px rgba(231,200,119,.4)}
+  .hd .t{font-weight:700;font-size:1.4rem}
+  .hd .s{font-size:.75rem;color:#9FB8B3}
+  .hd .meta{display:table-cell;vertical-align:middle;text-align:left;font-size:.8rem;color:#B9CCC7;white-space:nowrap}
+  .hd .meta b{color:#E7C877;display:block;font-size:1rem}
+  h1{font-size:1.25rem;margin:22px 0 4px;color:#0E3A37}
+  h2{font-size:.95rem;margin:20px 0 8px;color:#0E3A37;font-weight:700;
+      border-bottom:1px solid #E4DDCD;padding-bottom:5px}
+  .sub{color:#5C6B67;font-size:.85rem;margin-bottom:16px}
+  /* الهوامش السالبة كانت تدفع العنصر خارج النافذة، وoverflow-x:hidden يقصّه بلا تمرير */
+  .grid{display:table;width:100%;border-collapse:separate;border-spacing:7px 0;margin:0 0 18px;table-layout:fixed}
+  .box{display:table-cell;width:50%;vertical-align:top;border:1px solid #E4DDCD;border-radius:10px;padding:12px 14px;background:#FBF8F1}
+  .box h3{font-size:.78rem;color:#8a5a11;margin-bottom:7px;font-weight:700}
+  .box .r{display:table;width:100%;font-size:.84rem;padding:3px 0}
+  .box .r span{display:table-cell}
+  .box .r span:first-child{color:#5C6B67;text-align:right}
+  .box .r span:last-child{font-weight:600;text-align:left;white-space:nowrap;padding-inline-start:10px}
+  table{width:100%;border-collapse:collapse;font-size:.83rem;margin-bottom:16px}
+  /* جدول أعرض من الشاشة يُمرَّر بدل أن يُقصّ */
+  .scrollx{overflow-x:auto;-webkit-overflow-scrolling:touch;margin-bottom:16px}
+  .scrollx table{margin-bottom:0;min-width:520px}
+  @media print{.scrollx{overflow:visible}.scrollx table{min-width:0}}
+  th{background:#F3EEE2;padding:8px 10px;text-align:right;font-weight:700;border-bottom:2px solid #E4DDCD;font-size:.78rem}
+  td{padding:8px 10px;border-bottom:1px solid #EFE9DA}
+  tr:last-child td{border-bottom:0}
+  .pill{font-size:.72rem;font-weight:700;padding:3px 9px;border-radius:6px;display:inline-block}
+  .pill.p{background:#E6F4EC;color:#137a50}
+  .pill.l{background:#FBE9E7;color:#a5322c}
+  .pill.u{background:#F3EEE2;color:#5C6B67}
+  .tot{display:table;width:100%;border-collapse:separate;border-spacing:5px 0;margin:0 0 18px;table-layout:fixed}
+  .tot>div{display:table-cell;vertical-align:top;border:1px solid #E4DDCD;border-radius:10px;padding:11px;text-align:center;background:#FBF8F1}
+  .tot .v{font-weight:700;font-size:1.15rem;color:#0E3A37}
+  .tot .v.g{color:#1E9E6A}.tot .v.r{color:#D0453F}
+  .tot .l{font-size:.7rem;color:#5C6B67;margin-top:3px}
+  .due{background:#0E3A37;color:#EAF1EE;border-radius:12px;padding:16px 20px;display:table;width:100%;box-sizing:border-box;margin-bottom:18px}
+  .due .l{display:table-cell;vertical-align:middle;text-align:right;font-size:.85rem;color:#B9CCC7}
+  .due .v{display:table-cell;vertical-align:middle;text-align:left;font-weight:700;font-size:1.7rem;color:#E7C877;white-space:nowrap;padding-inline-start:14px}
+  .note{border-inline-start:3px solid #B8791F;background:#FBF1DF;padding:11px 14px;border-radius:8px;font-size:.78rem;color:#8a5a11;margin-bottom:14px}
+  .sign{display:table;width:100%;border-collapse:separate;border-spacing:15px 0;margin:26px 0 0;font-size:.82rem;table-layout:fixed}
+  .sign>div{display:table-cell;width:50%;vertical-align:top;border-top:1px solid #E4DDCD;padding-top:8px;color:#5C6B67}
+  .ft{margin-top:22px;border-top:1px solid #E4DDCD;padding-top:12px;font-size:.68rem;color:#5C6B67;line-height:1.6;text-align:center}
+  .noprint{margin:18px 0;text-align:center}
+  .noprint button{margin:0 4px}
+  .noprint button{font-family:inherit;font-weight:600;font-size:.9rem;padding:10px 20px;border-radius:9px;border:0;cursor:pointer}
+  .noprint .a{background:#0E3A37;color:#F6F1E4}
+  .noprint .b{background:#fff;color:#0E3A37;border:1px solid #E4DDCD}
+  @media print{.noprint{display:none}}
+  /* ── سطر المصدر: تجربة نشطة ── */
+  .madeby{margin:18px 0 0;padding-top:9px;border-top:1px solid #E4DDCD;
+      font-size:.72rem;color:#8C8579;text-align:center;letter-spacing:.2px}
+  .madeby b{font-weight:700;color:#6E675C}
+  /* ── علامة مائية: انتهت التجربة بلا اشتراك ── */
+  .wm{position:fixed;top:0;right:0;bottom:0;left:0;z-index:9999;pointer-events:none;
+      display:flex;align-items:center;justify-content:center}
+  .wm span{transform:rotate(-32deg);font-size:3.6rem;font-weight:800;letter-spacing:2px;
+      color:rgba(208,69,63,.14);border:6px solid rgba(208,69,63,.14);
+      padding:16px 46px;border-radius:18px;white-space:nowrap}
+  .trialbar{background:#FBE9E7;border:1px solid #F5C6C2;color:#8f2b26;border-radius:10px;
+      padding:11px 15px;margin:14px 0 0;font-size:.82rem;font-weight:600;line-height:1.75}
+</style></head><body>
+<div class="noprint"><button class="a" onclick="window.print()">🖨️ طباعة / حفظ PDF</button><button class="b" onclick="window.close()">إغلاق</button></div>
+${mark === "wm" ? `<div class="wm"><span>نسخة تجريبية — غير معتمدة</span></div>` : ""}
+${inner}
+${mark === "brand" ? `<div class="madeby">أُنشئ عبر <b>وثيق</b> · watheqapp.com</div>` : ""}
+${mark === "wm" ? `<div class="trialbar">
+  انتهت فترة التجربة المجانية ولم يُفعَّل اشتراك، لذا تخرج المستندات بعلامة «نسخة تجريبية».
+  لإصدار نسخة نهائية بلا علامة: فعّل اشتراكك عبر watheqdocs@gmail.com
+</div>` : ""}
+</body></html>`;
+
+/** إعدادات الضريبة الخاصة بالعقار */
+/**
+ * رمز QR للفاتورة الضريبية المبسطة — «فاتورة» المرحلة الأولى (إصدار).
+ * TLV بخمس خانات: اسم البائع، الرقم الضريبي، وقت الإصدار ISO،
+ * الإجمالي شامل الضريبة، مبلغ الضريبة — ثم Base64.
+ * بلا btoa: نبني Base64 يدويًّا حتى يعمل في المتصفح وخارجه سواء.
+ */
+function zatcaTlvBase64(sellerName: string, vatNo: string, isoDateTime: string, total: number, vat: number): string {
+  const enc = new TextEncoder();
+  const fields = [sellerName, vatNo, isoDateTime, total.toFixed(2), vat.toFixed(2)];
+  const parts: number[] = [];
+  fields.forEach((val, i) => {
+    const b = Array.from(enc.encode(val));
+    parts.push(i + 1, b.length, ...b);
+  });
+  const B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  let out = "";
+  for (let i = 0; i < parts.length; i += 3) {
+    const a = parts[i], b = parts[i + 1], c = parts[i + 2];
+    out += B64[a >> 2] + B64[((a & 3) << 4) | ((b ?? 0) >> 4)]
+        + (b === undefined ? "=" : B64[((b & 15) << 2) | ((c ?? 0) >> 6)])
+        + (c === undefined ? "=" : B64[c & 63]);
+  }
+  return out;
+}
+
+/**
+ * صندوق QR داخل الفاتورة. الرسم عبر مكتبة qrcodejs من CDN داخل نافذة
+ * الطباعة؛ وإن تعذّرت الشبكة يبقى نص Base64 ظاهرًا — وهو المحتوى
+ * النظامي نفسه، فالفاتورة لا تفقد صلاحيتها بغياب الرسم.
+ */
+function zatcaQrBlock(sellerName: string, vatNo: string, total: number, vat: number): string {
+  const tlv = zatcaTlvBase64(sellerName, vatNo, new Date().toISOString(), total, vat);
+  return `
+<div style="display:flex;justify-content:flex-end;margin-top:14px">
+  <div style="text-align:center">
+    <div id="zatca-qr" style="width:120px;height:120px;margin-inline-start:auto"></div>
+    <div style="font-size:8px;color:#8A8477;max-width:200px;word-break:break-all;margin-top:4px" id="zatca-tlv" title="محتوى رمز الاستجابة السريعة (TLV/Base64) — يُرسم رمزًا عند توفر الاتصال">${tlv}</div>
+  </div>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"><\/script>
+<script>try{new QRCode(document.getElementById("zatca-qr"),{text:document.getElementById("zatca-tlv").textContent,width:120,height:120,correctLevel:QRCode.CorrectLevel.M});document.getElementById("zatca-tlv").style.display="none";}catch(e){}<\/script>`;
+}
+
+/** إعدادات الضريبة — وإن مُرّرت الوحدة تُقرَّر بحسبها (العمارة المختلطة) */
+const vatOf = (p: Property, t?: { unit_type?: string | null; vat_mode?: string | null } | null) => ({
+  enabled: t ? unitVatApplies(t, p) : !!p.vat_enabled,
+  rate: Number(p.vat_rate) || 15, inclusive: p.vat_inclusive !== false,
+});
+/** فترة السماح الخاصة بالعقار */
+const graceOf = (p: Property) => ({ graceDays: Number(p.grace_days) || 0 });
+
+const header = (docTitle: string, docNo: string) => `
+<div class="hd">
+  <div class="lg"><div class="seal">و</div><div><div class="t">وثيق</div><div class="s">إدارة الأملاك العقارية</div></div></div>
+  <div class="meta">${docTitle}<b>${docNo}</b>التاريخ: ${arDate(today())}</div>
+</div>`;
+
+const footer = () => `
+<div class="ft">
+  صدر هذا المستند عبر منصة وثيق — أداة تنظيمية لإدارة الأملاك.<br>
+  وثيق لا يقدّم خدمات قانونية أو محاسبية، ولا يستلم أو يحوّل أي مبالغ. هذا المستند للاستخدام الإداري بين الطرفين، ومسؤولية اعتماده على مُصدِره.<br>
+  <b>وثيقة عمل حر رقم FL-763162251</b> — وزارة الموارد البشرية والتنمية الاجتماعية<br>
+  watheqdocs@gmail.com · تليجرام: ‎+966550165210
+</div>`;
+
+/** كشف حساب مستأجر — كامل الدفعات والأرصدة */
+/**
+ * كشف حساب المستأجر بنمطين:
+ *  - brief  (مختصر): بيانات العقد الأساسية + الملخص المالي + الرصيد + المدفوعات المستلمة.
+ *  - full   (شامل): كل ذلك + مواصفات الوحدة والعدادات وحسابات المرافق + جدول كل الدفعات
+ *    بحالاتها + استخدام العقار والمالك. بعض الملّاك يريدونه كاملًا للتوثيق، وبعضهم صفحة واحدة.
+ */
+export function statementHTML(t: Tenant, p: Property, issuer: Issuer = {}, payments: PaymentRow[] = [], mode: "brief" | "full" = "full") {
+  // تعقيم المدخلات (انظر scrub أعلاه)
+  t = scrub(t);
+  p = scrub(p);
+  issuer = scrub(issuer);
+  payments = scrub(payments);
+  const st = contractState(t, graceOf(p));
+  const rows = buildSchedule(t);
+  const ul = unitLabel(p.property_type);
+  const who = issuer.billing_name || p.manager || "إدارة الأملاك";
+  const v = vatOf(p, t);
+  const unit = splitVat(Number(t.rent_amount) || 0, v);      // تفصيل الدفعة الواحدة
+  const totalContract = unit.total * rows.length;
+  const totalPaid = st.paid * unit.total;
+  const dueSplit = splitVat(st.amountDue, v);                 // تفصيل الرصيد المستحق
+
+  const body = `
+${header(mode === "full" ? "كشف حساب شامل" : "كشف حساب مختصر", `${t.name}`)}
+<h1>كشف حساب ${ul} رقم (${t.unit || "—"})</h1>
+<div class="sub">${p.name}${p.address ? ` — ${p.address}` : ""}${p.city ? `، ${p.city}` : ""} · ${typeLabel(p.property_type)}</div>
+
+<div class="grid">
+  <div class="box">
+    <h3>بيانات المؤجّر</h3>
+    <div class="r"><span>الاسم</span><span>${who}</span></div>
+    ${issuer.cr_number ? `<div class="r"><span>السجل التجاري</span><span>${issuer.cr_number}</span></div>` : ""}
+    ${issuer.vat_number ? `<div class="r"><span>الرقم الضريبي</span><span>${issuer.vat_number}</span></div>` : ""}
+    ${issuer.billing_phone ? `<div class="r"><span>للتواصل</span><span>${issuer.billing_phone}</span></div>` : ""}
+  </div>
+  <div class="box">
+    <h3>بيانات المستأجر</h3>
+    <div class="r"><span>الاسم</span><span>${t.name}</span></div>
+    ${t.national_id ? `<div class="r"><span>الهوية / السجل</span><span>${t.national_id}</span></div>` : ""}
+    ${t.phone ? `<div class="r"><span>الجوال</span><span>${t.phone}</span></div>` : ""}
+    <div class="r"><span>${ul}</span><span>${t.unit || "—"}</span></div>
+  </div>
+</div>
+
+<div class="grid">
+  <div class="box">
+    <h3>بيانات العقد</h3>
+    ${t.contract_no ? `<div class="r"><span>رقم العقد</span><span dir="ltr"><b>${t.contract_no}</b></span></div>` : ""}
+    <div class="r"><span>الوحدة</span><span>${unitDesc(t, p)}</span></div>
+    ${p.usage ? `<div class="r"><span>استخدام العقار</span><span>${USAGE_AR[String(p.usage)] || p.usage}</span></div>` : ""}
+    ${t.first_due ? `<div class="r"><span>أول استحقاق</span><span>${arDateH(t.first_due)}</span></div>` : ""}
+    <div class="r"><span>بداية العقد</span><span>${arDateH(t.contract_start)}</span></div>
+    <div class="r"><span>نهاية العقد</span><span>${arDateH(st.endDate)}</span></div>
+    <div class="r"><span>دورة السداد</span><span>${freqLabel(t.payment_frequency)}</span></div>
+    <div class="r"><span>قيمة الدفعة${v.enabled ? " (شاملة الضريبة)" : ""}</span><span>${sar(unit.total)} ريال</span></div>
+    ${v.enabled ? `<div class="r"><span>منها إيجار أساسي</span><span>${sar(unit.base)} ريال</span></div>
+    <div class="r"><span>ضريبة القيمة المضافة (${v.rate}%)</span><span>${sar(unit.vat)} ريال</span></div>` : ""}
+  </div>
+  <div class="box">
+    <h3>ملخّص مالي</h3>
+    <div class="r"><span>إجمالي قيمة العقد</span><span>${sar(totalContract)} ريال</span></div>
+    <div class="r"><span>المسدَّد</span><span>${sar(totalPaid)} ريال</span></div>
+    <div class="r"><span>المتأخر</span><span>${sar(st.amountDue)} ريال</span></div>
+    ${v.enabled && st.amountDue > 0 ? `<div class="r"><span>منه ضريبة</span><span>${sar(dueSplit.vat)} ريال</span></div>` : ""}
+    ${st.hasPartial ? `<div class="r"><span>مدفوع جزئيًّا</span><span>${sar(st.partial)} ريال</span></div>` : ""}
+    <div class="r"><span>الدفعة القادمة</span><span>${arDate(st.nextDueDate)}</span></div>
+  </div>
+</div>
+
+<div class="tot">
+  <div><div class="v">${rows.length}</div><div class="l">إجمالي الدفعات</div></div>
+  <div><div class="v g">${st.paid}</div><div class="l">مسدّدة</div></div>
+  <div><div class="v r">${st.unpaid}</div><div class="l">متأخرة</div></div>
+  <div><div class="v">${Math.max(0, rows.length - st.due)}</div><div class="l">قادمة</div></div>
+</div>
+
+${st.amountDue > 0 ? `<div class="due"><span class="l">الرصيد المستحق حتى تاريخه</span><span class="v">${sar(st.amountDue)} ريال</span></div>` : ""}
+
+${mode === "full" ? `
+<h1 style="font-size:1rem">بيانات الوحدة</h1>
+<div class="grid">
+  <div class="box">
+    <div class="r"><span>الوحدة</span><span>${unitDesc(t, p)}</span></div>
+    ${(t as any).elec_account ? `<div class="r"><span>حساب الكهرباء</span><span dir="ltr">${(t as any).elec_account}</span></div>` : ""}
+    ${(t as any).water_account ? `<div class="r"><span>حساب الماء</span><span dir="ltr">${(t as any).water_account}</span></div>` : ""}
+    ${(t as any).meter_elec_in ? `<div class="r"><span>قراءة الكهرباء عند التسليم</span><span dir="ltr">${(t as any).meter_elec_in}</span></div>` : ""}
+    ${(t as any).meter_water_in ? `<div class="r"><span>قراءة الماء عند التسليم</span><span dir="ltr">${(t as any).meter_water_in}</span></div>` : ""}
+    ${(t as any).deposit_amount ? `<div class="r"><span>مبلغ التأمين</span><span>${sar(Number((t as any).deposit_amount) || 0)} ريال</span></div>` : ""}
+  </div>
+  <div class="box">
+    <div class="r"><span>العقار</span><span>${p.name}${p.city ? ` — ${p.city}` : ""}</span></div>
+    ${p.address ? `<div class="r"><span>العنوان</span><span>${p.address}</span></div>` : ""}
+    ${(p as any).owner_name ? `<div class="r"><span>المالك</span><span>${(p as any).owner_name}</span></div>` : ""}
+    ${p.usage ? `<div class="r"><span>الاستخدام</span><span>${USAGE_AR[String(p.usage)] || p.usage}</span></div>` : ""}
+    <div class="r"><span>التقويم المعتمد للأقساط</span><span>${(t as any).calendar === "hijri" ? "هجري (أم القرى)" : "ميلادي"}</span></div>
+  </div>
+</div>
+
+<h1 style="font-size:1rem">تفصيل الدفعات</h1>
+<table>
+  <thead><tr><th>#</th><th>تاريخ الاستحقاق</th>${v.enabled ? "<th>الأساس</th><th>الضريبة</th>" : ""}<th>الإجمالي (ريال)</th><th>الحالة</th></tr></thead>
+  <tbody>
+    ${rows.map((r) => { const x = splitVat(r.amount, v); return `<tr>
+      <td>${r.n}</td><td>${arDate(r.date)}</td>
+      ${v.enabled ? `<td>${sar(x.base)}</td><td>${sar(x.vat)}</td>` : ""}
+      <td>${sar(x.total)}</td>
+      <td>${r.status === "paid" ? '<span class="pill p">مسدّدة</span>'
+          : r.status === "partial" ? '<span class="pill u">سداد جزئي</span>'
+          : r.status === "late" ? '<span class="pill l">متأخرة</span>'
+          : '<span class="pill u">قادمة</span>'}</td>
+    </tr>`; }).join("")}
+  </tbody>
+</table>` : ""}
+
+${payments.length ? `
+<h1 style="font-size:1rem">المدفوعات المستلمة</h1>
+<table>
+  <thead><tr><th>#</th><th>تاريخ الاستلام</th><th>المبلغ (ريال)</th><th>طريقة السداد</th><th>ملاحظة</th></tr></thead>
+  <tbody>
+    ${payments.map((r, i) => `<tr>
+      <td>${i + 1}</td>
+      <td>${r.paid_on ? arDate(r.paid_on) : "—"}</td>
+      <td>${sar(r.amount)}</td>
+      <td>${payMethod(r)}</td>
+      <td>${r.note ? String(r.note).replace(/</g, "&lt;") : "—"}</td>
+    </tr>`).join("")}
+    <tr style="background:#F3EEE2;font-weight:700">
+      <td colspan="2">إجمالي المستلم</td>
+      <td>${sar(payments.reduce((a, r) => a + (Number(r.amount) || 0), 0))}</td>
+      <td colspan="2">${payments.length} عملية</td>
+    </tr>
+  </tbody>
+</table>
+<div class="note" style="border-inline-start-color:#1E9E6A;background:#E6F4EC;color:#137a50">
+  هذا الجدول مستخرج من سجل المدفوعات الموثّق في المنصة بتواريخه وطرق سداده، ويصلح للمطابقة مع سجلاتكم.
+</div>` : `
+<div class="note">لا توجد مدفوعات موثّقة في سجل المنصة لهذا العقد حتى تاريخه. الأرصدة أعلاه مستنتجة من دورة العقد وعدد الدفعات المسجّلة.</div>`}
+
+<div class="note">كشف استرشادي صادر آليًّا من بيانات العقد المسجّلة. يُرجى مطابقته مع سجلاتكم، وإشعارنا بأي فرق.</div>
+
+<div class="sign">
+  <div>المؤجّر / الوكيل: ${who}<br><br>التوقيع: ________________</div>
+  <div>المستأجر: ${t.name}<br><br>التوقيع: ________________</div>
+</div>
+${footer()}`;
+  return SHELL(`كشف حساب — ${t.name}`, body, markOf(issuer));
+}
+
+/** فاتورة دفعة واحدة */
+export function invoiceHTML(
+  t: Tenant, p: Property,
+  inv: { invoice_no: string; amount: number; due_date: string; period_label: string },
+  issuer: Issuer = {}
+) {
+  // تعقيم المدخلات (انظر scrub أعلاه)
+  t = scrub(t);
+  p = scrub(p);
+  inv = scrub(inv);
+  issuer = scrub(issuer);
+  const ul = unitLabel(p.property_type);
+  const who = issuer.billing_name || p.manager || "إدارة الأملاك";
+  const v = vatOf(p, t);
+  const x = splitVat(Number(inv.amount) || 0, v);
+  const body = `
+${header(v.enabled && issuer.vat_number ? "فاتورة ضريبية مبسطة" : "فاتورة", inv.invoice_no)}
+<h1>${v.enabled && issuer.vat_number ? "فاتورة ضريبية مبسطة — أجرة" : "فاتورة أجرة"}</h1>
+<div class="sub">${inv.period_label} · ${freqLabel(t.payment_frequency)}</div>
+
+<div class="grid">
+  <div class="box">
+    <h3>المُصدِر</h3>
+    <div class="r"><span>الاسم</span><span>${who}</span></div>
+    ${issuer.cr_number ? `<div class="r"><span>السجل التجاري</span><span>${issuer.cr_number}</span></div>` : ""}
+    ${issuer.vat_number ? `<div class="r"><span>الرقم الضريبي</span><span>${issuer.vat_number}</span></div>` : ""}
+    ${issuer.billing_phone ? `<div class="r"><span>للتواصل</span><span>${issuer.billing_phone}</span></div>` : ""}
+  </div>
+  <div class="box">
+    <h3>إلى</h3>
+    <div class="r"><span>الاسم</span><span>${t.name}</span></div>
+    ${t.national_id ? `<div class="r"><span>الهوية / السجل</span><span>${t.national_id}</span></div>` : ""}
+    <div class="r"><span>${ul}</span><span>${t.unit || "—"}</span></div>
+    <div class="r"><span>العقار</span><span>${p.name}</span></div>
+  </div>
+</div>
+
+<table>
+  <thead><tr><th>البيان</th><th>الفترة</th><th>تاريخ الاستحقاق</th><th>المبلغ قبل الضريبة (ريال)</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>أجرة ${ul} رقم (${t.unit || "—"}) بعقار ${p.name}</td>
+      <td>${inv.period_label}</td>
+      <td>${inv.due_date}</td>
+      <td>${sar(x.base)}</td>
+    </tr>
+  </tbody>
+</table>
+
+${v.enabled ? `<table style="max-width:340px;margin-inline-start:auto">
+  <tbody>
+    <tr><td>الإجمالي قبل الضريبة</td><td style="text-align:left;font-weight:600">${sar(x.base)}</td></tr>
+    <tr><td>ضريبة القيمة المضافة (${v.rate}%)</td><td style="text-align:left;font-weight:600">${sar(x.vat)}</td></tr>
+    <tr><td style="font-weight:700">الإجمالي شامل الضريبة</td><td style="text-align:left;font-weight:700">${sar(x.total)}</td></tr>
+  </tbody>
+</table>` : ""}
+
+<div class="due"><span class="l">الإجمالي المستحق${v.enabled ? " (شامل الضريبة)" : ""}</span><span class="v">${sar(x.total)} ريال</span></div>
+
+${v.enabled && issuer.vat_number ? zatcaQrBlock(who, issuer.vat_number, x.total, x.vat) : ""}
+
+${v.enabled && !issuer.vat_number ? `<div class="note" style="border-inline-start-color:#D0453F;background:#FBE9E7;color:#a5322c">
+  <b>تنبيه:</b> الضريبة مفعّلة لكن الرقم الضريبي للمُصدِر غير مسجَّل، لذا صدرت الوثيقة بعنوان «فاتورة» لا «فاتورة ضريبية».
+  أضِف الرقم الضريبي في الإعدادات لتصدر فاتورة ضريبية مبسطة برمز QR.
+</div>` : ""}
+
+<div class="note">
+  فاتورة إدارية صادرة عن المؤجّر لغرض التوثيق بين الطرفين. السداد يتم مباشرةً للمؤجّر بالوسيلة المتفق عليها —
+  منصة وثيق لا تستلم ولا تحوّل أي مبالغ.
+</div>
+${v.enabled && issuer.vat_number ? `<div class="note">
+  <b>عن الفوترة الإلكترونية:</b> هذه فاتورة ضريبية مبسطة تتضمن رمز الاستجابة السريعة وفق متطلبات المرحلة الأولى (الإصدار) من نظام الفاتورة الإلكترونية.
+  إن كانت منشأتك مشمولة بالمرحلة الثانية (الربط والتكامل مع منصة «فاتورة»)، فوثيق لا يقوم بهذا الربط — أصدر فواتيرك الضريبية من حلّ فوترة مرتبط، واستخدم هذه للتوثيق الإداري.
+</div>` : ""}
+
+<div class="sign">
+  <div>المُصدِر: ${who}<br><br>التوقيع: ________________</div>
+  <div>تاريخ الإصدار: ${today()}<br><br>رقم الفاتورة: ${inv.invoice_no}</div>
+</div>
+${footer()}`;
+  return SHELL(`فاتورة ${inv.invoice_no} — ${t.name}`, body, markOf(issuer));
+}
+
+/* ═══════════════════ عرض سعر تأجير وحدة ═══════════════════ */
+
+export type ChargeRow = { label: string; who: "owner" | "tenant" };
+
+export const DEFAULT_CHARGES: ChargeRow[] = [
+  { label: "استهلاك الكهرباء", who: "tenant" },
+  { label: "استهلاك المياه", who: "tenant" },
+  { label: "الإنترنت والاتصالات", who: "tenant" },
+  { label: "النظافة الداخلية للوحدة", who: "tenant" },
+  { label: "الصيانة الإنشائية والتمديدات الأساسية", who: "owner" },
+  { label: "صيانة المصعد والأجزاء المشتركة", who: "owner" },
+  { label: "رسوم جمعية الملاك / الخدمات المشتركة", who: "owner" },
+];
+
+export type QuoteInput = {
+  quote_no: string;
+  tenant_name: string;
+  unit: string;
+  rent_amount: number;        // إيجار الدفعة الواحدة
+  payment_frequency: string;
+  contract_periods: number;
+  start_date: string;
+  deposit: number;
+  valid_until: string;
+  charges: ChargeRow[];
+  notes?: string | null;
+  /** لتحديد الضريبة في العمارة المختلطة — كنوع الوحدة في العقد */
+  unit_type?: string | null;
+  vat_mode?: string | null;
+};
+
+/** عرض سعر تأجير — يُرسل لمستأجر محتمل قبل التعاقد */
+export function quotationHTML(p: Property, q: QuoteInput, issuer: Issuer = {}) {
+  // تعقيم المدخلات (انظر scrub أعلاه)
+  p = scrub(p);
+  q = scrub(q);
+  issuer = scrub(issuer);
+  const ul = unitLabel(p.property_type);
+  const who = issuer.billing_name || p.manager || "إدارة الأملاك";
+  const v = vatOf(p, { unit_type: q.unit_type, vat_mode: q.vat_mode });
+  const periods = Math.max(1, Number(q.contract_periods) || 1);
+  const perPeriod = Number(q.rent_amount) || 0;
+  const gross = perPeriod * periods;
+  const x = splitVat(gross, v);
+  const xp = splitVat(perPeriod, v);
+  const rows = buildSchedule({
+    contract_start: q.start_date, payment_frequency: q.payment_frequency,
+    rent_amount: perPeriod, contract_periods: periods, paid_periods: 0,
+  });
+  const tenantRows = q.charges.filter((c) => c.who === "tenant");
+  const ownerRows = q.charges.filter((c) => c.who === "owner");
+
+  const body = `
+${header("عرض سعر", q.quote_no)}
+<h1>عرض سعر تأجير ${ul}</h1>
+<div class="sub">${p.name}${p.city ? ` · ${p.city}` : ""} · ${ul} رقم ${q.unit || "—"}</div>
+
+<div class="grid">
+  <div class="box">
+    <h3>المُصدِر</h3>
+    <div class="r"><span>الاسم</span><span>${who}</span></div>
+    ${issuer.cr_number ? `<div class="r"><span>السجل التجاري</span><span>${issuer.cr_number}</span></div>` : ""}
+    ${issuer.vat_number ? `<div class="r"><span>الرقم الضريبي</span><span>${issuer.vat_number}</span></div>` : ""}
+    ${issuer.billing_phone ? `<div class="r"><span>للتواصل</span><span>${issuer.billing_phone}</span></div>` : ""}
+    ${p.address ? `<div class="r"><span>العنوان</span><span>${p.address}</span></div>` : ""}
+  </div>
+  <div class="box">
+    <h3>العرض مُقدَّم إلى</h3>
+    <div class="r"><span>الاسم</span><span>${q.tenant_name || "—"}</span></div>
+    <div class="r"><span>${ul}</span><span>${q.unit || "—"}</span></div>
+    <div class="r"><span>تاريخ الإصدار</span><span>${today()}</span></div>
+    <div class="r"><span>صالح حتى</span><span>${q.valid_until || "—"}</span></div>
+  </div>
+</div>
+
+<h2>شروط العرض</h2>
+<table>
+  <tbody>
+    <tr><td>إيجار الدفعة الواحدة${v.enabled ? " (قبل الضريبة)" : ""}</td><td style="text-align:left;font-weight:600">${sar(xp.base)} ريال</td></tr>
+    <tr><td>دورية السداد</td><td style="text-align:left;font-weight:600">${freqLabel(q.payment_frequency)}</td></tr>
+    <tr><td>عدد الدفعات</td><td style="text-align:left;font-weight:600">${periods}</td></tr>
+    <tr><td>تاريخ بداية العقد المقترح</td><td style="text-align:left;font-weight:600">${q.start_date || "—"}</td></tr>
+    <tr><td>مبلغ التأمين المسترد</td><td style="text-align:left;font-weight:600">${sar(q.deposit)} ريال</td></tr>
+  </tbody>
+</table>
+
+<h2>إجمالي قيمة العقد</h2>
+<table style="max-width:380px;margin-inline-start:auto">
+  <tbody>
+    <tr><td>الإجمالي قبل الضريبة</td><td style="text-align:left;font-weight:600">${sar(x.base)}</td></tr>
+    ${v.enabled ? `<tr><td>ضريبة القيمة المضافة (${v.rate}%)</td><td style="text-align:left;font-weight:600">${sar(x.vat)}</td></tr>` : ""}
+    <tr><td style="font-weight:700">الإجمالي${v.enabled ? " شامل الضريبة" : ""}</td><td style="text-align:left;font-weight:700">${sar(x.total)}</td></tr>
+    <tr><td>التأمين المسترد</td><td style="text-align:left;font-weight:600">${sar(q.deposit)}</td></tr>
+    <tr><td style="font-weight:700">المطلوب عند التعاقد (الدفعة الأولى + التأمين)</td><td style="text-align:left;font-weight:700">${sar(xp.total + (Number(q.deposit) || 0))}</td></tr>
+  </tbody>
+</table>
+
+<h2>جدول الدفعات المقترح</h2>
+<table>
+  <thead><tr><th>#</th><th>تاريخ الاستحقاق</th><th>المبلغ${v.enabled ? " (شامل الضريبة)" : ""} (ريال)</th></tr></thead>
+  <tbody>
+    ${rows.map((r) => `<tr><td>${r.n}</td><td>${arDate(r.date)}</td><td>${sar(splitVat(r.amount, v).total)}</td></tr>`).join("")}
+  </tbody>
+</table>
+
+<h2>من يتحمّل ماذا</h2>
+<div class="grid">
+  <div class="box">
+    <h3>على المستأجر</h3>
+    ${tenantRows.length ? tenantRows.map((c) => `<div class="r"><span>${c.label}</span><span>✔</span></div>`).join("") : `<div class="r"><span>—</span><span></span></div>`}
+  </div>
+  <div class="box">
+    <h3>على المؤجّر</h3>
+    ${ownerRows.length ? ownerRows.map((c) => `<div class="r"><span>${c.label}</span><span>✔</span></div>`).join("") : `<div class="r"><span>—</span><span></span></div>`}
+  </div>
+</div>
+
+${q.notes ? `<h2>ملاحظات إضافية</h2><div class="note">${q.notes}</div>` : ""}
+
+<div class="note">
+  هذا <b>عرض سعر مبدئي غير مُلزم</b>، وصلاحيته تنتهي بتاريخ ${q.valid_until || "—"}. لا يُنشئ هذا المستند
+  علاقة إيجارية ولا يقوم مقام العقد.
+</div>
+<div class="note" style="border-inline-start-color:#8a5a11;background:#FBF1DF;color:#8a5a11">
+  <b>التعاقد النهائي:</b> يُوثَّق عقد الإيجار عبر <b>منصة إيجار</b> التابعة للهيئة العامة للعقار، وهي المرجع
+  المعتمد لتوثيق العقود ومطالباتها. توثيق العقد وتحصيل مقابله يتمّان بين الطرفين عبر القنوات الرسمية —
+  منصة وثيق تُجهّز المستندات فقط ولا تستلم ولا تحوّل أي مبالغ.
+</div>
+
+<div class="sign">
+  <div>المؤجّر / وكيله: ${who}<br><br>التوقيع: ________________</div>
+  <div>اطّلع المستأجر المحتمل<br><br>التوقيع: ________________</div>
+</div>
+${footer()}`;
+  return SHELL(`عرض سعر ${q.quote_no} — ${q.tenant_name || p.name}`, body, markOf(issuer));
+}
+
+/** كشف حساب عقار كامل — كل الوحدات */
+/**
+ * كشف حساب العقار بنمطين — كنمطَي كشف الوحدة:
+ *  - brief (مختصر): الملخص وجدول الوحدات بحالتها. صفحة واحدة للمالك المستعجل.
+ *  - full (شامل): يضيف بيانات العقار الكاملة، ومواصفات كل وحدة وعدّاداتها
+ *    وعقودها وتواريخها بالتقويمين، والوحدات الشاغرة، وتحليل الدخل السنوي
+ *    مقابل المحصَّل، وتوزيع الحالات — للتوثيق ولتسليم المحفظة.
+ */
+export function propertyStatementHTML(
+  p: Property & { tenants: Tenant[] },
+  issuer: Issuer = {},
+  mode: "brief" | "full" = "brief",
+  /** فترة اختيارية: عندها يُضاف المحصَّل والمصروفات وتفصيل الدفعات فيها */
+  period?: { from: string; to: string; label: string } | null,
+  payments: PaymentRow[] = [],
+  expenses: ExpenseRow[] = [],
+) {
+  // تعقيم المدخلات (انظر scrub أعلاه)
+  p = scrub(p);
+  issuer = scrub(issuer);
+  const ul = unitLabel(p.property_type);
+  const who = issuer.billing_name || p.manager || "إدارة الأملاك";
+  const rows = p.tenants.map((t) => ({ t, st: contractState(t, graceOf(p)) }));
+  const totalDue = rows.reduce((s, r) => s + r.st.amountDue, 0);
+  /* العمارة المختلطة: كل وحدة بضريبتها — الشقة السكنية معفاة والمحل خاضع */
+  const vFor = (t: any) => vatOf(p, t);
+  const totalPaid = rows.reduce((s, r) => s + r.st.paid * splitVat(Number(r.t.rent_amount) || 0, vFor(r.t)).total, 0);
+  const totalVat = rows.reduce((s, r) => s + splitVat(r.st.amountDue, vFor(r.t)).vat, 0);
+  // المُخلاة ذات الدين لا تُعدّ «وحدة متأخرة» — دينها على من غادر
+  const late = rows.filter((r) => !r.st.vacant && r.st.status === "late").length;
+  const vacantCount = rows.filter((r) => isVacant(r.t)).length;
+  const occupied = p.tenants.length - vacantCount;
+  const annual = annualExpected(p.tenants as any[]);
+  const soonCount = rows.filter((r) => r.st.status === "soon").length;
+  /* أرقام الفترة: تُحسب من الدفعات والمصروفات المسجّلة داخلها فقط —
+     لا من الحالة اللحظية، وإلا اختلف الرقم عن تقرير المالك لنفس المدة. */
+  const inRange = (d?: string | null) => !!d && !!period && String(d) >= period.from && String(d) <= period.to;
+  const periodPayments = period ? payments.filter((x) => inRange(x.paid_on)) : [];
+  const periodCollected = periodPayments.reduce((a, x) => a + (Number(x.amount) || 0), 0);
+  const periodExpenses = period ? expenses.filter((x) => inRange((x as any).spent_on)).reduce((a, x) => a + (Number(x.amount) || 0), 0) : 0;
+  const byUnitP: Record<string, any> = {};
+  (p.tenants || []).forEach((t: any) => { if (t.unit) byUnitP[String(t.unit)] = t; });
+  const periodVat = periodPayments.reduce((a, x: any) => {
+    const t = x.unit ? byUnitP[String(x.unit)] : null;
+    return a + (t ? splitVat(Number(x.amount) || 0, vatOf(p, t)).vat : 0);
+  }, 0);
+  const expiringCount = rows.filter((r) => r.st.expiringSoon && !isVacant(r.t)).length;
+
+  const body = `
+${header(mode === "full" ? "كشف حساب عقار — شامل" : "كشف حساب عقار", p.name)}
+<h1>كشف حساب ${p.name}${mode === "full" ? " — شامل" : ""}</h1>
+<div class="sub">${typeLabel(p.property_type)}${p.address ? ` — ${p.address}` : ""}${p.city ? `، ${p.city}` : ""} · ${p.tenants.length} ${ul}${period ? ` · الفترة: ${period.label}` : ""}</div>
+
+<div class="tot">
+  <div><div class="v">${p.tenants.length}</div><div class="l">إجمالي الوحدات</div></div>
+  <div><div class="v g">${Math.max(0, occupied - late)}</div><div class="l">منتظمة</div></div>
+  <div><div class="v">${vacantCount}</div><div class="l">شاغرة</div></div>
+  <div><div class="v r">${late}</div><div class="l">متأخرة</div></div>
+  <div><div class="v">${sar(totalPaid)}</div><div class="l">المُحصَّل (ريال)</div></div>
+</div>
+
+${period ? `
+<h1 style="font-size:1rem">حركة الفترة — ${period.label}</h1>
+<div class="tot">
+  <div><div class="v g">${sar(periodCollected)}</div><div class="l">المُحصَّل (ريال)</div></div>
+  <div><div class="v">${periodPayments.length}</div><div class="l">عدد الدفعات</div></div>
+  <div><div class="v r">${sar(periodExpenses)}</div><div class="l">المصروفات (ريال)</div></div>
+  <div><div class="v">${sar(Math.max(0, periodCollected - periodExpenses))}</div><div class="l">الصافي (ريال)</div></div>
+</div>
+<div class="sub" style="margin-bottom:10px">من ${arDateH(period.from)} إلى ${arDateH(period.to)}${periodVat > 0 ? ` · منه ضريبة قيمة مضافة ${sar(periodVat)} ريال` : ""}</div>` : ""}
+
+${mode === "full" ? `
+<h1 style="font-size:1rem">بيانات العقار</h1>
+<div class="grid">
+  <div class="box">
+    <div class="r"><span>النوع</span><span>${typeLabel(p.property_type)}</span></div>
+    ${p.usage ? `<div class="r"><span>الاستخدام</span><span>${USAGE_AR[String(p.usage)] || p.usage}</span></div>` : ""}
+    ${(p as any).owner_name ? `<div class="r"><span>المالك</span><span>${(p as any).owner_name}</span></div>` : ""}
+    ${p.address ? `<div class="r"><span>العنوان</span><span>${p.address}</span></div>` : ""}
+    ${p.city ? `<div class="r"><span>المدينة</span><span>${p.city}</span></div>` : ""}
+  </div>
+  <div class="box">
+    <div class="r"><span>الوحدات</span><span>${p.tenants.length} (${occupied} مؤجّرة · ${vacantCount} شاغرة)</span></div>
+    <div class="r"><span>نسبة الإشغال</span><span>${p.tenants.length ? Math.round((occupied / p.tenants.length) * 100) : 0}%</span></div>
+    <div class="r"><span>الدخل السنوي المتوقع</span><span><b>${sar(annual)} ريال</b></span></div>
+    ${(p as any).mgmt_fee_pct ? `<div class="r"><span>أتعاب الإدارة</span><span>${(p as any).mgmt_fee_pct}%</span></div>` : ""}
+    ${Number(p.grace_days) > 0 ? `<div class="r"><span>فترة السماح</span><span>${p.grace_days} أيام</span></div>` : ""}
+    ${p.vat_enabled ? `<div class="r"><span>ضريبة القيمة المضافة</span><span>${Number(p.vat_rate) || 15}% على الوحدات التجارية</span></div>` : ""}
+  </div>
+</div>` : ""}
+
+${totalDue > 0 ? `<div class="due"><span class="l">إجمالي المستحق على العقار${totalVat > 0 ? ` (منه ضريبة ${sar(totalVat)} ريال)` : ""}</span><span class="v">${sar(totalDue)} ريال</span></div>` : ""}
+
+<table>
+  <thead><tr><th>${ul}</th>${mode === "full" ? "<th>النوع والمواصفات</th>" : ""}<th>المستأجر</th>${mode === "full" ? "<th>الجوال</th><th>رقم العقد</th>" : ""}<th>الدفعة</th><th>الدورة</th>${mode === "full" ? "<th>بداية العقد</th><th>نهايته</th>" : ""}<th>القادمة</th><th>المتأخر</th><th>الحالة</th></tr></thead>
+  <tbody>
+    ${rows.map(({ t, st }) => { const vc = isVacant(t); return `<tr>
+      <td><b>${t.unit || "—"}</b></td>
+      ${mode === "full" ? `<td>${t.unit_type ? (UNIT_TYPE_AR[String(t.unit_type)] || "—") : unitLabel(p.property_type)}${(t.rooms || t.baths || t.acs) ? `<div style="font-size:.68rem;color:#5C6B67">${[t.rooms ? `${t.rooms} غرف` : "", t.baths ? `${t.baths} حمام` : "", t.acs ? `${t.acs} مكيف` : ""].filter(Boolean).join(" · ")}</div>` : ""}${(t as any).elec_account ? `<div style="font-size:.65rem;color:#5C6B67" dir="ltr">كهرباء ${(t as any).elec_account}</div>` : ""}</td>` : ""}
+      <td>${vc ? "<span style='color:#5C6B67'>— شاغرة —</span>" : t.name}</td>
+      ${mode === "full" ? `<td dir="ltr">${vc ? "—" : (t.phone || "—")}</td><td dir="ltr">${t.contract_no || "—"}</td>` : ""}
+      <td>${vc ? "—" : sar(splitVat(Number(t.rent_amount) || 0, vatOf(p, t)).total)}</td>
+      <td>${vc ? "—" : freqLabel(t.payment_frequency)}</td>
+      ${mode === "full" ? `<td>${vc ? "—" : arDateH(t.contract_start)}</td><td>${vc ? "—" : arDateH(st.endDate)}</td>` : ""}
+      <td>${vc ? "—" : arDate(st.nextDueDate)}</td>
+      <td>${st.amountDue ? `${sar(st.amountDue)}${vc ? '<div style="font-size:.65rem;color:#5C6B67">على المستأجر السابق</div>' : ""}` : "—"}</td>
+      <td>${vc ? '<span class="pill">شاغرة</span>'
+          : st.inGrace ? '<span class="pill u">فترة سماح</span>'
+          : st.hasPartial && st.status === "late" ? '<span class="pill u">سداد جزئي</span>'
+          : st.status === "late" ? '<span class="pill l">متأخر</span>'
+          : st.status === "soon" ? '<span class="pill u">يستحق قريبًا</span>'
+          : '<span class="pill p">منتظم</span>'}</td>
+    </tr>`; }).join("")}
+  </tbody>
+</table>
+
+${period && mode === "full" && periodPayments.length ? `
+<h1 style="font-size:1rem">تفصيل دفعات الفترة</h1>
+<div class="scrollx"><table>
+  <thead><tr><th>التاريخ</th><th>${ul}</th><th>المستأجر</th><th>المبلغ</th><th>الطريقة</th></tr></thead>
+  <tbody>
+    ${periodPayments.slice().sort((a, b) => String(a.paid_on).localeCompare(String(b.paid_on)))
+      .map((x: any) => `<tr><td>${arDate(x.paid_on)}</td><td>${x.unit || "—"}</td><td>${x.tenant_name || "—"}</td><td>${sar(Number(x.amount) || 0)}</td><td>${payMethod(x.method)}</td></tr>`).join("")}
+    <tr><td colspan="3"><b>إجمالي المُحصَّل</b></td><td colspan="2"><b>${sar(periodCollected)}</b></td></tr>
+  </tbody>
+</table></div>` : ""}
+
+${mode === "full" ? `
+<h1 style="font-size:1rem">توزيع الحالات</h1>
+<table>
+  <thead><tr><th>الحالة</th><th>عدد الوحدات</th><th>النسبة</th></tr></thead>
+  <tbody>
+    ${[["مؤجّرة ومنتظمة", occupied - late - soonCount], ["تستحق قريبًا", soonCount], ["متأخرة", late], ["عقود تنتهي قريبًا", expiringCount], ["شاغرة", vacantCount]]
+      .filter(([, n]) => Number(n) > 0)
+      .map(([l, n]) => `<tr><td>${l}</td><td>${n}</td><td>${p.tenants.length ? Math.round((Number(n) / p.tenants.length) * 100) : 0}%</td></tr>`).join("")}
+  </tbody>
+</table>` : ""}
+
+<div class="note">كشف استرشادي صادر آليًّا من بيانات العقود المسجّلة بتاريخ ${today()}.${mode === "full" ? " الدخل السنوي المتوقع يُحسب من الوحدات المؤجّرة فقط." : ""}</div>
+<div class="sign"><div>المؤجّر / الوكيل: ${who}<br><br>التوقيع: ________________</div><div>تاريخ الإصدار: ${today()}</div></div>
+${footer()}`;
+  return SHELL(`كشف حساب — ${p.name}`, body, markOf(issuer));
+}
+
+/** فتح المستند في نافذة جديدة للطباعة */
+/**
+ * يعرض المستند للمستخدم.
+ *
+ * كان يعتمد على window.open وحدها، وسفاري على الآيفون يحجبها افتراضيًّا
+ * (وكذلك وضع التطبيق المثبَّت)، فكان المستخدم يرى «اسمح بالنوافذ المنبثقة»
+ * ولا يصل إلى مستنده أبدًا — وهو جوهر المنتج.
+ *
+ * الآن: تُجرَّب النافذة أولًا (أفضل تجربة على الحاسب للطباعة)، وإن حُجبت
+ * يُعرض المستند داخل التطبيق نفسه في طبقة ملء الشاشة، فلا يعتمد على إذن.
+ */
+export function openDoc(html: string) {
+  try {
+    const w = window.open("", "_blank");
+    if (w && w.document) {
+      w.document.write(html);
+      w.document.close();
+      return;
+    }
+  } catch {
+    /* محجوبة — نكمل إلى البديل */
+  }
+  showDocInline(html);
+}
+
+/** عرض المستند داخل الصفحة في طبقة ملء الشاشة مع أزرار طباعة وإغلاق */
+function showDocInline(html: string) {
+  const prev = document.getElementById("watheq-doc-overlay");
+  if (prev) prev.remove();
+
+  const overlay = document.createElement("div");
+  overlay.id = "watheq-doc-overlay";
+  overlay.setAttribute("dir", "rtl");
+  overlay.style.cssText =
+    "position:fixed;inset:0;z-index:99999;background:#F6F1E4;display:flex;flex-direction:column";
+
+  const bar = document.createElement("div");
+  bar.style.cssText =
+    "flex:0 0 auto;display:flex;gap:8px;padding:10px 12px;background:#0E3A37;" +
+    "align-items:center;padding-top:calc(10px + env(safe-area-inset-top))";
+
+  const mkBtn = (label: string, bg: string, color: string) => {
+    const b = document.createElement("button");
+    b.textContent = label;
+    b.style.cssText =
+      `appearance:none;border:0;border-radius:10px;padding:10px 16px;font-size:15px;` +
+      `font-weight:700;cursor:pointer;background:${bg};color:${color};` +
+      `font-family:inherit`;
+    return b;
+  };
+
+  const printBtn = mkBtn("🖨️ طباعة / حفظ PDF", "#E7C877", "#0E3A37");
+  const closeBtn = mkBtn("إغلاق", "transparent", "#F6F1E4");
+  closeBtn.style.border = "1px solid rgba(246,241,228,.45)";
+
+  const frame = document.createElement("iframe");
+  frame.style.cssText = "flex:1 1 auto;width:100%;border:0;background:#fff";
+  frame.setAttribute("title", "مستند وثيق");
+
+  printBtn.onclick = () => {
+    try {
+      frame.contentWindow?.focus();
+      frame.contentWindow?.print();
+    } catch {
+      window.print();
+    }
+  };
+  closeBtn.onclick = () => overlay.remove();
+
+  bar.appendChild(printBtn);
+  bar.appendChild(closeBtn);
+  overlay.appendChild(bar);
+  overlay.appendChild(frame);
+  document.body.appendChild(overlay);
+
+  // srcdoc بدل document.write: يعمل في كل المتصفحات ولا يحتاج إذنًا
+  frame.srcdoc = html;
+}
+
+// ============================================================
+// كشوف حساب جمعيات الملاك — بنفس هوية مستندات الأملاك
+// ============================================================
+
+type OwnerRow = {
+  id?: string; name: string; unit: string | null; phone: string | null;
+  months_late: number; last_paid: string | null; partial_amount?: number | null;
+};
+type AssociationDoc = {
+  name: string; units?: number; fee: number;
+  cert_expiry?: string | null; fund_balance?: number | null;
+  owners?: OwnerRow[];
+};
+
+const owed = (o: OwnerRow, fee: number) =>
+  Math.max(0, (Number(o.months_late) || 0) * fee - (Number(o.partial_amount) || 0));
+
+/** كشف حساب مالك واحد في جمعية */
+export function ownerStatementHTML(
+  o: OwnerRow, a: AssociationDoc, issuer: Issuer = {}, payments: PaymentRow[] = []
+) {
+  // تعقيم المدخلات (انظر scrub أعلاه)
+  o = scrub(o);
+  a = scrub(a);
+  issuer = scrub(issuer);
+  payments = scrub(payments);
+  const fee = Number(a.fee) || 0;
+  const who = issuer.billing_name || `إدارة ${a.name}`;
+  const due = owed(o, fee);
+  const partial = Number(o.partial_amount) || 0;
+  const received = payments.reduce((x, r) => x + (Number(r.amount) || 0), 0);
+
+  const body = `
+${header("كشف حساب مالك", o.name)}
+<h1>كشف حساب الوحدة رقم (${o.unit || "—"})</h1>
+<div class="sub">${a.name} · جمعية ملاك${a.units ? ` · ${a.units} وحدة` : ""}</div>
+
+<div class="grid">
+  <div class="box">
+    <h3>بيانات الجمعية</h3>
+    <div class="r"><span>الاسم</span><span>${a.name}</span></div>
+    <div class="r"><span>اشتراك الفترة</span><span>${sar(fee)} ريال</span></div>
+    ${a.cert_expiry ? `<div class="r"><span>انتهاء الشهادة</span><span>${a.cert_expiry}</span></div>` : ""}
+    ${issuer.billing_phone ? `<div class="r"><span>للتواصل</span><span>${issuer.billing_phone}</span></div>` : ""}
+  </div>
+  <div class="box">
+    <h3>بيانات المالك</h3>
+    <div class="r"><span>الاسم</span><span>${o.name}</span></div>
+    <div class="r"><span>الوحدة</span><span>${o.unit || "—"}</span></div>
+    ${o.phone ? `<div class="r"><span>الجوال</span><span>${o.phone}</span></div>` : ""}
+    <div class="r"><span>آخر سداد</span><span>${o.last_paid || "—"}</span></div>
+  </div>
+</div>
+
+<div class="tot">
+  <div><div class="v r">${o.months_late || 0}</div><div class="l">فترات متأخرة</div></div>
+  <div><div class="v">${sar(fee)}</div><div class="l">اشتراك الفترة (ريال)</div></div>
+  <div><div class="v g">${sar(partial)}</div><div class="l">مدفوع جزئيًّا (ريال)</div></div>
+  <div><div class="v g">${sar(received)}</div><div class="l">إجمالي المستلم (ريال)</div></div>
+</div>
+
+${due > 0 ? `<div class="due"><span class="l">الرصيد المستحق حتى تاريخه</span><span class="v">${sar(due)} ريال</span></div>` : ""}
+
+${payments.length ? `
+<h1 style="font-size:1rem">المدفوعات المستلمة</h1>
+<table>
+  <thead><tr><th>#</th><th>تاريخ الاستلام</th><th>المبلغ (ريال)</th><th>طريقة السداد</th><th>ملاحظة</th></tr></thead>
+  <tbody>
+    ${payments.map((r, i) => `<tr>
+      <td>${i + 1}</td><td>${r.paid_on ? arDate(r.paid_on) : "—"}</td><td>${sar(r.amount)}</td>
+      <td>${payMethod(r)}</td><td>${r.note ? String(r.note).replace(/</g, "&lt;") : "—"}</td>
+    </tr>`).join("")}
+    <tr style="background:#F3EEE2;font-weight:700">
+      <td colspan="2">إجمالي المستلم</td><td>${sar(received)}</td><td colspan="2">${payments.length} عملية</td>
+    </tr>
+  </tbody>
+</table>` : `<div class="note">لا توجد مدفوعات موثّقة في سجل المنصة لهذه الوحدة حتى تاريخه.</div>`}
+
+<div class="note">
+  تُخصَّص اشتراكات الصيانة لتشغيل الأجزاء المشتركة وصيانتها وفق الموازنة المعتمدة، ويكون السداد في الحساب البنكي للجمعية.
+  هذا كشف استرشادي صادر آليًّا — يُرجى مطابقته مع سجلاتكم وإشعارنا بأي فرق.
+</div>
+
+<div class="sign">
+  <div>إدارة الجمعية: ${who}<br><br>التوقيع: ________________</div>
+  <div>المالك: ${o.name}<br><br>التوقيع: ________________</div>
+</div>
+${footer()}`;
+  return SHELL(`كشف حساب — ${o.name}`, body, markOf(issuer));
+}
+
+/** كشف حساب الجمعية كاملة — كل الملّاك */
+export function associationStatementHTML(a: AssociationDoc, issuer: Issuer = {}) {
+  // تعقيم المدخلات (انظر scrub أعلاه)
+  a = scrub(a);
+  issuer = scrub(issuer);
+  const fee = Number(a.fee) || 0;
+  const who = issuer.billing_name || `إدارة ${a.name}`;
+  const rows = a.owners || [];
+  const late = rows.filter((o) => (Number(o.months_late) || 0) > 0);
+  const totalDue = rows.reduce((s, o) => s + owed(o, fee), 0);
+  const expected = rows.length * fee;
+  const pct = rows.length ? Math.round(((rows.length - late.length) / rows.length) * 100) : 0;
+
+  const body = `
+${header("كشف حساب جمعية", a.name)}
+<h1>كشف حساب ${a.name}</h1>
+<div class="sub">جمعية ملاك · ${rows.length} مالك${a.units ? ` من ${a.units} وحدة` : ""} · اشتراك الفترة ${sar(fee)} ريال</div>
+
+<div class="tot">
+  <div><div class="v">${rows.length}</div><div class="l">إجمالي الملّاك</div></div>
+  <div><div class="v g">${rows.length - late.length}</div><div class="l">منتظم</div></div>
+  <div><div class="v r">${late.length}</div><div class="l">متأخر</div></div>
+  <div><div class="v">${pct}%</div><div class="l">نسبة السداد</div></div>
+</div>
+
+<div class="grid">
+  <div class="box">
+    <h3>الوضع المالي</h3>
+    <div class="r"><span>الإيرادات المتوقّعة للفترة</span><span>${sar(expected)} ريال</span></div>
+    <div class="r"><span>إجمالي المتأخر</span><span>${sar(totalDue)} ريال</span></div>
+    ${a.fund_balance != null ? `<div class="r"><span>رصيد الصندوق</span><span>${sar(a.fund_balance)} ريال</span></div>` : ""}
+  </div>
+  <div class="box">
+    <h3>الوضع النظامي</h3>
+    <div class="r"><span>انتهاء الشهادة</span><span>${a.cert_expiry || "—"}</span></div>
+    ${issuer.cr_number ? `<div class="r"><span>السجل التجاري</span><span>${issuer.cr_number}</span></div>` : ""}
+    ${issuer.billing_phone ? `<div class="r"><span>للتواصل</span><span>${issuer.billing_phone}</span></div>` : ""}
+  </div>
+</div>
+
+${totalDue > 0 ? `<div class="due"><span class="l">إجمالي المستحق على الملّاك</span><span class="v">${sar(totalDue)} ريال</span></div>` : ""}
+
+<table>
+  <thead><tr><th>الوحدة</th><th>المالك</th><th>فترات متأخرة</th><th>المتأخر (ريال)</th><th>آخر سداد</th><th>الحالة</th></tr></thead>
+  <tbody>
+    ${rows.map((o) => {
+      const d = owed(o, fee); const m = Number(o.months_late) || 0;
+      return `<tr>
+        <td>${o.unit || "—"}</td>
+        <td>${o.name}</td>
+        <td>${m || "—"}</td>
+        <td>${d ? sar(d) : "—"}</td>
+        <td>${o.last_paid || "—"}</td>
+        <td>${m >= 3 ? '<span class="pill l">حرج</span>'
+            : (Number(o.partial_amount) || 0) > 0 && m > 0 ? '<span class="pill u">سداد جزئي</span>'
+            : m > 0 ? '<span class="pill l">متأخر</span>'
+            : '<span class="pill p">مسدّد</span>'}</td>
+      </tr>`;
+    }).join("")}
+  </tbody>
+</table>
+
+<div class="note">كشف استرشادي صادر آليًّا من بيانات الجمعية المسجّلة بتاريخ ${today()}. يُصرف من الاشتراكات وفق الموازنة المعتمدة من الجمعية العامة.</div>
+<div class="sign"><div>إدارة الجمعية: ${who}<br><br>التوقيع: ________________</div><div>تاريخ الإصدار: ${today()}</div></div>
+${footer()}`;
+  return SHELL(`كشف حساب — ${a.name}`, body, markOf(issuer));
+}
+
+// ============================================================
+// الموازنة التقديرية ومحضر الجمعية العمومية التأسيسية
+// ============================================================
+
+export type BudgetItem = { label: string; monthly: number; note?: string | null };
+
+/** بنود مصروفات نموذجية لعقار سكني مشترك — نقطة بداية يعدّلها المستخدم */
+export const DEFAULT_BUDGET_ITEMS: BudgetItem[] = [
+  { label: "النظافة العامة للأجزاء المشتركة", monthly: 0 },
+  { label: "الأمن والحراسة", monthly: 0 },
+  { label: "صيانة المصاعد (عقد دوري)", monthly: 0 },
+  { label: "صيانة التكييف والتهوية", monthly: 0 },
+  { label: "كهرباء ومياه الأجزاء المشتركة", monthly: 0 },
+  { label: "صيانة المضخات والخزانات", monthly: 0 },
+  { label: "مكافحة الحشرات", monthly: 0 },
+  { label: "أعمال سباكة وكهرباء طارئة", monthly: 0 },
+  { label: "أجرة مدير العقار", monthly: 0 },
+  { label: "مصروفات إدارية وبنكية", monthly: 0 },
+];
+
+/** الموازنة التقديرية السنوية — أساس اعتماد الاشتراك من الجمعية العامة */
+export function budgetHTML(
+  a: AssociationDoc & { units?: number },
+  budget: { year: number; items: BudgetItem[]; reserve_pct?: number; notes?: string | null },
+  issuer: Issuer = {}
+) {
+  // تعقيم المدخلات (انظر scrub أعلاه)
+  a = scrub(a);
+  budget = scrub(budget);
+  issuer = scrub(issuer);
+  const who = issuer.billing_name || `إدارة ${a.name}`;
+  const items = (budget.items || []).filter((i) => i && i.label);
+  const monthlyTotal = items.reduce((s, i) => s + (Number(i.monthly) || 0), 0);
+  const annualOps = monthlyTotal * 12;
+  const reservePct = Number(budget.reserve_pct ?? 10) || 0;
+  const reserve = Math.round(annualOps * (reservePct / 100));
+  const annualTotal = annualOps + reserve;
+
+  const units = Number(a.units) || (a.owners || []).length || 0;
+  const perUnitYear = units ? Math.round(annualTotal / units) : 0;
+  const perUnitMonth = units ? Math.round(annualTotal / units / 12) : 0;
+  const currentFee = Number(a.fee) || 0;
+  const currentAnnual = currentFee * 12 * units;
+  const gap = annualTotal - currentAnnual;
+
+  const body = `
+${header("موازنة تقديرية", String(budget.year))}
+<h1>الموازنة التقديرية لعام ${budget.year}</h1>
+<div class="sub">${a.name} · جمعية ملاك${units ? ` · ${units} وحدة` : ""}</div>
+
+<div class="note">
+  هذه موازنة تقديرية تُعرض على الجمعية العامة لاعتمادها، وعلى أساسها يُحدَّد اشتراك الصيانة.
+  الأرقام أدناه مدخلة من إدارة الجمعية وقابلة للتعديل قبل التصويت.
+</div>
+
+<h1 style="font-size:1rem">أولًا: المصروفات التشغيلية</h1>
+<table>
+  <thead><tr><th>#</th><th>البند</th><th>شهريًّا (ريال)</th><th>سنويًّا (ريال)</th><th>ملاحظة</th></tr></thead>
+  <tbody>
+    ${items.map((i, n) => `<tr>
+      <td>${n + 1}</td>
+      <td>${String(i.label).replace(/</g, "&lt;")}</td>
+      <td>${sar(i.monthly)}</td>
+      <td>${sar((Number(i.monthly) || 0) * 12)}</td>
+      <td>${i.note ? String(i.note).replace(/</g, "&lt;") : "—"}</td>
+    </tr>`).join("")}
+    <tr style="background:#F3EEE2;font-weight:700">
+      <td colspan="2">إجمالي المصروفات التشغيلية</td>
+      <td>${sar(monthlyTotal)}</td>
+      <td>${sar(annualOps)}</td>
+      <td>—</td>
+    </tr>
+  </tbody>
+</table>
+
+<h1 style="font-size:1rem">ثانيًا: احتياطي الصيانة الرأسمالية</h1>
+<table>
+  <tbody>
+    <tr><td>نسبة الاحتياطي من المصروفات التشغيلية</td><td style="text-align:left;font-weight:600">${reservePct}%</td></tr>
+    <tr><td>مبلغ الاحتياطي السنوي</td><td style="text-align:left;font-weight:600">${sar(reserve)} ريال</td></tr>
+  </tbody>
+</table>
+<div class="note">
+  يُخصَّص الاحتياطي للأعمال الكبيرة غير الدورية (تجديد المصاعد، العزل، الأصباغ الخارجية، استبدال المضخات)،
+  ويقي الملّاك من مطالبات مالية مفاجئة.
+</div>
+
+<div class="due">
+  <span class="l">إجمالي الموازنة التقديرية لعام ${budget.year}</span>
+  <span class="v">${sar(annualTotal)} ريال</span>
+</div>
+
+<h1 style="font-size:1rem">ثالثًا: الاشتراك المقترح لكل وحدة</h1>
+${units > 0 ? `<div class="tot">
+  <div><div class="v">${units}</div><div class="l">عدد الوحدات</div></div>
+  <div><div class="v">${sar(perUnitYear)}</div><div class="l">سنويًّا لكل وحدة (ريال)</div></div>
+  <div><div class="v">${sar(perUnitMonth)}</div><div class="l">شهريًّا لكل وحدة (ريال)</div></div>
+  ${currentFee > 0
+    ? `<div><div class="v ${gap > 0 ? "r" : "g"}">${sar(Math.abs(gap))}</div><div class="l">${gap > 0 ? "عجز متوقّع (ريال)" : "فائض متوقّع (ريال)"}</div></div>`
+    : `<div><div class="v">—</div><div class="l">لم يُعتمد اشتراك بعد</div></div>`}
+</div>` : `<div class="note" style="border-inline-start-color:#D0453F;background:#FBE9E7;color:#a5322c">
+  <b>لم يُحدَّد عدد الوحدات.</b> أدخل عدد وحدات العقار في إعدادات الجمعية ليُحتسب الاشتراك المقترح لكل وحدة —
+  وهو الرقم الذي تُبنى عليه الموازنة.
+</div>`}
+
+${currentFee > 0 ? `<table>
+  <tbody>
+    <tr><td>الاشتراك الحالي المعتمد</td><td style="text-align:left;font-weight:600">${sar(currentFee)} ريال / شهر لكل وحدة</td></tr>
+    <tr><td>إيرادات الاشتراك الحالي سنويًّا</td><td style="text-align:left;font-weight:600">${sar(currentAnnual)} ريال</td></tr>
+    <tr style="background:${gap > 0 ? "#FBE9E7" : "#E6F4EC"};font-weight:700">
+      <td>${gap > 0 ? "الفرق المطلوب تغطيته" : "الفائض المرحّل"}</td>
+      <td style="text-align:left">${sar(Math.abs(gap))} ريال</td>
+    </tr>
+  </tbody>
+</table>` : ""}
+
+${budget.notes ? `<div class="note">${String(budget.notes).replace(/</g, "&lt;")}</div>` : ""}
+
+<div class="note">
+  يُحدَّد مبلغ الاشتراك السنوي بقرار من الجمعية العامة وفق النظام الأساسي للجمعية،
+  ويُودَع في الحساب البنكي للجمعية ويُصرف منه وفق هذه الموازنة المعتمدة.
+</div>
+
+<div class="sign">
+  <div>أعدّها: ${who}<br><br>التوقيع: ________________</div>
+  <div>اعتماد رئيس الجمعية<br><br>التوقيع: ________________</div>
+</div>
+${footer()}`;
+  return SHELL(`الموازنة التقديرية ${budget.year} — ${a.name}`, body, markOf(issuer));
+}
+
+/** محضر الجمعية العمومية التأسيسية */
+export function foundingMinutesHTML(
+  a: AssociationDoc & { units?: number },
+  d: {
+    meeting_date?: string; place?: string; mode?: string;
+    attendees?: number; total_units?: number;
+    president?: string; manager?: string;
+    fee?: number; due_day?: string; bank?: string;
+    year?: number; annual_budget?: number;
+  },
+  issuer: Issuer = {}
+) {
+  // تعقيم المدخلات (انظر scrub أعلاه)
+  a = scrub(a);
+  d = scrub(d);
+  issuer = scrub(issuer);
+  const who = issuer.billing_name || `إدارة ${a.name}`;
+  const date = d.meeting_date || today();
+  const units = Number(d.total_units) || Number(a.units) || (a.owners || []).length || 0;
+  const att = Number(d.attendees) || 0;
+  const quorum = units ? Math.round((att / units) * 100) : 0;
+  const fee = Number(d.fee) || Number(a.fee) || 0;
+
+  const body = `
+${header("محضر اجتماع", "الجمعية العمومية التأسيسية")}
+<h1>محضر الجمعية العمومية التأسيسية</h1>
+<div class="sub">${a.name}${units ? ` · ${units} وحدة عقارية` : ""}</div>
+
+<div class="grid">
+  <div class="box">
+    <h3>بيانات الاجتماع</h3>
+    <div class="r"><span>التاريخ</span><span>${date}</span></div>
+    <div class="r"><span>طريقة الانعقاد</span><span>${d.mode || "حضوري"}</span></div>
+    ${d.place ? `<div class="r"><span>المكان</span><span>${d.place}</span></div>` : ""}
+    <div class="r"><span>عدد الحاضرين</span><span>${att || "—"} من ${units || "—"}</span></div>
+    <div class="r"><span>نسبة الحضور</span><span>${units ? quorum + "%" : "—"}</span></div>
+  </div>
+  <div class="box">
+    <h3>الأساس النظامي</h3>
+    <div class="r"><span>النظام</span><span>ملكية الوحدات العقارية وفرزها وإدارتها</span></div>
+    <div class="r"><span>المرسوم الملكي</span><span>م/85 وتاريخ 02/07/1441هـ</span></div>
+    <div class="r"><span>الجهة المشرفة</span><span>الهيئة العامة للعقار</span></div>
+  </div>
+</div>
+
+<div class="note">
+  عُقد هذا الاجتماع لتأسيس جمعية ملاك العقار المشترك المذكور أعلاه، وفقًا لنظام ملكية الوحدات العقارية
+  وفرزها وإدارتها ولائحته التنفيذية، وبما أن عدد ملّاك الوحدات المفرزة ثلاثة أو أكثر.
+</div>
+
+<h1 style="font-size:1rem">جدول الأعمال والقرارات</h1>
+<table>
+  <thead><tr><th>#</th><th>البند</th><th>القرار</th></tr></thead>
+  <tbody>
+    <tr><td>1</td><td>تأسيس جمعية الملاك واعتماد نظامها الأساسي</td>
+        <td>الموافقة على التأسيس واعتماد النظام الأساسي (الاسترشادي الصادر من الهيئة).</td></tr>
+    <tr><td>2</td><td>انتخاب رئيس الجمعية</td>
+        <td>${d.president ? `انتخاب المكرَّم <b>${String(d.president).replace(/</g, "&lt;")}</b> رئيسًا للجمعية.` : "________________________________"}</td></tr>
+    <tr><td>3</td><td>تعيين مدير العقار</td>
+        <td>${d.manager ? `تعيين <b>${String(d.manager).replace(/</g, "&lt;")}</b> مديرًا للعقار.` : "________________________________"}</td></tr>
+    <tr><td>4</td><td>اعتماد الموازنة التقديرية${d.year ? ` لعام ${d.year}` : ""}</td>
+        <td>${d.annual_budget ? `اعتماد موازنة بإجمالي <b>${sar(d.annual_budget)}</b> ريال.` : "________________________________"}</td></tr>
+    <tr><td>5</td><td>تحديد اشتراك الصيانة وموعد سداده</td>
+        <td>${fee ? `تحديد الاشتراك بمبلغ <b>${sar(fee)}</b> ريال لكل وحدة${d.due_day ? `، يُسدَّد ${d.due_day}` : ""}.` : "________________________________"}</td></tr>
+    <tr><td>6</td><td>فتح الحساب البنكي للجمعية</td>
+        <td>${d.bank ? `تفويض إدارة الجمعية بفتح حساب لدى <b>${String(d.bank).replace(/</g, "&lt;")}</b> باسم الجمعية.` : "تفويض إدارة الجمعية بفتح حساب بنكي باسم الجمعية."}</td></tr>
+    <tr><td>7</td><td>تسجيل الجمعية لدى الهيئة العامة للعقار</td>
+        <td>تفويض رئيس الجمعية بإتمام التسجيل عبر منصة «ملاك» واستكمال المتطلبات النظامية.</td></tr>
+  </tbody>
+</table>
+
+<div class="note">
+  تُودَع الاشتراكات في الحساب البنكي للجمعية، ولا يجوز الصرف منها إلا وفق الموازنة المعتمدة.
+  ولا يملك مدير العقار صلاحية تعديل النظام الأساسي أو فرض رسوم جديدة.
+</div>
+
+<h1 style="font-size:1rem">توقيعات الحاضرين</h1>
+<table>
+  <thead><tr><th>#</th><th>اسم المالك</th><th>الوحدة</th><th>التوقيع</th></tr></thead>
+  <tbody>
+    ${(a.owners && a.owners.length
+      ? a.owners.map((o, i) => `<tr><td>${i + 1}</td><td>${String(o.name).replace(/</g, "&lt;")}</td><td>${o.unit || "—"}</td><td>________________</td></tr>`).join("")
+      : Array.from({ length: 8 }, (_, i) => `<tr><td>${i + 1}</td><td>________________</td><td>____</td><td>________________</td></tr>`).join(""))}
+  </tbody>
+</table>
+
+<div class="sign">
+  <div>رئيس الجمعية: ${d.president || "________________"}<br><br>التوقيع: ________________</div>
+  <div>مدير العقار: ${d.manager || "________________"}<br><br>التوقيع: ________________</div>
+</div>
+<div class="note" style="border-inline-start-color:#D0453F;background:#FBE9E7;color:#a5322c">
+  <b>تنويه:</b> هذا نموذج محضر استرشادي أعدّته إدارة الجمعية للاستخدام الإداري.
+  وثيق لا يقدّم خدمات قانونية ولا يمثّل الجمعية أمام أي جهة — راجع النموذج مع مختص مرخّص
+  وطابقه مع النظام الأساسي المعتمد قبل تقديمه رسميًّا.
+</div>
+${footer()}`;
+  return SHELL(`محضر تأسيسي — ${a.name}`, body, markOf(issuer));
+}
+
+// ============================================================
+// مخالصة إخلاء وحدة — تسوية التأمين وقراءات العدادات
+// ============================================================
+
+export function moveOutSettlementHTML(
+  t: Tenant & {
+    status?: string | null; move_out_date?: string | null; notice_date?: string | null;
+    deposit_amount?: number | null; deposit_deductions?: number | null; deposit_notes?: string | null;
+    meter_elec_in?: string | null; meter_elec_out?: string | null;
+    meter_water_in?: string | null; meter_water_out?: string | null;
+    elec_account?: string | null; water_account?: string | null;
+    turnover_checklist?: { label: string; done?: boolean; note?: string | null }[] | null;
+  },
+  p: Property, issuer: Issuer = {}
+) {
+  // تعقيم المدخلات (انظر scrub أعلاه)
+  t = scrub(t);
+  p = scrub(p);
+  issuer = scrub(issuer);
+  const st = contractState(t as any, { graceDays: Number(p.grace_days) || 0 });
+  const ul = unitLabel(p.property_type);
+  const who = issuer.billing_name || p.manager || "إدارة الأملاك";
+  const s = settleDeposit(t as any, st.amountDue);
+  const list = Array.isArray(t.turnover_checklist) ? t.turnover_checklist : [];
+  const doneCount = list.filter((x) => x?.done).length;
+  const vac = vacancyDays(t.move_out_date);
+
+  const body = `
+${header("مخالصة إخلاء", t.name)}
+<h1>مخالصة إخلاء ${ul} رقم (${t.unit || "—"})</h1>
+<div class="sub">${p.name}${p.address ? ` — ${p.address}` : ""}${p.city ? `، ${p.city}` : ""} · ${typeLabel(p.property_type)}</div>
+
+<div class="grid">
+  <div class="box">
+    <h3>بيانات الطرفين</h3>
+    <div class="r"><span>المؤجّر / الوكيل</span><span>${who}</span></div>
+    <div class="r"><span>المستأجر</span><span>${t.name}</span></div>
+    ${t.national_id ? `<div class="r"><span>الهوية / السجل</span><span>${t.national_id}</span></div>` : ""}
+    ${t.phone ? `<div class="r"><span>الجوال</span><span>${t.phone}</span></div>` : ""}
+  </div>
+  <div class="box">
+    <h3>بيانات الإخلاء</h3>
+    ${t.contract_no ? `<div class="r"><span>رقم العقد</span><span dir="ltr"><b>${t.contract_no}</b></span></div>` : ""}
+    <div class="r"><span>الوحدة</span><span>${unitDesc(t, p)}</span></div>
+    ${p.usage ? `<div class="r"><span>استخدام العقار</span><span>${USAGE_AR[String(p.usage)] || p.usage}</span></div>` : ""}
+    ${t.first_due ? `<div class="r"><span>أول استحقاق</span><span>${arDateH(t.first_due)}</span></div>` : ""}
+    <div class="r"><span>بداية العقد</span><span>${arDateH(t.contract_start)}</span></div>
+    <div class="r"><span>نهاية العقد</span><span>${arDateH(st.endDate)}</span></div>
+    ${t.notice_date ? `<div class="r"><span>تاريخ الإشعار</span><span>${arDate(t.notice_date)}</span></div>` : ""}
+    <div class="r"><span>تاريخ الإخلاء الفعلي</span><span>${arDate(t.move_out_date)}</span></div>
+    ${vac !== null ? `<div class="r"><span>أيام الشغور حتى تاريخه</span><span>${vac}</span></div>` : ""}
+  </div>
+</div>
+
+<h1 style="font-size:1rem">أولًا: قراءات العدادات</h1>
+${(t.elec_account || t.water_account) ? `<div class="sub" style="margin-bottom:6px">حساب الكهرباء: <b dir="ltr">${t.elec_account || "—"}</b> · حساب الماء: <b dir="ltr">${t.water_account || "—"}</b> — على المستأجر سداد ما استُهلك حتى قراءة الإخلاء وعلى الطرفين إتمام نقل الخدمة.</div>` : ""}
+<table>
+  <thead><tr><th>العدّاد</th><th>عند التسليم</th><th>عند الإخلاء</th><th>الفرق</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>الكهرباء</td><td>${t.meter_elec_in || "—"}</td><td>${t.meter_elec_out || "—"}</td>
+      <td>${(Number(t.meter_elec_out) && Number(t.meter_elec_in)) ? sar(Number(t.meter_elec_out) - Number(t.meter_elec_in)) : "—"}</td>
+    </tr>
+    <tr>
+      <td>المياه</td><td>${t.meter_water_in || "—"}</td><td>${t.meter_water_out || "—"}</td>
+      <td>${(Number(t.meter_water_out) && Number(t.meter_water_in)) ? sar(Number(t.meter_water_out) - Number(t.meter_water_in)) : "—"}</td>
+    </tr>
+  </tbody>
+</table>
+<div class="note">يتحمّل المستأجر استهلاك الخدمات حتى تاريخ الإخلاء، ويلتزم بنقل أو فصل الاشتراكات باسمه.</div>
+
+<h1 style="font-size:1rem">ثانيًا: تسوية مبلغ التأمين</h1>
+<table>
+  <tbody>
+    <tr><td>مبلغ التأمين المستلم</td><td style="text-align:left;font-weight:600">${sar(s.deposit)} ريال</td></tr>
+    <tr><td>يُخصم: إيجار متأخر حتى تاريخ الإخلاء</td><td style="text-align:left;font-weight:600">${sar(s.outstanding)} ريال</td></tr>
+    <tr><td>يُخصم: تلفيات وأعمال إصلاح</td><td style="text-align:left;font-weight:600">${sar(s.deductions)} ريال</td></tr>
+    ${s.refund > 0
+      ? `<tr style="background:#E6F4EC;font-weight:700"><td>المستحق ردّه للمستأجر</td><td style="text-align:left">${sar(s.refund)} ريال</td></tr>`
+      : `<tr style="background:#FBE9E7;font-weight:700"><td>المستحق على المستأجر بعد استنفاد التأمين</td><td style="text-align:left">${sar(s.dueFromTenant)} ريال</td></tr>`}
+  </tbody>
+</table>
+${t.deposit_notes ? `<div class="note">تفصيل الخصومات: ${String(t.deposit_notes).replace(/</g, "&lt;")}</div>` : ""}
+
+${list.length ? `
+<h1 style="font-size:1rem">ثالثًا: قائمة تحقّق التسليم (${doneCount} من ${list.length})</h1>
+<table>
+  <thead><tr><th>#</th><th>البند</th><th>الحالة</th><th>ملاحظة</th></tr></thead>
+  <tbody>
+    ${list.map((x, i) => `<tr>
+      <td>${i + 1}</td>
+      <td>${String(x.label || "").replace(/</g, "&lt;")}</td>
+      <td>${x.done ? '<span class="pill p">تم</span>' : '<span class="pill u">لم يتم</span>'}</td>
+      <td>${x.note ? String(x.note).replace(/</g, "&lt;") : "—"}</td>
+    </tr>`).join("")}
+  </tbody>
+</table>` : ""}
+
+<div class="note">
+  بتوقيع الطرفين على هذه المخالصة، تُعدّ العلاقة الإيجارية منتهية عن ${ul} رقم (${t.unit || "—"})،
+  ويُقرّ كل طرف باستلام مستحقّاته الموضّحة أعلاه، مع بقاء أي التزام لم يُذكر صراحةً خاضعًا لأحكام العقد والأنظمة المعمول بها.
+</div>
+
+<div class="sign">
+  <div>المؤجّر / الوكيل: ${who}<br><br>التوقيع: ________________</div>
+  <div>المستأجر: ${t.name}<br><br>التوقيع: ________________</div>
+</div>
+<div class="note" style="border-inline-start-color:#B8791F;background:#FBF1DF;color:#8a5a11">
+  مستند إداري صادر عن إدارة الأملاك لتوثيق التسليم بين الطرفين. وثيق لا يقدّم خدمات قانونية ولا يستلم أي مبالغ —
+  راجعه مع مختص مرخّص قبل الاعتماد الرسمي.
+</div>
+${footer()}`;
+  return SHELL(`مخالصة إخلاء — ${t.name}`, body, markOf(issuer));
+}
+
+// ============================================================
+// محضر الاجتماع السنوي للجمعية العمومية
+// أساسه النظام الأساسي: المادة (14/2) توجب انعقاد الجمعية العامة مرّتين سنويًّا على الأقل،
+// وأحد الاجتماعين خلال الأشهر الثلاثة التالية لنهاية السنة المالية؛ والمادة (التاسعة)
+// تجعل اعتماد الميزانية وتقرير المدير وإبراء ذمّته من اختصاصات الجمعية العامة.
+// ملاحظة: إصدار شهادة الجمعية إجراء إلكتروني مباشر في منصة «ملاك» ولا يتطلّب رفع مستندات.
+// ============================================================
+
+export function renewalMinutesHTML(
+  a: AssociationDoc & { units?: number },
+  d: {
+    meeting_date?: string; place?: string; mode?: string;
+    attendees?: number; total_units?: number;
+    president?: string; manager?: string;
+    fee?: number; year?: number; annual_budget?: number;
+    collected?: number; spent?: number; fund_balance?: number;
+    notes?: string;
+  },
+  issuer: Issuer = {}
+) {
+  // تعقيم المدخلات (انظر scrub أعلاه)
+  a = scrub(a);
+  d = scrub(d);
+  issuer = scrub(issuer);
+  const esc = (s: any) => String(s ?? "").replace(/</g, "&lt;");
+  const date = d.meeting_date || today();
+  const units = Number(d.total_units) || Number(a.units) || (a.owners || []).length || 0;
+  const att = Number(d.attendees) || 0;
+  const quorum = units ? Math.round((att / units) * 100) : 0;
+  const fee = Number(d.fee) || Number(a.fee) || 0;
+  const nextYear = Number(d.year) || new Date().getFullYear() + 1;
+  const collected = Number(d.collected) || 0;
+  const spent = Number(d.spent) || 0;
+  const fund = d.fund_balance !== undefined ? Number(d.fund_balance) || 0 : Number(a.fund_balance) || 0;
+
+  const body = `
+${header("محضر اجتماع", "الجمعية العمومية السنوية")}
+<h1>محضر اجتماع الجمعية العمومية السنوي</h1>
+<div class="sub">${a.name}${units ? ` · ${units} وحدة عقارية` : ""} · الاجتماع السنوي واعتماد موازنة عام ${nextYear}</div>
+
+<div class="grid">
+  <div class="box">
+    <h3>بيانات الاجتماع</h3>
+    <div class="r"><span>التاريخ</span><span>${date}</span></div>
+    <div class="r"><span>طريقة الانعقاد</span><span>${d.mode || "حضوري"}</span></div>
+    ${d.place ? `<div class="r"><span>المكان</span><span>${esc(d.place)}</span></div>` : ""}
+    <div class="r"><span>عدد الحاضرين</span><span>${att || "—"} من ${units || "—"}</span></div>
+    <div class="r"><span>نسبة الحضور</span><span>${units ? quorum + "%" : "—"}</span></div>
+  </div>
+  <div class="box">
+    <h3>الأساس النظامي</h3>
+    <div class="r"><span>النظام</span><span>ملكية الوحدات العقارية وفرزها وإدارتها</span></div>
+    <div class="r"><span>المرسوم الملكي</span><span>م/85 وتاريخ 02/07/1441هـ</span></div>
+    <div class="r"><span>الجهة المشرفة</span><span>الهيئة العامة للعقار — منصة ملاك</span></div>
+    <div class="r"><span>سند الانعقاد</span><span>النظام الأساسي — المادتان (9) و(14/2)</span></div>
+  </div>
+</div>
+
+<div class="note">
+  عُقد هذا الاجتماع السنوي لاستعراض أعمال الجمعية عن العام المنقضي، واعتماد الموازنة التقديرية
+  لعام ${nextYear}، وتقرير مبلغ اشتراك الصيانة تمهيدًا لإدخاله في قرار رسوم الاشتراك بمنصة «ملاك»
+  وطرحه للتصويت.
+</div>
+
+<h1 style="font-size:1rem">أولًا: الموقف المالي للعام المنقضي</h1>
+<table>
+  <tbody>
+    <tr><td>إجمالي الاشتراكات المحصَّلة</td><td style="text-align:left;font-weight:600">${collected ? sar(collected) + " ريال" : "________________"}</td></tr>
+    <tr><td>إجمالي المصروفات (تشغيل وصيانة)</td><td style="text-align:left;font-weight:600">${spent ? sar(spent) + " ريال" : "________________"}</td></tr>
+    <tr style="background:#F3EEE2;font-weight:700"><td>رصيد صندوق الجمعية</td><td style="text-align:left">${sar(fund)} ريال</td></tr>
+  </tbody>
+</table>
+
+<h1 style="font-size:1rem">ثانيًا: جدول الأعمال والقرارات</h1>
+<table>
+  <thead><tr><th>#</th><th>البند</th><th>القرار</th></tr></thead>
+  <tbody>
+    <tr><td>1</td><td>تقرير أعمال الجمعية عن العام المنقضي</td>
+        <td>استُعرض التقرير وصودق عليه.</td></tr>
+    <tr><td>2</td><td>المصادقة على الحساب الختامي والموقف المالي</td>
+        <td>صودق على الموقف المالي الموضّح أعلاه.</td></tr>
+    <tr><td>3</td><td>اعتماد الموازنة التقديرية لعام ${nextYear}</td>
+        <td>${d.annual_budget ? `اعتماد موازنة بإجمالي <b>${sar(d.annual_budget)}</b> ريال (مرفقة بهذا المحضر).` : "اعتماد الموازنة التقديرية المرفقة بهذا المحضر."}</td></tr>
+    <tr><td>4</td><td>اشتراك الصيانة لعام ${nextYear}</td>
+        <td>${fee ? `إقرار الاشتراك بمبلغ <b>${sar(fee)}</b> ريال لكل وحدة.` : "________________________________"}</td></tr>
+    <tr><td>5</td><td>مدير العقار</td>
+        <td>${d.manager ? `تجديد تعيين <b>${esc(d.manager)}</b> مديرًا للعقار.` : "________________________________"}</td></tr>
+    <tr><td>6</td><td>إدخال قرار رسوم الاشتراك في المنصة</td>
+        <td>تفويض ${d.president ? `رئيس الجمعية <b>${esc(d.president)}</b>` : "رئيس الجمعية"} ومدير العقار بإنشاء قرار
+            «إعادة تحديد رسوم الاشتراك» في منصة «ملاك» ببنود موازنة عام ${nextYear} وطرحه لتصويت الأعضاء،
+            ثم إصدار الفواتير وفق موعد الاستحقاق المعتمد.</td></tr>
+    ${d.notes ? `<tr><td>7</td><td>بنود إضافية</td><td>${esc(d.notes)}</td></tr>` : ""}
+  </tbody>
+</table>
+
+<div class="note">
+  تُودَع الاشتراكات في الحساب البنكي للجمعية، ولا يُصرف منها إلا وفق الموازنة المعتمدة.
+  ويُرفق بهذا المحضر: الموازنة التقديرية لعام ${nextYear}.
+</div>
+
+<h1 style="font-size:1rem">توقيعات الحاضرين</h1>
+<table>
+  <thead><tr><th>#</th><th>اسم المالك</th><th>الوحدة</th><th>التوقيع</th></tr></thead>
+  <tbody>
+    ${(a.owners && a.owners.length
+      ? a.owners.map((o, i) => `<tr><td>${i + 1}</td><td>${esc(o.name)}</td><td>${o.unit || "—"}</td><td>________________</td></tr>`).join("")
+      : Array.from({ length: 8 }, (_, i) => `<tr><td>${i + 1}</td><td>________________</td><td>____</td><td>________________</td></tr>`).join(""))}
+  </tbody>
+</table>
+
+<div class="sign">
+  <div>رئيس الجمعية: ${d.president ? esc(d.president) : "________________"}<br><br>التوقيع: ________________</div>
+  <div>مدير العقار: ${d.manager ? esc(d.manager) : "________________"}<br><br>التوقيع: ________________</div>
+</div>
+<div class="note" style="border-inline-start-color:#D0453F;background:#FBE9E7;color:#a5322c">
+  <b>تنويه:</b> هذا نموذج محضر استرشادي أعدّته إدارة الجمعية للاستخدام الإداري.
+  وثيق لا يقدّم خدمات قانونية ولا يمثّل الجمعية أمام أي جهة — طابق النموذج مع النظام الأساسي
+  المعتمد ومتطلبات منصة «ملاك» قبل رفعه رسميًّا.
+</div>
+${footer()}`;
+  return SHELL(`محضر الاجتماع السنوي — ${a.name}`, body, markOf(issuer));
+}
+
+// ============================================================
+// فاتورة اشتراك وثيق — من وثيق إلى المشترك (تُصدر من لوحة الإدارة فقط)
+// ============================================================
+
+export type SubInvoice = {
+  invoice_no: string;
+  /** اسم المشترك ومنشأته */
+  to_name: string;
+  to_org?: string | null;
+  to_phone?: string | null;
+  /** الباقة كما تُعرض للمشترك، مثل: باقة المالك · الاحترافية */
+  plan_label: string;
+  months: number;
+  amount: number;
+  /** بداية ونهاية الفترة المشمولة (YYYY-MM-DD) */
+  from_date: string;
+  to_date: string;
+  method?: string | null;
+  paid_at?: string | null;
+  /** الرقم الضريبي لوثيق — إن وُجد تُحتسب الضريبة، وإن غاب تُطبع فاتورة بلا ضريبة */
+  vat_number?: string | null;
+  vat_rate?: number | null;
+};
+
+/**
+ * فاتورة/إيصال اشتراك تُسلَّم للمشترك.
+ * لا علامة مائية ولا سطر «أُنشئ عبر وثيق» — المُصدِر هنا وثيق نفسه.
+ */
+export function subscriptionInvoiceHTML(inv: SubInvoice) {
+  // تعقيم المدخلات (انظر scrub أعلاه)
+  inv = scrub(inv);
+  const rate = Number(inv.vat_rate ?? 15);
+  const hasVat = !!inv.vat_number;
+  const total = Number(inv.amount) || 0;
+  const base = hasVat ? Math.round((total / (1 + rate / 100)) * 100) / 100 : total;
+  const vat = Math.round((total - base) * 100) / 100;
+  const paid = inv.paid_at || today();
+
+  const body = `
+${header(hasVat ? "فاتورة ضريبية مبسطة" : "فاتورة اشتراك", inv.invoice_no)}
+<h1>${hasVat ? "فاتورة ضريبية مبسطة — اشتراك وثيق" : "فاتورة اشتراك وثيق"}</h1>
+<div class="sub">الفترة: ${inv.from_date} حتى ${inv.to_date} · ${inv.months} ${inv.months === 1 ? "شهر" : "شهرًا"}</div>
+
+<div class="grid">
+  <div class="box">
+    <h3>المُصدِر</h3>
+    <div class="r"><span>الاسم</span><span>وثيق — منصة إدارة الأملاك</span></div>
+    <div class="r"><span>وثيقة العمل الحر</span><span>FL-763162251</span></div>
+    ${inv.vat_number ? `<div class="r"><span>الرقم الضريبي</span><span>${inv.vat_number}</span></div>` : ""}
+    <div class="r"><span>للتواصل</span><span>watheqdocs@gmail.com</span></div>
+  </div>
+  <div class="box">
+    <h3>إلى</h3>
+    <div class="r"><span>الاسم</span><span>${inv.to_name || "—"}</span></div>
+    ${inv.to_org ? `<div class="r"><span>المنشأة</span><span>${inv.to_org}</span></div>` : ""}
+    ${inv.to_phone ? `<div class="r"><span>الجوال</span><span>${inv.to_phone}</span></div>` : ""}
+    <div class="r"><span>الباقة</span><span>${inv.plan_label}</span></div>
+  </div>
+</div>
+
+<table>
+  <thead><tr><th>البيان</th><th>الفترة</th><th>المدة</th><th>المبلغ${hasVat ? " قبل الضريبة" : ""} (ريال)</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>اشتراك منصة وثيق — ${inv.plan_label}</td>
+      <td>${inv.from_date} → ${inv.to_date}</td>
+      <td>${inv.months} ${inv.months === 1 ? "شهر" : "شهرًا"}</td>
+      <td>${sar(base)}</td>
+    </tr>
+  </tbody>
+</table>
+
+${hasVat ? `<table style="max-width:340px;margin-inline-start:auto">
+  <tbody>
+    <tr><td>الإجمالي قبل الضريبة</td><td style="text-align:left;font-weight:600">${sar(base)}</td></tr>
+    <tr><td>ضريبة القيمة المضافة (${rate}%)</td><td style="text-align:left;font-weight:600">${sar(vat)}</td></tr>
+    <tr><td style="font-weight:700">الإجمالي شامل الضريبة</td><td style="text-align:left;font-weight:700">${sar(total)}</td></tr>
+  </tbody>
+</table>` : ""}
+
+<div class="due"><span class="l">الإجمالي المدفوع${hasVat ? " (شامل الضريبة)" : ""}</span><span class="v">${sar(total)} ريال</span></div>
+
+${hasVat ? zatcaQrBlock("وثيق", String(inv.vat_number), total, vat) : ""}
+
+<div class="note">
+  ${methodAr(inv.method) !== "—" ? `وسيلة السداد: <b>${methodAr(inv.method)}</b> · ` : ""}تاريخ السداد: <b>${paid}</b>.
+  يسري الاشتراك حتى <b>${inv.to_date}</b>، وتبقى بيانات الحساب ومستنداته متاحة للمشترك طوال الفترة.
+</div>
+
+${hasVat ? `<div class="note" style="border-inline-start-color:#D0453F;background:#FBE9E7;color:#a5322c">
+  <b>تنويه:</b> هذا مستند إداري يبيّن احتساب الضريبة، وليس فاتورة إلكترونية معتمدة من هيئة الزكاة والضريبة والدخل
+  (لا يتضمّن رمز الاستجابة السريعة ولا التوقيع الإلكتروني المطلوبين نظامًا).
+</div>` : `<div class="note">
+  <b>لا تشمل هذه الفاتورة ضريبة القيمة المضافة</b> — المُصدِر غير مسجَّل في ضريبة القيمة المضافة،
+  وهي مستند إداري لإثبات السداد وليست فاتورة إلكترونية معتمدة من هيئة الزكاة والضريبة والدخل.
+</div>`}
+
+<div class="sign">
+  <div>المُصدِر: وثيق<br><br>التوقيع: ________________</div>
+  <div>تاريخ الإصدار: ${today()}<br><br>رقم الفاتورة: ${inv.invoice_no}</div>
+</div>
+${footer()}`;
+  return SHELL(`فاتورة ${inv.invoice_no} — ${inv.to_name}`, body, "none");
+}
+
+// ============================================================
+// تقرير المالك الدوري — أهم مستند يقدّمه مكتب إدارة الأملاك لمالكه:
+// إشغال + محصَّل الفترة فعليًّا (من سجل الدفعات) + المتأخرات الحالية.
+// يختلف عن «كشف حساب العقار»: ذاك لقطة لحظية، وهذا حصاد فترة.
+// ============================================================
+
+export type OwnerReportPayment = PaymentRow & { tenant_name?: string | null; unit?: string | null };
+
+export function ownerReportHTML(
+  p: Property & { tenants: (Tenant & { status?: string | null; move_out_date?: string | null })[] },
+  period: { label: string; from: string; to: string },
+  payments: OwnerReportPayment[] = [],
+  issuer: Issuer = {},
+  // المصروفات وأتعاب الإدارة اختيارية — بدونها يبقى التقرير كما كان (توافق خلفي)
+  extra: { expenses?: ExpenseRow[]; fee_pct?: number | null } = {},
+) {
+  // تعقيم المدخلات (انظر scrub أعلاه)
+  p = scrub(p);
+  period = scrub(period);
+  payments = scrub(payments);
+  issuer = scrub(issuer);
+  extra = scrub(extra);
+  const ul = unitLabel(p.property_type);
+  const who = issuer.billing_name || p.manager || "إدارة الأملاك";
+  const g = graceOf(p);
+
+  const rows = (p.tenants || []).map((t) => ({ t, st: contractState(t, g), vacant: isVacant(t) }));
+  const total = rows.length;
+  const vacant = rows.filter((r) => r.vacant).length;
+  const occupied = total - vacant;
+  const occupancy = total ? Math.round((occupied / total) * 100) : 0;
+  const late = rows.filter((r) => !r.vacant && r.st.status === "late").length;
+  const totalDue = rows.reduce((s, r) => s + (r.vacant ? 0 : r.st.amountDue), 0);
+  const collected = payments.reduce((s, x) => s + (Number(x.amount) || 0), 0);
+  const exp = extra.expenses || [];
+  /* الضريبة داخل المقبوض تُستبعد: أمانة للهيئة لا إيراد للمالك.
+     ونحسبها لكل دفعة بحسب وحدتها (العمارة المختلطة). */
+  const byUnit: Record<string, any> = {};
+  (p.tenants || []).forEach((t: any) => { if (t.unit) byUnit[String(t.unit)] = t; });
+  const vatCollected = payments.reduce((a, x: any) => {
+    const t = x.unit ? byUnit[String(x.unit)] : null;
+    return a + (t ? splitVat(Number(x.amount) || 0, vatOf(p, t)).vat : 0);
+  }, 0);
+  // أتعاب إدارة الأملاك خدمة خاضعة للضريبة إن كان المكتب مسجَّلًا ضريبيًّا
+  const feeVatRate = issuer.vat_number ? (Number(p.vat_rate) || 15) : 0;
+  const fin = ownerNet(collected, exp, extra.fee_pct, vatCollected, feeVatRate);
+  const showFinance = exp.length > 0 || fin.feePct !== null;
+  const expiring = rows.filter((r) => !r.vacant && r.st.daysToEnd !== null && r.st.daysToEnd >= 0 && r.st.daysToEnd <= 60).length;
+
+  const body = `
+${header("تقرير دوري للمالك", p.name)}
+<h1>تقرير المالك — ${p.name}</h1>
+<div class="sub">${typeLabel(p.property_type)}${p.address ? ` — ${p.address}` : ""}${p.city ? `، ${p.city}` : ""} · الفترة: <b>${period.label}</b> (${arDate(period.from)} إلى ${arDate(period.to)})</div>
+
+<div class="tot">
+  <div><div class="v">${total}</div><div class="l">إجمالي الوحدات</div></div>
+  <div><div class="v">${occupancy}%</div><div class="l">الإشغال (${vacant} شاغرة)</div></div>
+  <div><div class="v g">${sar(collected)}</div><div class="l">المُحصَّل خلال الفترة (ريال)</div></div>
+  <div><div class="v${totalDue ? " r" : ""}">${sar(totalDue)}</div><div class="l">المتأخرات القائمة (ريال)</div></div>
+</div>
+
+${totalDue > 0 || expiring > 0 ? `<div class="note">${[
+    late ? `${late} ${late === 1 ? "وحدة متأخرة" : "وحدات متأخرة"} بإجمالي ${sar(totalDue)} ريال` : "",
+    expiring ? `${expiring} ${expiring === 1 ? "عقد ينتهي" : "عقود تنتهي"} خلال 60 يومًا — قرار التجديد مطلوب` : "",
+  ].filter(Boolean).join(" · ")}</div>` : ""}
+
+<h2>حالة الوحدات في نهاية الفترة</h2>
+<div class="scrollx"><table>
+  <thead><tr><th>${ul}</th><th>المستأجر</th><th>الدفعة</th><th>الدورة</th><th>نهاية العقد</th><th>المتأخر</th><th>الحالة</th></tr></thead>
+  <tbody>
+    ${rows.map(({ t, st, vacant: vc }) => `<tr>
+      <td>${t.unit || "—"}</td>
+      <td>${vc ? "—" : t.name}</td>
+      <td>${vc ? "—" : sar(splitVat(Number(t.rent_amount) || 0, vatOf(p, t)).total)}</td>
+      <td>${vc ? "—" : freqLabel(t.payment_frequency)}</td>
+      <td>${vc ? "—" : arDate(st.endDate)}</td>
+      <td>${st.amountDue ? `${sar(st.amountDue)}${vc ? '<div style="font-size:.65rem;color:#5C6B67">على المستأجر السابق</div>' : ""}` : "—"}</td>
+      <td>${vc ? '<span class="pill u">شاغرة</span>'
+          : st.status === "late" ? '<span class="pill l">متأخر</span>'
+          : st.inGrace ? '<span class="pill u">فترة سماح</span>'
+          : st.status === "soon" ? '<span class="pill u">يستحق قريبًا</span>'
+          : '<span class="pill p">منتظم</span>'}</td>
+    </tr>`).join("")}
+  </tbody>
+</table></div>
+
+<h2>الدفعات المستلمة خلال الفترة (${payments.length})</h2>
+${payments.length ? `<div class="scrollx"><table>
+  <thead><tr><th>التاريخ</th><th>المستأجر</th><th>${ul}</th><th>المبلغ</th><th>الطريقة</th><th>ملاحظة</th></tr></thead>
+  <tbody>
+    ${payments.map((x) => `<tr>
+      <td>${arDate(x.paid_on)}</td>
+      <td>${x.tenant_name || "—"}</td>
+      <td>${x.unit || "—"}</td>
+      <td><b>${sar(x.amount)}</b></td>
+      <td>${payMethod(x)}</td>
+      <td>${x.note ? String(x.note) : "—"}</td>
+    </tr>`).join("")}
+    <tr><td colspan="3"><b>الإجمالي</b></td><td><b>${sar(collected)}</b></td><td colspan="2">—</td></tr>
+  </tbody>
+</table></div>` : `<div class="sub">لم تُسجَّل دفعات خلال هذه الفترة.</div>`}
+
+${showFinance ? `
+<h2>مصروفات الفترة (${exp.length})</h2>
+${exp.length ? `<div class="scrollx"><table>
+  <thead><tr><th>التاريخ</th><th>التصنيف</th><th>${ul}</th><th>المبلغ</th><th>ملاحظة</th></tr></thead>
+  <tbody>
+    ${exp.map((x) => `<tr>
+      <td>${arDate(x.spent_on)}</td>
+      <td>${catLabel(x.category)}</td>
+      <td>${x.unit || "—"}</td>
+      <td><b>${sar(Number(x.amount) || 0)}</b></td>
+      <td>${x.note ? String(x.note) : "—"}</td>
+    </tr>`).join("")}
+    <tr><td colspan="3"><b>إجمالي المصروفات</b></td><td><b>${sar(fin.expenses)}</b></td><td>${sumByCategory(exp).map((c) => `${c.label} ${sar(c.total)}`).join(" · ") || "—"}</td></tr>
+  </tbody>
+</table></div>` : `<div class="sub">لا مصروفات مسجّلة خلال هذه الفترة.</div>`}
+
+<h2>الحساب الختامي للمالك</h2>
+<table>
+  <tbody>
+    ${(() => { const y = annualExpected(p.tenants as any[]); return y > 0
+      ? `<tr><td>الدخل السنوي المتوقع للعقار <span style="font-size:.72rem;color:#5C6B67">(الوحدات المشغولة)</span></td><td style="text-align:left">${sar(y)}</td></tr>` : ""; })()}
+    ${(fin.vatCollected || 0) > 0 ? `<tr><td>إجمالي المقبوض خلال الفترة</td><td style="text-align:left">${sar(fin.grossCollected || 0)}</td></tr>
+    <tr><td>(−) ضريبة القيمة المضافة المحصَّلة <span style="font-size:.72rem;color:#5C6B67">(تُورَّد للهيئة — ليست إيرادًا للمالك)</span></td><td style="text-align:left">${sar(fin.vatCollected || 0)}</td></tr>` : ""}
+    <tr><td>${(fin.vatCollected || 0) > 0 ? "صافي إيراد المالك من الإيجار" : "المحصَّل خلال الفترة"}</td><td style="text-align:left"><b>${sar(fin.collected)}</b>${(() => { const y = annualExpected(p.tenants as any[]); return y > 0 ? ` <span style="font-size:.72rem;color:#5C6B67">(${Math.min(100, Math.round((fin.collected / y) * 100))}% من السنوي)</span>` : ""; })()}</td></tr>
+    <tr><td>(−) مصروفات الفترة</td><td style="text-align:left">${sar(fin.expenses)}</td></tr>
+    ${fin.feePct !== null ? `<tr><td>(−) أتعاب الإدارة (${fin.feePct}% من صافي الإيجار)</td><td style="text-align:left">${sar(fin.feeBase ?? fin.fee)}</td></tr>${(fin.feeVat || 0) > 0 ? `<tr><td>(−) ضريبة على أتعاب الإدارة (${feeVatRate}%)</td><td style="text-align:left">${sar(fin.feeVat || 0)}</td></tr>` : ""}` : ""}
+    <tr><td><b>صافي المالك عن ${period.label}</b></td><td style="text-align:left"><b style="font-size:1.1rem">${sar(fin.net)} ريال</b></td></tr>
+  </tbody>
+</table>
+` : ""}
+<div class="note">تقرير استرشادي صادر آليًّا من سجل الدفعات والمصروفات وبيانات العقود المسجّلة في وثيق بتاريخ ${today()}. الأرقام تعكس ما وثّقه المكتب في النظام.</div>
+<div class="sign"><div>إدارة الأملاك: ${who}<br><br>التوقيع: ________________</div><div>المالك: ____________________<br><br>تاريخ الإصدار: ${today()}</div></div>
+${footer()}`;
+  return SHELL(`تقرير المالك — ${p.name} — ${period.label}`, body, markOf(issuer));
+}
+
+// ============================================================
+// كشف المالك المجمّع — كل عقارات المالك في كشف واحد لفترة يحددها
+// المكتب (من شهر إلى شهر). طُلب من أول مكتب فعلي (160 وحدة، ملّاك
+// متعددو العقارات) في سبتمبر 2026.
+//
+// التصميم: ملخص أعلى الكشف (كل عقار في صف: محصَّل − مصروفات − أتعاب
+// = صافي، ثم الإجمالي) لأن المالك يسأل «كم لي؟» أولًا؛ ثم تفصيل كل
+// عقار (دفعات ومصروفات) لمن يريد التحقق. الحسابات نفسها التي يستخدمها
+// تقرير العقار الواحد (ownerNet) حتى لا يختلف رقم هنا عن رقم هناك.
+// ============================================================
+
+export type OwnerStatementSection = {
+  property: Property & { tenants: (Tenant & { status?: string | null; move_out_date?: string | null })[] };
+  payments: OwnerReportPayment[];
+  expenses: ExpenseRow[];
+  fee_pct?: number | null;
+};
+
+export function ownerConsolidatedStatementHTML(
+  ownerName: string,
+  sections: OwnerStatementSection[],
+  period: { label: string; from: string; to: string },
+  issuer: Issuer = {},
+  detail: "full" | "brief" = "full",
+) {
+  // تعقيم المدخلات (انظر scrub أعلاه)
+  ownerName = scrub(ownerName);
+  sections = scrub(sections);
+  period = scrub(period);
+  issuer = scrub(issuer);
+  const who = issuer.billing_name || "إدارة الأملاك";
+
+  const rows = sections.map((s) => {
+    const g = graceOf(s.property);
+    const ten = (s.property.tenants || []).map((t) => ({ t, st: contractState(t, g), vacant: isVacant(t) }));
+    const units = ten.length;
+    const vacant = ten.filter((r) => r.vacant).length;
+    const due = ten.reduce((a, r) => a + (r.vacant ? 0 : r.st.amountDue), 0);
+    const collected = s.payments.reduce((a, x) => a + (Number(x.amount) || 0), 0);
+    /* الضريبة المحصَّلة تُستبعد قبل الأتعاب والصافي (أمانة للهيئة) */
+    const byUnit: Record<string, any> = {};
+    (s.property.tenants || []).forEach((t: any) => { if (t.unit) byUnit[String(t.unit)] = t; });
+    const vatCollected = s.payments.reduce((a: number, x: any) => {
+      const t = x.unit ? byUnit[String(x.unit)] : null;
+      return a + (t ? splitVat(Number(x.amount) || 0, vatOf(s.property, t)).vat : 0);
+    }, 0);
+    const feeVatRate = issuer.vat_number ? (Number(s.property.vat_rate) || 15) : 0;
+    const fin = ownerNet(collected, s.expenses, s.fee_pct, vatCollected, feeVatRate);
+    return { s, units, vacant, due, collected, fin };
+  });
+
+  const T = rows.reduce((a, r) => ({
+    units: a.units + r.units, vacant: a.vacant + r.vacant, due: a.due + r.due,
+    collected: a.collected + r.fin.collected, expenses: a.expenses + r.fin.expenses,
+    fee: a.fee + r.fin.fee, net: a.net + r.fin.net,
+  }), { units: 0, vacant: 0, due: 0, collected: 0, expenses: 0, fee: 0, net: 0 });
+  const anyFee = rows.some((r) => r.fin.feePct !== null);
+
+  const body = `
+${header("كشف حساب مالك — مجمّع", ownerName)}
+<h1>كشف حساب المالك — ${ownerName}</h1>
+<div class="sub">${rows.length} ${rows.length === 1 ? "عقار" : "عقارات"} · ${T.units} وحدة · الفترة: <b>${period.label}</b> (${arDate(period.from)} إلى ${arDate(period.to)})</div>
+
+<div class="tot">
+  <div><div class="v">${sar(rows.reduce((a, r) => a + annualExpected(r.s.property.tenants as any[]), 0))}</div><div class="l">الدخل السنوي المتوقع (ريال)</div></div>
+  <div><div class="v g">${sar(T.collected)}</div><div class="l">المُحصَّل (ريال)</div></div>
+  <div><div class="v">${sar(T.expenses)}</div><div class="l">المصروفات (ريال)</div></div>
+  ${anyFee ? `<div><div class="v">${sar(T.fee)}</div><div class="l">أتعاب الإدارة (ريال)</div></div>` : ""}
+  <div><div class="v g" style="font-size:1.35rem">${sar(T.net)}</div><div class="l"><b>صافي المالك (ريال)</b></div></div>
+</div>
+
+<h2>ملخص العقارات</h2>
+<div class="scrollx"><table>
+  <thead><tr><th>العقار</th><th>الوحدات</th><th>شاغرة</th><th>الدخل السنوي المتوقع</th><th>المُحصَّل</th><th>المصروفات</th>${anyFee ? "<th>الأتعاب</th>" : ""}<th>الصافي</th><th>متأخرات قائمة</th></tr></thead>
+  <tbody>
+    ${rows.map((r) => `<tr>
+      <td><b>${r.s.property.name}</b><div style="font-size:.72rem;color:#5C6B67">${typeLabel(r.s.property.property_type)}${r.s.property.city ? ` · ${r.s.property.city}` : ""}</div></td>
+      <td>${r.units}</td><td>${r.vacant || "—"}</td>
+      <td>${sar(annualExpected(r.s.property.tenants as any[]))}</td>
+      <td>${sar(r.fin.collected)}</td><td>${sar(r.fin.expenses)}</td>
+      ${anyFee ? `<td>${r.fin.feePct !== null ? `${sar(r.fin.fee)} <span style="font-size:.7rem;color:#5C6B67">(${r.fin.feePct}%)</span>` : "—"}</td>` : ""}
+      <td><b>${sar(r.fin.net)}</b></td>
+      <td>${r.due ? `<span class="pill l">${sar(r.due)}</span>` : "—"}</td>
+    </tr>`).join("")}
+    <tr>
+      <td><b>الإجمالي</b></td><td><b>${T.units}</b></td><td>${T.vacant || "—"}</td>
+      <td><b>${sar(rows.reduce((a, r) => a + annualExpected(r.s.property.tenants as any[]), 0))}</b></td>
+      <td><b>${sar(T.collected)}</b></td><td><b>${sar(T.expenses)}</b></td>
+      ${anyFee ? `<td><b>${sar(T.fee)}</b></td>` : ""}
+      <td><b style="font-size:1.05rem">${sar(T.net)}</b></td>
+      <td>${T.due ? `<b>${sar(T.due)}</b>` : "—"}</td>
+    </tr>
+  </tbody>
+</table></div>
+
+${rows.map((r) => `
+<h2 style="margin-top:22px">${r.s.property.name} — التفصيل</h2>
+<div class="sub" style="margin-bottom:6px">${typeLabel(r.s.property.property_type)}${r.s.property.city ? ` · ${r.s.property.city}` : ""}${r.s.property.address ? ` · ${r.s.property.address}` : ""}${r.s.property.usage ? ` · ${USAGE_AR[String(r.s.property.usage)] || r.s.property.usage}` : ""} · ${r.units} وحدة (${r.units - r.vacant} مؤجّرة، ${r.vacant} شاغرة)</div>
+${detail === "full" ? `
+<h3 style="font-size:.85rem;margin:10px 0 4px">وحدات العقار وحالتها</h3>
+<div class="scrollx"><table>
+  <thead><tr><th>${unitLabel(r.s.property.property_type)}</th><th>النوع</th><th>المستأجر</th><th>الإيجار / الدورة</th><th>بداية العقد</th><th>نهاية العقد</th><th>الحالة</th><th>متأخر</th></tr></thead>
+  <tbody>
+    ${(r.s.property.tenants || []).map((t: any) => {
+      const g = graceOf(r.s.property); const cs = contractState(t, g); const vac = isVacant(t);
+      return `<tr>
+        <td><b>${t.unit || "—"}</b></td>
+        <td>${t.unit_type ? (UNIT_TYPE_AR[String(t.unit_type)] || "—") : unitLabel(r.s.property.property_type)}${(t.rooms || t.baths || t.acs) ? `<div style="font-size:.68rem;color:#5C6B67">${[t.rooms ? `${t.rooms} غرف` : "", t.baths ? `${t.baths} حمام` : "", t.acs ? `${t.acs} مكيف` : ""].filter(Boolean).join(" · ")}</div>` : ""}</td>
+        <td>${vac ? "<span style='color:#5C6B67'>— شاغرة —</span>" : t.name}${t.contract_no ? `<div style="font-size:.68rem;color:#5C6B67" dir="ltr">عقد ${t.contract_no}</div>` : ""}</td>
+        <td>${vac ? "—" : `${sar(t.rent_amount)} / ${freqLabel(t.payment_frequency)}`}</td>
+        <td>${vac ? "—" : arDate(t.contract_start)}</td>
+        <td>${vac ? "—" : arDate(cs.endDate)}</td>
+        <td>${vac ? '<span class="pill">شاغرة</span>' : cs.status === "late" ? '<span class="pill l">متأخر</span>' : cs.expiringSoon ? '<span class="pill u">ينتهي قريبًا</span>' : '<span class="pill p">منتظم</span>'}</td>
+        <td>${!vac && cs.amountDue > 0 ? `<b>${sar(cs.amountDue)}</b>` : "—"}</td>
+      </tr>`;
+    }).join("")}
+  </tbody>
+</table></div>` : ""}
+${r.s.payments.length ? `<div class="scrollx"><table>
+  <thead><tr><th>التاريخ</th><th>المستأجر</th><th>${unitLabel(r.s.property.property_type)}</th><th>المبلغ</th><th>الطريقة</th></tr></thead>
+  <tbody>
+    ${r.s.payments.map((x) => `<tr><td>${arDate(x.paid_on)}</td><td>${x.tenant_name || "—"}</td><td>${x.unit || "—"}</td><td><b>${sar(x.amount)}</b></td><td>${payMethod(x)}</td></tr>`).join("")}
+    <tr><td colspan="3"><b>إجمالي المُحصَّل</b></td><td colspan="2"><b>${sar(r.fin.collected)}</b></td></tr>
+  </tbody>
+</table></div>` : `<div class="sub">لا دفعات مسجّلة لهذا العقار خلال الفترة.</div>`}
+${r.s.expenses.length ? `<div class="scrollx" style="margin-top:8px"><table>
+  <thead><tr><th>التاريخ</th><th>التصنيف</th><th>${unitLabel(r.s.property.property_type)}</th><th>المبلغ</th><th>ملاحظة</th></tr></thead>
+  <tbody>
+    ${r.s.expenses.map((x) => `<tr><td>${arDate(x.spent_on)}</td><td>${catLabel(x.category)}</td><td>${x.unit || "—"}</td><td><b>${sar(Number(x.amount) || 0)}</b></td><td>${x.note ? String(x.note) : "—"}</td></tr>`).join("")}
+    <tr><td colspan="3"><b>إجمالي المصروفات</b></td><td colspan="2"><b>${sar(r.fin.expenses)}</b></td></tr>
+  </tbody>
+</table></div>` : ""}
+`).join("")}
+
+<div class="note">كشف استرشادي صادر آليًّا من سجل الدفعات والمصروفات المسجّلة في وثيق بتاريخ ${today()}. الأرقام تعكس ما وثّقه المكتب في النظام، وصافي كل عقار يُحسب بنفس طريقة تقرير العقار المنفرد.</div>
+<div class="sign"><div>إدارة الأملاك: ${who}<br><br>التوقيع: ________________</div><div>المالك: ${ownerName}<br><br>تاريخ الإصدار: ${today()}</div></div>
+${footer()}`;
+  return SHELL(`كشف حساب المالك — ${ownerName} — ${period.label}`, body, markOf(issuer));
+}
+
+// ============================================================
+// سجل التزامات المكتب العقاري — نسخة مطبوعة لملف المكتب:
+// رخصة فال · عقود الوساطة ونوافذ عمولتها · تراخيص الإعلانات،
+// مع الحدود النظامية بصياغة استرشادية موحّدة (UI_LEGAL).
+// ============================================================
+
+const DEAL_AR: Record<string, string> = { sale: "بيع", rent: "إيجار" };
+const phasePill = (tone: "ok" | "warn" | "bad" | "muted", label: string) =>
+  `<span class="pill ${tone === "ok" ? "p" : tone === "bad" ? "l" : "u"}">${label}</span>`;
+
+export function complianceRegisterHTML(items: ComplianceItem[], orgName: string, issuer: Issuer = {}) {
+  // تعقيم المدخلات (انظر scrub أعلاه)
+  items = scrub(items);
+  orgName = scrub(orgName);
+  issuer = scrub(issuer);
+  const who = issuer.billing_name || orgName || "المكتب العقاري";
+  const fal = items.filter((x) => x.kind === "fal_license");
+  const bro = items.filter((x) => x.kind === "brokerage");
+  const ads = items.filter((x) => x.kind === "ad_license");
+
+  const falRows = fal.map((it) => {
+    const st = complianceState(it);
+    return `<tr>
+      <td>${it.title}</td>
+      <td>${it.ref_no || "—"}</td>
+      <td>${arDate(it.start_date)}</td>
+      <td>${arDate(st.endDate)}</td>
+      <td>${phasePill(st.tone, st.label)}</td>
+    </tr>`;
+  }).join("");
+
+  const broRows = bro.map((it) => {
+    const st = complianceState(it);
+    const be = brokerageEnd(it);
+    const fee = expectedCommission(it);
+    return `<tr>
+      <td>${it.title}${it.exclusive ? ' <span class="pill u">حصري</span>' : ""}</td>
+      <td>${it.party || "—"}</td>
+      <td>${DEAL_AR[String(it.deal_type || "")] || "—"}</td>
+      <td>${it.ref_no || "—"}</td>
+      <td>${arDate(it.start_date)}</td>
+      <td>${arDate(st.endDate)}${be.derived ? ' <span class="pill u">مستنتج 90 يومًا</span>' : ""}</td>
+      <td>${st.windowEnd ? arDate(st.windowEnd) : "—"}</td>
+      <td>${fee ? `${sar(fee)} <span style="font-size:.7rem;color:#5C6B67">(${Number(it.commission_pct) > 0 ? it.commission_pct : DEFAULT_COMMISSION_PCT}%)</span>` : "—"}</td>
+      <td>${phasePill(st.tone, st.label)}</td>
+    </tr>`;
+  }).join("");
+
+  const adRows = ads.map((it) => {
+    const st = complianceState(it);
+    return `<tr>
+      <td>${it.title}</td>
+      <td>${it.platform || "—"}</td>
+      <td>${it.ref_no || "—"}</td>
+      <td>${arDate(it.start_date)}</td>
+      <td>${arDate(st.endDate)}</td>
+      <td>${phasePill(st.tone, st.label)}</td>
+    </tr>`;
+  }).join("");
+
+  const body = `
+${header("سجل التزامات المكتب", who)}
+<h1>سجل التزامات المكتب العقاري</h1>
+<div class="sub">${who} · تاريخ الإصدار: ${arDate(today())} · ${items.length} بند</div>
+
+<h2>🪪 رخصة فال</h2>
+${fal.length ? `<div class="scrollx"><table>
+  <thead><tr><th>الرخصة</th><th>رقمها</th><th>الإصدار</th><th>الانتهاء</th><th>الحالة</th></tr></thead>
+  <tbody>${falRows}</tbody>
+</table></div>` : `<div class="sub">لم تُسجَّل رخصة فال بعد — سجّلها ليصلك تنبيه قبل انتهائها بثلاثين يومًا.</div>`}
+
+<h2>🤝 عقود الوساطة (${bro.length})</h2>
+${bro.length ? `<div class="scrollx"><table>
+  <thead><tr><th>العقد</th><th>المالك</th><th>النوع</th><th>رقم الإيداع</th><th>الإبرام</th><th>الانتهاء</th><th>نافذة العمولة حتى</th><th>العمولة المتوقعة</th><th>الحالة</th></tr></thead>
+  <tbody>${broRows}</tbody>
+</table></div>` : `<div class="sub">لا عقود وساطة مسجّلة.</div>`}
+
+<h2>📢 تراخيص الإعلانات (${ads.length})</h2>
+${ads.length ? `<div class="scrollx"><table>
+  <thead><tr><th>الإعلان</th><th>المنصة</th><th>رقم الترخيص</th><th>البداية</th><th>الانتهاء</th><th>الحالة</th></tr></thead>
+  <tbody>${adRows}</tbody>
+</table></div>` : `<div class="sub">لا تراخيص إعلانات مسجّلة.</div>`}
+
+<h2>الحدود النظامية — استرشاديًّا</h2>
+<table>
+  <tbody>
+    ${UI_LEGAL.map((x) => `<tr><td style="width:90px"><b>${x.ref}</b></td><td>${x.text}</td></tr>`).join("")}
+  </tbody>
+</table>
+
+<div class="note">${LEGAL_DISCLAIMER}</div>
+<div class="sign"><div>أعدّه: ${who}<br><br>التوقيع: ________________</div><div>تاريخ الإصدار: ${today()}</div></div>
+${footer()}`;
+  return SHELL(`سجل التزامات المكتب — ${who}`, body, markOf(issuer));
+}
+
+// ============================================================
+// سجل المعروضات — نسخة مطبوعة تحلّ محلّ الأوراق المتفرقة:
+// كل معروض بكوده وحالته وسعر متره وتاريخ آخر تأكيد لتوفره.
+// ============================================================
+
+export function listingsRegisterHTML(items: Listing[], orgName: string, issuer: Issuer = {}) {
+  // تعقيم المدخلات (انظر scrub أعلاه)
+  items = scrub(items);
+  orgName = scrub(orgName);
+  issuer = scrub(issuer);
+  const who = issuer.billing_name || orgName || "المكتب العقاري";
+  const rows = sortListings(items || []);
+  const s = summarize(rows);
+
+  const line = (l: Listing) => {
+    const meta = L_KIND[l.kind] || L_KIND.other;
+    const st = STATUS_META[(l.status || "available") as keyof typeof STATUS_META] || STATUS_META.available;
+    const fr = freshness(l);
+    const ppm = pricePerMeter(l);
+    return `<tr>
+      <td><b>${l.code}</b></td>
+      <td>${meta.icon} ${meta.label} — ${OFFER_LABEL[l.offer_type] || ""}</td>
+      <td>${shortDesc(l)}${l.title ? `<div style="font-size:.72rem;color:#5C6B67">${l.title}</div>` : ""}</td>
+      <td>${Number(l.price) > 0 ? sar(Number(l.price)) : "—"}</td>
+      <td>${ppm ? sar(ppm) : "—"}</td>
+      <td>${l.owner_name || "—"}${l.owner_phone ? `<div style="font-size:.72rem;color:#5C6B67">${l.owner_phone}</div>` : ""}</td>
+      <td>${arDate(l.last_confirmed_at)}${fr.stale ? ' <span class="pill u">راجعه</span>' : ""}</td>
+      <td><span class="pill ${st.tone === "ok" ? "p" : st.tone === "warn" ? "u" : "u"}">${st.label}</span></td>
+    </tr>`;
+  };
+
+  const body = `
+${header("سجل المعروضات", who)}
+<h1>سجل المعروضات</h1>
+<div class="sub">${who} · تاريخ الإصدار: ${arDate(today())} · ${s.total} معروض</div>
+
+<div class="tot">
+  <div><div class="v">${s.total}</div><div class="l">إجمالي المعروضات</div></div>
+  <div><div class="v g">${s.available}</div><div class="l">متاح</div></div>
+  <div><div class="v">${s.reserved}</div><div class="l">محجوز بعربون</div></div>
+  <div><div class="v${s.stale ? " r" : ""}">${s.stale}</div><div class="l">يحتاج تأكيد توفر</div></div>
+</div>
+
+${s.stale > 0 ? `<div class="note">${s.stale} ${s.stale === 1 ? "معروض لم يُؤكَّد توفره" : "معروضًا لم تُؤكَّد توفراتها"} منذ ${STALE_DAYS} يومًا أو أكثر — تأكّد من المالك قبل عرضها على أي عميل.</div>` : ""}
+
+<h2>المعروضات</h2>
+${rows.length ? `<div class="scrollx"><table>
+  <thead><tr><th>الكود</th><th>النوع</th><th>الوصف</th><th>السعر</th><th>سعر المتر</th><th>المالك</th><th>آخر تأكيد</th><th>الحالة</th></tr></thead>
+  <tbody>${rows.map(line).join("")}</tbody>
+</table></div>` : `<div class="sub">لا معروضات مسجّلة بعد.</div>`}
+
+<div class="note">سجل داخلي للمكتب صادر آليًّا من وثيق بتاريخ ${today()}. الأسعار والحالات تعكس ما وثّقه المكتب، ولا يُعدّ هذا المستند عرضًا أو إعلانًا عقاريًّا.</div>
+<div class="sign"><div>أعدّه: ${who}<br><br>التوقيع: ________________</div><div>تاريخ الإصدار: ${today()}</div></div>
+${footer()}`;
+  return SHELL(`سجل المعروضات — ${who}`, body, markOf(issuer));
+}
