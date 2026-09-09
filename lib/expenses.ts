@@ -82,7 +82,10 @@ export function ownerNet(
   vatIncluded = 0, feeVatRate = 0,
 ): OwnerNet {
   const gross = r2(Number(collected) || 0);
-  const vat = r2(Math.max(0, Number(vatIncluded) || 0));
+  /* الضريبة لا تتجاوز المقبوض منطقيًّا؛ لكن خطأ بيانات (تصحيح دفعة، تراجع،
+     أو استيراد ناقص) قد يجعلها أكبر — فتُقصّ هنا بدل أن تُنتج إيرادًا سالبًا
+     للمالك وأتعابًا سالبة للمكتب. */
+  const vat = r2(Math.min(gross, Math.max(0, Number(vatIncluded) || 0)));
   const c = r2(gross - vat);                       // إيراد المالك الفعلي
   const e = sumExpenses(expenses);
   const pct = Number(feePct);

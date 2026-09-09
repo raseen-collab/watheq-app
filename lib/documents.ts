@@ -709,7 +709,7 @@ ${period ? `
   <div><div class="v r">${sar(periodExpenses)}</div><div class="l">المصروفات (ريال)</div></div>
   <div><div class="v">${sar(Math.max(0, periodCollected - periodExpenses))}</div><div class="l">الصافي (ريال)</div></div>
 </div>
-<div class="sub" style="margin-bottom:10px">من ${arDate(period.from)} إلى ${arDate(period.to)}${periodVat > 0 ? ` · منه ضريبة قيمة مضافة ${sar(periodVat)} ريال` : ""}</div>` : ""}
+<div class="sub" style="margin-bottom:10px">من ${arDateH(period.from)} إلى ${arDateH(period.to)}${periodVat > 0 ? ` · منه ضريبة قيمة مضافة ${sar(periodVat)} ريال` : ""}</div>` : ""}
 
 ${mode === "full" ? `
 <h1 style="font-size:1rem">بيانات العقار</h1>

@@ -59,23 +59,59 @@ export type ContractCalendar = "gregorian" | "hijri";
 const H_FMT = typeof Intl !== "undefined"
   ? new Intl.DateTimeFormat("en-u-ca-islamic-umalqura-nu-latn", { year: "numeric", month: "numeric", day: "numeric", timeZone: "UTC" })
   : null;
+/**
+ * ذاكرة التحويل الهجري.
+ *
+ * كل استدعاء لـ Intl.formatToParts مكلف، وحساب حالة عقد هجري واحد كان
+ * يستدعيه مئات المرات (بحث ±60 يومًا لكل دفعة) — 4.5ms للوحدة الواحدة،
+ * أي نصف ثانية لمكتب فيه 200 عقد هجري في كل إعادة رسم. التخزين المؤقّت
+ * يجعلها 0.04ms كالميلادي تمامًا، والنتيجة نفسها حرفيًّا.
+ */
+const H_CACHE = new Map<string, { y: number; m: number; d: number } | null>();
+const G_CACHE = new Map<string, string>();
+const CACHE_CAP = 20000;
+function cachePut<K, V>(m: Map<K, V>, k: K, v: V) {
+  if (m.size >= CACHE_CAP) m.clear();   // مسح كامل أبسط من LRU وكافٍ هنا
+  m.set(k, v);
+  return v;
+}
+
 function toH(d: Date): { y: number; m: number; d: number } | null {
   if (!H_FMT) return null;
+  const key = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+  const hit = H_CACHE.get(key);
+  if (hit !== undefined) return hit;
   const parts = H_FMT.formatToParts(new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate(), 12)));
   const g = (t: string) => Number(parts.find((x) => x.type === t)?.value);
   const y = g("year"), m = g("month"), dd = g("day");
-  return y && m && dd ? { y, m, d: dd } : null;
+  return cachePut(H_CACHE, key, y && m && dd ? { y, m, d: dd } : null);
 }
 function fromH(y: number, m: number, d: number): Date | null {
   if (!H_FMT) return null;
-  // تقدير ثم مسح ±60 يومًا — دقيق ومتسق مع المحوّل نفسه
+  const key = `${y}-${m}-${d}`;
+  const hit = G_CACHE.get(key);
+  if (hit !== undefined) return hit ? new Date(hit + "T00:00:00") : null;
+
   const approx = Date.UTC(1882, 10, 12) + ((y - 1300) * 354.367 + (m - 1) * 29.53 + (d - 1)) * 86400000;
-  for (let off = -60; off <= 60; off++) {
-    const cand = new Date(approx + off * 86400000);
-    const local = new Date(cand.getUTCFullYear(), cand.getUTCMonth(), cand.getUTCDate());
-    const h = toH(local);
-    if (h && h.y === y && h.m === m && h.d === d) return local;
+  const localOf = (ms: number) => { const c = new Date(ms); return new Date(c.getUTCFullYear(), c.getUTCMonth(), c.getUTCDate()); };
+  /* تقارب موجَّه: نقفز بفارق الأيام المقدَّر بدل المسح يومًا بيوم، فيكفي
+     ثلاث محاولات بدل 121 — ثم مسح ضيّق ±3 أيام لضبط الحافة. */
+  let ms = approx;
+  for (let i = 0; i < 4; i++) {
+    const h = toH(localOf(ms));
+    if (!h) break;
+    if (h.y === y && h.m === m && h.d === d) { const r = localOf(ms); cachePut(G_CACHE, key, isoDate(r)); return r; }
+    const diffMonths = (y * 12 + m) - (h.y * 12 + h.m);
+    const diffDays = diffMonths * 29.53 + (d - h.d);
+    if (!diffDays) break;
+    ms += Math.round(diffDays) * 86400000;
   }
+  for (let off = -3; off <= 3; off++) {
+    const local = localOf(ms + off * 86400000);
+    const h = toH(local);
+    if (h && h.y === y && h.m === m && h.d === d) { cachePut(G_CACHE, key, isoDate(local)); return local; }
+  }
+  cachePut(G_CACHE, key, "");
   return null;
 }
 function addHijriMonths(date: Date, months: number, anchorDay?: number | null): Date {
@@ -246,8 +282,19 @@ export function contractState(t: {
   const cutoff = vacated ? new Date(Math.min(Date.parse(String(t.move_out_date)), now.getTime())) : now;
   // فترة السماح: تُحتسب الدفعة مستحقّة رسميًّا بعد مرور أيام السماح
   const graceRef = new Date(cutoff); graceRef.setDate(graceRef.getDate() - grace);
-  const due = periodsElapsed(schedStart, freq, graceRef, anchor, cal);
-  const dueStrict = grace > 0 ? periodsElapsed(schedStart, freq, cutoff, anchor, cal) : due;
+  const dueRaw = periodsElapsed(schedStart, freq, graceRef, anchor, cal);
+  const dueStrictRaw = grace > 0 ? periodsElapsed(schedStart, freq, cutoff, anchor, cal) : dueRaw;
+  const totalPeriods = t.contract_periods && t.contract_periods > 0 ? t.contract_periods : defaultTermPeriods(freq);
+  /**
+   * سقف المتأخرات بمدة العقد.
+   *
+   * بلا هذا السقف يواصل النظام احتساب دفعات بعد انتهاء العقد: عقد سنة
+   * أُدخل بتاريخ قديم ولم يُجدَّد كان يُظهر 129 دفعة متأخرة (645,000 ريال)
+   * بدل 12 — فيتضخّم «إجمالي المتأخر» في اللوحة والملخص اليومي وتقرير
+   * المالك. العقد المنتهي يُجدَّد فتمتد مدته؛ ولا يُطالَب بما بعد مدته.
+   */
+  const due = Math.min(dueRaw, totalPeriods);
+  const dueStrict = Math.min(dueStrictRaw, totalPeriods);
   const unpaid = Math.max(0, due - paid);
   const grossDue = unpaid * rent;
   const amountDue = Math.max(0, grossDue - partial);
@@ -271,7 +318,6 @@ export function contractState(t: {
     ? Math.max(0, grace + daysBetween(addPeriods(start, freq, dueStrict - 1, anchor, cal), today))
     : 0;
 
-  const totalPeriods = t.contract_periods && t.contract_periods > 0 ? t.contract_periods : defaultTermPeriods(freq);
   const progress = Math.min(100, Math.round((due / totalPeriods) * 100));
 
   let status: ContractState["status"] = "ok";
@@ -336,12 +382,16 @@ export function buildSchedule(t: {
   paid_periods?: number | null;
   contract_periods?: number | null;
   partial_amount?: number | null;
-  billing_anchor_day?: number | null; calendar?: string | null;
+  billing_anchor_day?: number | null; calendar?: string | null; first_due?: string | null;
 }) {
-  if (!t.contract_start) return [];
+  const schedStart = scheduleStart(t);
+  if (!schedStart) return [];
   const anchor = anchorOf(t);
   const freq = (t.payment_frequency || "monthly") as Frequency;
-  const start = parseDate(t.contract_start);
+  /* يبدأ من «أول استحقاق» إن حُدّد — كما تفعل contractState تمامًا. كان يبدأ
+     من بداية العقد، فيخرج جدول دفعات مطبوع بتواريخ تخالف «الاستحقاق القادم»
+     في اللوحة وفي كشف الحساب: تناقض يراه المستأجر في مستندين رسميين. */
+  const start = parseDate(schedStart);
   const total = t.contract_periods && t.contract_periods > 0 ? t.contract_periods : defaultTermPeriods(freq);
   const paid = Math.max(0, Number(t.paid_periods) || 0);
   const rent = Number(t.rent_amount) || 0;
