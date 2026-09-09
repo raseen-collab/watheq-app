@@ -11,6 +11,8 @@
 // ============================================================
 
 import { useMemo, useState } from "react";
+import DateField from "@/components/DateField";
+import { hijriText } from "@/lib/hijri";
 
 export type StatementPeriod = { from: string; to: string; label: string } | null;
 
@@ -68,22 +70,27 @@ export default function PropertyStatementModal({ propertyName, onClose, onIssue 
           ))}
         </div>
 
+        {/* الحقلان يقبلان الهجري والميلادي: التصفية بالميلادي (تاريخ قبض النقد
+            وأساس الإقرار الضريبي)، ومن يفكّر بالهجري يُدخله ويُحوَّل تلقائيًّا. */}
         {preset !== "none" && (
           <div className="grid grid-cols-2 gap-3 mb-1">
-            <label className="block">
+            <div>
               <span className="block text-xs text-muted mb-1">من تاريخ</span>
-              <input className="fld" type="date" value={from} max={to}
-                onChange={(e) => { setFrom(e.target.value); setPreset("custom"); }} />
-            </label>
-            <label className="block">
+              <DateField value={from} onChange={(v) => { if (v) { setFrom(v); setPreset("custom"); } }} />
+            </div>
+            <div>
               <span className="block text-xs text-muted mb-1">إلى تاريخ</span>
-              <input className="fld" type="date" value={to} min={from}
-                onChange={(e) => { setTo(e.target.value); setPreset("custom"); }} />
-            </label>
+              <DateField value={to} onChange={(v) => { if (v) { setTo(v); setPreset("custom"); } }} />
+            </div>
           </div>
         )}
         {invalid && <p className="text-xs text-late mb-2">تاريخ البداية بعد تاريخ النهاية.</p>}
-        {preset !== "none" && !invalid && <p className="text-[11px] text-muted mb-3">سيصدر الكشف عن: <b className="text-deep">{label}</b></p>}
+        {preset !== "none" && !invalid && (
+          <p className="text-[11px] text-muted mb-3">
+            سيصدر الكشف عن: <b className="text-deep">{label}</b>
+            <span className="block">من {from} ({hijriText(from)}) إلى {to} ({hijriText(to)})</span>
+          </p>
+        )}
 
         <label className="block text-sm font-semibold mb-1.5">مستوى التفصيل</label>
         <div className="inline-flex border border-line rounded-lg p-0.5 text-xs mb-2">
