@@ -14,6 +14,15 @@ import { contractState, isVacant, unitVatApplies, type Frequency } from "./contr
 
 export type Severity = "critical" | "warn" | "info";
 
+export type Group = {
+  key: string;
+  severity: Severity;
+  title: string;
+  why: string;
+  fix: string;
+  items: Finding[];
+};
+
 export type Finding = {
   id: string;
   severity: Severity;
@@ -225,3 +234,24 @@ export const SEV_META: Record<Severity, { label: string; icon: string; cls: stri
   warn:     { label: "يستحق المراجعة",    icon: "🟡", cls: "bg-[#FDF6E3] text-[#7a5c12] border-[#EAD9A8]" },
   info:     { label: "معلومة",            icon: "🔵", cls: "bg-[#EEF4FB] text-[#2B5C8A] border-[#CFE0F0]" },
 };
+
+
+/**
+ * تجميع الملاحظات المتكررة.
+ *
+ * مكتب بمئتي عقار أنتج 926 ملاحظة، منها 733 من نوع واحد — قائمة بهذا الطول
+ * لا تُقرأ فتُهمَل كلها. الأنفع: «733 عقدًا منتهيًا» سطرًا واحدًا يُفتح عند
+ * الحاجة. القاعدة: نجمع بالنوع لا بالوحدة، ونرتّب بالخطورة ثم بالعدد.
+ */
+export function groupFindings(findings: Finding[]): Group[] {
+  const map = new Map<string, Group>();
+  for (const f of findings) {
+    // نُجرّد الأرقام من العنوان ليتجمّع «منتهٍ منذ 30 يومًا» مع «منذ 90»
+    const key = `${f.severity}:${f.title.replace(/[\d,]+/g, "#")}`;
+    const g = map.get(key);
+    if (g) g.items.push(f);
+    else map.set(key, { key, severity: f.severity, title: f.title.replace(/[\d,]+/g, "#"), why: f.why, fix: f.fix, items: [f] });
+  }
+  const rank: Record<Severity, number> = { critical: 0, warn: 1, info: 2 };
+  return [...map.values()].sort((a, b) => rank[a.severity] - rank[b.severity] || b.items.length - a.items.length);
+}
