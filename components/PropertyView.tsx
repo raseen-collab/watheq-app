@@ -498,6 +498,12 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       return;
     }
     if (y0 && y0 > 2100) { notify("err", `تاريخ البداية «${d.contract_start}» غير معقول.`); return; }
+    /* الوحدة المؤجّرة بلا تاريخ بداية لا تُحسب لها أقساط ولا استحقاق — وكان
+       الحفظ يمرّ بصمت فتبقى الوحدة بلا مواعيد ويظن الموظف أن التعديل «لا يعمل». */
+    if (!d.contract_start && String(d.status || "active") !== "vacated") {
+      notify("err", "أدخل تاريخ بداية العقد — بدونه لا يستطيع النظام حساب الاستحقاقات لهذه الوحدة.");
+      return;
+    }
     const freq = (d.payment_frequency || "monthly") as Frequency;
     const periods = d.contract_periods ? Number(d.contract_periods) : null;
     const payload = {
