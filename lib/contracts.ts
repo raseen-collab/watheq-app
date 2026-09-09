@@ -451,6 +451,26 @@ export const COMMERCIAL_TYPES = ["commercial", "office", "warehouse", "shop", "s
 export const isCommercial = (propertyType?: string | null) =>
   COMMERCIAL_TYPES.includes(String(propertyType || "").toLowerCase());
 
+/** أنواع الوحدات التي يخضع إيجارها لضريبة القيمة المضافة */
+const COMMERCIAL_UNITS = ["shop", "office", "warehouse", "land"];
+
+/**
+ * هل تُطبَّق الضريبة على هذه الوحدة؟
+ * العمارة المختلطة (شقق ومحلات) هي سبب هذه الدالة: السكني معفى والتجاري
+ * خاضع، فلا يصحّ أن يقرّرها العقار كله. القرار: تجاوز الوحدة الصريح إن
+ * وُجد، وإلا نوع الوحدة، وإلا نوع العقار.
+ */
+export function unitVatApplies(
+  t: { unit_type?: string | null; vat_mode?: string | null },
+  p: { property_type?: string | null; vat_enabled?: boolean | null },
+): boolean {
+  if (!p?.vat_enabled) return false;
+  if (t?.vat_mode === "on") return true;
+  if (t?.vat_mode === "off") return false;
+  if (t?.unit_type) return COMMERCIAL_UNITS.includes(String(t.unit_type).toLowerCase());
+  return isCommercial(p?.property_type);
+}
+
 // ============================================================
 // دورة الإخلاء: مخالصة مبلغ التأمين
 // ============================================================

@@ -1,4 +1,4 @@
-import { contractState, buildSchedule, freqLabel, splitVat, settleDeposit, vacancyDays, isVacant } from "./contracts";
+import { contractState, buildSchedule, freqLabel, splitVat, settleDeposit, vacancyDays, isVacant, unitVatApplies } from "./contracts";
 import { complianceState, brokerageEnd, expectedCommission, UI_LEGAL, LEGAL_DISCLAIMER, DEFAULT_COMMISSION_PCT, type ComplianceItem } from "./compliance";
 import { KIND_META as L_KIND, OFFER_LABEL, STATUS_META, freshness, pricePerMeter, shortDesc, sortListings, summarize, STALE_DAYS, type Listing } from "./listings";
 import { ownerNet, sumByCategory, catLabel, type ExpenseRow } from "./expenses";
@@ -65,7 +65,7 @@ type Tenant = {
   rent_amount: number; contract_start: string | null; contract_end: string | null;
   payment_frequency: string | null; paid_periods: number | null; contract_periods: number | null;
   partial_amount?: number | null; contract_no?: string | null;
-  unit_type?: string | null; rooms?: number | null; baths?: number | null; acs?: number | null; first_due?: string | null;
+  unit_type?: string | null; vat_mode?: string | null; rooms?: number | null; baths?: number | null; acs?: number | null; first_due?: string | null;
 };
 type Property = {
   usage?: string | null;
@@ -248,8 +248,10 @@ function zatcaQrBlock(sellerName: string, vatNo: string, total: number, vat: num
 <script>try{new QRCode(document.getElementById("zatca-qr"),{text:document.getElementById("zatca-tlv").textContent,width:120,height:120,correctLevel:QRCode.CorrectLevel.M});document.getElementById("zatca-tlv").style.display="none";}catch(e){}<\/script>`;
 }
 
-const vatOf = (p: Property) => ({
-  enabled: !!p.vat_enabled, rate: Number(p.vat_rate) || 15, inclusive: p.vat_inclusive !== false,
+/** إعدادات الضريبة — وإن مُرّرت الوحدة تُقرَّر بحسبها (العمارة المختلطة) */
+const vatOf = (p: Property, t?: { unit_type?: string | null; vat_mode?: string | null } | null) => ({
+  enabled: t ? unitVatApplies(t, p) : !!p.vat_enabled,
+  rate: Number(p.vat_rate) || 15, inclusive: p.vat_inclusive !== false,
 });
 /** فترة السماح الخاصة بالعقار */
 const graceOf = (p: Property) => ({ graceDays: Number(p.grace_days) || 0 });
@@ -285,7 +287,7 @@ export function statementHTML(t: Tenant, p: Property, issuer: Issuer = {}, payme
   const rows = buildSchedule(t);
   const ul = unitLabel(p.property_type);
   const who = issuer.billing_name || p.manager || "إدارة الأملاك";
-  const v = vatOf(p);
+  const v = vatOf(p, t);
   const unit = splitVat(Number(t.rent_amount) || 0, v);      // تفصيل الدفعة الواحدة
   const totalContract = unit.total * rows.length;
   const totalPaid = st.paid * unit.total;
@@ -430,7 +432,7 @@ export function invoiceHTML(
   issuer = scrub(issuer);
   const ul = unitLabel(p.property_type);
   const who = issuer.billing_name || p.manager || "إدارة الأملاك";
-  const v = vatOf(p);
+  const v = vatOf(p, t);
   const x = splitVat(Number(inv.amount) || 0, v);
   const body = `
 ${header(v.enabled && issuer.vat_number ? "فاتورة ضريبية مبسطة" : "فاتورة", inv.invoice_no)}
@@ -526,6 +528,9 @@ export type QuoteInput = {
   valid_until: string;
   charges: ChargeRow[];
   notes?: string | null;
+  /** لتحديد الضريبة في العمارة المختلطة — كنوع الوحدة في العقد */
+  unit_type?: string | null;
+  vat_mode?: string | null;
 };
 
 /** عرض سعر تأجير — يُرسل لمستأجر محتمل قبل التعاقد */
@@ -536,7 +541,7 @@ export function quotationHTML(p: Property, q: QuoteInput, issuer: Issuer = {}) {
   issuer = scrub(issuer);
   const ul = unitLabel(p.property_type);
   const who = issuer.billing_name || p.manager || "إدارة الأملاك";
-  const v = vatOf(p);
+  const v = vatOf(p, { unit_type: q.unit_type, vat_mode: q.vat_mode });
   const periods = Math.max(1, Number(q.contract_periods) || 1);
   const perPeriod = Number(q.rent_amount) || 0;
   const gross = perPeriod * periods;
@@ -641,11 +646,12 @@ export function propertyStatementHTML(p: Property & { tenants: Tenant[] }, issue
   issuer = scrub(issuer);
   const ul = unitLabel(p.property_type);
   const who = issuer.billing_name || p.manager || "إدارة الأملاك";
-  const v = vatOf(p);
   const rows = p.tenants.map((t) => ({ t, st: contractState(t, graceOf(p)) }));
   const totalDue = rows.reduce((s, r) => s + r.st.amountDue, 0);
-  const totalPaid = rows.reduce((s, r) => s + r.st.paid * splitVat(Number(r.t.rent_amount) || 0, v).total, 0);
-  const totalVat = v.enabled ? rows.reduce((s, r) => s + splitVat(r.st.amountDue, v).vat, 0) : 0;
+  /* العمارة المختلطة: كل وحدة بضريبتها — الشقة السكنية معفاة والمحل خاضع */
+  const vFor = (t: any) => vatOf(p, t);
+  const totalPaid = rows.reduce((s, r) => s + r.st.paid * splitVat(Number(r.t.rent_amount) || 0, vFor(r.t)).total, 0);
+  const totalVat = rows.reduce((s, r) => s + splitVat(r.st.amountDue, vFor(r.t)).vat, 0);
   const late = rows.filter((r) => r.st.status === "late").length;
 
   const body = `
@@ -660,7 +666,7 @@ ${header("كشف حساب عقار", p.name)}
   <div><div class="v">${sar(totalPaid)}</div><div class="l">المُحصَّل (ريال)</div></div>
 </div>
 
-${totalDue > 0 ? `<div class="due"><span class="l">إجمالي المستحق على العقار${v.enabled ? ` (منه ضريبة ${sar(totalVat)} ريال)` : ""}</span><span class="v">${sar(totalDue)} ريال</span></div>` : ""}
+${totalDue > 0 ? `<div class="due"><span class="l">إجمالي المستحق على العقار${totalVat > 0 ? ` (منه ضريبة ${sar(totalVat)} ريال)` : ""}</span><span class="v">${sar(totalDue)} ريال</span></div>` : ""}
 
 <table>
   <thead><tr><th>${ul}</th><th>المستأجر</th><th>الدفعة</th><th>الدورة</th><th>القادمة</th><th>المتأخر</th><th>الحالة</th></tr></thead>
@@ -668,7 +674,7 @@ ${totalDue > 0 ? `<div class="due"><span class="l">إجمالي المستحق �
     ${rows.map(({ t, st }) => `<tr>
       <td>${t.unit || "—"}</td>
       <td>${t.name}</td>
-      <td>${sar(splitVat(Number(t.rent_amount) || 0, v).total)}</td>
+      <td>${sar(splitVat(Number(t.rent_amount) || 0, vatOf(p, t)).total)}</td>
       <td>${freqLabel(t.payment_frequency)}</td>
       <td>${arDate(st.nextDueDate)}</td>
       <td>${st.amountDue ? sar(st.amountDue) : "—"}</td>
@@ -1522,7 +1528,6 @@ export function ownerReportHTML(
   extra = scrub(extra);
   const ul = unitLabel(p.property_type);
   const who = issuer.billing_name || p.manager || "إدارة الأملاك";
-  const v = vatOf(p);
   const g = graceOf(p);
 
   const rows = (p.tenants || []).map((t) => ({ t, st: contractState(t, g), vacant: isVacant(t) }));
@@ -1562,7 +1567,7 @@ ${totalDue > 0 || expiring > 0 ? `<div class="note">${[
     ${rows.map(({ t, st, vacant: vc }) => `<tr>
       <td>${t.unit || "—"}</td>
       <td>${vc ? "—" : t.name}</td>
-      <td>${vc ? "—" : sar(splitVat(Number(t.rent_amount) || 0, v).total)}</td>
+      <td>${vc ? "—" : sar(splitVat(Number(t.rent_amount) || 0, vatOf(p, t)).total)}</td>
       <td>${vc ? "—" : freqLabel(t.payment_frequency)}</td>
       <td>${vc ? "—" : arDate(st.endDate)}</td>
       <td>${!vc && st.amountDue ? sar(st.amountDue) : "—"}</td>
