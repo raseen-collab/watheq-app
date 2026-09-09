@@ -56,7 +56,7 @@ type Property = {
 };
 
 /** حالة الصف المعروضة (تشمل «في التنفيذ») */
-type RowKey = "vacant" | "litigation" | "late" | "partial" | "due" | "soon" | "expiring" | "ok";
+type RowKey = "vacant" | "litigation" | "incomplete" | "late" | "partial" | "due" | "soon" | "expiring" | "ok";
 type Row = { t: Tenant; st: ReturnType<typeof contractState>; key: RowKey };
 
 const ROW_META: Record<RowKey, { label: string; dot: string; cls: string }> = {
@@ -64,6 +64,7 @@ const ROW_META: Record<RowKey, { label: string; dot: string; cls: string }> = {
   litigation: { label: "في التنفيذ",  dot: "bg-[#64748B]", cls: "bg-[#EEF1F4] text-[#475569]" },
   late:       { label: "متأخر",        dot: "bg-late",      cls: "bg-[#FBE9E7] text-[#a5322c]" },
   partial:    { label: "سداد جزئي",    dot: "bg-[#EA8C00]", cls: "bg-[#FDF0DC] text-[#9A5B00]" },
+  incomplete: { label: "بيانات ناقصة",  dot: "bg-[#7C3AED]", cls: "bg-[#F1EBFC] text-[#5B21B6]" },
   due:        { label: "مستحق",        dot: "bg-[#D97706]", cls: "bg-[#FDECD2] text-[#9A4B00]" },
   soon:       { label: "قريب",         dot: "bg-gold",      cls: "bg-[#FBF1DF] text-[#8a5a11]" },
   expiring:   { label: "ينتهي قريبًا", dot: "bg-[#DC2626]", cls: "bg-[#FEE2E2] text-[#991B1B]" },
@@ -72,6 +73,9 @@ const ROW_META: Record<RowKey, { label: string; dot: string; cls: string }> = {
 
 function rowKey(t: Tenant, st: ReturnType<typeof contractState>): RowKey {
   if (isVacant(t)) return "vacant";
+  /* وحدة مؤجّرة بلا تاريخ بداية كانت تظهر «منتظم» خضراء — فيمرّ عليها المكتب
+     مطمئنًّا وهي بلا استحقاقات إطلاقًا. تُعرَض الآن كنقص يستدعي إكمالًا. */
+  if (st.incomplete) return "incomplete";
   if (t.litigation) return "litigation";
   if (st.status === "late") return st.hasPartial ? "partial" : "late";
   if (st.status === "soon") return st.soonTier === "near" ? "soon" : "due";
@@ -93,7 +97,7 @@ function plural(n: number, one: string, two: string, few: string, many = one): s
   return `${x} ${many}`;
 }
 
-const URGENCY: Record<RowKey, number> = { late: 0, partial: 1, due: 2, soon: 3, expiring: 4, litigation: 5, vacant: 6, ok: 7 };
+const URGENCY: Record<RowKey, number> = { incomplete: 0, late: 1, partial: 2, due: 3, soon: 4, expiring: 5, litigation: 6, vacant: 7, ok: 8 };
 
 export default function PropertyView({ initial, orgName, issuer, compliance, dueSoonDays, dueImminentDays, expiringDays }: { initial: Property[]; orgName: string; issuer?: any; compliance?: ComplianceItem[]; dueSoonDays?: number | null; dueImminentDays?: number | null; expiringDays?: number | null }) {
   const officeExpiring = Math.max(1, Math.min(180, Number(expiringDays) || 60));
@@ -817,12 +821,13 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
          ودينها القديم يُجمع على حدة. كانت تُعدّ كأنها مؤجّرة فيرتفع الدخل زورًا. */
       if (st.vacant) { acc.vacant++; acc.legacy += st.legacyArrears; return; }
       if (st.status === "late") { acc.late++; acc.overdue += st.amountDue; }
+      if (st.incomplete) acc.incomplete++;
       if (st.status === "soon") { if (st.soonTier === "near") acc.soon++; else acc.due++; }
       if (st.expiringSoon) acc.expiring++;
       acc.monthly += (Number(t.rent_amount) || 0) * PERIODS_PER_MONTH[(t.payment_frequency || "monthly") as Frequency];
     });
     return acc;
-  }, { units: 0, late: 0, soon: 0, due: 0, overdue: 0, expiring: 0, monthly: 0, vacant: 0, legacy: 0 }),
+  }, { units: 0, late: 0, soon: 0, due: 0, overdue: 0, expiring: 0, monthly: 0, vacant: 0, legacy: 0, incomplete: 0 }),
   // eslint-disable-next-line react-hooks/exhaustive-deps
   [items, officeSoon, officeImminent, officeExpiring]);
 
@@ -925,6 +930,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
   const chips: { k: "all" | RowKey; label: string }[] = [
     { k: "all", label: `الكل ${allRows.length}` },
     { k: "late", label: `متأخر ${counts.late || 0}` },
+    ...(counts.incomplete ? [{ k: "incomplete" as const, label: `بيانات ناقصة ${counts.incomplete}` }] : []),
     { k: "due", label: `مستحق ${counts.due || 0}` },
     { k: "soon", label: `قريب ${counts.soon || 0}` },
     { k: "expiring", label: `تجديد ${counts.expiring || 0}` },
@@ -1158,11 +1164,11 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
               );
               const badge = (key: RowKey) => ({
                 late: "bg-[#FBE9E7] text-[#a5322c] border-[#F5C6C2]", partial: "bg-[#FDF6E3] text-[#7a5c12] border-[#EAD9A8]",
-                due: "bg-[#FDECD2] text-[#9A4B00] border-[#F5CFA0]", soon: "bg-[#FDF6E3] text-[#7a5c12] border-[#EAD9A8]", expiring: "bg-[#FEE2E2] text-[#991B1B] border-[#FCA5A5]",
+                incomplete: "bg-[#F1EBFC] text-[#5B21B6] border-[#D9CEF6]", due: "bg-[#FDECD2] text-[#9A4B00] border-[#F5CFA0]", soon: "bg-[#FDF6E3] text-[#7a5c12] border-[#EAD9A8]", expiring: "bg-[#FEE2E2] text-[#991B1B] border-[#FCA5A5]",
                 litigation: "bg-[#F1F5F9] text-[#334155] border-[#CBD5E1]", vacant: "bg-[#EEF2F7] text-[#475569] border-[#CBD5E1]",
                 ok: "bg-[#E6F4EC] text-[#137a50] border-[#B7DFC7]",
               })[key];
-              const label = (key: RowKey) => ({ late: "متأخر", partial: "سداد جزئي", due: "مستحق", soon: "قريب", expiring: "ينتهي قريبًا", litigation: "تنفيذ", vacant: "شاغرة", ok: "منتظم" })[key];
+              const label = (key: RowKey) => ({ incomplete: "بيانات ناقصة", late: "متأخر", partial: "سداد جزئي", due: "مستحق", soon: "قريب", expiring: "ينتهي قريبًا", litigation: "تنفيذ", vacant: "شاغرة", ok: "منتظم" })[key];
               return (
                 <div className="border border-line rounded-xl overflow-hidden">
                   <div className="overflow-x-auto max-h-[70vh] overflow-y-auto">
