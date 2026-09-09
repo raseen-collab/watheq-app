@@ -31,7 +31,12 @@ const timeAr = (iso: string) => {
   } catch { return iso.slice(0, 16).replace("T", " "); }
 };
 
-export default function OfficeChat({ context, lookup }: { context?: Ctx; lookup?: { props: Record<string, string>; tenants: Record<string, string> } }) {
+export default function OfficeChat() {
+  /* مركّبة في تخطيط اللوحة كلها: الزر وعدّاد الجديد يظهران في كل صفحة —
+     فلا يحتاج أحد فتح وحدة بعينها ليعرف أن هناك رسالة. وأي شاشة تستطيع
+     فتح المحادثة بسياق وحدة عبر حدث watheq:chat. */
+  const [context, setContext] = useState<Ctx | undefined>(undefined);
+  const [lookup, setLookup] = useState<{ props: Record<string, string>; tenants: Record<string, string> }>({ props: {}, tenants: {} });
   const supabase = useMemo(() => createClient(), []);
   const [open, setOpen] = useState(false);
   const [msgs, setMsgs] = useState<Msg[]>([]);
@@ -66,6 +71,30 @@ export default function OfficeChat({ context, lookup }: { context?: Ctx; lookup?
   }, [supabase]);
 
   useEffect(() => { load(); }, [load]);
+
+  // فهرس الأسماء: تُعرض «شقة 106 — سعود · عمارة قباء» بجانب كل رسالة أينما كنت
+  useEffect(() => {
+    let alive = true;
+    supabase.from("properties").select("id, name, property_type, tenants(id, name, unit)").limit(500)
+      .then(({ data }) => {
+        if (!alive) return;
+        const props: Record<string, string> = {}; const tenants: Record<string, string> = {};
+        (data || []).forEach((p: any) => {
+          props[p.id] = p.name;
+          (p.tenants || []).forEach((t: any) => { tenants[t.id] = `${t.unit ? `وحدة ${t.unit} — ` : ""}${t.name}`; });
+        });
+        setLookup({ props, tenants });
+      });
+    return () => { alive = false; };
+  }, [supabase]);
+
+  // فتح بسياق وحدة من أي شاشة
+  useEffect(() => {
+    const h = (e: any) => { setContext(e.detail || undefined); setOpen(true); markSeen(); };
+    window.addEventListener("watheq:chat", h);
+    return () => window.removeEventListener("watheq:chat", h);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // بثّ لحظي: رسالة جديدة أو تغيّر حالة مهمة تظهر فورًا للجميع
   useEffect(() => {

@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase-client";
 import { trialDaysLeft } from "@/lib/domain";
 import type { AccountType } from "@/lib/roles";
 import type { SubState } from "@/lib/subscription";
+import OfficeChat from "@/components/OfficeChat";
 
 export default function DashboardShell({
   userName, accountType, showSwitcher, trialEndsAt, sub, children,
@@ -129,6 +130,9 @@ export default function DashboardShell({
         {" · "}
         <a href="mailto:watheqdocs@gmail.com" className="text-gold font-semibold">watheqdocs@gmail.com</a>
       </footer>
+
+      {/* تواصل الفريق: زر عائم في كل صفحات اللوحة — العدّاد يصل أينما كان المستخدم */}
+      <OfficeChat />
     </div>
   );
 }

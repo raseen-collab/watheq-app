@@ -16,7 +16,6 @@ import ComplianceModal from "@/components/ComplianceModal";
 import OwnerStatementModal from "@/components/OwnerStatementModal";
 import ActivityLog from "@/components/ActivityLog";
 import StatusLegend from "@/components/StatusLegend";
-import OfficeChat from "@/components/OfficeChat";
 import ExpensesModal from "@/components/ExpensesModal";
 import OwnerLinkModal from "@/components/OwnerLinkModal";
 import type { ExpenseRow } from "@/lib/expenses";
@@ -1029,7 +1028,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                                   { label: "🧾 كشف حساب مختصر", run: () => openStatement(t, "brief") },
                                   ...(may("issue_invoices") ? [{ label: "📄 فاتورة", run: () => openInvoice(t) }] : []),
                                   { label: "📅 جدول الدفعات", run: () => setSchedule(t) },
-                                  { label: "💬 ناقش مع الفريق", run: () => { setChatTenant(t); setTimeout(() => (document.querySelector("[title=\"تواصل الفريق\"]") as HTMLButtonElement)?.click(), 0); } },
+                                  { label: "💬 ناقش مع الفريق", run: () => window.dispatchEvent(new CustomEvent("watheq:chat", { detail: { propertyId: active?.id, propertyName: active?.name, tenantId: t.id, tenantName: t.name, unit: t.unit } })) },
                                   { label: "🧮 سجل المدفوعات", run: () => openHistory(t) },
                                   ...(st.unpaid > 0 && may("send_reminders") ? [{ label: "📨 نموذج إشعار", run: () => makeNotice(t) }] : []),
                                   ...(needsRenewal(t) && may("renew_contracts") ? [{ label: "🔁 تجديد", run: () => setRenewing(t) }] : []),
@@ -1134,7 +1133,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                   <RowMenu
                     items={[
                       { label: "📅 جدول الدفعات", run: () => setSchedule(t) },
-                                  { label: "💬 ناقش مع الفريق", run: () => { setChatTenant(t); setTimeout(() => (document.querySelector("[title=\"تواصل الفريق\"]") as HTMLButtonElement)?.click(), 0); } },
+                                  { label: "💬 ناقش مع الفريق", run: () => window.dispatchEvent(new CustomEvent("watheq:chat", { detail: { propertyId: active?.id, propertyName: active?.name, tenantId: t.id, tenantName: t.name, unit: t.unit } })) },
                       { label: "🧮 سجل المدفوعات", run: () => openHistory(t) },
                       { label: "🧾 كشف حساب شامل", run: () => openStatement(t, "full") },
                                   { label: "🧾 كشف حساب مختصر", run: () => openStatement(t, "brief") },
@@ -1191,10 +1190,6 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
 
       {ownerStmtOpen && <OwnerStatementModal properties={items} issuer={issuer} onClose={() => setOwnerStmtOpen(false)} />}
       {logOpen && <ActivityLog properties={items} onClose={() => setLogOpen(false)} />}
-
-      {/* تواصل الفريق — السياق هو العقار المفتوح (والوحدة إن فُتحت من قائمتها) */}
-      <OfficeChat lookup={chatLookup} context={{ propertyId: active?.id, propertyName: active?.name,
-        tenantId: chatTenant?.id || null, tenantName: chatTenant?.name || null, unit: chatTenant?.unit || null }} />
 
       {compOpen && (
         <ComplianceModal initial={comp} orgName={orgName} issuer={issuer || {}}
