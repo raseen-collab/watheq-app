@@ -648,7 +648,15 @@ ${footer()}`;
  *    وعقودها وتواريخها بالتقويمين، والوحدات الشاغرة، وتحليل الدخل السنوي
  *    مقابل المحصَّل، وتوزيع الحالات — للتوثيق ولتسليم المحفظة.
  */
-export function propertyStatementHTML(p: Property & { tenants: Tenant[] }, issuer: Issuer = {}, mode: "brief" | "full" = "brief") {
+export function propertyStatementHTML(
+  p: Property & { tenants: Tenant[] },
+  issuer: Issuer = {},
+  mode: "brief" | "full" = "brief",
+  /** فترة اختيارية: عندها يُضاف المحصَّل والمصروفات وتفصيل الدفعات فيها */
+  period?: { from: string; to: string; label: string } | null,
+  payments: PaymentRow[] = [],
+  expenses: ExpenseRow[] = [],
+) {
   // تعقيم المدخلات (انظر scrub أعلاه)
   p = scrub(p);
   issuer = scrub(issuer);
@@ -666,12 +674,24 @@ export function propertyStatementHTML(p: Property & { tenants: Tenant[] }, issue
   const occupied = p.tenants.length - vacantCount;
   const annual = annualExpected(p.tenants as any[]);
   const soonCount = rows.filter((r) => r.st.status === "soon").length;
+  /* أرقام الفترة: تُحسب من الدفعات والمصروفات المسجّلة داخلها فقط —
+     لا من الحالة اللحظية، وإلا اختلف الرقم عن تقرير المالك لنفس المدة. */
+  const inRange = (d?: string | null) => !!d && !!period && String(d) >= period.from && String(d) <= period.to;
+  const periodPayments = period ? payments.filter((x) => inRange(x.paid_on)) : [];
+  const periodCollected = periodPayments.reduce((a, x) => a + (Number(x.amount) || 0), 0);
+  const periodExpenses = period ? expenses.filter((x) => inRange((x as any).spent_on)).reduce((a, x) => a + (Number(x.amount) || 0), 0) : 0;
+  const byUnitP: Record<string, any> = {};
+  (p.tenants || []).forEach((t: any) => { if (t.unit) byUnitP[String(t.unit)] = t; });
+  const periodVat = periodPayments.reduce((a, x: any) => {
+    const t = x.unit ? byUnitP[String(x.unit)] : null;
+    return a + (t ? splitVat(Number(x.amount) || 0, vatOf(p, t)).vat : 0);
+  }, 0);
   const expiringCount = rows.filter((r) => r.st.expiringSoon && !isVacant(r.t)).length;
 
   const body = `
 ${header(mode === "full" ? "كشف حساب عقار — شامل" : "كشف حساب عقار", p.name)}
 <h1>كشف حساب ${p.name}${mode === "full" ? " — شامل" : ""}</h1>
-<div class="sub">${typeLabel(p.property_type)}${p.address ? ` — ${p.address}` : ""}${p.city ? `، ${p.city}` : ""} · ${p.tenants.length} ${ul}</div>
+<div class="sub">${typeLabel(p.property_type)}${p.address ? ` — ${p.address}` : ""}${p.city ? `، ${p.city}` : ""} · ${p.tenants.length} ${ul}${period ? ` · الفترة: ${period.label}` : ""}</div>
 
 <div class="tot">
   <div><div class="v">${p.tenants.length}</div><div class="l">إجمالي الوحدات</div></div>
@@ -680,6 +700,16 @@ ${header(mode === "full" ? "كشف حساب عقار — شامل" : "كشف ح�
   <div><div class="v r">${late}</div><div class="l">متأخرة</div></div>
   <div><div class="v">${sar(totalPaid)}</div><div class="l">المُحصَّل (ريال)</div></div>
 </div>
+
+${period ? `
+<h1 style="font-size:1rem">حركة الفترة — ${period.label}</h1>
+<div class="tot">
+  <div><div class="v g">${sar(periodCollected)}</div><div class="l">المُحصَّل (ريال)</div></div>
+  <div><div class="v">${periodPayments.length}</div><div class="l">عدد الدفعات</div></div>
+  <div><div class="v r">${sar(periodExpenses)}</div><div class="l">المصروفات (ريال)</div></div>
+  <div><div class="v">${sar(Math.max(0, periodCollected - periodExpenses))}</div><div class="l">الصافي (ريال)</div></div>
+</div>
+<div class="sub" style="margin-bottom:10px">من ${arDate(period.from)} إلى ${arDate(period.to)}${periodVat > 0 ? ` · منه ضريبة قيمة مضافة ${sar(periodVat)} ريال` : ""}</div>` : ""}
 
 ${mode === "full" ? `
 <h1 style="font-size:1rem">بيانات العقار</h1>
@@ -725,6 +755,17 @@ ${totalDue > 0 ? `<div class="due"><span class="l">إجمالي المستحق �
     </tr>`; }).join("")}
   </tbody>
 </table>
+
+${period && mode === "full" && periodPayments.length ? `
+<h1 style="font-size:1rem">تفصيل دفعات الفترة</h1>
+<div class="scrollx"><table>
+  <thead><tr><th>التاريخ</th><th>${ul}</th><th>المستأجر</th><th>المبلغ</th><th>الطريقة</th></tr></thead>
+  <tbody>
+    ${periodPayments.slice().sort((a, b) => String(a.paid_on).localeCompare(String(b.paid_on)))
+      .map((x: any) => `<tr><td>${arDate(x.paid_on)}</td><td>${x.unit || "—"}</td><td>${x.tenant_name || "—"}</td><td>${sar(Number(x.amount) || 0)}</td><td>${payMethod(x.method)}</td></tr>`).join("")}
+    <tr><td colspan="3"><b>إجمالي المُحصَّل</b></td><td colspan="2"><b>${sar(periodCollected)}</b></td></tr>
+  </tbody>
+</table></div>` : ""}
 
 ${mode === "full" ? `
 <h1 style="font-size:1rem">توزيع الحالات</h1>
