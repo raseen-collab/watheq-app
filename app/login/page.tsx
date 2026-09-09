@@ -171,10 +171,18 @@ function LoginInner() {
       }
     } catch (e: any) {
       const msg = String(e?.message || e);
-      if (msg.includes("Invalid login")) setError("بريد أو كلمة مرور غير صحيحة.");
-      else if (msg.includes("already registered")) setError("هذا البريد مسجّل مسبقًا — سجّل الدخول.");
-      else if (msg.includes("Password should")) setError("كلمة المرور قصيرة — استخدم 6 أحرف على الأقل.");
-      else setError(msg);
+      /* لا تصل رسالة إنجليزية خام للمستخدم: أول انطباع بلغة لا يفهمها
+         يُفقد الثقة. نترجم الحالات الشائعة، وما عداها رسالة عربية مع
+         وسيلة تواصل — والنص الأصلي في سجل المتصفح للتشخيص. */
+      console.error("Watheq auth error:", msg);
+      if (/Invalid login/i.test(msg)) setError("بريد أو كلمة مرور غير صحيحة.");
+      else if (/already registered/i.test(msg)) setError("هذا البريد مسجّل مسبقًا — سجّل الدخول، أو اضغط «نسيت كلمة المرور».");
+      else if (/Password should/i.test(msg)) setError("كلمة المرور قصيرة — استخدم 6 أحرف على الأقل.");
+      else if (/Email not confirmed/i.test(msg)) setError("لم يُفعّل بريدك بعد — افتح رسالة التفعيل في بريدك (وتحقق من مجلد الرسائل غير المرغوبة).");
+      else if (/rate limit|after \d+ seconds|too many/i.test(msg)) setError("محاولات كثيرة متتابعة — انتظر دقيقة ثم أعد المحاولة.");
+      else if (/network|fetch failed|Failed to fetch/i.test(msg)) setError("تعذّر الاتصال — تحقّق من الإنترنت وأعد المحاولة.");
+      else if (/User not found/i.test(msg)) setError("لا يوجد حساب بهذا البريد — أنشئ حسابًا جديدًا.");
+      else setError("تعذّر إتمام العملية. أعد المحاولة، وإن تكرر راسلنا على واتساب 0596300591 ونساعدك فورًا.");
     } finally {
       setLoading(false);   // leaving يبقي الزر معطّلًا حتى تُغادر الصفحة
     }
