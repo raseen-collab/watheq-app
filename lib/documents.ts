@@ -1784,11 +1784,17 @@ export function ownerConsolidatedStatementHTML(
     return { s, units, vacant, due, collected, fin };
   });
 
+  const annualAll = rows.reduce((a, r) => a + annualExpected(r.s.property.tenants as any[]), 0);
+  /* المالك يقارن «المحصَّل» بشيء: بلا مرجع للفترة يبدو التحصيل كارثيًّا
+     (122,900 مقابل دخل سنوي 3.4 مليون). المتوقع للفترة يعطيه المرجع. */
+  const periodDays = Math.max(1, Math.round((Date.parse(period.to) - Date.parse(period.from)) / 86400000) + 1);
+  const expectedInPeriod = Math.round((annualAll / 365) * periodDays);
   const T = rows.reduce((a, r) => ({
     units: a.units + r.units, vacant: a.vacant + r.vacant, due: a.due + r.due,
     collected: a.collected + r.fin.collected, expenses: a.expenses + r.fin.expenses,
     fee: a.fee + r.fin.fee, net: a.net + r.fin.net,
-  }), { units: 0, vacant: 0, due: 0, collected: 0, expenses: 0, fee: 0, net: 0 });
+    gross: a.gross + (r.fin.grossCollected ?? r.fin.collected), vat: a.vat + (r.fin.vatCollected ?? 0),
+  }), { units: 0, vacant: 0, due: 0, collected: 0, expenses: 0, fee: 0, net: 0, gross: 0, vat: 0 });
   const anyFee = rows.some((r) => r.fin.feePct !== null);
 
   const body = `
@@ -1797,16 +1803,23 @@ ${header("كشف حساب مالك — مجمّع", ownerName)}
 <div class="sub">${rows.length} ${rows.length === 1 ? "عقار" : "عقارات"} · ${T.units} وحدة · الفترة: <b>${period.label}</b> (${arDate(period.from)} إلى ${arDate(period.to)})</div>
 
 <div class="tot">
-  <div><div class="v">${sar(rows.reduce((a, r) => a + annualExpected(r.s.property.tenants as any[]), 0))}</div><div class="l">الدخل السنوي المتوقع (ريال)</div></div>
-  <div><div class="v g">${sar(T.collected)}</div><div class="l">المُحصَّل (ريال)</div></div>
+  <div><div class="v g">${sar(T.collected)}</div><div class="l">المُحصَّل للمالك (ريال)</div></div>
   <div><div class="v">${sar(T.expenses)}</div><div class="l">المصروفات (ريال)</div></div>
   ${anyFee ? `<div><div class="v">${sar(T.fee)}</div><div class="l">أتعاب الإدارة (ريال)</div></div>` : ""}
   <div><div class="v g" style="font-size:1.35rem">${sar(T.net)}</div><div class="l"><b>صافي المالك (ريال)</b></div></div>
 </div>
 
+<div class="box" style="margin:12px 0 6px">
+  <div class="r"><span>المتوقع تحصيله خلال الفترة</span><span><b>${sar(expectedInPeriod)}</b> ريال — حُصّل منه <b>${sar(T.collected)}</b> (${expectedInPeriod > 0 ? Math.round((T.collected / expectedInPeriod) * 100) : 0}%)</span></div>
+  ${T.vat > 0 ? `<div class="r"><span>إجمالي المقبوض من المستأجرين</span><span>${sar(T.gross)} ريال — منه ${sar(T.vat)} ضريبة تُورَّد للهيئة</span></div>` : ""}
+  <div class="r"><span>الدخل السنوي المتوقع للمحفظة</span><span>${sar(annualAll)} ريال / سنة — من الوحدات المؤجّرة</span></div>
+</div>
+<div class="note" style="margin-bottom:12px">
+  المُحصَّل والمصروفات والأتعاب عن <b>الفترة المحددة وحدها</b>؛ أما «متأخرات قائمة» و«الدخل السنوي» فأرقام تراكمية لكامل العقود — فلا تُقارن ببعضها مباشرة.
+</div>
 <h2>ملخص العقارات</h2>
 <div class="scrollx"><table>
-  <thead><tr><th>العقار</th><th>الوحدات</th><th>شاغرة</th><th>الدخل السنوي المتوقع</th><th>المُحصَّل</th><th>المصروفات</th>${anyFee ? "<th>الأتعاب</th>" : ""}<th>الصافي</th><th>متأخرات قائمة</th></tr></thead>
+  <thead><tr><th>العقار</th><th>الوحدات</th><th>شاغرة</th><th>الدخل السنوي المتوقع</th><th>المُحصَّل</th><th>المصروفات</th>${anyFee ? "<th>الأتعاب</th>" : ""}<th>الصافي</th><th>متأخرات قائمة<div style="font-size:.62rem;font-weight:400;opacity:.8">كل المدد لا الفترة</div></th></tr></thead>
   <tbody>
     ${rows.map((r) => `<tr>
       <td><b>${r.s.property.name}</b><div style="font-size:.72rem;color:#5C6B67">${typeLabel(r.s.property.property_type)}${r.s.property.city ? ` · ${r.s.property.city}` : ""}</div></td>
