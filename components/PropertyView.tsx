@@ -2067,28 +2067,41 @@ function OwnerReportModal({ property, unitWord, issuer, onClose }: {
   property: Property; unitWord: string; issuer: any; onClose: () => void;
 }) {
   const supabase = createClient();
-  const thisMonth = today().slice(0, 7); // YYYY-MM
-  const [ym, setYm] = useState(thisMonth);
+  /* كان الشهر الواحد هو الخيار الوحيد. المالك يطلب الربع والسنة و«منذ
+     البداية»، والمكتب يحتاج فترة مخصّصة عند التسليم أو النزاع. */
+  const [preset, setPreset] = useState<"month" | "quarter" | "half" | "year" | "all" | "custom">("month");
+  const [from, setFrom] = useState(() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`; });
+  const [to, setTo] = useState(today());
+  const [mode, setMode] = useState<"full" | "brief">("full");
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  const valid = /^\d{4}-\d{2}$/.test(ym);
-  const label = valid ? `${AR_MONTHS[Number(ym.slice(5, 7)) - 1] || ym} ${ym.slice(0, 4)}` : ym;
+  function applyPreset(k: typeof preset) {
+    setPreset(k);
+    const n = new Date(); const p2 = (x: number) => String(x).padStart(2, "0");
+    const ymd = (d: Date) => `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`;
+    if (k === "month") { setFrom(`${n.getFullYear()}-${p2(n.getMonth() + 1)}-01`); setTo(ymd(n)); }
+    else if (k === "quarter") { setFrom(ymd(new Date(n.getFullYear(), n.getMonth() - 2, 1))); setTo(ymd(n)); }
+    else if (k === "half") { setFrom(ymd(new Date(n.getFullYear(), n.getMonth() - 5, 1))); setTo(ymd(n)); }
+    else if (k === "year") { setFrom(`${n.getFullYear()}-01-01`); setTo(ymd(n)); }
+    else if (k === "all") { setFrom("2000-01-01"); setTo(ymd(n)); }
+  }
+  const valid = !!from && !!to && from <= to;
+  const label = preset === "all" ? "منذ البداية حتى اليوم"
+    : preset === "month" ? `${AR_MONTHS[Number(from.slice(5, 7)) - 1]} ${from.slice(0, 4)}`
+    : preset === "year" ? `سنة ${from.slice(0, 4)}`
+    : `${arDate(from)} — ${arDate(to)}`;
 
   async function issue() {
     if (!valid) return;
     setLoading(true); setErr(null);
-    const y = Number(ym.slice(0, 4)), m = Number(ym.slice(5, 7));
-    const from = `${ym}-01`;
-    const lastDay = new Date(y, m, 0).getDate();
-    const to = `${ym}-${String(lastDay).padStart(2, "0")}`;
 
     // دفعات العقار الموثّقة خلال الشهر — نفس السجل الذي يغذّي كشف حساب المستأجر
     const { data, error } = await supabase.from("payments")
       .select("id,paid_on,amount,method,periods_covered,note,tenant_id")
       .eq("property_id", property.id)
       .gte("paid_on", from).lte("paid_on", to)
-      .order("paid_on", { ascending: true }).limit(1000);
+      .order("paid_on", { ascending: true }).limit(5000);
     setLoading(false);
     if (error) { setErr(error.message); return; }
 
@@ -2109,7 +2122,7 @@ function OwnerReportModal({ property, unitWord, issuer, onClose }: {
     if (!ex.error) expenses = (ex.data || []) as ExpenseRow[];
 
     openDoc(ownerReportHTML(property as any, { label, from, to }, payments, issuer || {},
-      { expenses, fee_pct: (property as any).mgmt_fee_pct }));
+      { expenses, fee_pct: (property as any).mgmt_fee_pct }, mode));
     onClose();
   }
 
@@ -2121,9 +2134,40 @@ function OwnerReportModal({ property, unitWord, issuer, onClose }: {
         من السجلات الموثّقة في وثيق، أرسله للمالك كل شهر بدل تجميعه يدويًّا.
       </p>
       <div className="space-y-3">
-        <Field label="شهر التقرير">
-          <input className="fld" type="month" value={ym} max={thisMonth} onChange={(e) => setYm(e.target.value)} />
-        </Field>
+        <div>
+          <label className="block text-sm font-semibold mb-1.5">الفترة</label>
+          <div className="flex flex-wrap gap-1.5 mb-2">
+            {([["month", "هذا الشهر"], ["quarter", "آخر 3 أشهر"], ["half", "آخر 6 أشهر"],
+               ["year", "هذه السنة"], ["all", "منذ البداية"], ["custom", "من — إلى"]] as const).map(([k, l]) => (
+              <button key={k} type="button" onClick={() => (k === "custom" ? setPreset("custom") : applyPreset(k))}
+                className={`text-xs px-3 py-1.5 rounded-full border ${preset === k ? "bg-deep text-goldSoft border-deep" : "border-line text-muted hover:text-deep"}`}>{l}</button>
+            ))}
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <span className="block text-xs text-muted mb-1">من تاريخ</span>
+              <DateField value={from} onChange={(v) => { if (v) { setFrom(v); setPreset("custom"); } }} />
+            </div>
+            <div>
+              <span className="block text-xs text-muted mb-1">إلى تاريخ</span>
+              <DateField value={to} onChange={(v) => { if (v) { setTo(v); setPreset("custom"); } }} />
+            </div>
+          </div>
+          {!valid && <p className="text-xs text-late mt-1">تاريخ البداية بعد تاريخ النهاية.</p>}
+          {valid && <p className="text-[11px] text-muted mt-1">سيصدر عن: <b className="text-deep">{label}</b></p>}
+        </div>
+
+        <div>
+          <label className="block text-sm font-semibold mb-1.5">مستوى التفصيل</label>
+          <div className="inline-flex border border-line rounded-lg p-0.5 text-xs">
+            <button type="button" onClick={() => setMode("full")} className={`px-3 py-1.5 rounded-md ${mode === "full" ? "bg-deep text-goldSoft" : "text-muted"}`}>شامل</button>
+            <button type="button" onClick={() => setMode("brief")} className={`px-3 py-1.5 rounded-md ${mode === "brief" ? "bg-deep text-goldSoft" : "text-muted"}`}>مختصر</button>
+          </div>
+          <p className="text-[11px] text-muted mt-1">
+            {mode === "full" ? "الشامل: جدول كل وحدة بمواصفاتها وعقدها وحالتها، وتفصيل كل دفعة ومصروف في الفترة."
+              : "المختصر: الأرقام والصافي وجدول الوحدات — بلا تفصيل الدفعات."}
+          </p>
+        </div>
         <div className="bg-paper border border-line rounded-xl p-3 text-xs text-muted leading-relaxed">
           يشمل التقرير: نسبة الإشغال وعدد الشواغر · جدول {unitWord === "وحدة" ? "الوحدات" : `كل ${unitWord}`} وحالتها ·
           الدفعات المستلمة خلال <b className="text-deep">{label}</b> بإجماليها · والمتأخرات القائمة وقت الإصدار.
