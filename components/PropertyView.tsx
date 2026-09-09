@@ -84,6 +84,15 @@ const UNIT_TYPES: Record<string, string> = {
 };
 const PROPERTY_USAGE: Record<string, string> = { families: "سكني — عوائل", singles: "سكني — عزّاب", mixed: "سكني تجاري — عزّاب أو عوائل", commercial: "تجاري" };
 
+/** جمع عربي صحيح: 1 وحدة · 2 وحدتان · 3–10 وحدات · 11+ وحدة */
+function plural(n: number, one: string, two: string, few: string, many = one): string {
+  const x = Math.abs(Math.round(n));
+  if (x === 1) return `${one}`;
+  if (x === 2) return `${two}`;
+  if (x >= 3 && x <= 10) return `${x} ${few}`;
+  return `${x} ${many}`;
+}
+
 const URGENCY: Record<RowKey, number> = { late: 0, partial: 1, due: 2, soon: 3, expiring: 4, litigation: 5, vacant: 6, ok: 7 };
 
 export default function PropertyView({ initial, orgName, issuer, compliance, dueSoonDays, dueImminentDays, expiringDays }: { initial: Property[]; orgName: string; issuer?: any; compliance?: ComplianceItem[]; dueSoonDays?: number | null; dueImminentDays?: number | null; expiringDays?: number | null }) {
@@ -875,13 +884,13 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
 
       {items.length > 1 && (
         <div className="bg-deep text-[#EAF1EE] rounded-2xl p-4 mb-5 flex flex-wrap items-center gap-x-6 gap-y-3">
-          <div className="font-display font-bold text-sm text-goldSoft">محفظتك · {items.length} عقارات</div>
-          <PortfolioStat v={String(portfolio.units)} l="وحدة" />
-          <PortfolioStat v={String(portfolio.late)} l="متأخرة" tone={portfolio.late ? "warn" : undefined} />
+          <div className="font-display font-bold text-sm text-goldSoft">محفظتك · {plural(items.length, "عقار واحد", "عقاران", "عقارات", "عقارًا")}</div>
+          <PortfolioStat v={String(portfolio.units)} l={portfolio.units === 1 ? "وحدة" : portfolio.units === 2 ? "وحدتان" : portfolio.units <= 10 ? "وحدات" : "وحدة"} />
+          <PortfolioStat v={String(portfolio.late)} l={portfolio.late === 1 ? "وحدة متأخرة" : "متأخرة"} tone={portfolio.late ? "warn" : undefined} />
           <PortfolioStat v={sar(portfolio.overdue)} l="ريال متأخر" tone={portfolio.overdue ? "warn" : undefined} />
-          <PortfolioStat v={String(portfolio.due + portfolio.soon)} l={`تستحق خلال ${officeSoon} يوم`} />
+          <PortfolioStat v={String(portfolio.due + portfolio.soon)} l={`تستحق خلال ${plural(officeSoon, "يوم واحد", "يومين", "أيام", "يومًا")}`} />
           <PortfolioStat v={String(portfolio.expiring)} l="عقود تنتهي قريبًا" />
-          <PortfolioStat v={`${occupancyPct}%`} l={`إشغال (${portfolio.vacant} شاغرة)`} tone={portfolio.vacant ? "warn" : undefined} />
+          <PortfolioStat v={`${occupancyPct}%`} l={`إشغال (${portfolio.vacant === 0 ? "لا شاغر" : plural(portfolio.vacant, "وحدة شاغرة", "وحدتان شاغرتان", "شاغرة", "شاغرة")})`} tone={portfolio.vacant ? "warn" : undefined} />
           <PortfolioStat v={sar(Math.round(portfolio.monthly))} l="دخل شهري تقريبي" />
         </div>
       )}
@@ -929,8 +938,8 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       {/* إحصاءات — قابلة للنقر للتصفية */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
         <Stat v={collectedThisMonth === null ? "…" : sar(Math.round(collectedThisMonth))} l={`المحصَّل فعليًّا هذا الشهر · المتوقع ${sar(Math.round(monthlyIncome))}`} kpi="income" icon="↑" />
-        <Stat v={sar(overdue)} l={`المتأخر (${lateCount} وحدة)`} kpi="overdue" icon="!" onClick={() => { setFilter("late"); setSort("amount"); }} active={filter === "late"} />
-        <Stat v={String((counts.due || 0) + (counts.soon || 0))} l={`تستحق خلال ${windowsOf(active).soonDays} يوم`} kpi="soon" icon="●" onClick={() => setFilter("soon")} active={filter === "soon"} />
+        <Stat v={sar(overdue)} l={`المتأخر (${lateCount === 0 ? "لا وحدات" : plural(lateCount, "وحدة واحدة", "وحدتان", "وحدات", "وحدة")})`} kpi="overdue" icon="!" onClick={() => { setFilter("late"); setSort("amount"); }} active={filter === "late"} />
+        <Stat v={String((counts.due || 0) + (counts.soon || 0))} l={`تستحق خلال ${plural(windowsOf(active).soonDays, "يوم واحد", "يومين", "أيام", "يومًا")}`} kpi="soon" icon="●" onClick={() => setFilter("soon")} active={filter === "soon"} />
         <Stat v={String(counts.expiring || 0)} l="عقود تنتهي قريبًا" kpi="expiring" icon="↻" onClick={() => setFilter("expiring")} active={filter === "expiring"} />
       </div>
 
@@ -940,7 +949,11 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
           ? annualIncome * ((Date.now() - new Date(new Date().getFullYear(), 0, 1).getTime()) / (365 * 86400000))
           : incPeriod === "month" ? annualIncome / 12 : annualIncome;
         const col = collectedInPeriod ?? 0;
-        const pctOfAnnual = annualIncome > 0 ? Math.min(100, Math.round((col / annualIncome) * 100)) : 0;
+        /* النسبة الحقيقية قد تتجاوز 100% (سداد سنوي مقدَّم، أو إدخال دفعات سنوات
+           سابقة). قصّها عند 100 كان يعرض «100%» بينما المحصَّل 141% — رقم كاذب.
+           الشريط يُقصّ بصريًّا، والنص يقول الحقيقة. */
+        const pctOfAnnual = annualIncome > 0 ? Math.round((col / annualIncome) * 100) : 0;
+        const barPct = Math.min(100, pctOfAnnual);
         const label = incPeriod === "year" ? `هذه السنة (${new Date().getFullYear()})` : incPeriod === "month" ? "هذا الشهر" : "آخر 12 شهرًا";
         return (
           <div className="bg-white border border-line rounded-2xl p-4 mb-5">
@@ -958,10 +971,10 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
             </div>
             <div className="flex items-baseline justify-between text-sm mb-1">
               <span>المحصَّل {label}: <b className="tabular-nums text-[#137a50]">{collectedInPeriod === null ? "…" : sar(Math.round(col))}</b> ريال</span>
-              <span className="text-xs text-muted tabular-nums">{pctOfAnnual}% من الدخل السنوي</span>
+              <span className={`text-xs tabular-nums ${pctOfAnnual > 100 ? "text-[#137a50] font-semibold" : "text-muted"}`}>{pctOfAnnual}% من الدخل السنوي{pctOfAnnual > 100 ? " — يشمل سدادًا مقدَّمًا أو دفعات سنوات سابقة" : ""}</span>
             </div>
             <div className="h-2.5 bg-paper2 rounded-full overflow-hidden">
-              <div className="h-full bg-[#1E9E6A] rounded-full transition-all" style={{ width: `${pctOfAnnual}%` }} />
+              <div className="h-full bg-[#1E9E6A] rounded-full transition-all" style={{ width: `${barPct}%` }} />
             </div>
             <div className="text-[11px] text-muted mt-1.5">
               {incPeriod === "year"
