@@ -5,6 +5,7 @@ import { normalizeAccountType, canAccess } from "@/lib/roles";
 import { issuerMarks } from "@/lib/subscription";
 import { withClockSkewRetry, isClockSkew } from "@/lib/db-retry";
 import RetryScreen from "@/components/RetryScreen";
+import { fetchAllRows } from "@/lib/fetch-all";
 
 export const dynamic = "force-dynamic";
 
@@ -43,13 +44,23 @@ export default async function PropertyPage() {
     await supabase.from("profiles").update({ last_dashboard: "property" }).eq("id", u.id);
   }
 
-  const { data: properties } = await supabase
+  /**
+   * الوحدات تُجلب على دفعات لا مضمّنة: Supabase يقصّ عند 1000 صف بصمت،
+   * ومكتب بمئات الوحدات كان قد يرى بعضها فقط وتُحسب أرقامه ناقصة بلا تحذير.
+   * الملاحظات تبقى مضمّنة بحدّ 100 لكل عقار (لا تدخل في أي حساب).
+   */
+  const { data: propsRaw } = await supabase
     .from("properties")
-    .select("*, tenants(*), property_notes(*)")
+    .select("*, property_notes(*)")
     .order("created_at", { ascending: false })
-    // الملاحظات تتراكم سنين؛ اللوحة تحتاج آخر 100 لكل عقار لا الأرشيف كله
     .order("note_date", { ascending: false, referencedTable: "property_notes" })
     .limit(100, { referencedTable: "property_notes" });
+
+  const allTenants = await fetchAllRows(supabase, "tenants", "*",
+    (q: any) => q.order("created_at", { ascending: true }));
+  const byProp: Record<string, any[]> = {};
+  allTenants.forEach((t: any) => { (byProp[t.property_id] ||= []).push(t); });
+  const properties = (propsRaw || []).map((p: any) => ({ ...p, tenants: byProp[p.id] || [] }));
 
   const { data: { user } } = await supabase.auth.getUser();
   const { data: profile } = await supabase
@@ -64,6 +75,6 @@ export default async function PropertyPage() {
     .from("compliance_items").select("*")
     .order("end_date", { ascending: true, nullsFirst: false });
 
-  return <PropertyView dueSoonDays={(profile as any)?.due_soon_days} dueImminentDays={(profile as any)?.due_imminent_days} expiringDays={(profile as any)?.expiring_days} initial={properties || []} orgName={profile?.org_name || ""}
+  return <PropertyView dueSoonDays={(profile as any)?.due_soon_days} dueImminentDays={(profile as any)?.due_imminent_days} expiringDays={(profile as any)?.expiring_days} initial={properties} orgName={profile?.org_name || ""}
     issuer={{ ...(profile || {}), trial, expired }} compliance={compliance || []} />;
 }
