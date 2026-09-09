@@ -36,6 +36,7 @@ export default function DashboardShell({
     ? [
         { href: "/dashboard/property", label: "عقاراتي" },
         { href: "/dashboard/property/overview", label: "🗂️ نظرة عامة" },
+        { href: "/dashboard/health", label: "🩺 فحص البيانات" },
         { href: "/dashboard/property/listings", label: "📋 المعروضات" },
         { href: "/dashboard/property/import", label: "رفع Excel" },
         { href: "/dashboard/property/advisor", label: "🧠 المستشار" },
