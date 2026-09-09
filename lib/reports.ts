@@ -18,6 +18,15 @@ const iso = (d: Date) => {
 };
 const todayISO = () => iso(new Date());
 export const sar = (n: number) => (Number(n) || 0).toLocaleString("en-US");
+
+/** جمع عربي صحيح في رسائل البوت: 1 دفعة · 2 دفعتان · 3–10 دفعات · 11+ دفعة */
+function arPlural(n: number, one: string, two: string, few: string, many = one): string {
+  const x = Math.abs(Math.round(Number(n) || 0));
+  if (x === 1) return one;
+  if (x === 2) return two;
+  if (x >= 3 && x <= 10) return `${x} ${few}`;
+  return `${x} ${many}`;
+}
 const esc = (s: any) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
 function normalizeSaudi(raw: string): string {
@@ -113,7 +122,7 @@ export async function todayReport(db: DB, profile: any): Promise<string> {
       const lines = soon.map((r) =>
         `• <b>${esc(rowLabel(r))}</b> — ${esc(r.t.name)} — <b>${sar(r.t.rent_amount)}</b> ريال — ${arDate(r.st.nextDueDate)}`
       ).join("\n");
-      return `📅 <b>استحقاقات قريبة</b> (خلال 7 أيام)\n\n${lines}\n\n— الإجمالي: <b>${sar(total)}</b> ريال · ${soon.length} دفعة`;
+      return `📅 <b>استحقاقات قريبة</b> (خلال 7 أيام)\n\n${lines}\n\n— الإجمالي: <b>${sar(total)}</b> ريال · ${arPlural(soon.length, "دفعة واحدة", "دفعتان", "دفعات", "دفعة")}`;
     }
     const { assocs, owners } = await assocContext(db, profile);
     const soon = assocs.filter((a: any) => a.cert_expiry && a.cert_expiry >= todayISO());
@@ -133,7 +142,7 @@ export async function lateReport(db: DB, profile: any): Promise<string> {
       if (!late.length) return `⚠️ <b>المتأخرات</b>\n\nلا توجد متأخرات — ممتاز 👏`;
       const total = late.reduce((s, r) => s + (r.st.amountDue || 0), 0);
       const lines = late.map((r) =>
-        `• <b>${esc(rowLabel(r))}</b> — ${esc(r.t.name)} — متأخر <b>${r.st.unpaid}</b> دفعة — <b>${sar(r.st.amountDue)}</b> ريال`
+        `• <b>${esc(rowLabel(r))}</b> — ${esc(r.t.name)} — متأخر <b>${arPlural(r.st.unpaid, "دفعة واحدة", "دفعتان", "دفعات", "دفعة")}</b> — <b>${sar(r.st.amountDue)}</b> ريال`
       ).join("\n");
       return `⚠️ <b>المتأخرات</b>\n\n${lines}\n\n— إجمالي المتأخر: <b>${sar(total)}</b> ريال · ${late.length} عقد`;
     }
@@ -142,7 +151,7 @@ export async function lateReport(db: DB, profile: any): Promise<string> {
       .sort((a: any, b: any) => (Number(b.months_late) || 0) - (Number(a.months_late) || 0));
     if (!late.length) return `⚠️ <b>المتأخرات</b>\n\nلا يوجد ملّاك متأخرون 👏`;
     const total = late.reduce((s: number, o: any) => s + ownerOwed(o, assocById), 0);
-    const lines = late.map((o: any) => `• <b>${esc(o.name)}</b>${o.unit ? " — وحدة " + esc(o.unit) : ""} — متأخر <b>${o.months_late}</b> شهر — <b>${sar(ownerOwed(o, assocById))}</b> ريال`).join("\n");
+    const lines = late.map((o: any) => `• <b>${esc(o.name)}</b>${o.unit ? " — وحدة " + esc(o.unit) : ""} — متأخر <b>${arPlural(o.months_late, "شهر واحد", "شهران", "أشهر", "شهرًا")}</b> — <b>${sar(ownerOwed(o, assocById))}</b> ريال`).join("\n");
     return `⚠️ <b>المتأخرات</b>\n\n${lines}\n\n— إجمالي المتأخر: <b>${sar(total)}</b> ريال · ${late.length} مالك`;
   } catch (e: any) { return `تعذّر جلب المتأخرات.\n<code>${esc(e.message)}</code>`; }
 }

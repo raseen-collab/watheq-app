@@ -2002,7 +2002,7 @@ export function listingsRegisterHTML(items: Listing[], orgName: string, issuer: 
     const fr = freshness(l);
     const ppm = pricePerMeter(l);
     return `<tr>
-      <td><b>${l.code}</b></td>
+      <td><b>${l.code || "—"}</b></td>
       <td>${meta.icon} ${meta.label} — ${OFFER_LABEL[l.offer_type] || ""}</td>
       <td>${shortDesc(l)}${l.title ? `<div style="font-size:.72rem;color:#5C6B67">${l.title}</div>` : ""}</td>
       <td>${Number(l.price) > 0 ? sar(Number(l.price)) : "—"}</td>
