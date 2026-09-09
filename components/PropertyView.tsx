@@ -505,7 +505,17 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       contract_start: d.contract_start || null,
       payment_frequency: freq,
       contract_periods: periods,
-      contract_end: d.contract_start ? derivedEndDate(d.contract_start, freq, periods) : null,
+      /**
+       * نهاية العقد تُحسب بتقويم العقد نفسه.
+       *
+       * كانت تُحسب ميلاديًّا دائمًا ثم تُخزَّن — وحالة العقد تستعمل المخزَّنة
+       * إن وُجدت، فتتجاوز الحساب الهجري الصحيح. النتيجة: عقد يبدأ 1448/02/18
+       * هجريًّا كان ينتهي 1449/02/28 بدل 1449/02/18 (فرق عشرة أيام)، ولا
+       * يُصلحه أي تعديل لاحق لأن القيمة الخاطئة محفوظة في القاعدة.
+       */
+      contract_end: d.contract_start
+        ? derivedEndDate(d.contract_start, freq, periods, null, d.calendar === "hijri" ? "hijri" : "gregorian")
+        : null,
       billing_anchor_day: d.contract_start ? new Date(d.contract_start).getDate() : null,
       // المرافق: رقما حساب الكهرباء والماء ثابتان للوحدة ويبقيان مع تغيّر المستأجر؛
       // وقراءتا التسليم تُثبتان في مخالصة الإخلاء لاحقًا
