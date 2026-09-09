@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase-server";
+import { fetchAllRows } from "@/lib/fetch-all";
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import PortfolioView from "@/components/PortfolioView";
@@ -17,8 +18,13 @@ export default async function OverviewPage() {
     supabase.from("profiles").select("due_soon_days, due_imminent_days, expiring_days").eq("id", user.id).maybeSingle());
   if (error && isClockSkew(error.message)) return <RetryScreen detail={error.message} />;
 
-  const { data: properties } = await supabase
-    .from("properties").select("*, tenants(*)").order("created_at", { ascending: false });
+  // الوحدات على دفعات — لا قصّ صامت عند 1000 صف (انظر lib/fetch-all.ts)
+  const { data: propsRaw } = await supabase
+    .from("properties").select("*").order("created_at", { ascending: false });
+  const allTenants = await fetchAllRows(supabase, "tenants", "*");
+  const byProp: Record<string, any[]> = {};
+  allTenants.forEach((t: any) => { (byProp[t.property_id] ||= []).push(t); });
+  const properties = (propsRaw || []).map((p: any) => ({ ...p, tenants: byProp[p.id] || [] }));
 
   const windows = {
     soon: Number((profile as any)?.due_soon_days) || 10,
@@ -35,7 +41,7 @@ export default async function OverviewPage() {
         </div>
         <Link href="/dashboard/property" className="btn btn-ghost text-sm">← لوحة العقارات</Link>
       </div>
-      <PortfolioView properties={(properties || []) as any[]} windows={windows} />
+      <PortfolioView properties={properties as any[]} windows={windows} />
     </main>
   );
 }
