@@ -1211,22 +1211,28 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                                   <a href={remindLink(t)} target="_blank" rel="noreferrer" className="btn btn-wa text-xs px-2.5" title="إرسال تذكير واتساب">&#128172;</a>
                                 </>)}
                                 <RowMenu items={[
-                                  { sep: "المستندات" } as any,
-                                  { label: "🧾 كشف حساب شامل", run: () => openStatement(t, "full") },
-                                  { label: "🧾 كشف حساب مختصر", run: () => openStatement(t, "brief") },
-                                  ...(may("issue_invoices") ? [{ label: "📄 فاتورة", run: () => openInvoice(t) }] : []),
-                                  { label: "📅 جدول الدفعات", run: () => setSchedule(t) },
-                                  { label: "💬 ناقش مع الفريق", run: () => window.dispatchEvent(new CustomEvent("watheq:chat", { detail: { propertyId: active?.id, propertyName: active?.name, tenantId: t.id, tenantName: t.name, unit: t.unit } })) },
-                                  { label: "🧮 سجل المدفوعات", run: () => openHistory(t) },
-                                  ...(may("edit_tenants") || may("renew_contracts") || may("move_out") || may("undo_actions") ? [{ sep: "إجراءات العقد" } as any] : []),
-                                  ...(st.unpaid > 0 && may("send_reminders") ? [{ label: "📨 نموذج إشعار", run: () => makeNotice(t) }] : []),
-                                  ...(needsRenewal(t) && may("renew_contracts") ? [{ label: "🔁 تجديد", run: () => setRenewing(t) }] : []),
-                                  ...(may("undo_actions") && (t.paid_periods || 0) > 0 ? [{ label: "↩︎ تراجع عن دفعة", run: () => undoPayment(t) }] : []),
-                                  ...(isManager && !t.litigation && st.unpaid > 0 ? [{ label: "⚖️ رفع للتنفيذ", run: () => setEnforcing(t) }] : []),
-                                  ...(may("move_out") && !isVacant(t) ? [{ label: "🔑 إنهاء العقد وإخلاء", run: () => setTurnover(t) }] : []),
-                                  ...(isVacant(t) ? [{ label: "📄 مخالصة الإخلاء", run: () => openSettlement(t) }] : []),
-                                  ...(may("edit_tenants") ? [{ label: "✎ تعديل البيانات", run: () => setModal({ kind: "tenant", id: t.id }) }] : []),
-                                  ...(may("undo_actions") ? [{ label: "🗑 حذف", run: () => deleteTenant(t.id), danger: true }] : []),
+                                  /* ثلاث مجموعات بترتيب الاستعمال لا بترتيب البناء:
+                                     ما يُطبع · ما يُرسل · ما يغيّر العقد. */
+                                  { sep: "📄 مستندات" } as any,
+                                  { label: "كشف حساب شامل", run: () => openStatement(t, "full") },
+                                  { label: "كشف حساب مختصر", run: () => openStatement(t, "brief") },
+                                  ...(may("issue_invoices") ? [{ label: "فاتورة", run: () => openInvoice(t) }] : []),
+                                  { label: "جدول الدفعات", run: () => setSchedule(t) },
+                                  { label: "سجل المدفوعات", run: () => openHistory(t) },
+                                  ...(isVacant(t) ? [{ label: "مخالصة الإخلاء", run: () => openSettlement(t) }] : []),
+
+                                  { sep: "✉️ مراسلة" } as any,
+                                  ...(st.unpaid > 0 && may("send_reminders") ? [{ label: "خطاب إشعار رسمي", run: () => makeNotice(t) }] : []),
+                                  { label: "ناقش مع الفريق", run: () => window.dispatchEvent(new CustomEvent("watheq:chat", { detail: { propertyId: active?.id, propertyName: active?.name, tenantId: t.id, tenantName: t.name, unit: t.unit } })) },
+
+                                  ...(may("edit_tenants") || may("renew_contracts") || may("move_out") || may("undo_actions") || isManager
+                                    ? [{ sep: "🔧 العقد" } as any] : []),
+                                  ...(may("edit_tenants") ? [{ label: "تعديل البيانات", run: () => setModal({ kind: "tenant", id: t.id }) }] : []),
+                                  ...(needsRenewal(t) && may("renew_contracts") ? [{ label: "تجديد العقد", run: () => setRenewing(t) }] : []),
+                                  ...(may("move_out") && !isVacant(t) ? [{ label: "إنهاء العقد وإخلاء", run: () => setTurnover(t) }] : []),
+                                  ...(isManager && !t.litigation && st.unpaid > 0 ? [{ label: "رفع للتنفيذ القضائي", run: () => setEnforcing(t) }] : []),
+                                  ...(may("undo_actions") && (t.paid_periods || 0) > 0 ? [{ label: "↩︎ تراجع عن آخر دفعة", run: () => undoPayment(t), danger: true }] : []),
+                                  ...(may("undo_actions") ? [{ label: "🗑 حذف الوحدة", run: () => deleteTenant(t.id), danger: true }] : []),
                                 ]} />
                               </div>
                             </td>
@@ -1235,7 +1241,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                       </tbody>
                       <tfoot className="bg-paper border-t border-line text-xs text-muted">
                         <tr>
-                          <td className="px-3 py-2" colSpan={2}>{rows.length} {ul} · عرض {slice.length} من {rows.length}</td>
+                          <td className="px-3 py-2" colSpan={2}>عرض {slice.length} من {rows.length}{rows.length !== allRows.length ? ` (من ${allRows.length})` : ""}</td>
                           <td className="px-3 py-2 whitespace-nowrap">الدخل المتوقع: {sar(Math.round(annualIncome))} سنويًّا · {sar(Math.round(monthlyIncome))} شهريًّا</td>
                           <td className="px-3 py-2 whitespace-nowrap" colSpan={2}>{nearest ? `أقرب استحقاق: ${nearest}` : "—"}</td>
                           <td className={`px-3 py-2 text-left font-bold ${totalDue > 0 ? "text-late" : ""}`}>{totalDue > 0 ? <>{sar(totalDue)}<div className="text-[10px] font-normal text-muted">إجمالي المتأخر</div></> : "—"}</td>
@@ -1321,18 +1327,27 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                   )}
                   <RowMenu
                     items={[
-                      { label: "📅 جدول الدفعات", run: () => setSchedule(t) },
-                                  { label: "💬 ناقش مع الفريق", run: () => window.dispatchEvent(new CustomEvent("watheq:chat", { detail: { propertyId: active?.id, propertyName: active?.name, tenantId: t.id, tenantName: t.name, unit: t.unit } })) },
-                      { label: "🧮 سجل المدفوعات", run: () => openHistory(t) },
-                                  ...(may("edit_tenants") || may("renew_contracts") || may("move_out") || may("undo_actions") ? [{ sep: "إجراءات العقد" } as any] : []),
-                      { sep: "المستندات" } as any,
-                                  { label: "🧾 كشف حساب شامل", run: () => openStatement(t, "full") },
-                                  { label: "🧾 كشف حساب مختصر", run: () => openStatement(t, "brief") },
-                      ...((t.paid_periods || 0) > 0 ? [{ label: "↩︎ تراجع عن دفعة", run: () => undoPayment(t) }] : []),
-                      ...(!t.litigation && st.unpaid > 0 ? [{ label: "⚖️ رفع للتنفيذ", run: () => setEnforcing(t) }] : []),
-                      ...(!isVacant(t) ? [{ label: "🔑 إنهاء العقد وإخلاء", run: () => setTurnover(t) }] : []),
-                      { label: "✎ تعديل البيانات", run: () => setModal({ kind: "tenant", id: t.id }) },
-                      { label: "🗑 حذف", run: () => deleteTenant(t.id), danger: true },
+/* نفس ترتيب الجدول حرفيًّا: المستخدم لا يتعلّم قائمتين */
+                      { sep: "📄 مستندات" } as any,
+                      { label: "كشف حساب شامل", run: () => openStatement(t, "full") },
+                      { label: "كشف حساب مختصر", run: () => openStatement(t, "brief") },
+                      ...(may("issue_invoices") ? [{ label: "فاتورة", run: () => openInvoice(t) }] : []),
+                      { label: "جدول الدفعات", run: () => setSchedule(t) },
+                      { label: "سجل المدفوعات", run: () => openHistory(t) },
+                      ...(isVacant(t) ? [{ label: "مخالصة الإخلاء", run: () => openSettlement(t) }] : []),
+
+                      { sep: "✉️ مراسلة" } as any,
+                      ...(st.unpaid > 0 && may("send_reminders") ? [{ label: "خطاب إشعار رسمي", run: () => makeNotice(t) }] : []),
+                      { label: "ناقش مع الفريق", run: () => window.dispatchEvent(new CustomEvent("watheq:chat", { detail: { propertyId: active?.id, propertyName: active?.name, tenantId: t.id, tenantName: t.name, unit: t.unit } })) },
+
+                      ...(may("edit_tenants") || may("renew_contracts") || may("move_out") || may("undo_actions") || isManager
+                        ? [{ sep: "🔧 العقد" } as any] : []),
+                      ...(may("edit_tenants") ? [{ label: "تعديل البيانات", run: () => setModal({ kind: "tenant", id: t.id }) }] : []),
+                      ...(needsRenewal(t) && may("renew_contracts") ? [{ label: "تجديد العقد", run: () => setRenewing(t) }] : []),
+                      ...(may("move_out") && !isVacant(t) ? [{ label: "إنهاء العقد وإخلاء", run: () => setTurnover(t) }] : []),
+                      ...(isManager && !t.litigation && st.unpaid > 0 ? [{ label: "رفع للتنفيذ القضائي", run: () => setEnforcing(t) }] : []),
+                      ...(may("undo_actions") && (t.paid_periods || 0) > 0 ? [{ label: "↩︎ تراجع عن آخر دفعة", run: () => undoPayment(t), danger: true }] : []),
+                      ...(may("undo_actions") ? [{ label: "🗑 حذف الوحدة", run: () => deleteTenant(t.id), danger: true }] : []),
                     ]}
                   />
                 </div>
@@ -1345,7 +1360,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
               </button>
             )}
             {view === "cards" && tenants.length > 0 && rows.length > 0 && (
-              <div className="text-center text-xs text-muted pt-1">عرض {Math.min(cardsShown, rows.length)} من {allRows.length} {ul}</div>
+              <div className="text-center text-xs text-muted pt-1">عرض {Math.min(cardsShown, rows.length)} من {rows.length}{rows.length !== allRows.length ? ` (من ${allRows.length})` : ""}</div>
             )}
           </div>
         </div>
@@ -1698,18 +1713,50 @@ function StatusPill({ k }: { k: RowKey }) {
 /** قائمة إجراءات منسدلة — تُخفي الأزرار الثانوية */
 function RowMenu({ items }: { items: { label?: string; run?: () => void; danger?: boolean; sep?: string }[] }) {
   const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
+  const btnRef = useRef<HTMLButtonElement | null>(null);
+
+  /**
+   * القائمة تُثبَّت بإحداثيات الشاشة لا داخل الصف.
+   *
+   * جدول الوحدات له تمرير رأسي (لتثبيت الترويسة)، وأي قائمة منسدلة داخله
+   * يقصّها إطاره — فصفوف أسفل الشاشة تفتح قائمة نصفها مخفي. بالتثبيت على
+   * الشاشة تخرج من الإطار، وتنقلب للأعلى إن ضاق ما تحتها.
+   */
+  function place() {
+    const r = btnRef.current?.getBoundingClientRect();
+    if (!r) return;
+    const H = Math.min(items.length * 30 + 24, 320);
+    const below = window.innerHeight - r.bottom;
+    const top = below > H + 12 ? r.bottom + 4 : Math.max(8, r.top - H - 4);
+    setPos({ top, left: Math.max(8, r.left) });
+  }
+  useEffect(() => {
+    if (!open) return;
+    place();
+    const close = () => setOpen(false);
+    window.addEventListener("resize", close);
+    window.addEventListener("scroll", close, true);   // التمرير يغلقها بدل أن تطير
+    return () => { window.removeEventListener("resize", close); window.removeEventListener("scroll", close, true); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
   if (!items.length) return null;
   return (
     <div className="relative">
-      <button type="button" onClick={() => setOpen((v) => !v)} aria-label="إجراءات أخرى"
+      <button ref={btnRef} type="button" onClick={() => setOpen((v) => !v)} aria-label="إجراءات أخرى"
         className="btn btn-ghost text-xs px-2.5" title="المزيد">⋯</button>
-      {open && (
+      {open && pos && (
         <>
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div className="absolute z-50 top-full mt-1 left-0 min-w-[190px] bg-white border border-line rounded-xl shadow-lg overflow-hidden py-1">
+          <div style={{ top: pos.top, left: pos.left }}
+            className="fixed z-50 min-w-[190px] max-h-[70vh] overflow-y-auto bg-white border border-line rounded-xl shadow-lg py-1">
             {items.map((it, i) => it.sep ? (
+              /* لا نعرض عنوان قسم لا عناصر بعده — يحدث مع الموظف محدود الصلاحيات */
+              items.slice(i + 1).findIndex((x) => !x.sep) === -1 ? null : (
               /* عنوان قسم: تسع خيارات متساوية تُقرأ ببطء — التقسيم يجعل العين تقفز */
               <div key={i} className="px-3.5 pt-2 pb-1 text-[10px] font-bold text-muted border-t border-line first:border-0 first:pt-1">{it.sep}</div>
+              )
             ) : (
               <button key={i} type="button"
                 onClick={() => { setOpen(false); it.run?.(); }}
