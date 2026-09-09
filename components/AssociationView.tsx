@@ -128,11 +128,10 @@ export default function AssociationView({ initial, issuer }: { initial: Associat
         : /does not exist|function/.test(m) ? "شغّل schema-v18 في قاعدة البيانات أولًا." : m);
     }
     const r = data as { months_late: number; partial_amount: number; months: number };
-    // رصيد الصندوق يزيد بالمبلغ المستلم كما كان يفعل ownerPatch
-    await supabase.from("associations").update({ fund_balance: (active.fund_balance || 0) + amt }).eq("id", active.id);
+    /* الرصيد تحرّكه الدالة الذرّية نفسها (v27) — لا كتابة ثانية تتسابق */
     setItems(items.map((a) => a.id === active.id ? {
       ...a,
-      fund_balance: (a.fund_balance || 0) + amt,
+      fund_balance: Number((r as any).fund_balance ?? ((a.fund_balance || 0) + amt)),
       owners: a.owners.map((x) => (x.id === o.id
         ? { ...x, months_late: r.months_late, partial_amount: r.partial_amount, ...(r.months > 0 ? { last_paid: today() } : {}) }
         : x)),
@@ -333,9 +332,15 @@ export default function AssociationView({ initial, issuer }: { initial: Associat
   }
   async function ownerPatch(id: string, patch: Partial<Owner>, fundDelta = 0) {
     if (!active) return;
-    const { error } = await supabase.from("owners").update(patch).eq("id", id);
+    const { data: _u, error } = await supabase.from("owners").update(patch).eq("id", id).select("id");
     if (error) { console.error("Watheq save error:", error); return notify("err", error.message); }
-    if (fundDelta) await supabase.from("associations").update({ fund_balance: (active.fund_balance || 0) + fundDelta }).eq("id", active.id);
+    if (!_u?.length) return notify("err", "هذا الإجراء يحتاج صلاحية أعلى — اطلبه من صاحب المكتب.");
+    /* تعديل الرصيد داخل القاعدة بقفل الصف: كتابتان متزامنتان كانتا تفقدان
+       مبلغًا من الصندوق بلا أثر — وهو مال جماعة الملّاك لا مال المكتب. */
+    if (fundDelta) {
+      const { error: fe } = await supabase.rpc("watheq_adjust_fund", { p_assoc: active.id, p_delta: fundDelta });
+      if (fe) { console.error("fund adjust", fe); notify("err", /does not exist|function/.test(fe.message) ? "شغّل schema-v27 في قاعدة البيانات أولًا." : fe.message); return; }
+    }
     setItems(items.map((a) => a.id === active.id ? {
       ...a,
       fund_balance: fundDelta ? (a.fund_balance || 0) + fundDelta : a.fund_balance,

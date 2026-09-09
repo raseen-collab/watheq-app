@@ -348,14 +348,15 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
     };
     await patchTenant(t.id, patch);
     // توثيق في سجل العقار حتى لا يضيع تاريخ المستأجر السابق
-    await supabase.from("property_notes").insert({
+    /* الملاحظة توثيق لا شرط: إن رفضتها الصلاحيات نُكمل ونُعلم بلا إفشال العملية */
+    const noteRes = await supabase.from("property_notes").insert({
       property_id: active.id, note_date: today(),
       text: `إخلاء ${unitLabel(active.property_type)} ${t.unit || "—"} — ${t.name} بتاريخ ${patch.move_out_date}` +
             (patch.deposit_amount ? ` · تأمين ${sar(patch.deposit_amount)} ريال` : "") +
             (patch.deposit_deductions ? ` · خصومات ${sar(patch.deposit_deductions)} ريال` : ""),
     });
     setTurnover(null);
-    notify("ok", "سُجّل الإخلاء — الوحدة صارت شاغرة.");
+    notify("ok", noteRes.error ? "سُجّل الإخلاء — الوحدة صارت شاغرة. (تعذّر كتابة الملاحظة في السجل)" : "سُجّل الإخلاء — الوحدة صارت شاغرة.");
     router.refresh();
   }
 
@@ -537,7 +538,8 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
     if (error) { console.error("Watheq save error:", error); return notify("err", error.message); }
     if (!_u3 || _u3.length === 0) return notify("err", "هذا الإجراء يحتاج صلاحية أعلى — اطلبه من صاحب المكتب.");
     // توثيق التجديد في سجل العقار
-    await supabase.from("property_notes").insert({
+    /* الملاحظة توثيق لا شرط: إن رفضتها الصلاحيات نُكمل ونُعلم بلا إفشال العملية */
+    const noteRes = await supabase.from("property_notes").insert({
       property_id: active.id, note_date: today(),
       text: `تجديد عقد ${t.name} (${unitLabel(active.property_type)} ${t.unit || "—"}) — من ${fields.contract_start} إلى ${fields.contract_end} بقيمة ${sar(fields.rent_amount)} ريال / ${freqShort(fields.payment_frequency)}`,
     });
@@ -546,6 +548,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       tenants: pp.tenants.map((x) => (x.id === t.id ? { ...x, ...fields } as Tenant : x)),
     } : pp));
     setRenewing(null);
+    if (noteRes.error) notify("err", "جُدّد العقد، لكن تعذّرت كتابة الملاحظة في سجل العقار.");
     router.refresh();
   }
 
@@ -732,7 +735,19 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
   }
 
 
-  const p = active!;
+  /* حارس: لو اختفى العقار النشط (حُذف من جهاز آخر، أو تغيّرت البيانات
+     بعد تحديث الخادم) فلا نُسقط الصفحة بـ active! — نعود لأول عقار. */
+  if (!active) {
+    const first = items[0]?.id || null;
+    if (first && first !== activeId) { setTimeout(() => setActiveId(first), 0); }
+    return (
+      <div className="max-w-lg mx-auto bg-white border border-line rounded-2xl p-8 mt-8 text-center">
+        <p className="text-muted mb-4">لم يعد هذا العقار متاحًا — ربما حُذف أو تغيّرت صلاحياتك.</p>
+        <button className="btn btn-gold" onClick={() => router.refresh()}>تحديث الصفحة</button>
+      </div>
+    );
+  }
+  const p = active;
   const ul = unitLabel(p.property_type);
 
   // كل الصفوف مع حالتها (تُستخدم للإحصاءات)
@@ -1244,13 +1259,13 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       )}
 
       {schedule && <ScheduleModal tenant={schedule} unitWord={ul} onClose={() => setSchedule(null)} />}
-      {renewing && <RenewModal tenant={renewing} unitWord={ul} onClose={() => setRenewing(null)} onRenew={(o) => doRenew(renewing, o)} />}
+      {renewing && <RenewModal key={renewing.id} tenant={renewing} unitWord={ul} onClose={() => setRenewing(null)} onRenew={(o) => doRenew(renewing, o)} />}
       {enforcing && <EnforcementModal tenant={enforcing} unitWord={ul}
         onClose={() => setEnforcing(null)}
         onSubmit={(no, order) => { patchTenant(enforcing.id, { litigation: true, enforcement_no: no || null, enforcement_order: order || null }); setEnforcing(null); }} />}
       {paying && <PaymentModal tenant={paying} unitWord={ul} onClose={() => setPaying(null)}
         onSubmit={(amt, method, note) => { recordPayment(paying, amt, method, note); setPaying(null); }} />}
-      {turnover && <TurnoverModal tenant={turnover} unitWord={ul} onClose={() => setTurnover(null)}
+      {turnover && <TurnoverModal key={turnover.id} tenant={turnover} unitWord={ul} onClose={() => setTurnover(null)}
         onSubmit={(d) => saveTurnover(turnover, d)} />}
       {history && <HistoryModal data={history} unitWord={ul} onClose={() => setHistory(null)} />}
       {remindAll && <RemindAllModal rows={lateRows} unitWord={ul} linkOf={remindLink}
