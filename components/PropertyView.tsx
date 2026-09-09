@@ -207,6 +207,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
   /* كثافة الجدول: «مضغوط» يعرض نحو 40% صفوفًا أكثر في الشاشة نفسها —
      فرق محسوس مع مئات الوحدات. الاختيار يُحفظ في المتصفح. */
   const [dense, setDense] = useState(false);
+  const [propQ, setPropQ] = useState("");
   useEffect(() => { try { setDense(localStorage.getItem("watheq.units.dense") === "1"); } catch { /* */ } }, []);
   const setDensity = (v: boolean) => { setDense(v); try { localStorage.setItem("watheq.units.dense", v ? "1" : "0"); } catch { /* */ } };
   const cellY = dense ? "py-1" : "py-2";
@@ -954,9 +955,20 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
           </h1>
           <div className="text-sm text-muted">{typeLabel(p.property_type)}{p.city ? ` · ${p.city}` : ""} · {tenants.length} {ul}</div>
         </div>
+{/* مكتب بمئة عقار: قائمة منسدلة بمئة خيار لا يُبحث فيها — وعلى الجوال
+            عجلة طويلة. فوق 12 عقارًا نعرض حقل بحث يصفّي القائمة. */}
+        {items.length > 12 && (
+          <input className="fld max-w-[150px] text-xs" value={propQ} onChange={(e) => setPropQ(e.target.value)}
+            placeholder={`ابحث في ${items.length} عقارًا…`} />
+        )}
         <select value={p.id} onChange={(e) => setActiveId(e.target.value)} className="fld max-w-[220px] font-semibold text-deep">
-          {[...items].sort((a, b) => a.name.localeCompare(b.name, "ar")).map((x) =>
-            <option key={x.id} value={x.id}>{typeIcon(x.property_type)} {x.name} · {x.tenants.length}</option>)}
+          {(() => {
+            const q = propQ.trim().toLowerCase();
+            const list = [...items].sort((a, b) => a.name.localeCompare(b.name, "ar"))
+              .filter((x) => !q || `${x.name} ${x.city || ""} ${x.owner_name || ""}`.toLowerCase().includes(q) || x.id === p.id);
+            return list.map((x) =>
+              <option key={x.id} value={x.id}>{typeIcon(x.property_type)} {x.name} · {x.tenants.length}</option>);
+          })()}
         </select>
         <button type="button" className="btn btn-ghost text-sm" onClick={refreshNow} disabled={refreshing}
           title="تحديث البيانات من السيرفر (بعد تسجيل دفعة من البوت مثلًا)">

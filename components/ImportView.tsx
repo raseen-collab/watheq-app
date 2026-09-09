@@ -111,6 +111,7 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
   const [propId, setPropId] = useState(properties[0]?.id || "");
   const [rows, setRows] = useState<Row[]>([]);
   const [busy, setBusy] = useState(false);
+  const [progress, setProgress] = useState(0);
   const [done, setDone] = useState<number | null>(null);
   const [fileName, setFileName] = useState("");
 
@@ -303,14 +304,30 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
         name: r.name, unit: r.unit || null, phone: r.phone || null, national_id: r.national_id || null,
         rent_amount: r.rent_amount, contract_start: r.contract_start || null,
         payment_frequency: r.payment_frequency, contract_periods: r.contract_periods,
-        contract_end: r.contract_start ? derivedEndDate(r.contract_start, r.payment_frequency, r.contract_periods) : null,
+        /* بتقويم العقد لا ميلاديًّا دائمًا: عقد هجري مرفوع من إكسل كان
+           يُحفظ بنهاية متأخرة 11 يومًا (السنة الميلادية 365 والهجرية 354). */
+        contract_end: r.contract_start
+          ? derivedEndDate(r.contract_start, r.payment_frequency, r.contract_periods, null,
+              r.calendar === "hijri" ? "hijri" : "gregorian")
+          : null,
         paid_periods: r.paid_periods,
         // يوم المرساة كما يفعل الإدخال اليدوي: يُشتق من البداية عند غيابه،
         // لكن حفظه صراحةً يبقي المواعيد ثابتة لو عُدّل تاريخ البداية لاحقًا
         billing_anchor_day: r.contract_start ? new Date(r.contract_start).getDate() : null,
       }));
-      const { error } = await supabase.from("tenants").insert(payload);
-      if (error) { setBusy(false); return alert(`تعذّر الحفظ في أحد العقارات: ${error.message}\nأُضيف ${inserted} قبل التوقف — راجع اللوحة قبل إعادة الرفع.`); }
+      /* على دفعات من 100 صف: مكتب يرفع 450 وحدة دفعة واحدة قد تنتهي مهلة
+         الطلب أو يُرفض حجمه، فيفشل الرفع كله بعد دقيقة انتظار. وبالدفعات
+         يُحفظ ما نجح ويُقال له أين توقف بالضبط. */
+      const BATCH = 100;
+      for (let i = 0; i < payload.length; i += BATCH) {
+        const part = payload.slice(i, i + BATCH);
+        const { error } = await supabase.from("tenants").insert(part);
+        if (error) {
+          setBusy(false);
+          return alert(`تعذّر الحفظ: ${error.message}\n\nأُضيف ${inserted + i} صفًّا قبل التوقف.\nراجع اللوحة، واحذف الملف من الصفوف المضافة قبل إعادة الرفع (المكرر يُتخطّى تلقائيًّا).`);
+        }
+        setProgress(inserted + Math.min(i + BATCH, payload.length));
+      }
       inserted += fresh.length;
     }
     setBusy(false);
@@ -405,7 +422,7 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
                   </div>
                 </div>
                 <button onClick={importRows} disabled={busy || !validCount} className="btn btn-gold text-sm disabled:opacity-40">
-                  {busy ? "..." : `حفظ ${validCount} وحدة`}
+                  {busy ? (progress ? `جارٍ الحفظ… ${progress}` : "جارٍ الحفظ…") : `حفظ ${validCount} وحدة`}
                 </button>
               </div>
               <div className="overflow-x-auto max-h-[50vh]">

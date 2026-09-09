@@ -26,6 +26,9 @@ export default function PortfolioView({ properties, windows }: {
   const supabase = createClient();
   const [q, setQ] = useState("");
   const [monthCollected, setMonthCollected] = useState<Record<string, number> | null>(null);
+  /* جدول العقارات بلا ترقيم: مكتب بمئة عقار يرسم 100 صف دفعة واحدة ويطيل
+     الصفحة بلا فائدة — الأهم أعلاها (مرتّبة بالأكثر متأخرات). */
+  const [propsShown, setPropsShown] = useState(25);
 
   // المحصَّل هذا الشهر لكل عقار — استعلام واحد لكل المحفظة
   useEffect(() => {
@@ -170,7 +173,7 @@ export default function PortfolioView({ properties, windows }: {
               <tr><th className="text-right px-3 py-2">العقار</th><th className="px-3 py-2">الوحدات</th><th className="px-3 py-2">متأخر</th><th className="px-3 py-2">ريال متأخر</th><th className="px-3 py-2">تستحق</th><th className="px-3 py-2">تنتهي</th><th className="px-3 py-2">محصَّل الشهر</th><th className="px-3 py-2">المتوقع شهريًّا</th><th></th></tr>
             </thead>
             <tbody>
-              {perProperty.map((r) => (
+              {perProperty.slice(0, propsShown).map((r) => (
                 <tr key={r.p.id} className={`border-t border-line ${r.overdue > 0 ? "bg-[#FFF5F4]" : ""}`}>
                   <td className="px-3 py-2 font-semibold">{r.p.name}<div className="text-[11px] text-muted font-normal">{r.p.city || ""}{r.p.owner_name ? ` · ${r.p.owner_name}` : ""}</div></td>
                   <td className="px-3 py-2 text-center tabular-nums">{r.occupied}/{r.units}</td>
@@ -184,6 +187,13 @@ export default function PortfolioView({ properties, windows }: {
                 </tr>
               ))}
             </tbody>
+            {perProperty.length > propsShown && (
+              <tbody><tr><td colSpan={9} className="p-2 text-center">
+                <button className="btn btn-ghost text-xs" onClick={() => setPropsShown((n) => n + 25)}>
+                  عرض 25 عقارًا إضافيًّا — بقي {perProperty.length - propsShown}
+                </button>
+              </td></tr></tbody>
+            )}
             <tfoot className="bg-paper text-xs">
               <tr><td className="px-3 py-2 font-semibold">الإجمالي</td><td className="px-3 py-2 text-center tabular-nums">{totals.units - totals.vacant}/{totals.units}</td><td className="px-3 py-2 text-center tabular-nums text-late font-bold">{totals.late || "—"}</td><td className="px-3 py-2 text-center tabular-nums text-late font-bold">{totals.overdue ? sar(totals.overdue) : "—"}</td><td className="px-3 py-2 text-center tabular-nums">{totals.due + totals.soon || "—"}</td><td className="px-3 py-2 text-center tabular-nums">{totals.expiring || "—"}</td><td className="px-3 py-2 text-center tabular-nums text-[#137a50] font-bold">{collectedTotal === null ? "…" : sar(Math.round(collectedTotal))}</td><td className="px-3 py-2 text-center tabular-nums">{sar(Math.round(totals.monthly))}</td><td></td></tr>
             </tfoot>
