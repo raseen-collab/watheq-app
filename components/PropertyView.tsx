@@ -701,14 +701,16 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
     (Array.isArray(prop.tenants) ? prop.tenants : []).forEach((t) => {
       const st = contractState(t, { graceDays: Number(prop.grace_days) || 0, ...windowsOf(prop) });
       acc.units++;
+      /* المُخلاة: لا تدخل في الدخل الشهري (لا ساكن يدفع) ولا في عدّاد المتأخرين؛
+         ودينها القديم يُجمع على حدة. كانت تُعدّ كأنها مؤجّرة فيرتفع الدخل زورًا. */
+      if (st.vacant) { acc.vacant++; acc.legacy += st.legacyArrears; return; }
       if (st.status === "late") { acc.late++; acc.overdue += st.amountDue; }
       if (st.status === "soon") { if (st.soonTier === "near") acc.soon++; else acc.due++; }
       if (st.expiringSoon) acc.expiring++;
-      if (isVacant(t)) acc.vacant++;
       acc.monthly += (Number(t.rent_amount) || 0) * PERIODS_PER_MONTH[(t.payment_frequency || "monthly") as Frequency];
     });
     return acc;
-  }, { units: 0, late: 0, soon: 0, due: 0, overdue: 0, expiring: 0, monthly: 0, vacant: 0 }),
+  }, { units: 0, late: 0, soon: 0, due: 0, overdue: 0, expiring: 0, monthly: 0, vacant: 0, legacy: 0 }),
   // eslint-disable-next-line react-hooks/exhaustive-deps
   [items, officeSoon, officeImminent, officeExpiring]);
 
@@ -781,8 +783,9 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
     {} as Record<RowKey, number>);
   const lateRows = allRows.filter((r) => r.key === "late" || r.key === "partial");
   const lateCount = lateRows.length;
+  // الدخل الشهري المتوقع من الوحدات المؤجّرة فقط — الشاغرة كانت تُحسب فيه كأن فيها ساكنًا
   const monthlyIncome = tenants.reduce((sum, t) =>
-    sum + (Number(t.rent_amount) || 0) * PERIODS_PER_MONTH[(t.payment_frequency || "monthly") as Frequency], 0);
+    sum + (isVacant(t) ? 0 : (Number(t.rent_amount) || 0) * PERIODS_PER_MONTH[(t.payment_frequency || "monthly") as Frequency]), 0);
   const overdue = lateRows.reduce((s, r) => s + r.st.amountDue, 0);
   /**
    * الدخل السنوي للعقار = مجموع إيجارات الوحدات المشغولة مُقيَّسًا على سنة
