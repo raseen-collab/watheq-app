@@ -15,7 +15,26 @@ export type ExpenseRow = {
   amount: number;
   spent_on: string;
   note?: string | null;
+  /** تُخصم من صافي المالك؟ false = مصروف على المكتب لا يتحمّله المالك */
+  billable?: boolean | null;
+  /** collections: من تحصيل العقار · office: من المكتب ويُستردّ · owner: دفعها المالك */
+  paid_by?: "collections" | "office" | "owner" | string | null;
+  /** paid: مدفوعة · due: مستحقة لم تُدفع */
+  status?: "paid" | "due" | string | null;
+  vendor?: string | null;
+  invoice_no?: string | null;
 };
+
+export const PAID_BY: Record<string, string> = {
+  collections: "من تحصيل العقار",
+  office: "من المكتب (يُستردّ)",
+  owner: "دفعها المالك مباشرة",
+};
+
+/** المصروف يُخصم من صافي المالك؟ الافتراضي نعم — إلا ما وُسم على المكتب */
+export const isBillable = (e: ExpenseRow) => e.billable !== false;
+/** ويؤثّر في نقد المكتب؟ ما دفعه المالك بنفسه لا يمسّ صندوق المكتب */
+export const hitsOfficeCash = (e: ExpenseRow) => e.paid_by !== "owner";
 
 export const EXPENSE_CATS: Record<ExpenseCategory, { label: string; icon: string }> = {
   maintenance: { label: "صيانة",        icon: "🔧" },
@@ -32,8 +51,24 @@ export const catIcon = (c?: string | null) =>
 
 const r2 = (n: number) => Math.round(n * 100) / 100;
 
+/**
+ * مجموع ما يُخصم من المالك.
+ *
+ * كان يجمع كل شيء — فمصروف على المكتب (تسويق، أدوات مكتبية) كان ينقص
+ * صافي المالك بلا وجه حق. الآن القابل للخصم وحده، وما عداه يُعرض منفصلًا.
+ */
 export function sumExpenses(rows: ExpenseRow[]): number {
+  return r2((rows || []).filter(isBillable).reduce((s, x) => s + (Number(x.amount) || 0), 0));
+}
+
+/** مجموع كل المصروفات مهما كان تحمّلها — لتقرير المكتب لا لتقرير المالك */
+export function sumAllExpenses(rows: ExpenseRow[]): number {
   return r2((rows || []).reduce((s, x) => s + (Number(x.amount) || 0), 0));
+}
+
+/** المستحقة غير المدفوعة — تُعرض تنبيهًا ولا تُخصم من نقد اليوم */
+export function sumDue(rows: ExpenseRow[]): number {
+  return r2((rows || []).filter((x) => x.status === "due").reduce((s, x) => s + (Number(x.amount) || 0), 0));
 }
 
 /** مجاميع كل تصنيف — لسطر «صيانة 1,200 · فواتير 300» في التقرير */

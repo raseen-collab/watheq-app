@@ -1,7 +1,7 @@
 import { contractState, buildSchedule, freqLabel, splitVat, settleDeposit, vacancyDays, isVacant, unitVatApplies } from "./contracts";
 import { complianceState, brokerageEnd, expectedCommission, UI_LEGAL, LEGAL_DISCLAIMER, DEFAULT_COMMISSION_PCT, type ComplianceItem } from "./compliance";
 import { KIND_META as L_KIND, OFFER_LABEL, STATUS_META, freshness, pricePerMeter, shortDesc, sortListings, summarize, STALE_DAYS, type Listing } from "./listings";
-import { ownerNet, sumByCategory, catLabel, type ExpenseRow } from "./expenses";
+import { ownerNet, sumByCategory, catLabel, sumAllExpenses, sumDue, isBillable, PAID_BY, type ExpenseRow } from "./expenses";
 import { unitLabel, typeLabel } from "./domain";
 import { hijriText } from "@/lib/hijri";
 
@@ -2079,4 +2079,87 @@ ${rows.length ? `<div class="scrollx"><table>
 <div class="sign"><div>أعدّه: ${who}<br><br>التوقيع: ________________</div><div>تاريخ الإصدار: ${today()}</div></div>
 ${footer()}`;
   return SHELL(`سجل المعروضات — ${who}`, body, markOf(issuer));
+}
+
+
+// ============================================================
+// سجل المصروفات المجمّع — كل العقارات في تقرير واحد
+//
+// صاحب المكتب كان يفتح كل عقار ليرى مصروفاته، فلا تتكوّن عنده صورة واحدة
+// ولا يستطيع أن يطبع للمالك ما صُرف على عقاراته كلها. هذا التقرير يجمعها
+// بفلترة على المالك والفترة والتصنيف، ويفصل بوضوح:
+//   ما يُخصم من المالك · ما على المكتب · ما هو مستحق لم يُدفع بعد.
+// ============================================================
+export function expensesRegisterHTML(
+  rows: (ExpenseRow & { property_name?: string | null; owner_name?: string | null })[],
+  period: { label: string; from: string; to: string },
+  issuer: Issuer = {},
+  filters: { owner?: string | null; category?: string | null } = {},
+) {
+  rows = scrub(rows); issuer = scrub(issuer);
+  const list = [...(rows || [])].sort((a, b) => String(a.spent_on).localeCompare(String(b.spent_on)));
+
+  const billable = sumExpensesLocal(list.filter(isBillable));
+  const onOffice = sumExpensesLocal(list.filter((e) => !isBillable(e)));
+  const due = sumExpensesLocal(list.filter((e) => e.status === "due"));
+  const total = sumExpensesLocal(list);
+
+  // تجميع حسب العقار ثم حسب التصنيف
+  const byProp: Record<string, typeof list> = {};
+  list.forEach((e) => { const k = e.property_name || "—"; (byProp[k] ||= []).push(e); });
+  const cats = sumByCategory(list as ExpenseRow[]);
+
+  const inner = `
+${header("سجل المصروفات", filters.owner ? `مالك: ${filters.owner}` : "كل العقارات")}
+<h1>سجل المصروفات — ${period.label}</h1>
+<div class="sub">من ${arDateH(period.from)} إلى ${arDateH(period.to)}${filters.owner ? ` · المالك: ${filters.owner}` : ""}${filters.category ? ` · التصنيف: ${catLabel(filters.category)}` : ""} · ${list.length} قيدًا</div>
+
+<div class="tot">
+  <div><div class="v">${sar(total)}</div><div class="l">إجمالي المصروفات (ريال)</div></div>
+  <div><div class="v r">${sar(billable)}</div><div class="l">تُخصم من المالك</div></div>
+  <div><div class="v">${sar(onOffice)}</div><div class="l">على المكتب</div></div>
+  ${due > 0 ? `<div><div class="v u">${sar(due)}</div><div class="l">مستحقة لم تُدفع</div></div>` : ""}
+</div>
+
+${cats.length ? `
+<h2>حسب التصنيف</h2>
+<div class="scrollx"><table>
+  <thead><tr><th>التصنيف</th><th>عدد القيود</th><th>المبلغ</th><th>النسبة</th></tr></thead>
+  <tbody>
+    ${cats.map((c) => `<tr><td>${c.label}</td><td>${list.filter((e) => String(e.category || "other") === c.category).length}</td><td>${sar(c.total)}</td><td>${total > 0 ? Math.round((c.total / total) * 100) : 0}%</td></tr>`).join("")}
+    <tr><td><b>الإجمالي</b></td><td><b>${list.length}</b></td><td><b>${sar(total)}</b></td><td>100%</td></tr>
+  </tbody>
+</table></div>` : ""}
+
+${Object.entries(byProp).map(([name, items]) => `
+<h2 style="margin-top:18px">${name} — ${sar(sumExpensesLocal(items))} ريال</h2>
+<div class="scrollx"><table>
+  <thead><tr><th>التاريخ</th><th>الوحدة</th><th>التصنيف</th><th>المورّد</th><th>رقم الفاتورة</th><th>المبلغ</th><th>على من</th><th>الحالة</th><th>ملاحظة</th></tr></thead>
+  <tbody>
+    ${items.map((e) => `<tr>
+      <td>${arDate(e.spent_on)}</td>
+      <td>${e.unit || "—"}</td>
+      <td>${catLabel(e.category)}</td>
+      <td>${e.vendor || "—"}</td>
+      <td dir="ltr">${e.invoice_no || "—"}</td>
+      <td><b>${sar(e.amount)}</b></td>
+      <td>${isBillable(e) ? "المالك" : "<span style='color:#5C6B67'>المكتب</span>"}${e.paid_by ? `<div style="font-size:.65rem;color:#5C6B67">${PAID_BY[String(e.paid_by)] || ""}</div>` : ""}</td>
+      <td>${e.status === "due" ? '<span class="pill u">مستحقة</span>' : '<span class="pill p">مدفوعة</span>'}</td>
+      <td>${e.note || "—"}</td>
+    </tr>`).join("")}
+    <tr><td colspan="5"><b>مجموع ${name}</b></td><td colspan="4"><b>${sar(sumExpensesLocal(items))} ريال</b></td></tr>
+  </tbody>
+</table></div>`).join("")}
+
+<div class="note">
+  «تُخصم من المالك» تدخل في حساب صافيه في تقرير المالك، و«على المكتب» لا تدخل.
+  والمستحقة غير المدفوعة معروضة للعلم ولا تُعدّ نقدًا خارجًا بعد.
+  سجل استرشادي صادر آليًّا بتاريخ ${today()}.
+</div>`;
+  return SHELL(`سجل المصروفات — ${period.label}`, inner + footer(), markOf(issuer));
+}
+
+/** مجموع بسيط بلا فلترة — داخلي لهذا التقرير */
+function sumExpensesLocal(rows: ExpenseRow[]): number {
+  return Math.round((rows || []).reduce((s, x) => s + (Number(x.amount) || 0), 0) * 100) / 100;
 }
