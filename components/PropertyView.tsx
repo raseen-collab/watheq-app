@@ -489,6 +489,14 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       const clash = active.tenants.find((t) => t.id !== id && String(t.unit || "").trim() === unitTxt && !isVacant(t));
       if (clash && !confirm(`${ul} ${unitTxt} مشغولة حاليًّا بـ«${clash.name}».\n\nإن كان مستأجرًا جديدًا، سجّل إخلاء السابق أولًا حتى لا تظهر الوحدة مرتين.\n\nمتابعة الإضافة على أي حال؟`)) return;
     }
+    /* أشيع خطأ عند النقل من إكسل: كتابة 1447-03-15 في منتقي التاريخ الميلادي.
+       المتصفح يقبلها كسنة 1447 ميلادية فيصير العقد قبل ستة قرون. */
+    const y0 = Number(String(d.contract_start || "").slice(0, 4));
+    if (y0 && y0 < 1900) {
+      notify("err", `تاريخ البداية «${d.contract_start}» يبدو هجريًّا أُدخل في خانة ميلادية. اضغط زر «هجري» فوق الخانة ثم أدخله.`);
+      return;
+    }
+    if (y0 && y0 > 2100) { notify("err", `تاريخ البداية «${d.contract_start}» غير معقول.`); return; }
     const freq = (d.payment_frequency || "monthly") as Frequency;
     const periods = d.contract_periods ? Number(d.contract_periods) : null;
     const payload = {
@@ -502,7 +510,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       // المرافق: رقما حساب الكهرباء والماء ثابتان للوحدة ويبقيان مع تغيّر المستأجر؛
       // وقراءتا التسليم تُثبتان في مخالصة الإخلاء لاحقًا
       contract_no: (d.contract_no || "").trim() || null,
-      calendar: d.calendar === "hijri" ? "hijri" : "gregorian",
+      calendar: d.calendar === "hijri" ? "hijri" : "gregorian",  // _calAuto واجهة فقط
       vat_mode: ["on", "off"].includes(String(d.vat_mode)) ? d.vat_mode : "auto",
       carried_debt: Math.max(0, Number(d.carried_debt) || 0),
       first_due: d.first_due || null,
@@ -518,6 +526,23 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
     if (id) {
       // إن كانت الوحدة شاغرة فهذا تأجير جديد: تُصفَّر عدّادات المدة السابقة
       const prev = active.tenants.find((x) => x.id === id);
+      /**
+       * تعديل الإيجار وسط عقد فيه دفعات مسجَّلة يُعيد تقييمها كلها بالسعر
+       * الجديد: من دفع شهرين بـ5,000 يصير كأنه دفع بـ8,000، فتتغيّر متأخراته
+       * دون أن يدفع شيئًا. هذا صحيح حسابيًّا (النظام يعدّ دفعات لا مبالغ)
+       * لكنه مفاجئ — فنُنبّه ونقترح التجديد الذي يبدأ مدة جديدة بسعر جديد.
+       */
+      if (prev && (prev.paid_periods || 0) > 0 && Number(d.rent_amount) !== Number(prev.rent_amount)) {
+        const st0 = contractState(prev, { graceDays: Number(active.grace_days) || 0, ...windowsOf(active) });
+        const after = contractState({ ...prev, rent_amount: Number(d.rent_amount) || 0 }, { graceDays: Number(active.grace_days) || 0, ...windowsOf(active) });
+        const diff = Math.round(after.amountDue - st0.amountDue);
+        if (!confirm(
+          `تغيير الإيجار من ${sar(prev.rent_amount)} إلى ${sar(d.rent_amount)} ريال.\n\n`
+          + `على هذا العقد ${prev.paid_periods} دفعة مسجَّلة، وستُقيَّم بالسعر الجديد — `
+          + (diff > 0 ? `فيرتفع المتأخر ${sar(diff)} ريال.` : diff < 0 ? `فينخفض المتأخر ${sar(-diff)} ريال.` : "بلا أثر على المتأخر.")
+          + `\n\nإن كان السعر الجديد يبدأ من مدة قادمة فالأفضل «تجديد العقد» بدل التعديل.\n\nمتابعة التعديل؟`
+        )) return;
+      }
       const reletting = prev && isVacant(prev);
       const full: any = reletting
         ? { ...payload, status: "active", paid_periods: 0, partial_amount: 0,
@@ -1860,18 +1885,35 @@ function TenantModal({ open, initial, unitWord, onClose, onSubmit }: {
         </Field>
         <div className="grid grid-cols-2 gap-3">
           <Field label="بداية العقد">
-          <DateField value={d.contract_start || ""} onChange={(v) => setD({ ...d, contract_start: v })} /></Field>
-        <Field label="أول تاريخ استحقاق" hint="اختياري — إن كان يختلف عن بداية العقد (يبدأ 1/1 والدفعة الأولى 5/1). بقية الدفعات تُعدّ منه">
+          <DateField value={d.contract_start || ""} onChange={(v, mode) => setD({ ...d, contract_start: v,
+            /* أدخل التاريخ بالهجري؟ إذن عقده هجري وأقساطه تُحسب بالأشهر الهجرية —
+               كان يجب عليه تغيير خانة ثانية بنفسه، فينسى وتخرج الاستحقاقات منحرفة أيامًا */
+            ...(mode ? { calendar: mode === "h" ? "hijri" : "gregorian", _calAuto: true } : {}) })} /></Field>
+        <Field label="أول تاريخ استحقاق" hint="اختياري — الافتراضي أن أول دفعة تستحق يوم بداية العقد. املأه فقط إن كان يختلف (يبدأ 1/1 والدفعة الأولى 5/1). بقية الدفعات تُعدّ منه">
           <DateField value={d.first_due || ""} onChange={(v) => setD({ ...d, first_due: v })} />
         </Field>
-        <Field label="تُحسب الأقساط بالتقويم" hint="عقد مكتوب بالهجري (كل 6 أشهر هجرية) اختر هجري — وإلا يزحف الاستحقاق أيامًا كل قسط">
-          <select className="fld" value={d.calendar || "gregorian"} onChange={(e) => setD({ ...d, calendar: e.target.value })}>
+        <Field label="تُحسب الأقساط بالتقويم" hint={d._calAuto ? `ضُبط تلقائيًّا لأنك أدخلت البداية بالتقويم ${d.calendar === "hijri" ? "الهجري" : "الميلادي"} — غيّره إن كان العقد مكتوبًا بالتقويم الآخر` : "عقد مكتوب بالهجري (كل 6 أشهر هجرية) اختر هجري — وإلا يزحف الاستحقاق أيامًا كل قسط"}>
+          <select className="fld" value={d.calendar || "gregorian"} onChange={(e) => setD({ ...d, calendar: e.target.value, _calAuto: false })}>
             <option value="gregorian">ميلادي — الأشهر الميلادية</option>
             <option value="hijri">هجري — الأشهر الهجرية (أم القرى)</option>
           </select>
         </Field>
-          <Field label="عدد الدفعات" hint="فارغ = سنة">
-            <input className="fld" type="number" value={d.contract_periods || ""} onChange={(e) => setD({ ...d, contract_periods: e.target.value })} placeholder="12" />
+          <Field label="عدد الدفعات — وهو ما يحدد مدة العقد" hint={(() => {
+            /* عدد الدفعات هو مدة العقد فعليًّا: 24 دفعة شهرية = سنتان، و6 = نصف
+               سنة. كان الحقل يقول «فارغ = سنة» فقط، فيظنّ المكتب أن العقود
+               السنوية وحدها مدعومة. الآن يرى المدة والنهاية وهو يكتب. */
+            const n = Number(d.contract_periods) || 0;
+            const f = (d.payment_frequency || "monthly") as Frequency;
+            if (!n) return "فارغ = سنة كاملة. اكتب 24 لعقد سنتين، أو 6 لعقد نصف سنة.";
+            const months = n * ({ daily: 0, weekly: 0, monthly: 1, quarterly: 3, semiannual: 6, annual: 12 } as any)[f];
+            const dur = !months ? `${n} دفعة`
+              : months % 12 === 0 ? plural(months / 12, "سنة واحدة", "سنتان", "سنوات", "سنة")
+              : months < 12 ? plural(months, "شهر واحد", "شهران", "أشهر", "شهرًا")
+              : `${plural(Math.floor(months / 12), "سنة", "سنتان", "سنوات", "سنة")} و${plural(months % 12, "شهر", "شهران", "أشهر", "شهرًا")}`;
+            const end = d.contract_start ? derivedEndDate(d.contract_start, f, n, null, d.calendar === "hijri" ? "hijri" : "gregorian") : null;
+            return `المدة: ${dur}${end ? ` · ينتهي ${end}` : ""}`;
+          })()}>
+            <input className="fld" type="number" min={1} value={d.contract_periods || ""} onChange={(e) => setD({ ...d, contract_periods: e.target.value })} placeholder="12" />
           </Field>
         </div>
         <Field label="رقم الهوية / السجل" hint="للخطابات"><input className="fld" value={d.national_id || ""} onChange={(e) => setD({ ...d, national_id: e.target.value })} /></Field>
@@ -2104,9 +2146,43 @@ function QuoteModal({ property, unitWord, issuer, onClose }: {
             <input className="fld" type="number" value={d.rent_amount}
               onChange={(e) => setD({ ...d, rent_amount: e.target.value })} placeholder="25000" />
           </Field>
-          <Field label="عدد الدفعات">
-            <input className="fld" type="number" value={d.contract_periods}
-              onChange={(e) => setD({ ...d, contract_periods: e.target.value })} placeholder="1" />
+          <Field label="مدة العقد" hint="عقود المكاتب ليست كلها سنة — اختر المدة ويُحسب عدد الدفعات">
+            {(() => {
+              /* المكتب يفكّر بالمدة («سنتان»)، لا بعدد الدفعات («4»). تحويلها
+                 بيده مصدر خطأ: عقد سنتين نصف سنوي = 4 دفعات لا 2. نأخذ المدة
+                 ونحسب العدد، ونعرض النتيجة ليراها قبل الحفظ. */
+              const perYear = { daily: 365, weekly: 52, monthly: 12, quarterly: 4, semiannual: 2, annual: 1 }[
+                (d.payment_frequency || "monthly") as Frequency] || 12;
+              const months = Math.round((Number(d.contract_periods) || 0) * (12 / perYear));
+              const setMonths = (m: number) => {
+                const per = Math.max(1, Math.round(m * perYear / 12));
+                setD({ ...d, contract_periods: per, _months: m });
+              };
+              const PRESETS = [[3, "3 أشهر"], [6, "6 أشهر"], [12, "سنة"], [18, "سنة ونصف"], [24, "سنتان"], [36, "3 سنوات"]] as const;
+              const matched = PRESETS.find(([m]) => m === months);
+              return (
+                <>
+                  <select className="fld" value={matched ? String(months) : "custom"}
+                    onChange={(e) => { if (e.target.value !== "custom") setMonths(Number(e.target.value)); else setD({ ...d, _custom: true }); }}>
+                    {PRESETS.map(([m, l]) => <option key={m} value={m}>{l}</option>)}
+                    <option value="custom">مدة أخرى…</option>
+                  </select>
+                  {(!matched || d._custom) && (
+                    <div className="grid grid-cols-2 gap-2 mt-2">
+                      <input className="fld" type="number" min={1} value={months || ""} placeholder="عدد الأشهر"
+                        onChange={(e) => setMonths(Math.max(1, Number(e.target.value) || 1))} />
+                      <input className="fld" type="number" min={1} value={d.contract_periods || ""} placeholder="عدد الدفعات"
+                        onChange={(e) => setD({ ...d, contract_periods: e.target.value })} />
+                    </div>
+                  )}
+                  <span className="block text-[11px] text-muted mt-1">
+                    {Number(d.contract_periods) > 0
+                      ? `${d.contract_periods} دفعة ${freqLabel(d.payment_frequency)}${d.contract_start ? ` · ينتهي ${derivedEndDate(d.contract_start, (d.payment_frequency || "monthly") as Frequency, Number(d.contract_periods), null, d.calendar === "hijri" ? "hijri" : "gregorian")}` : ""}`
+                      : "حدّد المدة"}
+                  </span>
+                </>
+              );
+            })()}
           </Field>
         </div>
 

@@ -21,7 +21,8 @@ const MONTHS = [
 
 export default function DateField({ value, onChange, id }: {
   value: string;                       // ميلادي ISO أو ""
-  onChange: (iso: string) => void;
+  /** يمرّ التقويم الذي أُدخل به التاريخ: "h" هجري أو "g" ميلادي — ليتبعه العقد تلقائيًّا */
+  onChange: (iso: string, mode?: "g" | "h") => void;
   id?: string;
 }) {
   const [cal, setCal] = useState<"g" | "h">("g");
@@ -49,8 +50,8 @@ export default function DateField({ value, onChange, id }: {
   function pushHijri(y: string, m: string, d: string) {
     setHy(y); setHm(m); setHd(d);
     const iso = fromHijri(Number(y), Number(m), Number(d));
-    if (iso) onChange(iso);
-    else if (y && m && d) onChange("");   // تاريخ غير موجود في التقويم
+    if (iso) onChange(iso, "h");
+    else if (y && m && d) onChange("", "h");   // تاريخ غير موجود في التقويم
   }
 
   return (
@@ -67,7 +68,7 @@ export default function DateField({ value, onChange, id }: {
       </div>
 
       {cal === "g" ? (
-        <input id={id} className="fld" type="date" value={value || ""} onChange={(e) => onChange(e.target.value)} />
+        <input id={id} className="fld" type="date" value={value || ""} onChange={(e) => onChange(e.target.value, "g")} />
       ) : (
         <div className="grid grid-cols-3 gap-2">
           <input className="fld" inputMode="numeric" placeholder="اليوم" value={hd}
