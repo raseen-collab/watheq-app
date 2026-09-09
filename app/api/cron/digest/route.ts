@@ -61,6 +61,8 @@ export async function GET(req: Request) {
     const within = p.notify_days_before ?? 5;
     const dueSoon: string[] = [];
     const lateList: string[] = [];
+    const legacyList: string[] = [];
+    const litigationList: string[] = [];
     const expiring: string[] = [];
     let totalDue = 0;
 
@@ -69,6 +71,15 @@ export async function GET(req: Request) {
       for (const t of prop.tenants || []) {
         // فترة السماح نفسها التي تعتمدها اللوحة — وإلا وصلت رسالة «متأخر» لمستأجر لوحته تقول «فترة سماح»
         const st = contractState(t, { graceDays: Number(prop.grace_days) || 0, soonDays: Number(prop.soon_days) || p.due_soon_days, imminentDays: Number(prop.imminent_days) || p.due_imminent_days, expiringDays: Number(prop.expiring_days) || p.expiring_days });
+        /* الوحدة المُخلاة لا تُذكَّر كإيجار متأخر كل صباح — ما عليها دين على من غادر */
+        if (st.vacant) {
+          if (st.legacyArrears > 0) legacyList.push(`• ${ul} ${esc(t.unit || "—")} (${esc(prop.name)}) — على المستأجر السابق ${esc(t.name)}: <b>${sar(st.legacyArrears)}</b> ريال`);
+          continue;
+        }
+        if (t.litigation) {
+          if (st.amountDue > 0) litigationList.push(`• ${esc(t.name)} — ${ul} ${esc(t.unit || "—")} (${esc(prop.name)}) — <b>${sar(st.amountDue)}</b> ريال${t.enforcement_no ? ` — طلب ${esc(String(t.enforcement_no))}` : ""}`);
+          continue;
+        }
         if (st.status === "late") {
           totalDue += st.amountDue;
           lateList.push(`• ${esc(t.name)} — ${ul} ${esc(t.unit || "—")} (${esc(prop.name)}) — <b>${sar(st.amountDue)}</b> ريال`);
@@ -122,6 +133,8 @@ export async function GET(req: Request) {
     if (dueSoon.length) parts.push(`🟡 <b>تستحق خلال ${within} أيام (${dueSoon.length})</b>`, ...dueSoon.slice(0, 12), ...more(dueSoon.length), "");
     if (lateList.length) parts.push(`🔴 <b>متأخرة (${lateList.length})</b> — إجمالي ${sar(totalDue)} ريال`, ...lateList.slice(0, 12), ...more(lateList.length), "");
     if (expiring.length) parts.push(`📄 <b>عقود تنتهي قريبًا (${expiring.length})</b>`, ...expiring.slice(0, 12), ...more(expiring.length), "");
+    if (legacyList.length) parts.push(`💼 <b>ديون على مستأجرين سابقين (${legacyList.length})</b>`, ...legacyList.slice(0, 8), "");
+    if (litigationList.length) parts.push(`⚖️ <b>في التنفيذ القضائي (${litigationList.length})</b> — لا تُرسل لهم تذكيرات`, ...litigationList.slice(0, 8), "");
     if (compliance.length) parts.push(`⚖️ <b>التزامات المكتب (${compliance.length})</b>`, ...compliance.slice(0, 12), "");
     if (listings.length) parts.push(`📋 <b>المعروضات</b>`, ...listings, "");
     if (matchLines.length) parts.push(...matchLines, "");
