@@ -15,6 +15,8 @@ import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase-client";
 import { getOffice } from "@/lib/office";
 
+const UNIT_AR: Record<string, string> = { apartment: "شقة", annex: "شقة ملحق", studio: "استديو", room: "غرفة", shop: "محل", office: "مكتب", warehouse: "مستودع", land: "أرض", villa: "فيلا", other: "أخرى" };
+
 const FREQ_AR: Record<string, string> = {
   daily: "يومي", weekly: "اسبوعي", monthly: "شهري", quarterly: "كل 3 اشهر",
   semiannual: "نصف سنوي", annual: "سنوي", yearly: "سنوي",
@@ -74,17 +76,26 @@ export default function ExportData() {
         "الجوال": t.phone || "", "رقم الهوية": t.national_id || "",
         "الدفعات المسدّدة": t.paid_periods || 0, "العقار": pName[t.property_id] || "",
         "رقم العقد": t.contract_no || "",
-        "نوع الوحدة": ({ apartment: "شقة", annex: "شقة ملحق", studio: "استديو", room: "غرفة", shop: "محل", office: "مكتب", warehouse: "مستودع", land: "أرض", villa: "فيلا", other: "أخرى" } as any)[t.unit_type] || "",
+        "نوع الوحدة": UNIT_AR[t.unit_type] || "",
         "الغرف": t.rooms ?? "", "دورات المياه": t.baths ?? "", "المكيفات": t.acs ?? "", "أول استحقاق": t.first_due || "", "الضريبة": t.vat_mode === "on" ? "تُطبَّق" : t.vat_mode === "off" ? "معفاة" : "تلقائي",
         "حساب الكهرباء": t.elec_account || "", "حساب الماء": t.water_account || "",
-      })), [22, 12, 12, 12, 12, 10, 14, 14, 12, 22, 16, 12, 8, 10, 10, 12, 10, 14, 14]);
+        /* الأعمدة الثلاثة الأخيرة تُكمل تطابق ورقة «قالب الرفع» مع القالب
+           الرسمي: من صدّر بياناته ثم أعاد رفعها كان يفقد التقويم والدين
+           المرحَّل — أي تعود عقوده الهجرية ميلادية وتختفي ديون سابقة. */
+        "التقويم": t.calendar === "hijri" ? "هجري" : "ميلادي",
+        "مدة العقد (أشهر)": "",
+        "دين مرحَّل": Number(t.carried_debt) || 0,
+      })), [22, 12, 12, 12, 12, 10, 14, 14, 12, 22, 16, 12, 8, 10, 10, 12, 10, 14, 14, 12, 16, 12]);
 
       add("العقارات", props.map((p) => ({
         "العقار": p.name, "النوع": p.property_type || "", "المدينة": p.city || "", "الحي/العنوان": p.address || "",
         "المالك": p.owner_name || "", "المدير/المكتب": p.manager || "", "فترة السماح (أيام)": p.grace_days || 0,
         "أتعاب الإدارة %": p.mgmt_fee_pct || "", "ضريبة مفعّلة": p.vat_enabled ? "نعم" : "لا",
         "عدد الوحدات": tenants.filter((t) => t.property_id === p.id).length,
-      })), [24, 12, 12, 20, 18, 18, 10, 10, 10, 10]);
+        "الاستخدام": ({ families: "سكني — عوائل", singles: "سكني — عزّاب", mixed: "سكني تجاري", commercial: "تجاري" } as any)[p.usage] || "",
+        "نسبة الضريبة": p.vat_rate ?? "", "الضريبة شاملة": p.vat_inclusive === false ? "لا" : "نعم",
+        "نافذة قريب (يوم)": p.soon_days ?? "", "نافذة مستحق (يوم)": p.imminent_days ?? "", "تنبيه انتهاء العقد (يوم)": p.expiring_days ?? "",
+      })), [24, 12, 12, 20, 18, 18, 10, 10, 10, 10, 18, 10, 12, 14, 14, 18]);
 
       add("الوحدات والمستأجرون", tenants.map((t) => ({
         "العقار": pName[t.property_id] || "", "الوحدة": t.unit || "", "المستأجر": t.name, "رقم العقد": t.contract_no || "", "الجوال": t.phone || "",
@@ -95,7 +106,16 @@ export default function ExportData() {
         "حساب الكهرباء": t.elec_account || "", "حساب الماء": t.water_account || "",
         "قراءة كهرباء (تسليم)": t.meter_elec_in || "", "قراءة كهرباء (إخلاء)": t.meter_elec_out || "",
         "قراءة ماء (تسليم)": t.meter_water_in || "", "قراءة ماء (إخلاء)": t.meter_water_out || "",
-      })), [22, 10, 22, 14, 14, 12, 10, 12, 12, 10, 10, 10, 12, 12, 10, 12, 14, 14, 12, 12, 12, 12]);
+        /* حقول أُضيفت بعد كتابة التصدير: بدونها يفقدها من صدّر بياناته
+           للأرشفة أو للانتقال — والغرض من التصدير ألا يفقد شيئًا. */
+        "التقويم": t.calendar === "hijri" ? "هجري" : "ميلادي",
+        "أول استحقاق": t.first_due || "",
+        "نوع الوحدة": UNIT_AR[t.unit_type] || "", "الغرف": t.rooms ?? "", "دورات المياه": t.baths ?? "", "المكيفات": t.acs ?? "",
+        "الضريبة": t.vat_mode === "on" ? "تُطبَّق" : t.vat_mode === "off" ? "معفاة" : "تلقائي",
+        "دين مرحَّل": Number(t.carried_debt) || 0, "سبب الدين المرحَّل": t.carried_debt_note || "",
+        "في التنفيذ": t.litigation ? "نعم" : "", "رقم طلب التنفيذ": t.enforcement_no || "",
+        "ملاحظات التأمين": t.deposit_notes || "", "تاريخ الإشعار": t.notice_date || "",
+      })), [22, 10, 22, 14, 14, 12, 10, 12, 12, 10, 10, 10, 12, 12, 10, 12, 14, 14, 12, 12, 12, 12, 10, 12, 14, 8, 10, 10, 10, 12, 20, 10, 14, 20, 12]);
 
       add("الدفعات", payments.map((x) => ({
         "التاريخ": x.paid_on, "العقار": pName[x.property_id] || pName[tById[x.tenant_id]?.property_id] || "",
