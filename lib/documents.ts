@@ -61,6 +61,7 @@ const today = () => {
 };
 
 type Tenant = {
+  status?: string | null;
   id: string; name: string; unit: string | null; phone: string | null; national_id: string | null;
   rent_amount: number; contract_start: string | null; contract_end: string | null;
   payment_frequency: string | null; paid_periods: number | null; contract_periods: number | null;
@@ -640,7 +641,14 @@ ${footer()}`;
 }
 
 /** كشف حساب عقار كامل — كل الوحدات */
-export function propertyStatementHTML(p: Property & { tenants: Tenant[] }, issuer: Issuer = {}) {
+/**
+ * كشف حساب العقار بنمطين — كنمطَي كشف الوحدة:
+ *  - brief (مختصر): الملخص وجدول الوحدات بحالتها. صفحة واحدة للمالك المستعجل.
+ *  - full (شامل): يضيف بيانات العقار الكاملة، ومواصفات كل وحدة وعدّاداتها
+ *    وعقودها وتواريخها بالتقويمين، والوحدات الشاغرة، وتحليل الدخل السنوي
+ *    مقابل المحصَّل، وتوزيع الحالات — للتوثيق ولتسليم المحفظة.
+ */
+export function propertyStatementHTML(p: Property & { tenants: Tenant[] }, issuer: Issuer = {}, mode: "brief" | "full" = "brief") {
   // تعقيم المدخلات (انظر scrub أعلاه)
   p = scrub(p);
   issuer = scrub(issuer);
@@ -653,41 +661,82 @@ export function propertyStatementHTML(p: Property & { tenants: Tenant[] }, issue
   const totalPaid = rows.reduce((s, r) => s + r.st.paid * splitVat(Number(r.t.rent_amount) || 0, vFor(r.t)).total, 0);
   const totalVat = rows.reduce((s, r) => s + splitVat(r.st.amountDue, vFor(r.t)).vat, 0);
   const late = rows.filter((r) => r.st.status === "late").length;
+  const vacantCount = rows.filter((r) => isVacant(r.t)).length;
+  const occupied = p.tenants.length - vacantCount;
+  const annual = annualExpected(p.tenants as any[]);
+  const soonCount = rows.filter((r) => r.st.status === "soon").length;
+  const expiringCount = rows.filter((r) => r.st.expiringSoon && !isVacant(r.t)).length;
 
   const body = `
-${header("كشف حساب عقار", p.name)}
-<h1>كشف حساب ${p.name}</h1>
+${header(mode === "full" ? "كشف حساب عقار — شامل" : "كشف حساب عقار", p.name)}
+<h1>كشف حساب ${p.name}${mode === "full" ? " — شامل" : ""}</h1>
 <div class="sub">${typeLabel(p.property_type)}${p.address ? ` — ${p.address}` : ""}${p.city ? `، ${p.city}` : ""} · ${p.tenants.length} ${ul}</div>
 
 <div class="tot">
   <div><div class="v">${p.tenants.length}</div><div class="l">إجمالي الوحدات</div></div>
-  <div><div class="v g">${p.tenants.length - late}</div><div class="l">منتظمة</div></div>
+  <div><div class="v g">${Math.max(0, occupied - late)}</div><div class="l">منتظمة</div></div>
+  <div><div class="v">${vacantCount}</div><div class="l">شاغرة</div></div>
   <div><div class="v r">${late}</div><div class="l">متأخرة</div></div>
   <div><div class="v">${sar(totalPaid)}</div><div class="l">المُحصَّل (ريال)</div></div>
 </div>
 
+${mode === "full" ? `
+<h1 style="font-size:1rem">بيانات العقار</h1>
+<div class="grid">
+  <div class="box">
+    <div class="r"><span>النوع</span><span>${typeLabel(p.property_type)}</span></div>
+    ${p.usage ? `<div class="r"><span>الاستخدام</span><span>${USAGE_AR[String(p.usage)] || p.usage}</span></div>` : ""}
+    ${(p as any).owner_name ? `<div class="r"><span>المالك</span><span>${(p as any).owner_name}</span></div>` : ""}
+    ${p.address ? `<div class="r"><span>العنوان</span><span>${p.address}</span></div>` : ""}
+    ${p.city ? `<div class="r"><span>المدينة</span><span>${p.city}</span></div>` : ""}
+  </div>
+  <div class="box">
+    <div class="r"><span>الوحدات</span><span>${p.tenants.length} (${occupied} مؤجّرة · ${vacantCount} شاغرة)</span></div>
+    <div class="r"><span>نسبة الإشغال</span><span>${p.tenants.length ? Math.round((occupied / p.tenants.length) * 100) : 0}%</span></div>
+    <div class="r"><span>الدخل السنوي المتوقع</span><span><b>${sar(annual)} ريال</b></span></div>
+    ${(p as any).mgmt_fee_pct ? `<div class="r"><span>أتعاب الإدارة</span><span>${(p as any).mgmt_fee_pct}%</span></div>` : ""}
+    ${Number(p.grace_days) > 0 ? `<div class="r"><span>فترة السماح</span><span>${p.grace_days} أيام</span></div>` : ""}
+    ${p.vat_enabled ? `<div class="r"><span>ضريبة القيمة المضافة</span><span>${Number(p.vat_rate) || 15}% على الوحدات التجارية</span></div>` : ""}
+  </div>
+</div>` : ""}
+
 ${totalDue > 0 ? `<div class="due"><span class="l">إجمالي المستحق على العقار${totalVat > 0 ? ` (منه ضريبة ${sar(totalVat)} ريال)` : ""}</span><span class="v">${sar(totalDue)} ريال</span></div>` : ""}
 
 <table>
-  <thead><tr><th>${ul}</th><th>المستأجر</th><th>الدفعة</th><th>الدورة</th><th>القادمة</th><th>المتأخر</th><th>الحالة</th></tr></thead>
+  <thead><tr><th>${ul}</th>${mode === "full" ? "<th>النوع والمواصفات</th>" : ""}<th>المستأجر</th>${mode === "full" ? "<th>الجوال</th><th>رقم العقد</th>" : ""}<th>الدفعة</th><th>الدورة</th>${mode === "full" ? "<th>بداية العقد</th><th>نهايته</th>" : ""}<th>القادمة</th><th>المتأخر</th><th>الحالة</th></tr></thead>
   <tbody>
-    ${rows.map(({ t, st }) => `<tr>
-      <td>${t.unit || "—"}</td>
-      <td>${t.name}</td>
-      <td>${sar(splitVat(Number(t.rent_amount) || 0, vatOf(p, t)).total)}</td>
-      <td>${freqLabel(t.payment_frequency)}</td>
-      <td>${arDate(st.nextDueDate)}</td>
-      <td>${st.amountDue ? sar(st.amountDue) : "—"}</td>
-      <td>${st.inGrace ? '<span class="pill u">فترة سماح</span>'
+    ${rows.map(({ t, st }) => { const vc = isVacant(t); return `<tr>
+      <td><b>${t.unit || "—"}</b></td>
+      ${mode === "full" ? `<td>${t.unit_type ? (UNIT_TYPE_AR[String(t.unit_type)] || "—") : unitLabel(p.property_type)}${(t.rooms || t.baths || t.acs) ? `<div style="font-size:.68rem;color:#5C6B67">${[t.rooms ? `${t.rooms} غرف` : "", t.baths ? `${t.baths} حمام` : "", t.acs ? `${t.acs} مكيف` : ""].filter(Boolean).join(" · ")}</div>` : ""}${(t as any).elec_account ? `<div style="font-size:.65rem;color:#5C6B67" dir="ltr">كهرباء ${(t as any).elec_account}</div>` : ""}</td>` : ""}
+      <td>${vc ? "<span style='color:#5C6B67'>— شاغرة —</span>" : t.name}</td>
+      ${mode === "full" ? `<td dir="ltr">${vc ? "—" : (t.phone || "—")}</td><td dir="ltr">${t.contract_no || "—"}</td>` : ""}
+      <td>${vc ? "—" : sar(splitVat(Number(t.rent_amount) || 0, vatOf(p, t)).total)}</td>
+      <td>${vc ? "—" : freqLabel(t.payment_frequency)}</td>
+      ${mode === "full" ? `<td>${vc ? "—" : arDateH(t.contract_start)}</td><td>${vc ? "—" : arDateH(st.endDate)}</td>` : ""}
+      <td>${vc ? "—" : arDate(st.nextDueDate)}</td>
+      <td>${st.amountDue ? `${sar(st.amountDue)}${vc ? '<div style="font-size:.65rem;color:#5C6B67">على المستأجر السابق</div>' : ""}` : "—"}</td>
+      <td>${vc ? '<span class="pill">شاغرة</span>'
+          : st.inGrace ? '<span class="pill u">فترة سماح</span>'
           : st.hasPartial && st.status === "late" ? '<span class="pill u">سداد جزئي</span>'
           : st.status === "late" ? '<span class="pill l">متأخر</span>'
           : st.status === "soon" ? '<span class="pill u">يستحق قريبًا</span>'
           : '<span class="pill p">منتظم</span>'}</td>
-    </tr>`).join("")}
+    </tr>`; }).join("")}
   </tbody>
 </table>
 
-<div class="note">كشف استرشادي صادر آليًّا من بيانات العقود المسجّلة بتاريخ ${today()}.</div>
+${mode === "full" ? `
+<h1 style="font-size:1rem">توزيع الحالات</h1>
+<table>
+  <thead><tr><th>الحالة</th><th>عدد الوحدات</th><th>النسبة</th></tr></thead>
+  <tbody>
+    ${[["مؤجّرة ومنتظمة", occupied - late - soonCount], ["تستحق قريبًا", soonCount], ["متأخرة", late], ["عقود تنتهي قريبًا", expiringCount], ["شاغرة", vacantCount]]
+      .filter(([, n]) => Number(n) > 0)
+      .map(([l, n]) => `<tr><td>${l}</td><td>${n}</td><td>${p.tenants.length ? Math.round((Number(n) / p.tenants.length) * 100) : 0}%</td></tr>`).join("")}
+  </tbody>
+</table>` : ""}
+
+<div class="note">كشف استرشادي صادر آليًّا من بيانات العقود المسجّلة بتاريخ ${today()}.${mode === "full" ? " الدخل السنوي المتوقع يُحسب من الوحدات المؤجّرة فقط." : ""}</div>
 <div class="sign"><div>المؤجّر / الوكيل: ${who}<br><br>التوقيع: ________________</div><div>تاريخ الإصدار: ${today()}</div></div>
 ${footer()}`;
   return SHELL(`كشف حساب — ${p.name}`, body, markOf(issuer));
