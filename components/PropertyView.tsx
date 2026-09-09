@@ -183,6 +183,12 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
   /* البطاقات كانت تُرسم كلها: 500 وحدة = 500 عنصر في الصفحة فيثقل الجوال.
      نعرض دفعة ونزيد بالطلب — الجدول مرقَّم أصلًا بـ50. */
   const [cardsShown, setCardsShown] = useState(60);
+  /* كثافة الجدول: «مضغوط» يعرض نحو 40% صفوفًا أكثر في الشاشة نفسها —
+     فرق محسوس مع مئات الوحدات. الاختيار يُحفظ في المتصفح. */
+  const [dense, setDense] = useState(false);
+  useEffect(() => { try { setDense(localStorage.getItem("watheq.units.dense") === "1"); } catch { /* */ } }, []);
+  const setDensity = (v: boolean) => { setDense(v); try { localStorage.setItem("watheq.units.dense", v ? "1" : "0"); } catch { /* */ } };
+  const cellY = dense ? "py-1" : "py-2";
   const PAGE = 50;
   useEffect(() => {
     try {
@@ -976,6 +982,12 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
               <button type="button" onClick={() => pickView("table")} className={`px-2.5 py-1 rounded-md ${view === "table" ? "bg-deep text-goldSoft" : "text-muted hover:text-deep"}`} title="جدول: صف لكل وحدة">☰ جدول</button>
               <button type="button" onClick={() => pickView("cards")} className={`px-2.5 py-1 rounded-md ${view === "cards" ? "bg-deep text-goldSoft" : "text-muted hover:text-deep"}`} title="بطاقات">▦ بطاقات</button>
             </div>
+            {view === "table" && (
+              <div className="hidden lg:inline-flex items-center gap-0.5 border border-line rounded-lg p-0.5 me-2 align-middle text-[11px]">
+                <button type="button" onClick={() => setDensity(false)} className={`px-2.5 py-1 rounded-md ${!dense ? "bg-deep text-goldSoft" : "text-muted hover:text-deep"}`} title="صفوف مريحة">مريح</button>
+                <button type="button" onClick={() => setDensity(true)} className={`px-2.5 py-1 rounded-md ${dense ? "bg-deep text-goldSoft" : "text-muted hover:text-deep"}`} title="صفوف مضغوطة — وحدات أكثر في الشاشة">مضغوط</button>
+              </div>
+            )}
             <h2 className="font-semibold">الوحدات والمستأجرون
               {active && <StatusLegend soonDays={windowsOf(active).soonDays} imminentDays={windowsOf(active).imminentDays} expiringDays={windowsOf(active).expiringDays} graceDays={active.grace_days}
                 scope={active.soon_days || active.imminent_days ? `هذا العقار (${active.name})` : "المكتب"} />}
@@ -1075,20 +1087,20 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                       {/* الترويسة تثبت عند التمرير: مع 300 وحدة لا تعرف أي عمود تقرأ بدونها */}
                       <thead className="bg-paper sticky top-0 z-10 shadow-[0_1px_0_var(--tw-shadow-color)] shadow-line">
                         <tr>
-                          <Th k="unit" label={ul} cls="w-16" />
-                          <Th k="name" label="المستأجر" />
-                          <th className="px-3 py-2.5 text-right font-semibold text-xs text-muted whitespace-nowrap">الإيجار</th>
-                          <Th k="due" label="الاستحقاق القادم" />
-                          <Th k="urgent" label="الحالة" />
-                          <Th k="amount" label="المستحق" cls="text-left" />
+                          <Th k="unit" label={ul} cls="w-14" />
+                          <Th k="name" label="المستأجر" cls="w-[30%]" />
+                          <th className="px-3 py-2.5 text-right font-semibold text-xs text-muted whitespace-nowrap w-[15%]">الإيجار</th>
+                          <Th k="due" label="الاستحقاق القادم" cls="w-[16%]" />
+                          <Th k="urgent" label="الحالة" cls="w-[11%]" />
+                          <Th k="amount" label="المستحق" cls="text-left w-[12%]" />
                           <th className="px-3 py-2.5 w-[150px]"></th>
                         </tr>
                       </thead>
                       <tbody>
                         {slice.map(({ t, st, key }, i) => (
                           <tr key={t.id} className={`border-t border-line transition-colors hover:bg-paper/70 ${key === "late" ? "bg-[#FFF5F4]" : key === "litigation" ? "bg-[#F8FAFC]" : key === "vacant" ? "bg-[#FAFAF8]" : i % 2 ? "bg-paper/30" : ""}`}>
-                            <td className="px-3 py-2 font-semibold tabular-nums">{t.unit || "—"}</td>
-                            <td className="px-3 py-2">
+                            <td className={`px-3 ${cellY} font-semibold tabular-nums`}>{t.unit || "—"}</td>
+                            <td className={`px-3 ${cellY}`}>
                               {key === "vacant" ? (
                                 <>
                                   <div className="text-muted">— شاغرة —</div>
@@ -1098,8 +1110,8 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                               <div className={`font-medium ${key === "vacant" ? "hidden" : ""}`}>{t.name}{msgCount[t.id] > 0 && <span className="ms-1 text-[10px] bg-deep text-goldSoft rounded-full px-1.5 py-0.5" title="رسائل الفريق على هذه الوحدة">💬 {msgCount[t.id]}</span>}</div>
                               {t.contract_no && <div className="text-[11px] text-muted" dir="ltr">عقد {t.contract_no}</div>}
                             </td>
-                            <td className="px-3 py-2 text-muted whitespace-nowrap tabular-nums">{sar(t.rent_amount)} / {freqShort(t.payment_frequency)}</td>
-                            <td className="px-3 py-2 whitespace-nowrap tabular-nums">
+                            <td className={`px-3 ${cellY} whitespace-nowrap tabular-nums ${key === "vacant" ? "text-muted/70" : "text-muted"}`}>{sar(t.rent_amount)} / {freqShort(t.payment_frequency)}{key === "vacant" && <div className="text-[10px]">الإيجار المطلوب</div>}</td>
+                            <td className={`px-3 ${cellY} whitespace-nowrap tabular-nums`}>
                               {key === "vacant" ? <span className="text-muted">—</span>
                               : st.fullyPaid && st.endDate ? (<>
                                 <div className="text-[#137a50]">ينتهي {st.endDate}</div>
@@ -1110,8 +1122,8 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                                 <div className="text-[11px] text-muted">{hijriShort(st.nextDueDate)}</div>
                               </>) : <span className="text-muted">—</span>}
                             </td>
-                            <td className="px-3 py-2"><span className={`inline-block text-[11px] font-semibold px-2.5 py-0.5 rounded-full border ${badge(key)}`}>{key === "ok" && st.fullyPaid ? "✓ مسدَّد كاملًا" : label(key)}</span></td>
-                            <td className={`px-3 py-2 text-left tabular-nums whitespace-nowrap ${st.totalOwed > 0 ? "font-bold text-late" : "text-muted"}`}>
+                            <td className={`px-3 ${cellY}`}><span className={`inline-block text-[11px] font-semibold px-2.5 py-0.5 rounded-full border ${badge(key)}`}>{key === "ok" && st.fullyPaid ? "✓ مسدَّد كاملًا" : label(key)}</span></td>
+                            <td className={`px-3 ${cellY} text-left tabular-nums whitespace-nowrap ${st.totalOwed > 0 ? "font-bold text-late" : "text-muted"}`}>
                               {st.totalOwed > 0 ? (<>
                                 {sar(st.amountDue)}
                                 {st.carriedDebt > 0 && <div className="text-[10px] font-normal text-[#9A4B00]">+ {sar(st.carriedDebt)} دين مرحَّل</div>}
@@ -1119,7 +1131,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                                 {key === "vacant" && <div className="text-[10px] font-normal text-muted">على المستأجر السابق</div>}
                               </>) : "—"}
                             </td>
-                            <td className="px-2 py-1.5 text-left whitespace-nowrap">
+                            <td className={`px-2 ${dense ? "py-1" : "py-1.5"} text-left whitespace-nowrap`}>
                               <div className="inline-flex items-center gap-1">
                                 {key === "vacant" ? (
                                   <button type="button" className="btn btn-primary text-xs whitespace-nowrap" onClick={() => reLet(t)}>🔑 تأجير</button>
@@ -1134,12 +1146,14 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                                   <a href={remindLink(t)} target="_blank" rel="noreferrer" className="btn btn-wa text-xs px-2.5" title="إرسال تذكير واتساب">&#128172;</a>
                                 </>)}
                                 <RowMenu items={[
+                                  { sep: "المستندات" } as any,
                                   { label: "🧾 كشف حساب شامل", run: () => openStatement(t, "full") },
                                   { label: "🧾 كشف حساب مختصر", run: () => openStatement(t, "brief") },
                                   ...(may("issue_invoices") ? [{ label: "📄 فاتورة", run: () => openInvoice(t) }] : []),
                                   { label: "📅 جدول الدفعات", run: () => setSchedule(t) },
                                   { label: "💬 ناقش مع الفريق", run: () => window.dispatchEvent(new CustomEvent("watheq:chat", { detail: { propertyId: active?.id, propertyName: active?.name, tenantId: t.id, tenantName: t.name, unit: t.unit } })) },
                                   { label: "🧮 سجل المدفوعات", run: () => openHistory(t) },
+                                  ...(may("edit_tenants") || may("renew_contracts") || may("move_out") || may("undo_actions") ? [{ sep: "إجراءات العقد" } as any] : []),
                                   ...(st.unpaid > 0 && may("send_reminders") ? [{ label: "📨 نموذج إشعار", run: () => makeNotice(t) }] : []),
                                   ...(needsRenewal(t) && may("renew_contracts") ? [{ label: "🔁 تجديد", run: () => setRenewing(t) }] : []),
                                   ...(may("undo_actions") && (t.paid_periods || 0) > 0 ? [{ label: "↩︎ تراجع عن دفعة", run: () => undoPayment(t) }] : []),
@@ -1245,7 +1259,9 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                       { label: "📅 جدول الدفعات", run: () => setSchedule(t) },
                                   { label: "💬 ناقش مع الفريق", run: () => window.dispatchEvent(new CustomEvent("watheq:chat", { detail: { propertyId: active?.id, propertyName: active?.name, tenantId: t.id, tenantName: t.name, unit: t.unit } })) },
                       { label: "🧮 سجل المدفوعات", run: () => openHistory(t) },
-                      { label: "🧾 كشف حساب شامل", run: () => openStatement(t, "full") },
+                                  ...(may("edit_tenants") || may("renew_contracts") || may("move_out") || may("undo_actions") ? [{ sep: "إجراءات العقد" } as any] : []),
+                      { sep: "المستندات" } as any,
+                                  { label: "🧾 كشف حساب شامل", run: () => openStatement(t, "full") },
                                   { label: "🧾 كشف حساب مختصر", run: () => openStatement(t, "brief") },
                       ...((t.paid_periods || 0) > 0 ? [{ label: "↩︎ تراجع عن دفعة", run: () => undoPayment(t) }] : []),
                       ...(!t.litigation && st.unpaid > 0 ? [{ label: "⚖️ رفع للتنفيذ", run: () => setEnforcing(t) }] : []),
@@ -1615,7 +1631,7 @@ function StatusPill({ k }: { k: RowKey }) {
 }
 
 /** قائمة إجراءات منسدلة — تُخفي الأزرار الثانوية */
-function RowMenu({ items }: { items: { label: string; run: () => void; danger?: boolean }[] }) {
+function RowMenu({ items }: { items: { label?: string; run?: () => void; danger?: boolean; sep?: string }[] }) {
   const [open, setOpen] = useState(false);
   if (!items.length) return null;
   return (
@@ -1626,10 +1642,13 @@ function RowMenu({ items }: { items: { label: string; run: () => void; danger?: 
         <>
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
           <div className="absolute z-50 top-full mt-1 left-0 min-w-[190px] bg-white border border-line rounded-xl shadow-lg overflow-hidden py-1">
-            {items.map((it, i) => (
+            {items.map((it, i) => it.sep ? (
+              /* عنوان قسم: تسع خيارات متساوية تُقرأ ببطء — التقسيم يجعل العين تقفز */
+              <div key={i} className="px-3.5 pt-2 pb-1 text-[10px] font-bold text-muted border-t border-line first:border-0 first:pt-1">{it.sep}</div>
+            ) : (
               <button key={i} type="button"
-                onClick={() => { setOpen(false); it.run(); }}
-                className={`block w-full text-right px-3.5 py-2 text-xs font-semibold hover:bg-paper2 transition ${it.danger ? "text-late" : "text-deep"}`}>
+                onClick={() => { setOpen(false); it.run?.(); }}
+                className={`block w-full text-right px-3.5 py-1.5 text-xs font-semibold hover:bg-paper2 transition ${it.danger ? "text-late" : "text-deep"}`}>
                 {it.label}
               </button>
             ))}
