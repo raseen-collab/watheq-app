@@ -3,10 +3,12 @@ import { createClient } from "@supabase/supabase-js";
 import { tgSend, tgEdit, tgAnswer, navButtons, TgKeyboard } from "@/lib/telegram";
 import {
   buildReport, getUnpaid, markPaid, buildReminder, sar,
-  statusReport, contractsInState, contractCard, payTenantOldest, renewContract, buildNotice, stateLabel,
-} from "@/lib/reports";
+  statusReport, contractsInState, contractCard, payTenantOldest, renewContract, buildNotice, stateLabel, searchTenants } from "@/lib/reports";
 
 export const dynamic = "force-dynamic";
+
+/** تهريب HTML — اسم مستأجر فيه < أو & كان يُسقط رسالة تليجرام كاملة */
+const esc = (v: any) => String(v ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 export const maxDuration = 30;
 
 /** عميل Supabase بصلاحية الخدمة — لأن المُنادي هنا تليجرام وليس مستخدمًا مسجّلًا */
@@ -60,7 +62,10 @@ const helpText = () => [
   "/late — المتأخرات",
   "/status — حالة العقود (منتظم/متأخر/تجديد…)",
   "/summary — ملخّص شامل",
-  "/menu — القائمة الرئيسية", "",
+  "/menu — القائمة الرئيسية",
+  "/team — رسائل الفريق والمهام المفتوحة",
+  "",
+  "أو اكتب اسم مستأجر أو رقم جواله مباشرة للبحث.", "",
   "من «حالة العقود» تتحكّم بكل عقد حسب حالته: تذكير، مطالبة، تجديد، أو تسجيل دفعة.",
 ].join("\n");
 
@@ -97,7 +102,14 @@ async function handleMessage(db: DB, msg: any) {
       return tgSend(chatId, r, statusButtons());
     }
     case "help": return tgSend(chatId, helpText(), navButtons());
-    case "menu": default: return tgSend(chatId, "اختر من القائمة:", reportButtons("late"));
+    case "menu": return tgSend(chatId, "اختر من القائمة:", reportButtons("late"));
+    case "team": case "فريق": return teamInbox(db, chatId, p);
+    default: {
+      /* أي نص غير أمر = بحث عن مستأجر. أكثر سؤال خارج المكتب: «فلان دفع؟» —
+         كان يتطلب فتح اللوحة، والآن يكفي اسمه أو آخر أرقام جواله. */
+      if (text.startsWith("/")) return tgSend(chatId, helpText(), navButtons());
+      return searchAndShow(db, chatId, p, text);
+    }
   }
 }
 
@@ -269,6 +281,57 @@ async function showState(db: DB, chatId: number, messageId: number, p: any, key:
 }
 
 /** بطاقة عقد واحد */
+/** نتائج البحث: بطاقة واحدة مباشرة، أو قائمة أزرار إن تعدّدت */
+async function searchAndShow(db: DB, chatId: number, p: any, q: string) {
+  if (q.length < 2) return tgSend(chatId, "اكتب حرفين على الأقل للبحث — أو /menu للقائمة.", navButtons());
+  const { cards, total } = await searchTenants(db, p, q);
+  if (!total) {
+    return tgSend(chatId, `لا نتائج لـ «${esc(q)}».\n\nابحث بالاسم أو الجوال أو رقم الوحدة أو رقم العقد.`, navButtons());
+  }
+  if (cards.length === 1) return tgSend(chatId, cardText(cards[0]), cardButtons(cards[0]));
+  const rows: TgKeyboard = cards.map((c: any) => [{
+    text: `${c.state.dot} ${c.tenant} — ${c.label}`.slice(0, 60),
+    callback_data: `card:search:${c.tenantId}`,
+  }]);
+  rows.push([{ text: "⬅︎ القائمة", callback_data: "cmd:menu" }]);
+  const more = total > cards.length ? `\n\n<i>و${total - cards.length} نتيجة أخرى — ضيّق البحث.</i>` : "";
+  return tgSend(chatId, `🔎 <b>${total} نتيجة</b> لـ «${esc(q)}»:${more}`, rows);
+}
+
+/** رسائل الفريق: آخر ما كُتب في المنصة + المهام المفتوحة على صاحب الحساب */
+async function teamInbox(db: DB, chatId: number, p: any) {
+  const { data, error } = await db.from("office_messages")
+    .select("body, author_id, assigned_to, done_at, created_at")
+    .eq("user_id", p.id).order("created_at", { ascending: false }).limit(10);
+  if (error) {
+    return tgSend(chatId, /does not exist|relation/.test(error.message)
+      ? "ميزة رسائل الفريق غير مفعّلة بعد في قاعدة البيانات."
+      : "تعذّر جلب رسائل الفريق.", navButtons());
+  }
+  const rows = (data || []) as any[];
+  if (!rows.length) return tgSend(chatId, "💬 <b>رسائل الفريق</b>\n\nلا رسائل بعد.", navButtons());
+  const names = await actorNames(db, p.id);
+  const open = rows.filter((r) => r.assigned_to && !r.done_at);
+  const lines = rows.slice(0, 6).map((r) => {
+    const who = names[r.author_id] || "زميل";
+    const when = String(r.created_at || "").slice(0, 10);
+    const task = r.assigned_to ? (r.done_at ? " ✓" : " ⏳") : "";
+    return `• <b>${esc(who)}</b>${task} — ${esc(String(r.body || "").slice(0, 90))}\n  <i>${when}</i>`;
+  }).join("\n");
+  const head = `💬 <b>رسائل الفريق</b>${open.length ? ` — <b>${open.length}</b> مهمة مفتوحة` : ""}\n\n`;
+  return tgSend(chatId, head + lines + "\n\n<i>الردّ والتكليف من المنصة.</i>", navButtons());
+}
+
+/** أسماء أعضاء المكتب لعرضها بدل المعرّفات */
+async function actorNames(db: DB, office: string): Promise<Record<string, string>> {
+  try {
+    const { data } = await db.rpc("watheq_actor_names", { office });
+    const m: Record<string, string> = {};
+    (data || []).forEach((a: any) => { m[a.actor_id] = a.actor_name; });
+    return m;
+  } catch { return {}; }
+}
+
 async function showCard(db: DB, chatId: number, messageId: number, p: any, tenantId: string) {
   const c = await contractCard(db, p, tenantId);
   if (!c) return tgEdit(chatId, messageId, "لم تُعثر على العقد.", statusButtons());
