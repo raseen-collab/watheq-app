@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase-client";
@@ -136,6 +136,18 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
   const [ownerStmtOpen, setOwnerStmtOpen] = useState(false);
   const [logOpen, setLogOpen] = useState(false);
   const [chatTenant, setChatTenant] = useState<Tenant | null>(null);
+  /* حارس النقر المزدوج: على شبكة جوال بطيئة يضغط المحصّل «✔» مرتين قبل أن
+     يرد الخادم، فتُسجَّل دفعتان — مال يُضاف للمستأجر بلا سبب. مجموعة
+     العمليات الجارية تمنع تكرار العملية نفسها على الوحدة نفسها. */
+  const busyRef = useRef<Set<string>>(new Set());
+  const [busyTick, setBusyTick] = useState(0);
+  const isBusy = (id: string) => busyRef.current.has(id);
+  async function once<T>(id: string, fn: () => Promise<T>): Promise<T | undefined> {
+    if (busyRef.current.has(id)) return undefined;
+    busyRef.current.add(id); setBusyTick((n) => n + 1);
+    try { return await fn(); }
+    finally { busyRef.current.delete(id); setBusyTick((n) => n + 1); }
+  }
   /* عدد رسائل الفريق لكل وحدة — تظهر شارة على الصف فيعرف الجميع أن هناك نقاشًا */
   const [msgCount, setMsgCount] = useState<Record<string, number>>({});
   useEffect(() => {
@@ -311,6 +323,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
   async function recordPayment(t: Tenant, amount: number, method = "transfer", note?: string) {
     const amt = Math.max(0, Number(amount) || 0);
     if (!amt || !active) return;
+    return once(`pay:${t.id}`, async () => {
     const { data, error } = await supabase.rpc("watheq_record_payment", {
       p_tenant: t.id, p_amount: amt, p_method: method, p_note: note || null, p_paid_on: today(),
     });
@@ -328,11 +341,14 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
     notify("ok", r.completed > 0
       ? `سُجّل ${sar(amt)} ريال — اكتملت ${r.completed} دفعة`
       : `سُجّل ${sar(amt)} ريال كسداد جزئي`);
+    });
   }
 
   /** التراجع عن آخر دفعة — ذرّي في القاعدة، للمدير فقط، بصف سالب في السجل */
   async function undoPayment(t: Tenant) {
     if (!active) return;
+    if (isBusy(`pay:${t.id}`) || isBusy(`undo:${t.id}`)) return;
+    return once(`undo:${t.id}`, async () => {
     const amt = Number(t.rent_amount) || 0;
     if (!confirm(`التراجع عن آخر دفعة مسجّلة؟\n\n${t.name} — ${ul} ${t.unit || "—"} — ${active.name}\nسيُخصم ${sar(amt)} ريال من المحصَّل ويُسجَّل التراجع باسمك في سجل العمليات.`)) return;
     const { data, error } = await supabase.rpc("watheq_undo_payment", { p_tenant: t.id });
@@ -347,6 +363,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       tenants: p.tenants.map((x) => (x.id === t.id ? { ...x, paid_periods: r.paid_periods } : x)),
     } : p));
     notify("ok", `تم التراجع — خُصم ${sar(r.reversed || amt)} ريال وسُجّل في سجل العمليات`);
+    });
   }
 
   /** تسجيل الإخلاء: تتحوّل الوحدة إلى «شاغرة» ويُوثَّق التسليم */
@@ -1151,7 +1168,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                                 ) : key === "litigation" ? (
                                   <button className="btn btn-ghost text-xs" onClick={() => setEnforcing(t)}>متابعة التنفيذ</button>
                                 ) : (<>
-                                  {canCollect && <QuickBtn title="تأكيد استلام الدفعة كاملة" cls="btn-primary" onClick={() => {
+                                  {canCollect && <QuickBtn title={isBusy(`pay:${t.id}`) ? "جارٍ التسجيل…" : "تأكيد استلام الدفعة كاملة"} cls={`btn-primary ${isBusy(`pay:${t.id}`) ? "opacity-50 pointer-events-none" : ""}`} onClick={() => {
                                     const amt = Number(t.rent_amount) || 0;
                                     if (confirm(`تسجيل استلام دفعة كاملة؟\n\n${sar(amt)} ريال من ${t.name} — ${ul} ${t.unit || "—"} — ${active?.name}\n\n(تُسجَّل باسمك في سجل العمليات)`)) recordPayment(t, amt);
                                   }}>&#10004;</QuickBtn>}
