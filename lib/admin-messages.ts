@@ -35,7 +35,7 @@ export function buildMessage(kind: MsgKind, c: MsgCtx): { title: string; text: s
       return {
         title: "تجديد اشتراك",
         text:
-`السلام عليكم ${who} 🌿
+`السلام عليكم ${who}
 
 اشتراككم في وثيق ينتهي ${c.endDate ? `بتاريخ ${c.endDate}` : "قريبًا"}${c.daysLeft !== null && c.daysLeft !== undefined ? ` (بقي ${c.daysLeft} يوم)` : ""}.
 
@@ -48,7 +48,7 @@ export function buildMessage(kind: MsgKind, c: MsgCtx): { title: string; text: s
       return {
         title: "تجربة تنتهي قريبًا",
         text:
-`السلام عليكم ${who} 🌿
+`السلام عليكم ${who}
 
 ملاحظة سريعة: تجربتكم في وثيق تنتهي ${c.daysLeft === 0 ? "اليوم" : `خلال ${c.daysLeft} يوم`}${c.endDate ? ` (${c.endDate})` : ""}.
 
@@ -62,7 +62,7 @@ export function buildMessage(kind: MsgKind, c: MsgCtx): { title: string; text: s
       return {
         title: "انتهت التجربة",
         text:
-`السلام عليكم ${who} 🌿
+`السلام عليكم ${who}
 
 انتهت تجربتكم في وثيق${c.endDate ? ` بتاريخ ${c.endDate}` : ""}، وبياناتكم كلها محفوظة كما هي — ${units ? `${units} وحدة` : ""} وسجلاتها.
 
@@ -74,7 +74,7 @@ export function buildMessage(kind: MsgKind, c: MsgCtx): { title: string; text: s
       return {
         title: "سجّل ولم يبدأ",
         text:
-`السلام عليكم ${who} 🌿
+`السلام عليكم ${who}
 
 سجّلت في وثيق ${c.sinceJoin ? `قبل ${c.sinceJoin} يوم` : "مؤخرًا"} وما بدأت بعد — وأتوقّع السبب إن إدخال البيانات يبي وقت.
 
@@ -87,7 +87,7 @@ export function buildMessage(kind: MsgKind, c: MsgCtx): { title: string; text: s
       return {
         title: "توقّف بعد البداية",
         text:
-`السلام عليكم ${who} 🌿
+`السلام عليكم ${who}
 
 شفت إنك مدخل ${units} وحدة في وثيق، وآخر نشاط ${c.sinceLast ? `قبل ${c.sinceLast} يوم` : "له فترة"}.
 
@@ -98,7 +98,7 @@ export function buildMessage(kind: MsgKind, c: MsgCtx): { title: string; text: s
       return {
         title: "ترحيب بمسجّل جديد",
         text:
-`السلام عليكم ${who} 🌿
+`السلام عليكم ${who}
 
 أهلًا بك في وثيق — أنا عبيد، مطوّر المنصة، وتواصلك معي مباشر بدون دعم فني.
 
