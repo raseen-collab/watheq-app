@@ -12,9 +12,13 @@ import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase-client";
 import { getOffice } from "@/lib/office";
 
+const catLabelAr = (c?: string | null) => ({ maintenance: "صيانة", utilities: "مرافق", cleaning: "نظافة", security: "حراسة", gov: "رسوم حكومية", other: "أخرى" } as any)[String(c || "")] || "مصروف";
+
 type Entry = {
   id: string; created_at: string | null; paid_on: string; amount: number; method: string | null;
   note: string | null; tenant_id: string; property_id: string; created_by: string | null; periods_covered: number | null;
+  /** نوع الحركة: دفعة/تراجع أو مصروف — والمصروف قد يخصّ وحدة بعينها */
+  kind?: "payment" | "expense"; unit?: string | null;
 };
 
 const METHOD_AR: Record<string, string> = { transfer: "تحويل", cash: "نقدًا", pos: "شبكة", cheque: "شيك", other: "أخرى" };
@@ -43,11 +47,28 @@ export default function ActivityLog({ properties, onClose }: { properties: any[]
     (async () => {
       const [{ data: { user } }, office] = await Promise.all([supabase.auth.getUser(), getOffice(supabase)]);
       setMe(user?.id || null);
-      const { data, error } = await supabase.from("payments")
-        .select("id, created_at, paid_on, amount, method, note, tenant_id, property_id, created_by, periods_covered")
-        .order("created_at", { ascending: false, nullsFirst: false }).limit(300);
-      if (error) { setErr(error.message); setLoading(false); return; }
-      setRows((data || []) as Entry[]);
+      /* الدفعات والمصروفات معًا: الاثنان يؤثران في صافي المالك، ولا يفيد
+         أن يرى المكتب أحدهما بلا الآخر عند مراجعة اختلاف في الأرقام. */
+      const [pay, exp] = await Promise.all([
+        supabase.from("payments")
+          .select("id, created_at, paid_on, amount, method, note, tenant_id, property_id, created_by, periods_covered")
+          .order("created_at", { ascending: false, nullsFirst: false }).limit(300),
+        supabase.from("expenses")
+          .select("id, created_at, spent_on, amount, category, note, property_id, unit, created_by")
+          .order("created_at", { ascending: false, nullsFirst: false }).limit(150),
+      ]);
+      if (pay.error) { setErr(pay.error.message); setLoading(false); return; }
+      const merged: Entry[] = [
+        ...((pay.data || []) as any[]).map((x) => ({ ...x, kind: "payment" as const })),
+        // المصروفات لا تخصّ مستأجرًا: تُعرض بوحدتها إن ذُكرت
+        ...(exp.error ? [] : ((exp.data || []) as any[])).map((x) => ({
+          id: x.id, created_at: x.created_at, paid_on: x.spent_on, amount: -Math.abs(Number(x.amount) || 0),
+          method: null, note: [catLabelAr(x.category), x.note].filter(Boolean).join(" — "),
+          tenant_id: "", property_id: x.property_id, created_by: x.created_by, periods_covered: null,
+          unit: x.unit || null, kind: "expense" as const,
+        })),
+      ].sort((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || "")));
+      setRows(merged);
       if (office?.officeId) {
         const { data: actors } = await supabase.rpc("watheq_actor_names", { office: office.officeId });
         const m: Record<string, string> = {};
@@ -75,8 +96,8 @@ export default function ActivityLog({ properties, onClose }: { properties: any[]
       <div className="w-full max-w-3xl bg-white rounded-2xl border border-line shadow-xl p-5 max-h-[88vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-start justify-between gap-3 mb-3">
           <div>
-            <h2 className="font-display font-bold text-deep text-xl">🕘 سجل العمليات</h2>
-            <p className="text-xs text-muted">كل دفعة سُجّلت وكل تراجع — بمن سجّلها، ولأي مستأجر، وبأي ساعة. آخر 300 عملية.</p>
+            <h2 className="font-display font-bold text-deep text-xl">🕘 سجل الحركات المالية</h2>
+            <p className="text-xs text-muted">كل دفعة ومصروف وتراجع — بمن سجّله ولأي وحدة وبأي ساعة. آخر 300 حركة. (تعديلات العقود لا تُدرج هنا.)</p>
           </div>
           <button className="btn btn-ghost text-sm shrink-0" onClick={onClose}>إغلاق</button>
         </div>
@@ -100,9 +121,10 @@ export default function ActivityLog({ properties, onClose }: { properties: any[]
                   return (
                     <tr key={r.id} className={`border-t border-line ${neg ? "bg-[#FBE9E7]" : ""}`}>
                       <td className="p-2 whitespace-nowrap text-muted" dir="ltr">{fmtTime(r.created_at)}</td>
-                      <td className="p-2 whitespace-nowrap">{neg ? <span className="font-semibold text-late">↩︎ تراجع عن دفعة</span>
+                      <td className="p-2 whitespace-nowrap">{r.kind === "expense" ? <span className="font-semibold text-[#9A4B00]">💸 مصروف</span>
+                        : neg ? <span className="font-semibold text-late">↩︎ تراجع عن دفعة</span>
                         : r.periods_covered ? `✔ دفعة (${r.periods_covered})` : "½ سداد جزئي"}</td>
-                      <td className="p-2">{t?.name || "—"}{t?.unit && <span className="text-muted text-xs"> · {t.unit}</span>}</td>
+                      <td className="p-2">{r.kind === "expense" ? <span className="text-muted">{r.unit ? `الوحدة ${r.unit}` : "على العقار"}</span> : <>{t?.name || "—"}{t?.unit && <span className="text-muted text-xs"> · {t.unit}</span>}</>}</td>
                       <td className="p-2 text-muted">{pName[r.property_id] || "—"}</td>
                       <td className={`p-2 font-semibold whitespace-nowrap ${neg ? "text-late" : ""}`}>{sar(r.amount)} <span className="text-[11px] text-muted">{METHOD_AR[r.method || ""] || ""}</span></td>
                       <td className="p-2 whitespace-nowrap">{who(r.created_by)}</td>

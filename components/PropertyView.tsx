@@ -6,7 +6,7 @@ import { createClient } from "@/lib/supabase-client";
 import { officeId, getOffice, ROLE_LABEL, OWNER_PERMS } from "@/lib/office";
 import { arDate } from "@/lib/documents";
 import { hijriShort, hijriText, parseHijriInput } from "@/lib/hijri";
-import { sar, waLink, today } from "@/lib/utils";
+import { sar, waLink, today, WATHEQ_WA } from "@/lib/utils";
 import { contractState, buildSchedule, FREQUENCIES, freqLabel, freqShort, derivedEndDate, renewContract, needsRenewal, applyPayment, splitVat, isCommercial, isVacant, settleDeposit, unitVatApplies,
   vacancyDays, TURNOVER_CHECKLIST, type Frequency } from "@/lib/contracts";
 import { PROPERTY_TYPES, typeLabel, unitLabel, typeIcon } from "@/lib/domain";
@@ -178,6 +178,9 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
   const [view, setView] = useState<"cards" | "table">("cards");
   const [tSort, setTSort] = useState<"urgent" | "due" | "amount" | "unit" | "name">("urgent");
   const [tPage, setTPage] = useState(0);
+  /* البطاقات كانت تُرسم كلها: 500 وحدة = 500 عنصر في الصفحة فيثقل الجوال.
+     نعرض دفعة ونزيد بالطلب — الجدول مرقَّم أصلًا بـ50. */
+  const [cardsShown, setCardsShown] = useState(60);
   const PAGE = 50;
   useEffect(() => {
     try {
@@ -219,6 +222,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
   const [q, setQ] = useState("");
   const [filter, setFilter] = useState<"all" | RowKey>("all");
   useEffect(() => { setTPage(0); }, [filter, q, tSort, activeId]);
+  useEffect(() => { setCardsShown(60); }, [filter, q, activeId]);
   const [sort, setSort] = useState<"urgent" | "due" | "amount" | "name">("urgent");
   const [toast, setToast] = useState<null | { k: "ok" | "err"; m: string }>(null);
   // الحسابات تعتمد على تاريخ اليوم، وتوقيت السيرفر يختلف عن توقيت الجهاز.
@@ -255,7 +259,8 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
     let out = allRowsForFilter.filter((r) => {
       if (filter !== "all" && r.key !== filter && !(filter === "soon" && r.key === "due")) return false;
       if (!needle) return true;
-      return [r.t.name, r.t.unit, r.t.phone, r.t.contract_no].filter(Boolean)
+      // نفس حقول بحث «النظرة العامة» — لا يجد المستأجر في صفحة ويعجز في أخرى
+      return [r.t.name, r.t.unit, r.t.phone, r.t.contract_no, r.t.national_id, r.t.elec_account, r.t.water_account].filter(Boolean)
         .some((v) => String(v).toLowerCase().includes(needle));
     });
     out = [...out].sort((a, b) => {
@@ -695,10 +700,31 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       <div className="max-w-lg mx-auto bg-white border border-line rounded-2xl shadow-sm p-8 mt-8 text-center">
         <div className="text-4xl mb-3">🏢</div>
         <h2 className="font-display text-xl font-bold text-deep mb-2">أضف أول عقار لك</h2>
-        <p className="text-muted mb-6">عمارة، معرض تجاري، مكتب، مستودع، فيلا، أو أرض — كلها مدعومة.</p>
+        <p className="text-muted mb-5">عمارة، معرض تجاري، مكتب، مستودع، فيلا، أو أرض — كلها مدعومة.</p>
+
+        {/* ثلاث خطوات: المستخدم الجديد يعرف أين هو وما التالي بدل لوحة فارغة */}
+        <div className="grid sm:grid-cols-3 gap-2 text-right mb-5">
+          {[["١", "أضف عقارك", "الاسم والمدينة — دقيقة"],
+            ["٢", "أدخل وحداته", "يدويًّا أو رفع Excel دفعة واحدة"],
+            ["٣", "سجّل أول دفعة", "وتبدأ اللوحة تعمل لك"]].map(([n, t, d]) => (
+            <div key={n} className="border border-line rounded-xl p-3 bg-paper">
+              <div className="text-xs font-bold text-gold mb-0.5">{n}</div>
+              <div className="text-sm font-semibold text-deep">{t}</div>
+              <div className="text-[11px] text-muted mt-0.5">{d}</div>
+            </div>
+          ))}
+        </div>
+
         <div className="flex gap-2 justify-center flex-wrap">
           <button className="btn btn-gold" onClick={() => setModal({ kind: "newProp" })}>+ إضافة عقار</button>
           <Link href="/dashboard/property/import" className="btn btn-ghost">رفع من ملف Excel</Link>
+        </div>
+
+        {/* أقوى عرض عندنا — وكان غائبًا عن أهم شاشة في المنتج */}
+        <div className="bg-paper border border-line rounded-xl p-3 mt-5 text-sm text-right">
+          <b className="text-deep">ما عندك وقت للإدخال؟</b> أرسل لنا بياناتك بأي شكل (ملف إكسل، صورة دفتر، أو حتى رسالة) ونجهّز حسابك كاملًا خلال يوم — بلا أي التزام.
+          <a href={waLink(WATHEQ_WA, "السلام عليكم، أبغى أجهّز حسابي في وثيق وعندي بيانات عقاراتي.")} target="_blank" rel="noreferrer"
+             className="btn btn-wa text-xs mt-2">💬 أرسل بياناتك على واتساب</a>
         </div>
         <PropertyModal open={modal?.kind === "newProp"} orgName={orgName} onClose={() => setModal(null)} onSubmit={(d) => saveProperty(d)} />
       </div>
@@ -739,7 +765,9 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
   const editing = modal?.kind === "tenant" && modal.id ? tenants.find((t) => t.id === modal.id) : undefined;
 
   // ملخّص المحفظة كاملة (كل العقارات)
-  const portfolio = items.reduce((acc, prop) => {
+  /* يمرّ على وحدات كل العقارات: بلا تذكير يُعاد الحساب مع كل ضغطة في
+     البحث — عند 500 وحدة يظهر ذلك بطئًا محسوسًا في الكتابة. */
+  const portfolio = useMemo(() => items.reduce((acc, prop) => {
     (Array.isArray(prop.tenants) ? prop.tenants : []).forEach((t) => {
       const st = contractState(t, { graceDays: Number(prop.grace_days) || 0, ...windowsOf(prop) });
       acc.units++;
@@ -750,7 +778,9 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       acc.monthly += (Number(t.rent_amount) || 0) * PERIODS_PER_MONTH[(t.payment_frequency || "monthly") as Frequency];
     });
     return acc;
-  }, { units: 0, late: 0, soon: 0, due: 0, overdue: 0, expiring: 0, monthly: 0, vacant: 0 });
+  }, { units: 0, late: 0, soon: 0, due: 0, overdue: 0, expiring: 0, monthly: 0, vacant: 0 }),
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  [items, officeSoon, officeImminent, officeExpiring]);
   const occupancyPct = portfolio.units
     ? Math.round(((portfolio.units - portfolio.vacant) / portfolio.units) * 100) : 100;
 
@@ -873,7 +903,9 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
         );
       })()}
 
-      <div className="grid md:grid-cols-[1.65fr_1fr] gap-5 items-start">
+      {/* الوحدات تأخذ العرض كاملًا: مكتب بمئات الوحدات يحتاج كل بكسل للجدول،
+          وسجل العقار (ملاحظات نصية) ينتقل أسفلها — يُقرأ حين يُطلب لا دائمًا. */}
+      <div className="grid grid-cols-1 gap-5 items-start">
         <div className="bg-white border border-line rounded-2xl shadow-sm">
           <div className="flex items-center justify-between border-b border-line px-5 py-4 gap-2 flex-wrap">
             <div className="hidden lg:inline-flex items-center gap-0.5 border border-line rounded-lg p-0.5 me-2 align-middle text-[11px]">
@@ -913,7 +945,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
           {tenants.length > 0 && (
             <div className="border-b border-line px-4 py-3 flex flex-wrap gap-2 items-center bg-paper">
               <input className="fld flex-1 min-w-[150px]" value={q} onChange={(e) => setQ(e.target.value)}
-                placeholder={`ابحث باسم المستأجر أو رقم ${ul}…`} />
+                placeholder={`ابحث بالاسم أو رقم ${ul} أو الجوال أو الهوية أو رقم العقد أو حساب الكهرباء…`} />
               <select className="fld max-w-[170px]" value={sort} onChange={(e) => setSort(e.target.value as any)}>
                 <option value="urgent">الأهم أولًا</option>
                 <option value="due">الأقرب استحقاقًا</option>
@@ -1064,7 +1096,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                   )}
                 </div>
               );
-            })() : rows.map(({ t, st, key }) => (
+            })() : rows.slice(0, cardsShown).map(({ t, st, key }) => (
               <div key={t.id} className={`rounded-xl border p-3 ${key === "litigation" ? "border-[#CBD5E1] bg-[#F8FAFC]" : "border-line bg-paper"}`}>
                 <div className="flex flex-col sm:flex-row sm:items-center gap-2.5 sm:gap-3">
                   <div className="flex items-center gap-3 min-w-0 flex-1">
@@ -1148,14 +1180,19 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
               </div>
             ))}
 
+            {view === "cards" && rows.length > cardsShown && (
+              <button className="btn btn-ghost text-sm w-full justify-center" onClick={() => setCardsShown((n) => n + 60)}>
+                عرض 60 {ul} إضافية — بقي {rows.length - cardsShown}
+              </button>
+            )}
             {view === "cards" && tenants.length > 0 && rows.length > 0 && (
-              <div className="text-center text-xs text-muted pt-1">عرض {rows.length} من {allRows.length} {ul}</div>
+              <div className="text-center text-xs text-muted pt-1">عرض {Math.min(cardsShown, rows.length)} من {allRows.length} {ul}</div>
             )}
           </div>
         </div>
 
         <div className="bg-white border border-line rounded-2xl shadow-sm">
-          <div className="border-b border-line px-5 py-4"><h2 className="font-semibold">سجل العقار</h2></div>
+          <div className="border-b border-line px-5 py-4"><h2 className="font-semibold">📝 سجل العقار <span className="text-xs font-normal text-muted">— ملاحظات الصيانة والتجديد والإخلاء</span></h2></div>
           <div className="p-4">
             <AddNote onAdd={addNote} />
             {notes.length ? notes.map((n) => (

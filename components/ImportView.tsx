@@ -6,6 +6,7 @@ import { derivedEndDate, FREQUENCIES, type Frequency } from "@/lib/contracts";
 import { typeIcon, unitLabel } from "@/lib/domain";
 import { sar } from "@/lib/utils";
 import { parseHijriInput, hijriShort } from "@/lib/hijri";
+import { waLink, WATHEQ_WA } from "@/lib/utils";
 
 type Prop = { id: string; name: string; property_type: string | null };
 type Row = {
@@ -317,9 +318,33 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
       <p className="text-muted mb-6">لديك عشرات المستأجرين؟ ارفعهم دفعة واحدة بدل الإدخال اليدوي.</p>
 
       {!properties.length ? (
-        <div className="bg-white border border-line rounded-2xl p-8 text-center">
-          <p className="text-muted mb-4">أضف عقارًا أولًا لترفع وحداته.</p>
-          <a href="/dashboard/property" className="btn btn-gold">← الذهاب للعقارات</a>
+        /* مكتب أتى ومعه ملف جاهز: لا تُغلق الباب في وجهه — أعطه القالب أولًا
+           ثم وجّهه لإنشاء العقارات، فعمود «العقار» في القالب يوزّع الصفوف. */
+        <div className="bg-white border border-line rounded-2xl p-6">
+          <h2 className="font-display font-bold text-deep text-lg mb-1">ابدأ من هنا — حتى قبل إنشاء العقارات</h2>
+          <p className="text-sm text-muted mb-4">حمّل القالب وعبّئه، واكتب اسم العقار في عمود «العقار» لكل وحدة. ثم أنشئ العقارات بالأسماء نفسها وارفع الملف مرة واحدة.</p>
+          <div className="grid sm:grid-cols-3 gap-3 mb-5">
+            <div className="border border-line rounded-xl p-3">
+              <div className="text-xs font-bold text-gold mb-1">١</div>
+              <div className="text-sm font-semibold text-deep mb-2">حمّل القالب</div>
+              <a href="/watheq-template.xlsx" download className="btn btn-gold text-xs justify-center w-full">⬇ قالب Excel</a>
+            </div>
+            <div className="border border-line rounded-xl p-3">
+              <div className="text-xs font-bold text-gold mb-1">٢</div>
+              <div className="text-sm font-semibold text-deep mb-2">أنشئ عقاراتك</div>
+              <a href="/dashboard/property" className="btn btn-ghost text-xs justify-center w-full">+ إضافة عقار</a>
+            </div>
+            <div className="border border-line rounded-xl p-3">
+              <div className="text-xs font-bold text-gold mb-1">٣</div>
+              <div className="text-sm font-semibold text-deep mb-2">ارجع وارفع</div>
+              <span className="text-[11px] text-muted">كل صف يذهب لعقاره تلقائيًّا</span>
+            </div>
+          </div>
+          <div className="bg-paper border border-line rounded-xl p-3 text-sm">
+            <b className="text-deep">أو وفّر على نفسك الوقت:</b> أرسل لنا ملفك بأي شكل (إكسل، صورة دفتر، أي شيء) ونجهّز حسابك كاملًا خلال يوم — بلا أي التزام.
+            <a href={waLink(WATHEQ_WA, "السلام عليكم، عندي ملف بيانات عقارات وأبغى أجهّز حسابي في وثيق.")} target="_blank" rel="noreferrer"
+               className="btn btn-wa text-xs mt-2">💬 أرسل ملفك على واتساب</a>
+          </div>
         </div>
       ) : (
         <>
