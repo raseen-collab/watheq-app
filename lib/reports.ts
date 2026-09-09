@@ -27,6 +27,25 @@ function arPlural(n: number, one: string, two: string, few: string, many = one):
   if (x >= 3 && x <= 10) return `${x} ${few}`;
   return `${x} ${many}`;
 }
+/**
+ * حد تليجرام 4096 حرفًا — والرسالة الأطول تُرفض بالكامل فلا يصل شيء.
+ * مكتب فيه 226 متأخرًا كان ينتج 18,846 حرفًا: أي أن `/late` لا يعمل عند
+ * من يحتاجه أكثر. نقصّ القائمة ونذكر المتبقي، ثم حارس أخير على الطول.
+ */
+const TG_MAX = 3900;                       // هامش أمان تحت 4096
+const TOP_N = 25;                          // أطول قائمة معقولة للقراءة على الجوال
+function capList(lines: string[], total: number, unit: string): string {
+  const shown = lines.slice(0, TOP_N).join("\n");
+  const rest = total - Math.min(TOP_N, lines.length);
+  return rest > 0 ? `${shown}\n\n<i>و${rest} ${unit} أخرى — افتح اللوحة لرؤيتها كلها.</i>` : shown;
+}
+export function tgClip(text: string): string {
+  if (text.length <= TG_MAX) return text;
+  const cut = text.slice(0, TG_MAX);
+  const nl = cut.lastIndexOf("\n");
+  return (nl > TG_MAX * 0.6 ? cut.slice(0, nl) : cut) + "\n\n<i>… القائمة أطول من حد تليجرام — افتح اللوحة.</i>";
+}
+
 const esc = (s: any) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
 function normalizeSaudi(raw: string): string {
@@ -117,18 +136,18 @@ export async function todayReport(db: DB, profile: any): Promise<string> {
       const { rows } = await enrichedTenants(db, profile);
       const soon = rows.filter((r) => r.key === "due_soon")
         .sort((a, b) => (a.st.daysToNextDue || 0) - (b.st.daysToNextDue || 0));
-      if (!soon.length) return `📅 <b>استحقاقات قريبة</b>\n\nلا توجد دفعات مستحقة خلال 7 أيام ✅`;
+      if (!soon.length) return tgClip(`📅 <b>استحقاقات قريبة</b>\n\nلا توجد دفعات مستحقة خلال 7 أيام ✅`);
       const total = soon.reduce((s, r) => s + (Number(r.t.rent_amount) || 0), 0);
       const lines = soon.map((r) =>
         `• <b>${esc(rowLabel(r))}</b> — ${esc(r.t.name)} — <b>${sar(r.t.rent_amount)}</b> ريال — ${arDate(r.st.nextDueDate)}`
       ).join("\n");
-      return `📅 <b>استحقاقات قريبة</b> (خلال 7 أيام)\n\n${lines}\n\n— الإجمالي: <b>${sar(total)}</b> ريال · ${arPlural(soon.length, "دفعة واحدة", "دفعتان", "دفعات", "دفعة")}`;
+      return tgClip(`📅 <b>استحقاقات قريبة</b> (خلال 7 أيام)\n\n${capList(lines.split("\n"), soon.length, "دفعة")}\n\n— الإجمالي: <b>${sar(total)}</b> ريال · ${arPlural(soon.length, "دفعة واحدة", "دفعتان", "دفعات", "دفعة")}`);
     }
     const { assocs, owners } = await assocContext(db, profile);
     const soon = assocs.filter((a: any) => a.cert_expiry && a.cert_expiry >= todayISO());
     const lateCount = owners.filter((o: any) => (Number(o.months_late) || 0) > 0).length;
     const certLines = soon.length ? soon.map((a: any) => `• <b>${esc(a.name)}</b> — شهادة تنتهي ${esc(a.cert_expiry)}`).join("\n") : "لا شهادات قريبة ✅";
-    return `📅 <b>تنبيهات قريبة</b>\n\n🪪 الشهادات:\n${certLines}\n\n⚠️ ملّاك متأخرون: <b>${lateCount}</b>`;
+    return tgClip(`📅 <b>تنبيهات قريبة</b>\n\n🪪 الشهادات:\n${certLines}\n\n⚠️ ملّاك متأخرون: <b>${lateCount}</b>`);
   } catch (e: any) { return `تعذّر جلب الاستحقاقات.\n<code>${esc(e.message)}</code>`; }
 }
 
@@ -139,20 +158,20 @@ export async function lateReport(db: DB, profile: any): Promise<string> {
       const { rows } = await enrichedTenants(db, profile);
       const late = rows.filter((r) => r.key === "arrears")
         .sort((a, b) => (b.st.amountDue || 0) - (a.st.amountDue || 0));
-      if (!late.length) return `⚠️ <b>المتأخرات</b>\n\nلا توجد متأخرات — ممتاز 👏`;
+      if (!late.length) return tgClip(`⚠️ <b>المتأخرات</b>\n\nلا توجد متأخرات — ممتاز 👏`);
       const total = late.reduce((s, r) => s + (r.st.amountDue || 0), 0);
       const lines = late.map((r) =>
         `• <b>${esc(rowLabel(r))}</b> — ${esc(r.t.name)} — متأخر <b>${arPlural(r.st.unpaid, "دفعة واحدة", "دفعتان", "دفعات", "دفعة")}</b> — <b>${sar(r.st.amountDue)}</b> ريال`
       ).join("\n");
-      return `⚠️ <b>المتأخرات</b>\n\n${lines}\n\n— إجمالي المتأخر: <b>${sar(total)}</b> ريال · ${late.length} عقد`;
+      return tgClip(`⚠️ <b>المتأخرات</b>\n\n${capList(lines.split("\n"), late.length, "عقد")}\n\n— إجمالي المتأخر: <b>${sar(total)}</b> ريال · ${late.length} عقد`);
     }
     const { assocById, owners } = await assocContext(db, profile);
     const late = owners.filter((o: any) => (Number(o.months_late) || 0) > 0)
       .sort((a: any, b: any) => (Number(b.months_late) || 0) - (Number(a.months_late) || 0));
-    if (!late.length) return `⚠️ <b>المتأخرات</b>\n\nلا يوجد ملّاك متأخرون 👏`;
+    if (!late.length) return tgClip(`⚠️ <b>المتأخرات</b>\n\nلا يوجد ملّاك متأخرون 👏`);
     const total = late.reduce((s: number, o: any) => s + ownerOwed(o, assocById), 0);
     const lines = late.map((o: any) => `• <b>${esc(o.name)}</b>${o.unit ? " — وحدة " + esc(o.unit) : ""} — متأخر <b>${arPlural(o.months_late, "شهر واحد", "شهران", "أشهر", "شهرًا")}</b> — <b>${sar(ownerOwed(o, assocById))}</b> ريال`).join("\n");
-    return `⚠️ <b>المتأخرات</b>\n\n${lines}\n\n— إجمالي المتأخر: <b>${sar(total)}</b> ريال · ${late.length} مالك`;
+    return tgClip(`⚠️ <b>المتأخرات</b>\n\n${capList(lines.split("\n"), late.length, "مالك")}\n\n— إجمالي المتأخر: <b>${sar(total)}</b> ريال · ${late.length} مالك`);
   } catch (e: any) { return `تعذّر جلب المتأخرات.\n<code>${esc(e.message)}</code>`; }
 }
 

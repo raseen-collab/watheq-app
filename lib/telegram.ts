@@ -49,6 +49,21 @@ function splitTelegram(text: string): string[] {
   return out;
 }
 
+/**
+ * حارس أخير على طول الرسالة.
+ *
+ * تليجرام يرفض أي رسالة فوق 4096 حرفًا بالكامل — فلا يصل شيء. مكتب بمئات
+ * المتأخرين كان ينتج 18 ألف حرف، أي أن التقرير يفشل عند من يحتاجه أكثر.
+ * التقارير مقصوصة عند مصدرها، وهذا يحمي أي رسالة جديدة تُنسى.
+ */
+function clipTg(t: string): string {
+  const MAX = 4000;
+  if (!t || t.length <= MAX) return t;
+  const cut = t.slice(0, MAX);
+  const nl = cut.lastIndexOf("\n");
+  return (nl > MAX * 0.6 ? cut.slice(0, nl) : cut) + "\n\n<i>… بقية القائمة في اللوحة.</i>";
+}
+
 export async function tgSend(chatId: string | number, text: string, buttons?: TgKeyboard) {
   const parts = splitTelegram(text);
   let last: any = null;
@@ -73,10 +88,12 @@ export async function tgEdit(
   text: string,
   buttons?: TgKeyboard
 ) {
+  /* editMessageText لا يقبل التقسيم كما يفعل الإرسال: النص فوق الحد يفشل
+     التعديل كليًّا فيبقى الزر بلا استجابة. نقصّه بدل أن يُرفض. */
   return call("editMessageText", {
     chat_id: chatId,
     message_id: messageId,
-    text,
+    text: clipTg(text),
     parse_mode: "HTML",
     disable_web_page_preview: true,
     ...(buttons ? { reply_markup: { inline_keyboard: buttons } } : {}),
