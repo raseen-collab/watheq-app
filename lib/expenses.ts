@@ -49,6 +49,10 @@ export function sumByCategory(rows: ExpenseRow[]): { category: string; label: st
 }
 
 export type OwnerNet = {
+  /** إجمالي المقبوض شاملًا الضريبة، والضريبة منه */
+  grossCollected?: number; vatCollected?: number;
+  /** الأتعاب قبل ضريبتها، وضريبتها إن كان المكتب مسجَّلًا */
+  feeBase?: number; feeVat?: number;
   collected: number;      // المحصَّل خلال الفترة
   expenses: number;       // مصروفات الفترة
   feePct: number | null;  // نسبة أتعاب الإدارة المطبَّقة (null = لا أتعاب)
@@ -60,11 +64,32 @@ export type OwnerNet = {
  * حساب الصافي. الأتعاب تُحتسب من المحصَّل فعليًّا (لا من المستحق) —
  * فالمكتب يأخذ نسبته مما دخل، وهذا هو العرف في عقود إدارة الأملاك.
  */
-export function ownerNet(collected: number, expenses: ExpenseRow[], feePct?: number | null): OwnerNet {
-  const c = r2(Number(collected) || 0);
+/**
+ * صافي المالك.
+ *
+ * تصحيح محاسبي مهم: ضريبة القيمة المضافة المحصَّلة مع إيجار الوحدات
+ * التجارية ليست إيرادًا للمالك — هي أمانة تُورَّد لهيئة الزكاة والضريبة.
+ * لذلك تُستبعد قبل حساب أتعاب الإدارة وقبل الصافي. وبدون هذا الاستبعاد
+ * يتقاضى المكتب أتعابًا على ضريبة ليست له، ويظهر للمالك دخل أكبر مما قبض.
+ *
+ * @param collected  إجمالي المقبوض (شامل الضريبة إن وُجدت)
+ * @param vatIncluded الضريبة داخل المبلغ أعلاه (0 للسكني)
+ * @param feeVatRate  نسبة ضريبة على أتعاب الإدارة نفسها إن كان المكتب
+ *                    مسجَّلًا ضريبيًّا (إدارة الأملاك خدمة خاضعة 15%)
+ */
+export function ownerNet(
+  collected: number, expenses: ExpenseRow[], feePct?: number | null,
+  vatIncluded = 0, feeVatRate = 0,
+): OwnerNet {
+  const gross = r2(Number(collected) || 0);
+  const vat = r2(Math.max(0, Number(vatIncluded) || 0));
+  const c = r2(gross - vat);                       // إيراد المالك الفعلي
   const e = sumExpenses(expenses);
   const pct = Number(feePct);
   const validPct = pct > 0 && pct <= 100 ? pct : null;
-  const fee = validPct ? r2((c * validPct) / 100) : 0;
-  return { collected: c, expenses: e, feePct: validPct, fee, net: r2(c - e - fee) };
+  const feeBase = validPct ? r2((c * validPct) / 100) : 0;
+  const feeVat = feeBase > 0 && feeVatRate > 0 ? r2((feeBase * feeVatRate) / 100) : 0;
+  const fee = r2(feeBase + feeVat);
+  return { collected: c, grossCollected: gross, vatCollected: vat, expenses: e,
+           feePct: validPct, fee, feeBase, feeVat, net: r2(c - e - fee) };
 }

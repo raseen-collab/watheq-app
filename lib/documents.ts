@@ -1539,7 +1539,17 @@ export function ownerReportHTML(
   const totalDue = rows.reduce((s, r) => s + (r.vacant ? 0 : r.st.amountDue), 0);
   const collected = payments.reduce((s, x) => s + (Number(x.amount) || 0), 0);
   const exp = extra.expenses || [];
-  const fin = ownerNet(collected, exp, extra.fee_pct);
+  /* الضريبة داخل المقبوض تُستبعد: أمانة للهيئة لا إيراد للمالك.
+     ونحسبها لكل دفعة بحسب وحدتها (العمارة المختلطة). */
+  const byUnit: Record<string, any> = {};
+  (p.tenants || []).forEach((t: any) => { if (t.unit) byUnit[String(t.unit)] = t; });
+  const vatCollected = payments.reduce((a, x: any) => {
+    const t = x.unit ? byUnit[String(x.unit)] : null;
+    return a + (t ? splitVat(Number(x.amount) || 0, vatOf(p, t)).vat : 0);
+  }, 0);
+  // أتعاب إدارة الأملاك خدمة خاضعة للضريبة إن كان المكتب مسجَّلًا ضريبيًّا
+  const feeVatRate = issuer.vat_number ? (Number(p.vat_rate) || 15) : 0;
+  const fin = ownerNet(collected, exp, extra.fee_pct, vatCollected, feeVatRate);
   const showFinance = exp.length > 0 || fin.feePct !== null;
   const expiring = rows.filter((r) => !r.vacant && r.st.daysToEnd !== null && r.st.daysToEnd >= 0 && r.st.daysToEnd <= 60).length;
 
@@ -1617,9 +1627,11 @@ ${exp.length ? `<div class="scrollx"><table>
   <tbody>
     ${(() => { const y = annualExpected(p.tenants as any[]); return y > 0
       ? `<tr><td>الدخل السنوي المتوقع للعقار <span style="font-size:.72rem;color:#5C6B67">(الوحدات المشغولة)</span></td><td style="text-align:left">${sar(y)}</td></tr>` : ""; })()}
-    <tr><td>المحصَّل خلال الفترة</td><td style="text-align:left"><b>${sar(fin.collected)}</b>${(() => { const y = annualExpected(p.tenants as any[]); return y > 0 ? ` <span style="font-size:.72rem;color:#5C6B67">(${Math.min(100, Math.round((fin.collected / y) * 100))}% من السنوي)</span>` : ""; })()}</td></tr>
+    ${(fin.vatCollected || 0) > 0 ? `<tr><td>إجمالي المقبوض خلال الفترة</td><td style="text-align:left">${sar(fin.grossCollected || 0)}</td></tr>
+    <tr><td>(−) ضريبة القيمة المضافة المحصَّلة <span style="font-size:.72rem;color:#5C6B67">(تُورَّد للهيئة — ليست إيرادًا للمالك)</span></td><td style="text-align:left">${sar(fin.vatCollected || 0)}</td></tr>` : ""}
+    <tr><td>${(fin.vatCollected || 0) > 0 ? "صافي إيراد المالك من الإيجار" : "المحصَّل خلال الفترة"}</td><td style="text-align:left"><b>${sar(fin.collected)}</b>${(() => { const y = annualExpected(p.tenants as any[]); return y > 0 ? ` <span style="font-size:.72rem;color:#5C6B67">(${Math.min(100, Math.round((fin.collected / y) * 100))}% من السنوي)</span>` : ""; })()}</td></tr>
     <tr><td>(−) مصروفات الفترة</td><td style="text-align:left">${sar(fin.expenses)}</td></tr>
-    ${fin.feePct !== null ? `<tr><td>(−) أتعاب الإدارة (${fin.feePct}% من المحصَّل)</td><td style="text-align:left">${sar(fin.fee)}</td></tr>` : ""}
+    ${fin.feePct !== null ? `<tr><td>(−) أتعاب الإدارة (${fin.feePct}% من صافي الإيجار)</td><td style="text-align:left">${sar(fin.feeBase ?? fin.fee)}</td></tr>${(fin.feeVat || 0) > 0 ? `<tr><td>(−) ضريبة على أتعاب الإدارة (${feeVatRate}%)</td><td style="text-align:left">${sar(fin.feeVat || 0)}</td></tr>` : ""}` : ""}
     <tr><td><b>صافي المالك عن ${period.label}</b></td><td style="text-align:left"><b style="font-size:1.1rem">${sar(fin.net)} ريال</b></td></tr>
   </tbody>
 </table>
@@ -1669,7 +1681,15 @@ export function ownerConsolidatedStatementHTML(
     const vacant = ten.filter((r) => r.vacant).length;
     const due = ten.reduce((a, r) => a + (r.vacant ? 0 : r.st.amountDue), 0);
     const collected = s.payments.reduce((a, x) => a + (Number(x.amount) || 0), 0);
-    const fin = ownerNet(collected, s.expenses, s.fee_pct);
+    /* الضريبة المحصَّلة تُستبعد قبل الأتعاب والصافي (أمانة للهيئة) */
+    const byUnit: Record<string, any> = {};
+    (s.property.tenants || []).forEach((t: any) => { if (t.unit) byUnit[String(t.unit)] = t; });
+    const vatCollected = s.payments.reduce((a: number, x: any) => {
+      const t = x.unit ? byUnit[String(x.unit)] : null;
+      return a + (t ? splitVat(Number(x.amount) || 0, vatOf(s.property, t)).vat : 0);
+    }, 0);
+    const feeVatRate = issuer.vat_number ? (Number(s.property.vat_rate) || 15) : 0;
+    const fin = ownerNet(collected, s.expenses, s.fee_pct, vatCollected, feeVatRate);
     return { s, units, vacant, due, collected, fin };
   });
 
