@@ -1610,6 +1610,8 @@ export function ownerReportHTML(
   issuer: Issuer = {},
   // المصروفات وأتعاب الإدارة اختيارية — بدونها يبقى التقرير كما كان (توافق خلفي)
   extra: { expenses?: ExpenseRow[]; fee_pct?: number | null } = {},
+  /** شامل: مواصفات كل وحدة وعقدها وتفصيل كل دفعة ومصروف · مختصر: الأرقام والجدول */
+  mode: "full" | "brief" = "full",
 ) {
   // تعقيم المدخلات (انظر scrub أعلاه)
   p = scrub(p);
@@ -1640,6 +1642,13 @@ export function ownerReportHTML(
   }, 0);
   // أتعاب إدارة الأملاك خدمة خاضعة للضريبة إن كان المكتب مسجَّلًا ضريبيًّا
   const feeVatRate = issuer.vat_number ? (Number(p.vat_rate) || 15) : 0;
+  /* المالك يجمع عمود «المتأخر» فيخرج رقمًا يخالف بطاقة «المتأخرات القائمة»:
+     البطاقة تستبعد الشاغرة والجدول يعرضها. صف الإجمالي يفصلهما صراحةً. */
+  const stRows = (p.tenants || []).map((t: any) => ({ t, cs: contractState(t, graceOf(p)) }));
+  const activeOwed = stRows.reduce((a, r) => a + (r.cs.vacant ? 0 : r.cs.amountDue), 0);
+  const legacyOwed = stRows.reduce((a, r) => a + (r.cs.vacant ? r.cs.legacyArrears : 0), 0);
+  const activeLate = stRows.filter((r) => !r.cs.vacant && r.cs.amountDue > 0).length;
+  const vacantOwing = stRows.filter((r) => r.cs.vacant && r.cs.legacyArrears > 0).length;
   const fin = ownerNet(collected, exp, extra.fee_pct, vatCollected, feeVatRate);
   const showFinance = exp.length > 0 || fin.feePct !== null;
   const expiring = rows.filter((r) => !r.vacant && r.st.daysToEnd !== null && r.st.daysToEnd >= 0 && r.st.daysToEnd <= 60).length;
@@ -1661,6 +1670,23 @@ ${totalDue > 0 || expiring > 0 ? `<div class="note">${[
     expiring ? `${expiring} ${expiring === 1 ? "عقد ينتهي" : "عقود تنتهي"} خلال 60 يومًا — قرار التجديد مطلوب` : "",
   ].filter(Boolean).join(" · ")}</div>` : ""}
 
+${mode === "full" ? `
+<h2>بيانات العقار</h2>
+<div class="grid">
+  <div class="box">
+    <div class="r"><span>النوع</span><span>${typeLabel(p.property_type)}</span></div>
+    ${p.usage ? `<div class="r"><span>الاستخدام</span><span>${USAGE_AR[String(p.usage)] || p.usage}</span></div>` : ""}
+    ${p.address ? `<div class="r"><span>العنوان</span><span>${p.address}</span></div>` : ""}
+    ${p.city ? `<div class="r"><span>المدينة</span><span>${p.city}</span></div>` : ""}
+  </div>
+  <div class="box">
+    <div class="r"><span>عدد الوحدات</span><span>${p.tenants.length}</span></div>
+    <div class="r"><span>الدخل السنوي المتوقع</span><span><b>${sar(annualExpected(p.tenants as any[]))}</b> ريال</span></div>
+    ${extra.fee_pct ? `<div class="r"><span>أتعاب الإدارة</span><span>${extra.fee_pct}%</span></div>` : ""}
+    ${Number(p.grace_days) > 0 ? `<div class="r"><span>فترة السماح</span><span>${p.grace_days} أيام</span></div>` : ""}
+  </div>
+</div>` : ""}
+
 <h2>حالة الوحدات في نهاية الفترة</h2>
 <div class="scrollx"><table>
   <thead><tr><th>${ul}</th><th>المستأجر</th><th>الدفعة</th><th>الدورة</th><th>نهاية العقد</th><th>المتأخر</th><th>الحالة</th></tr></thead>
@@ -1679,6 +1705,11 @@ ${totalDue > 0 || expiring > 0 ? `<div class="note">${[
           : '<span class="pill p">منتظم</span>'}</td>
     </tr>`).join("")}
   </tbody>
+  <tfoot><tr>
+    <td colspan="${5}"><b>الإجمالي</b> <span style="font-size:.72rem;color:#5C6B67">(${activeLate} وحدة متأخرة${vacantOwing ? ` · ${vacantOwing} شاغرة عليها دين سابق` : ""})</span></td>
+    <td><b>${sar(activeOwed)}</b>${legacyOwed > 0 ? `<div style="font-size:.65rem;color:#5C6B67">+ ${sar(legacyOwed)} على مستأجرين سابقين</div>` : ""}</td>
+    <td></td>
+  </tr></tfoot>
 </table></div>
 
 <h2>الدفعات المستلمة خلال الفترة (${payments.length})</h2>
@@ -1727,6 +1758,17 @@ ${exp.length ? `<div class="scrollx"><table>
   </tbody>
 </table>
 ` : ""}
+${mode === "full" && exp.length ? `
+<h1 style="font-size:1rem">تفصيل مصروفات الفترة</h1>
+<div class="scrollx"><table>
+  <thead><tr><th>التاريخ</th><th>${unitLabel(p.property_type)}</th><th>التصنيف</th><th>المبلغ</th><th>ملاحظة</th></tr></thead>
+  <tbody>
+    ${exp.slice().sort((a, b) => String(a.spent_on).localeCompare(String(b.spent_on)))
+      .map((e) => `<tr><td>${arDate(e.spent_on)}</td><td>${(e as any).unit || "—"}</td><td>${catLabel(e.category)}</td><td>${sar(e.amount)}</td><td>${(e as any).note || "—"}</td></tr>`).join("")}
+    <tr><td colspan="3"><b>الإجمالي</b></td><td colspan="2"><b>${sar(exp.reduce((a, e) => a + (Number(e.amount) || 0), 0))}</b></td></tr>
+  </tbody>
+</table></div>` : ""}
+
 <div class="note">تقرير استرشادي صادر آليًّا من سجل الدفعات والمصروفات وبيانات العقود المسجّلة في وثيق بتاريخ ${today()}. الأرقام تعكس ما وثّقه المكتب في النظام.</div>
 <div class="sign"><div>إدارة الأملاك: ${who}<br><br>التوقيع: ________________</div><div>المالك: ____________________<br><br>تاريخ الإصدار: ${today()}</div></div>
 ${footer()}`;
