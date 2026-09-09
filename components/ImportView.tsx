@@ -14,7 +14,7 @@ type Row = {
   contract_start: string; payment_frequency: Frequency; contract_periods: number | null;
   paid_periods: number;
   elec_account?: string; water_account?: string; contract_no?: string; calendar?: string;
-  unit_type?: string; rooms?: number; baths?: number; acs?: number; first_due?: string; vat_mode?: string;
+  unit_type?: string; rooms?: number; baths?: number; acs?: number; first_due?: string; vat_mode?: string; carried_debt?: number;
   prop_name?: string;
   prop_id?: string;
   _error?: string;
@@ -23,7 +23,7 @@ type Row = {
 // العمود التاسع «الدفعات المسدّدة» اختياري: بدونه يُعدّ العقد لم يُسدَّد منه شيء —
 // وهذا كارثة لمكتب ينقل عقودًا قائمة (عقد من يناير يُرفع في سبتمبر = 8 «متأخرات» وهمية).
 // القوالب القديمة بثمانية أعمدة تبقى تعمل: الغائب = 0.
-const HEADERS = ["اسم المستأجر", "رقم الوحدة", "قيمة الدفعة", "دورة السداد", "بداية العقد", "عدد الدفعات", "الجوال", "رقم الهوية", "الدفعات المسدّدة", "العقار", "حساب الكهرباء", "حساب الماء", "رقم العقد", "نوع الوحدة", "الغرف", "دورات المياه", "المكيفات", "أول استحقاق", "الضريبة"];
+const HEADERS = ["اسم المستأجر", "رقم الوحدة", "قيمة الدفعة", "دورة السداد", "بداية العقد", "عدد الدفعات", "الجوال", "رقم الهوية", "الدفعات المسدّدة", "العقار", "حساب الكهرباء", "حساب الماء", "رقم العقد", "نوع الوحدة", "الغرف", "دورات المياه", "المكيفات", "أول استحقاق", "الضريبة", "التقويم", "مدة العقد (أشهر)", "دين مرحَّل"];
 // عمود عاشر اختياري «العقار»: ملف واحد لكل المحفظة بدل ملف لكل عقار — مكتب بـ40
 // عقارًا لا يرفع 40 مرة. الاسم يجب أن يطابق عقارًا موجودًا؛ الصف الفارغ يذهب للعقار المختار.
 
@@ -206,7 +206,7 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
     const start = grid[0].some((c) => String(c).includes("اسم") || String(c).toLowerCase().includes("name")) ? 1 : 0;
 
     const parsed: Row[] = grid.slice(start).map((r) => {
-      const [name, unit, rent, freq, startDate, periods, phone, nid, paid, propName, elecAcc, waterAcc, contractNo, unitTypeTxt, roomsTxt, bathsTxt, acsTxt, firstDueTxt, vatTxt] = r.map((x) => String(x ?? "").trim());
+      const [name, unit, rent, freq, startDate, periods, phone, nid, paid, propName, elecAcc, waterAcc, contractNo, unitTypeTxt, roomsTxt, bathsTxt, acsTxt, firstDueTxt, vatTxt, calTxt, monthsTxt, carriedTxt] = r.map((x) => String(x ?? "").trim());
       const rentN = Number(toEnDigits(rent).replace(/[^\d.]/g, "")) || 0;
       const fk = arKey(freq);
       const frequency: Frequency = FREQ_LOOKUP[fk] || "monthly";
@@ -216,8 +216,18 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
       const hijriStart = parseHijriInput(startDate);
       const cs = hijriStart || normalizeDate(startDate);
       // كُتب التاريخ بالهجري؟ إذن العقد هجري وأقساطه تُحسب بالأشهر الهجرية
-      const calendar = hijriStart ? "hijri" : "gregorian";
-      const pr = Number(toEnDigits(periods)) || null;
+      /* التقويم: العمود الصريح يتقدّم على الاكتشاف — مكتب قد يكتب تواريخه
+         ميلادية بينما عقوده هجرية، فيحدّده هنا ولا نخمّن نيابةً عنه. */
+      const calTxtN = arKey(calTxt || "");
+      const calendar = /هجري|hijri/i.test(calTxtN) ? "hijri"
+        : /ميلادي|gregorian/i.test(calTxtN) ? "gregorian"
+        : hijriStart ? "hijri" : "gregorian";
+      /* «مدة العقد بالأشهر» بديل مريح عن «عدد الدفعات»: عقد سنتين نصف سنوي
+         = 4 دفعات، وحسابها بيد المكتب مصدر خطأ. العمود الصريح يتقدّم. */
+      const PER_YEAR: Record<string, number> = { daily: 365, weekly: 52, monthly: 12, quarterly: 4, semiannual: 2, annual: 1 };
+      const monthsN = Number(toEnDigits(String(monthsTxt || "").replace(/[^\d.]/g, ""))) || 0;
+      const prFromMonths = monthsN > 0 ? Math.max(1, Math.round(monthsN * (PER_YEAR[frequency] || 12) / 12)) : null;
+      const pr = Number(toEnDigits(periods)) || prFromMonths;
       const pd = Math.max(0, Math.floor(Number(toEnDigits(paid)) || 0));
       let err = "";
       if (!name) err = "الاسم مفقود";
@@ -242,6 +252,7 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
         acs: acsTxt ? Number(toEnDigits(acsTxt)) || 0 : undefined,
         first_due: firstDueTxt ? (parseHijriInput(firstDueTxt) || normalizeDate(firstDueTxt) || undefined) : undefined,
         vat_mode: /معف|بدون|off/i.test(vatTxt || "") ? "off" : /تطبق|تُطبَّق|نعم|on/i.test(vatTxt || "") ? "on" : undefined,
+        carried_debt: carriedTxt ? Math.max(0, Number(toEnDigits(String(carriedTxt).replace(/[^\d.]/g, ""))) || 0) : undefined,
         prop_name: propName || undefined, prop_id: target?.id,
         _error: err || undefined,
       };
