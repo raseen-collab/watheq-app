@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { tgSend } from "@/lib/telegram";
+import { subsDigest, type SubAccount } from "@/lib/subs-ops";
 
 export const dynamic = "force-dynamic";
 
@@ -90,6 +91,24 @@ async function handle(req: Request) {
   L.push(`• العقارات: <b>${(props.data || []).length}</b> · الوحدات: <b>${tenants.count || 0}</b>`);
   L.push(`• الجمعيات: <b>${(assoc.data || []).length}</b> · الملّاك: <b>${owners.count || 0}</b>`);
   L.push(`• الدفعات المسجّلة: <b>${pays.count || 0}</b>`);
+
+  /* تنبيه الاشتراكات: من انتهى أو يقترب — بلا هذا يعتمد التجديد على أن
+     أتذكّر أنا، والمكتب لا يجدّد ما لم يُذكَّر في وقته. */
+  try {
+    const { data: profs2 } = await db.from("profiles")
+      .select("id,org_name,full_name,billing_phone,plan,trial_ends_at,subscribed_until").limit(1000);
+    const byUser: Record<string, string[]> = {};
+    (props.data || []).forEach((x: any) => { (byUser[x.user_id] ||= []).push(x.id); });
+    const { data: tenRows } = await db.from("tenants").select("id,property_id").limit(20000);
+    const perProp: Record<string, number> = {};
+    (tenRows || []).forEach((t: any) => { perProp[t.property_id] = (perProp[t.property_id] || 0) + 1; });
+    const accounts: SubAccount[] = (profs2 || []).map((p: any) => {
+      const ids = byUser[p.id] || [];
+      return { ...p, properties: ids.length, units: ids.reduce((a: number, id: string) => a + (perProp[id] || 0), 0) };
+    });
+    const sd = subsDigest(accounts);
+    if (sd) { L.push("", sd); }
+  } catch { /* ثانوي — لا يعطّل النبض */ }
 
   const res = await tgSend(chatId, L.join("\n"));
   return NextResponse.json({ ok: !!res.ok, sent: res.ok, newSignups: fresh.length });
