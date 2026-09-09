@@ -698,6 +698,24 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
     return <div className="text-center text-muted py-16 text-sm">جارٍ تحميل لوحتك…</div>;
   }
 
+  /* كل الخطافات قبل أي خروج مبكر — وإلا اختلف عددها بين الرسمات وانهار React */
+  /* يمرّ على وحدات كل العقارات: بلا تذكير يُعاد الحساب مع كل ضغطة في
+     البحث — عند 500 وحدة يظهر ذلك بطئًا محسوسًا في الكتابة. */
+  const portfolio = useMemo(() => items.reduce((acc, prop) => {
+    (Array.isArray(prop.tenants) ? prop.tenants : []).forEach((t) => {
+      const st = contractState(t, { graceDays: Number(prop.grace_days) || 0, ...windowsOf(prop) });
+      acc.units++;
+      if (st.status === "late") { acc.late++; acc.overdue += st.amountDue; }
+      if (st.status === "soon") { if (st.soonTier === "near") acc.soon++; else acc.due++; }
+      if (st.expiringSoon) acc.expiring++;
+      if (isVacant(t)) acc.vacant++;
+      acc.monthly += (Number(t.rent_amount) || 0) * PERIODS_PER_MONTH[(t.payment_frequency || "monthly") as Frequency];
+    });
+    return acc;
+  }, { units: 0, late: 0, soon: 0, due: 0, overdue: 0, expiring: 0, monthly: 0, vacant: 0 }),
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  [items, officeSoon, officeImminent, officeExpiring]);
+
   if (!items.length) {
     return (
       <div className="max-w-lg mx-auto bg-white border border-line rounded-2xl shadow-sm p-8 mt-8 text-center">
@@ -780,22 +798,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
   const editing = modal?.kind === "tenant" && modal.id ? tenants.find((t) => t.id === modal.id) : undefined;
 
   // ملخّص المحفظة كاملة (كل العقارات)
-  /* يمرّ على وحدات كل العقارات: بلا تذكير يُعاد الحساب مع كل ضغطة في
-     البحث — عند 500 وحدة يظهر ذلك بطئًا محسوسًا في الكتابة. */
-  const portfolio = useMemo(() => items.reduce((acc, prop) => {
-    (Array.isArray(prop.tenants) ? prop.tenants : []).forEach((t) => {
-      const st = contractState(t, { graceDays: Number(prop.grace_days) || 0, ...windowsOf(prop) });
-      acc.units++;
-      if (st.status === "late") { acc.late++; acc.overdue += st.amountDue; }
-      if (st.status === "soon") { if (st.soonTier === "near") acc.soon++; else acc.due++; }
-      if (st.expiringSoon) acc.expiring++;
-      if (isVacant(t)) acc.vacant++;
-      acc.monthly += (Number(t.rent_amount) || 0) * PERIODS_PER_MONTH[(t.payment_frequency || "monthly") as Frequency];
-    });
-    return acc;
-  }, { units: 0, late: 0, soon: 0, due: 0, overdue: 0, expiring: 0, monthly: 0, vacant: 0 }),
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  [items, officeSoon, officeImminent, officeExpiring]);
+
   const occupancyPct = portfolio.units
     ? Math.round(((portfolio.units - portfolio.vacant) / portfolio.units) * 100) : 100;
 
