@@ -48,6 +48,23 @@ export async function GET(_req: Request, { params }: { params: { token: string }
   // الرابط المجمّع يقبل ?from=YYYY-MM&to=YYYY-MM ليرى المالك أي فترة يشاء.
   const now = new Date();
   const p2 = (n: number) => String(n).padStart(2, "0");
+
+  /**
+   * منتقي فترة للمالك داخل الصفحة.
+   *
+   * الرابط يقبل ?from&to منذ البداية، لكن لا أحد يعدّل رابطًا بيده — فكان
+   * المالك يرى الشهر الحالي فقط ويتصل بالمكتب لطلب تقرير الربع أو السنة.
+   * شريط صغير لا يظهر عند الطباعة.
+   */
+  const periodPicker = (fromYm: string, toYm: string) => `
+<div class="noprint" style="max-width:900px;margin:10px auto 0;padding:10px 14px;background:#F6F2E8;border:1px solid #E3DCCB;border-radius:12px;font-family:system-ui,-apple-system,'Segoe UI',sans-serif;direction:rtl">
+  <form method="get" style="display:flex;gap:10px;align-items:end;flex-wrap:wrap">
+    <label style="font-size:12px;color:#5C6B67">من شهر<br><input type="month" name="from" value="${fromYm}" style="padding:6px 8px;border:1px solid #E3DCCB;border-radius:8px;font-size:13px"></label>
+    <label style="font-size:12px;color:#5C6B67">إلى شهر<br><input type="month" name="to" value="${toYm}" style="padding:6px 8px;border:1px solid #E3DCCB;border-radius:8px;font-size:13px"></label>
+    <button type="submit" style="padding:7px 16px;background:#14594A;color:#F6F1E4;border:0;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer">عرض الفترة</button>
+    <span style="font-size:11px;color:#8A8477">الأرقام محدَّثة لحظة الفتح</span>
+  </form>
+</div>`;
   const ymNow = `${now.getFullYear()}-${p2(now.getMonth() + 1)}`;
 
   // ---------- الرابط المجمّع: كل عقارات المالك (schema-v13) ----------
@@ -100,7 +117,8 @@ export async function GET(_req: Request, { params }: { params: { token: string }
     const marks = issuerMarks(profile || {});
     const html = ownerConsolidatedStatementHTML(link.owner_name, sections, { label, from, to },
       { ...(profile || {}), trial: marks.trial, expired: marks.expired });
-    return new Response(html, { headers: {
+    const withPicker = html.replace("<body>", `<body>${periodPicker(fromYm, toYm)}`);
+  return new Response(withPicker, { headers: {
       "content-type": "text/html; charset=utf-8", "x-robots-tag": "noindex, nofollow", "cache-control": "no-store",
     } });
   }
@@ -109,10 +127,20 @@ export async function GET(_req: Request, { params }: { params: { token: string }
     .select("*, tenants(*)").limit(2000, { referencedTable: "tenants" }).eq("id", link.property_id).maybeSingle();
   if (!property) return deny("العقار لم يعد موجودًا");
 
-  const ym = ymNow;
-  const from = `${ym}-01`;
-  const to = `${ym}-${p2(now.getDate())}`;
-  const label = `${AR_MONTHS[now.getMonth()]} ${now.getFullYear()} (حتى اليوم)`;
+  /* الفترة يختارها المالك كما في الرابط المجمّع: ?from=2026-01&to=2026-06
+     كان رابط العقار الواحد مثبّتًا على الشهر الحالي، فيضطر المالك لطلب
+     تقرير الربع أو السنة من المكتب هاتفيًّا. */
+  const q = new URL(_req.url).searchParams;
+  const ymOk = (v: string | null) => (v && /^\d{4}-(0[1-9]|1[0-2])$/.test(v) ? v : null);
+  const fromYm = ymOk(q.get("from")) || ymNow;
+  const toYm = ymOk(q.get("to")) || ymNow;
+  if (fromYm > toYm) return deny("الفترة غير صحيحة");
+  const from = `${fromYm}-01`;
+  const [ty2, tm2] = [Number(toYm.slice(0, 4)), Number(toYm.slice(5, 7))];
+  const to = toYm === ymNow ? `${ymNow}-${p2(now.getDate())}` : `${toYm}-${p2(new Date(ty2, tm2, 0).getDate())}`;
+  const label = fromYm === toYm
+    ? `${AR_MONTHS[Number(fromYm.slice(5, 7)) - 1]} ${fromYm.slice(0, 4)}${toYm === ymNow ? " (حتى اليوم)" : ""}`
+    : `${AR_MONTHS[Number(fromYm.slice(5, 7)) - 1]} ${fromYm.slice(0, 4)} — ${AR_MONTHS[Number(toYm.slice(5, 7)) - 1]} ${toYm.slice(0, 4)}`;
 
   const [{ data: pays }, { data: exps }, { data: profile }] = await Promise.all([
     db.from("payments").select("id,paid_on,amount,method,periods_covered,note,tenant_id")
@@ -137,9 +165,11 @@ export async function GET(_req: Request, { params }: { params: { token: string }
     payments,
     { ...(profile || {}), trial, expired },
     { expenses: (exps || []) as any, fee_pct: (property as any).mgmt_fee_pct },
+    "full",   // المالك يفتح رابطه ليرى كل شيء — لا ملخصًا
   );
 
-  return new Response(html, {
+  const withPicker = html.replace("<body>", `<body>${periodPicker(fromYm, toYm)}`);
+  return new Response(withPicker, {
     headers: {
       "content-type": "text/html; charset=utf-8",
       // صفحة سرّية بالرمز: لا فهرسة ولا تخزين وسيط
