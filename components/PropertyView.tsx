@@ -694,10 +694,6 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
     setDoc({ title: `إشعار سداد — ${t.name}`, body });
   }
 
-  if (!hydrated) {
-    return <div className="text-center text-muted py-16 text-sm">جارٍ تحميل لوحتك…</div>;
-  }
-
   /* كل الخطافات قبل أي خروج مبكر — وإلا اختلف عددها بين الرسمات وانهار React */
   /* يمرّ على وحدات كل العقارات: بلا تذكير يُعاد الحساب مع كل ضغطة في
      البحث — عند 500 وحدة يظهر ذلك بطئًا محسوسًا في الكتابة. */
@@ -715,6 +711,12 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
   }, { units: 0, late: 0, soon: 0, due: 0, overdue: 0, expiring: 0, monthly: 0, vacant: 0 }),
   // eslint-disable-next-line react-hooks/exhaustive-deps
   [items, officeSoon, officeImminent, officeExpiring]);
+
+  if (!hydrated) {
+    return <div className="text-center text-muted py-16 text-sm">جارٍ تحميل لوحتك…</div>;
+  }
+
+
 
   if (!items.length) {
     return (
