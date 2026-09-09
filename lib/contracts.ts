@@ -3,6 +3,9 @@
 // (v7) يدعم السداد الجزئي: partial_amount = مبلغ مدفوع على الدفعة الحالية
 // ============================================================
 
+/** تقريب لمنزلتين — قاعدة العرض والحساب في كل المبالغ */
+const r2 = (n: number) => Math.round(n * 100) / 100;
+
 export type Frequency = "daily" | "weekly" | "monthly" | "quarterly" | "semiannual" | "annual";
 
 export const FREQUENCIES: { value: Frequency; label: string; short: string }[] = [
@@ -220,6 +223,10 @@ export type ContractState = {
   vacant: boolean;
   /** متأخرات بقيت على مستأجر أخلى الوحدة — تُتابَع كدين لا كتذكير إيجار */
   legacyArrears: number;
+  /** دين مرحَّل من عقد سابق أو مستأجر سابق — خارج دفعات العقد الجاري */
+  carriedDebt: number;
+  /** كل ما على الوحدة: مستحق العقد الجاري + الدين المرحَّل */
+  totalOwed: number;
   /** سدّد كل دفعات العقد — لا استحقاق قادم قبل انتهائه، والقادم يكون مع التجديد */
   fullyPaid: boolean;
   inGrace: boolean;        // مرّ الاستحقاق لكن ضمن فترة السماح — لا يُعدّ متأخرًا
@@ -245,7 +252,7 @@ export function contractState(t: {
   billing_anchor_day?: number | null;
   status?: string | null;
   move_out_date?: string | null;
-  calendar?: string | null; first_due?: string | null;
+  calendar?: string | null; first_due?: string | null; carried_debt?: number | null;
 }, opts: { graceDays?: number | null; soonDays?: number | null; imminentDays?: number | null; expiringDays?: number | null } = {}): ContractState {
   const anchor = anchorOf(t);
   // الوحدة المُخلاة تتوقّف عن تراكم المتأخرات من تاريخ الإخلاء — لا تبقى "متأخرة" للأبد
@@ -265,7 +272,7 @@ export function contractState(t: {
 
   if (!t.contract_start) {
     return {
-      due: 0, paid, unpaid: 0, amountDue: 0, grossDue: 0, partial, hasPartial: partial > 0, fullyPaid: false, soonTier: null, expiringSoon: false, vacant: isVacant(t), legacyArrears: 0,
+      due: 0, paid, unpaid: 0, amountDue: 0, grossDue: 0, partial, hasPartial: partial > 0, fullyPaid: false, soonTier: null, expiringSoon: false, vacant: isVacant(t), legacyArrears: 0, carriedDebt: Math.max(0, Number(t.carried_debt) || 0), totalOwed: Math.max(0, Number(t.carried_debt) || 0),
       partialPct: rent ? Math.round((partial / rent) * 100) : 0,
       nextDueDate: null, daysToNextDue: null,
       endDate: t.contract_end || null,
@@ -355,6 +362,7 @@ export function contractState(t: {
    */
   const vacant = isVacant(t);
   const legacyArrears = vacant ? amountDue : 0;
+  const carriedDebt = Math.max(0, Number(t.carried_debt) || 0);
   let nextDueOut: string | null = nextDueDate;
   let daysToNextOut: number | null = daysToNextDue;
   let daysToEndOut: number | null = daysToEnd;
@@ -369,6 +377,7 @@ export function contractState(t: {
 
   return {
     due, paid, unpaid, amountDue, grossDue, partial, hasPartial, partialPct, fullyPaid, soonTier, expiringSoon, vacant, legacyArrears,
+    carriedDebt, totalOwed: r2(amountDue + carriedDebt),
     nextDueDate: nextDueOut, daysToNextDue: daysToNextOut, endDate, daysToEnd: daysToEndOut, status, statusLabel, progress,
     inGrace, graceDaysLeft,
   };
@@ -428,7 +437,10 @@ export function renewContract(t: {
   contract_periods?: number | null;
   rent_amount?: number | null;
   billing_anchor_day?: number | null;
-}, opts: { periods?: number | null; newAmount?: number | null; newFrequency?: Frequency | null } = {}) {
+  carried_debt?: number | null;
+}, opts: { periods?: number | null; newAmount?: number | null; newFrequency?: Frequency | null;
+           /** ما يُفعل بمتأخرات العقد المنتهي: ترحيلها دينًا (الافتراضي) أو اعتبارها مسدَّدة */
+           arrears?: "carry" | "settled" } = {}) {
   const anchor = anchorOf(t);
   const oldFreq = (t.payment_frequency || "monthly") as Frequency;
   const freq = (opts.newFrequency || oldFreq) as Frequency;
@@ -445,6 +457,10 @@ export function renewContract(t: {
     rent_amount: amount,
     paid_periods: 0,   // مدة جديدة تبدأ بصفر دفعات مسدّدة
     partial_amount: 0, // ولا سداد جزئي معلّق
+    /* متأخرات المدة المنتهية لا تُمحى بالتجديد: تُرحَّل دينًا ظاهرًا، إلا أن
+       يؤكّد المكتب صراحةً أنها سُدّدت. كان تصفيرها يُسقط المبلغ بلا أثر. */
+    carried_debt: opts.arrears === "settled" ? Math.max(0, Number(t.carried_debt) || 0)
+      : Math.round((Math.max(0, Number(t.carried_debt) || 0) + st.amountDue) * 100) / 100,
     billing_anchor_day: anchor, // ← تثبيت يوم السداد عبر كل التجديدات
   };
 }
@@ -512,7 +528,6 @@ export function splitVat(amount: number, v?: VatSettings | null): VatSplit {
     return { base: gross, vat: 0, total: gross, rate: 0, enabled: false };
   }
   const inclusive = v?.inclusive !== false; // الافتراضي: شامل
-  const r2 = (n: number) => Math.round(n * 100) / 100;
   if (inclusive) {
     const base = r2(gross / (1 + rate / 100));
     return { base, vat: r2(gross - base), total: r2(gross), rate, enabled: true };

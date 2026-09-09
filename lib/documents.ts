@@ -66,7 +66,7 @@ type Tenant = {
   rent_amount: number; contract_start: string | null; contract_end: string | null;
   payment_frequency: string | null; paid_periods: number | null; contract_periods: number | null;
   partial_amount?: number | null; contract_no?: string | null;
-  unit_type?: string | null; vat_mode?: string | null; rooms?: number | null; baths?: number | null; acs?: number | null; first_due?: string | null;
+  unit_type?: string | null; vat_mode?: string | null; carried_debt?: number | null; rooms?: number | null; baths?: number | null; acs?: number | null; first_due?: string | null;
 };
 type Property = {
   usage?: string | null;
@@ -745,7 +745,7 @@ ${totalDue > 0 ? `<div class="due"><span class="l">إجمالي المستحق �
       <td>${vc ? "—" : freqLabel(t.payment_frequency)}</td>
       ${mode === "full" ? `<td>${vc ? "—" : arDateH(t.contract_start)}</td><td>${vc ? "—" : arDateH(st.endDate)}</td>` : ""}
       <td>${vc ? "—" : arDate(st.nextDueDate)}</td>
-      <td>${st.amountDue ? `${sar(st.amountDue)}${vc ? '<div style="font-size:.65rem;color:#5C6B67">على المستأجر السابق</div>' : ""}` : "—"}</td>
+      <td>${st.totalOwed ? `${sar(st.amountDue)}${st.carriedDebt > 0 ? `<div style="font-size:.62rem;color:#9A4B00">+ ${sar(st.carriedDebt)} دين مرحَّل</div>` : ""}${vc ? '<div style="font-size:.65rem;color:#5C6B67">على المستأجر السابق</div>' : ""}` : "—"}</td>
       <td>${vc ? '<span class="pill">شاغرة</span>'
           : st.inGrace ? '<span class="pill u">فترة سماح</span>'
           : st.hasPartial && st.status === "late" ? '<span class="pill u">سداد جزئي</span>'
@@ -1671,7 +1671,7 @@ ${totalDue > 0 || expiring > 0 ? `<div class="note">${[
       <td>${vc ? "—" : sar(splitVat(Number(t.rent_amount) || 0, vatOf(p, t)).total)}</td>
       <td>${vc ? "—" : freqLabel(t.payment_frequency)}</td>
       <td>${vc ? "—" : arDate(st.endDate)}</td>
-      <td>${st.amountDue ? `${sar(st.amountDue)}${vc ? '<div style="font-size:.65rem;color:#5C6B67">على المستأجر السابق</div>' : ""}` : "—"}</td>
+      <td>${st.totalOwed ? `${sar(st.amountDue)}${st.carriedDebt > 0 ? `<div style="font-size:.62rem;color:#9A4B00">+ ${sar(st.carriedDebt)} دين مرحَّل</div>` : ""}${vc ? '<div style="font-size:.65rem;color:#5C6B67">على المستأجر السابق</div>' : ""}` : "—"}</td>
       <td>${vc ? '<span class="pill u">شاغرة</span>'
           : st.status === "late" ? '<span class="pill l">متأخر</span>'
           : st.inGrace ? '<span class="pill u">فترة سماح</span>'
