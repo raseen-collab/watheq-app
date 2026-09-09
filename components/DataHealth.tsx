@@ -9,7 +9,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase-client";
-import { auditOffice, SEV_META, type Finding, type Severity } from "@/lib/integrity";
+import { auditOffice, groupFindings, SEV_META, type Finding, type Group, type Severity } from "@/lib/integrity";
 
 export default function DataHealth({ initial }: { initial: any[] }) {
   const supabase = useMemo(() => createClient(), []);
@@ -42,6 +42,8 @@ export default function DataHealth({ initial }: { initial: any[] }) {
     info: findings.filter((f) => f.severity === "info").length,
   }), [findings]);
   const shown = sev === "all" ? findings : findings.filter((f) => f.severity === sev);
+  /* مكتب كبير ينتج مئات الملاحظات من نوع واحد — نجمعها في سطر يُفتح. */
+  const groups = useMemo(() => groupFindings(shown), [shown]);
 
   const units = props.reduce((a, p) => a + (p.tenants?.length || 0), 0);
 
@@ -87,11 +89,49 @@ export default function DataHealth({ initial }: { initial: any[] }) {
           )}
 
           <div className="space-y-2">
-            {shown.map((f, i) => <Card key={f.id + i} f={f} />)}
+            {groups.map((g) => <GroupCard key={g.key} g={g} />)}
           </div>
         </>
       )}
     </main>
+  );
+}
+
+/** ملاحظة متكررة: سطر واحد بعددها، وتفاصيلها عند الطلب */
+function GroupCard({ g }: { g: Group }) {
+  const m = SEV_META[g.severity];
+  const [open, setOpen] = useState(false);
+  if (g.items.length === 1) return <Card f={g.items[0]} />;
+  return (
+    <div className={`bg-white border rounded-xl p-3.5 ${g.severity === "critical" ? "border-[#F5C6C2]" : "border-line"}`}>
+      <button type="button" className="w-full text-right" onClick={() => setOpen((v) => !v)}>
+        <div className="flex items-center justify-between gap-3">
+          <div className="font-semibold text-deep text-sm">
+            {m.icon} {g.title.replace(/#/g, "…")}
+            <span className="ms-2 text-xs font-normal text-muted">{g.items.length} وحدة</span>
+          </div>
+          <span className="text-xs text-muted shrink-0">{open ? "إخفاء ▲" : "عرض ▼"}</span>
+        </div>
+      </button>
+      <p className="text-sm text-ink leading-relaxed mt-1">{g.why}</p>
+      <p className="text-xs text-muted"><b className="text-deep">ما تفعله:</b> {g.fix}</p>
+      {open && (
+        <div className="mt-2 border-t border-line pt-2 space-y-1 max-h-64 overflow-auto">
+          {g.items.slice(0, 200).map((f, i) => (
+            <div key={f.id + i} className="flex items-center justify-between gap-2 text-[11px]">
+              <span className="text-muted truncate">
+                {f.propertyName}{f.unit ? ` · وحدة ${f.unit}` : ""}{f.tenantName ? ` · ${f.tenantName}` : ""}
+              </span>
+              {f.propertyId && (
+                <Link href={`/dashboard/property?p=${f.propertyId}${f.unit ? `&q=${encodeURIComponent(f.unit)}` : ""}`}
+                  className="btn btn-ghost text-[10px] px-2 py-0.5 shrink-0">افتح</Link>
+              )}
+            </div>
+          ))}
+          {g.items.length > 200 && <div className="text-[11px] text-muted">…و{g.items.length - 200} أخرى</div>}
+        </div>
+      )}
+    </div>
   );
 }
 
