@@ -982,25 +982,14 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
               <option key={x.id} value={x.id}>{typeIcon(x.property_type)} {x.name} · {x.tenants.length}</option>);
           })()}
         </select>
-        <button type="button" className="btn btn-ghost text-sm" onClick={refreshNow} disabled={refreshing}
-          title="تحديث البيانات من السيرفر (بعد تسجيل دفعة من البوت مثلًا)">
-          {refreshing ? "…" : "↻ تحديث"}
-        </button>
-        {may("manage_compliance") && <button type="button" className="btn btn-ghost text-sm" onClick={() => setCompOpen(true)}
-          title="عقود الوساطة ومددها، تراخيص الإعلانات، ورخصة فال — بتنبيهات قبل فوات وقتها">
-          ⚖️ الالتزامات{alertCount(comp) > 0 && (
-            <span className="mr-1.5 inline-grid place-items-center min-w-[20px] h-5 px-1 rounded-full bg-[#FBE9E7] text-[#a5322c] text-[.68rem] font-bold">{alertCount(comp)}</span>
-          )}
-        </button>}
-        {may("view_financials") && (<>
-        <button type="button" className="btn btn-ghost text-sm" onClick={() => setOwnerStmtOpen(true)}
-          title="كل عقارات المالك في كشف واحد لفترة تحددها">📑 كشف مالك</button>
-        </>)}
-        <button type="button" className="btn btn-ghost text-sm" onClick={() => setLogOpen(true)}
-          title="كل دفعة وتراجع: من سجّلها ولمن وبأي ساعة">🕘 سجل العمليات</button>
-        {isManager && <button type="button" className="btn btn-ghost text-sm" onClick={() => setModal({ kind: "editProp" })}>الإعدادات</button>}
+{/* شريط العقار صار للتنقّل وحده. كل الأدوات انتقلت إلى شريط الوحدات
+            مجمَّعةً في ثلاث قوائم — كان الشريطان يعرضان 15 زرًّا معًا،
+            ومستندات المالك موزّعة بينهما بلا منطق. */}
+        <button type="button" className="btn btn-ghost text-sm px-3" onClick={refreshNow} disabled={refreshing}
+          title="تحديث البيانات من السيرفر (بعد تسجيل دفعة من البوت مثلًا)">{refreshing ? "…" : "↻"}</button>
+        {isManager && <button type="button" className="btn btn-ghost text-sm px-3" onClick={() => setModal({ kind: "editProp" })} title="إعدادات هذا العقار">⚙️</button>}
         {items.length > 1 && <Link href="/dashboard/property/overview" className="btn btn-ghost text-sm" title="كل العقارات في صفحة واحدة">🗂️ نظرة عامة</Link>}
-        {isManager && <button className="btn btn-gold text-sm" onClick={() => setModal({ kind: "newProp" })}>+ عقار</button>}
+        {isManager && <button className="btn btn-ghost text-sm" onClick={() => setModal({ kind: "newProp" })}>+ عقار</button>}
       </div>
 
       {expiringSoon && (
@@ -1014,9 +1003,9 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       {/* إحصاءات — قابلة للنقر للتصفية */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
         <Stat v={collectedThisMonth === null ? "…" : sar(Math.round(collectedThisMonth))} l={`المحصَّل فعليًّا هذا الشهر · المتوقع ${sar(Math.round(monthlyIncome))}`} kpi="income" icon="↑" />
-        <Stat v={sar(overdue)} l={`المتأخر (${lateCount === 0 ? "لا وحدات" : plural(lateCount, "وحدة واحدة", "وحدتان", "وحدات", "وحدة")})`} kpi="overdue" icon="!" onClick={() => { setFilter("late"); setSort("amount"); }} active={filter === "late"} />
-        <Stat v={String((counts.due || 0) + (counts.soon || 0))} l={`تستحق خلال ${plural(windowsOf(active).soonDays, "يوم واحد", "يومين", "أيام", "يومًا")}`} kpi="soon" icon="●" onClick={() => setFilter("soon")} active={filter === "soon"} />
-        <Stat v={String(counts.expiring || 0)} l="عقود تنتهي قريبًا" kpi="expiring" icon="↻" onClick={() => setFilter("expiring")} active={filter === "expiring"} />
+        {(lateCount > 0 || overdue > 0) && <Stat v={sar(overdue)} l={`المتأخر (${lateCount === 0 ? "لا وحدات" : plural(lateCount, "وحدة واحدة", "وحدتان", "وحدات", "وحدة")})`} kpi="overdue" icon="!" onClick={() => { setFilter("late"); setSort("amount"); }} active={filter === "late"} />}
+        {((counts.due || 0) + (counts.soon || 0)) > 0 && <Stat v={String((counts.due || 0) + (counts.soon || 0))} l={`تستحق خلال ${plural(windowsOf(active).soonDays, "يوم واحد", "يومين", "أيام", "يومًا")}`} kpi="soon" icon="●" onClick={() => setFilter("soon")} active={filter === "soon"} />}
+        {(counts.expiring || 0) > 0 && <Stat v={String(counts.expiring || 0)} l="عقود تنتهي قريبًا" kpi="expiring" icon="↻" onClick={() => setFilter("expiring")} active={filter === "expiring"} />}
       </div>
 
       {/* الدخل السنوي والمحصَّل منه — سؤال المالك الأول: «كم يدخل هذا العقار في السنة، وكم قبضنا منه؟» */}
@@ -1085,23 +1074,31 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
               </span>}
             </h2>
             <div className="flex gap-2 flex-wrap">
-              {may("manage_expenses") && <button className="btn btn-ghost text-xs" onClick={() => setExpensesOpen(true)}
-                title="ما دفعه المكتب نيابة عن المالك — يُخصم تلقائيًّا في تقرير المالك">💸 المصروفات</button>}
-              {may("view_financials") && (<>
-              <button className="btn btn-ghost text-xs" onClick={() => setOwnerLinkOpen(true)}
-                title="رابط قراءة حي يرسله المكتب للمالك — يرى تقريره بلا حساب">🔗 رابط المالك</button>
-              <button className="btn btn-ghost text-xs" onClick={() => setReporting(true)}
-                title="تقرير فترة للمالك: الإشغال والمحصَّل والمصروفات والصافي — من السجلات">📊 تقرير المالك</button>
-              </>)}
-              <button className="btn btn-ghost text-xs" onClick={() => setStmtOpen(true)} title="اختر الفترة ومستوى التفصيل">📄 كشف حساب العقار</button>
-              <button className="btn btn-ghost text-xs" onClick={() => setQuoteOpen(true)}
-                title="إصدار عرض سعر تأجير لمستأجر محتمل قبل التعاقد">📋 عرض سعر</button>
-              <button className="btn btn-ghost text-xs" onClick={exportCSV} title="تنزيل ملف Excel/CSV بكل الوحدات وحالتها">⬇️ CSV</button>
-              {lateCount > 0 && (
+              {/* ثلاث قوائم بدل تسعة أزرار: ما يُطبع · ما يخصّ المالك · ما يخصّ البيانات.
+                  الأدوات نفسها — لكن العين تجد مكانها بدل أن تمسح صفًّا طويلًا. */}
+              <MenuBtn label="📄 مستندات" items={[
+                { label: "كشف حساب العقار", run: () => setStmtOpen(true) },
+                { label: "عرض سعر لمستأجر محتمل", run: () => setQuoteOpen(true) },
+                ...(may("manage_compliance") ? [{ label: `التزامات المكتب${alertCount(comp) > 0 ? ` (${alertCount(comp)})` : ""}`, run: () => setCompOpen(true) }] : []),
+              ]} badge={may("manage_compliance") ? alertCount(comp) : 0} />
+
+              {may("view_financials") && <MenuBtn label="👤 المالك" items={[
+                { label: "تقرير المالك", run: () => setReporting(true) },
+                { label: "كشف مالك مجمّع", run: () => setOwnerStmtOpen(true) },
+                { label: "رابط المالك", run: () => setOwnerLinkOpen(true) },
+                ...(may("manage_expenses") ? [{ label: "المصروفات", run: () => setExpensesOpen(true) }] : []),
+              ]} />}
+
+              <MenuBtn label="🗂️ البيانات" items={[
+                ...(may("edit_tenants") ? [{ label: "رفع من Excel", href: "/dashboard/property/import" }] : []),
+                { label: "تصدير CSV", run: exportCSV },
+                ...(may("view_activity") ? [{ label: "سجل الحركات المالية", run: () => setLogOpen(true) }] : []),
+              ]} />
+
+              {lateCount > 0 && may("send_reminders") && (
                 <button className="btn btn-wa text-xs" onClick={() => setRemindAll(true)}
                   title="إرسال تذكير واتساب لكل المتأخرين واحدًا تلو الآخر">💬 تذكير جماعي ({lateCount})</button>
               )}
-              {may("edit_tenants") && <Link href="/dashboard/property/import" className="btn btn-ghost text-xs">رفع Excel</Link>}
               {may("edit_tenants") && <button className="btn btn-gold text-xs" onClick={() => setModal({ kind: "tenant" })}>+ {ul}</button>}
             </div>
           </div>
@@ -1735,6 +1732,56 @@ function StatusPill({ k }: { k: RowKey }) {
 }
 
 /** قائمة إجراءات منسدلة — تُخفي الأزرار الثانوية */
+/**
+ * زر بقائمة — لتجميع الأدوات بدل نشرها في شريط طويل.
+ * مثبّت بإحداثيات الشاشة كقائمة الصف، فلا يقصّه أي إطار متمرّر.
+ */
+function MenuBtn({ label, items, badge = 0 }: {
+  label: string;
+  items: { label: string; run?: () => void; href?: string }[];
+  badge?: number;
+}) {
+  const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
+  const ref = useRef<HTMLButtonElement | null>(null);
+  useEffect(() => {
+    if (!open) return;
+    const r = ref.current?.getBoundingClientRect();
+    if (r) {
+      const H = Math.min(items.length * 34 + 16, 300);
+      const below = window.innerHeight - r.bottom;
+      setPos({ top: below > H + 12 ? r.bottom + 4 : Math.max(8, r.top - H - 4), left: Math.max(8, r.left) });
+    }
+    const close = () => setOpen(false);
+    window.addEventListener("scroll", close, true);
+    window.addEventListener("resize", close);
+    return () => { window.removeEventListener("scroll", close, true); window.removeEventListener("resize", close); };
+  }, [open, items.length]);
+  if (!items.length) return null;
+  return (
+    <>
+      <button ref={ref} type="button" className="btn btn-ghost text-xs" onClick={() => setOpen((v) => !v)}>
+        {label} <span className="opacity-60">▾</span>
+        {badge > 0 && <span className="mr-1 inline-grid place-items-center min-w-[18px] h-4 px-1 rounded-full bg-[#FBE9E7] text-[#a5322c] text-[.62rem] font-bold">{badge}</span>}
+      </button>
+      {open && pos && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
+          <div style={{ top: pos.top, left: pos.left }}
+            className="fixed z-50 min-w-[210px] bg-white border border-line rounded-xl shadow-lg py-1">
+            {items.map((it, i) => it.href ? (
+              <Link key={i} href={it.href} className="block px-3.5 py-2 text-xs font-semibold text-deep hover:bg-paper2">{it.label}</Link>
+            ) : (
+              <button key={i} type="button" onClick={() => { setOpen(false); it.run?.(); }}
+                className="block w-full text-right px-3.5 py-2 text-xs font-semibold text-deep hover:bg-paper2">{it.label}</button>
+            ))}
+          </div>
+        </>
+      )}
+    </>
+  );
+}
+
 function RowMenu({ items }: { items: { label?: string; run?: () => void; danger?: boolean; sep?: string }[] }) {
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
