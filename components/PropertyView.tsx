@@ -1026,9 +1026,10 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
               const label = (key: RowKey) => ({ late: "متأخر", partial: "سداد جزئي", due: "مستحق", soon: "قريب", expiring: "ينتهي قريبًا", litigation: "تنفيذ", vacant: "شاغرة", ok: "منتظم" })[key];
               return (
                 <div className="border border-line rounded-xl overflow-hidden">
-                  <div className="overflow-x-auto">
+                  <div className="overflow-x-auto max-h-[70vh] overflow-y-auto">
                     <table className="w-full text-sm">
-                      <thead className="bg-paper">
+                      {/* الترويسة تثبت عند التمرير: مع 300 وحدة لا تعرف أي عمود تقرأ بدونها */}
+                      <thead className="bg-paper sticky top-0 z-10 shadow-[0_1px_0_var(--tw-shadow-color)] shadow-line">
                         <tr>
                           <Th k="unit" label={ul} cls="w-16" />
                           <Th k="name" label="المستأجر" />
@@ -1036,15 +1037,21 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                           <Th k="due" label="الاستحقاق القادم" />
                           <Th k="urgent" label="الحالة" />
                           <Th k="amount" label="المستحق" cls="text-left" />
-                          <th className="px-3 py-2.5"></th>
+                          <th className="px-3 py-2.5 w-[150px]"></th>
                         </tr>
                       </thead>
                       <tbody>
-                        {slice.map(({ t, st, key }) => (
-                          <tr key={t.id} className={`border-t border-line ${key === "late" ? "bg-[#FFF5F4]" : key === "litigation" ? "bg-[#F8FAFC]" : ""}`}>
+                        {slice.map(({ t, st, key }, i) => (
+                          <tr key={t.id} className={`border-t border-line transition-colors hover:bg-paper/70 ${key === "late" ? "bg-[#FFF5F4]" : key === "litigation" ? "bg-[#F8FAFC]" : key === "vacant" ? "bg-[#FAFAF8]" : i % 2 ? "bg-paper/30" : ""}`}>
                             <td className="px-3 py-2 font-semibold tabular-nums">{t.unit || "—"}</td>
                             <td className="px-3 py-2">
-                              <div className="font-medium">{t.name}{msgCount[t.id] > 0 && <span className="ms-1 text-[10px] bg-deep text-goldSoft rounded-full px-1.5 py-0.5" title="رسائل الفريق على هذه الوحدة">💬 {msgCount[t.id]}</span>}</div>
+                              {key === "vacant" ? (
+                                <>
+                                  <div className="text-muted">— شاغرة —</div>
+                                  {t.name && <div className="text-[11px] text-muted">آخر مستأجر: {t.name}</div>}
+                                </>
+                              ) : null}
+                              <div className={`font-medium ${key === "vacant" ? "hidden" : ""}`}>{t.name}{msgCount[t.id] > 0 && <span className="ms-1 text-[10px] bg-deep text-goldSoft rounded-full px-1.5 py-0.5" title="رسائل الفريق على هذه الوحدة">💬 {msgCount[t.id]}</span>}</div>
                               {t.contract_no && <div className="text-[11px] text-muted" dir="ltr">عقد {t.contract_no}</div>}
                             </td>
                             <td className="px-3 py-2 text-muted whitespace-nowrap tabular-nums">{sar(t.rent_amount)} / {freqShort(t.payment_frequency)}</td>
@@ -1060,11 +1067,17 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                               </>) : <span className="text-muted">—</span>}
                             </td>
                             <td className="px-3 py-2"><span className={`inline-block text-[11px] font-semibold px-2.5 py-0.5 rounded-full border ${badge(key)}`}>{key === "ok" && st.fullyPaid ? "✓ مسدَّد كاملًا" : label(key)}</span></td>
-                            <td className={`px-3 py-2 text-left tabular-nums whitespace-nowrap ${st.amountDue > 0 ? "font-bold text-late" : "text-muted"}`}>{st.amountDue > 0 ? sar(st.amountDue) : "—"}</td>
+                            <td className={`px-3 py-2 text-left tabular-nums whitespace-nowrap ${st.amountDue > 0 ? "font-bold text-late" : "text-muted"}`}>
+                              {st.amountDue > 0 ? (<>
+                                {sar(st.amountDue)}
+                                {/* الوحدة فارغة والمبلغ على من سكنها قبل الإخلاء — تسميته «المستحق» توهم أن الشاغرة مدينة */}
+                                {key === "vacant" && <div className="text-[10px] font-normal text-muted">على المستأجر السابق</div>}
+                              </>) : "—"}
+                            </td>
                             <td className="px-2 py-1.5 text-left whitespace-nowrap">
                               <div className="inline-flex items-center gap-1">
                                 {key === "vacant" ? (
-                                  <button type="button" className="btn btn-primary text-xs" onClick={() => reLet(t)}>🔑 تأجير جديد</button>
+                                  <button type="button" className="btn btn-primary text-xs whitespace-nowrap" onClick={() => reLet(t)}>🔑 تأجير</button>
                                 ) : key === "litigation" ? (
                                   <button className="btn btn-ghost text-xs" onClick={() => setEnforcing(t)}>متابعة التنفيذ</button>
                                 ) : (<>
@@ -1099,9 +1112,9 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                       <tfoot className="bg-paper border-t border-line text-xs text-muted">
                         <tr>
                           <td className="px-3 py-2" colSpan={2}>{rows.length} {ul} · عرض {slice.length} من {rows.length}</td>
-                          <td className="px-3 py-2 whitespace-nowrap">سنوي ≈ {sar(Math.round(annualIncome))} · شهري ≈ {sar(Math.round(monthlyIncome))}</td>
+                          <td className="px-3 py-2 whitespace-nowrap">الدخل المتوقع: {sar(Math.round(annualIncome))} سنويًّا · {sar(Math.round(monthlyIncome))} شهريًّا</td>
                           <td className="px-3 py-2 whitespace-nowrap" colSpan={2}>{nearest ? `أقرب استحقاق: ${nearest}` : "—"}</td>
-                          <td className={`px-3 py-2 text-left font-bold ${totalDue > 0 ? "text-late" : ""}`}>{totalDue > 0 ? sar(totalDue) : "—"}</td>
+                          <td className={`px-3 py-2 text-left font-bold ${totalDue > 0 ? "text-late" : ""}`}>{totalDue > 0 ? <>{sar(totalDue)}<div className="text-[10px] font-normal text-muted">إجمالي المتأخر</div></> : "—"}</td>
                           <td></td>
                         </tr>
                       </tfoot>
