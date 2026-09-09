@@ -562,9 +562,9 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
     openDoc(statementHTML(t as any, active as any, issuer || {}, (data || []) as any, mode));
   }
 
-  function openPropertyStatement() {
+  function openPropertyStatement(mode: "brief" | "full" = "brief") {
     if (!active) return;
-    openDoc(propertyStatementHTML(active as any, issuer || {}));
+    openDoc(propertyStatementHTML(active as any, issuer || {}, mode));
   }
 
   /** تصدير وحدات العقار CSV — يفتح مباشرة في Excel بترميز عربي سليم */
@@ -948,7 +948,8 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
               <button className="btn btn-ghost text-xs" onClick={() => setReporting(true)}
                 title="تقرير فترة للمالك: الإشغال والمحصَّل والمصروفات والصافي — من السجلات">📊 تقرير المالك</button>
               </>)}
-              <button className="btn btn-ghost text-xs" onClick={openPropertyStatement}>كشف حساب العقار</button>
+              <button className="btn btn-ghost text-xs" onClick={() => openPropertyStatement("brief")} title="ملخص وجدول الوحدات — صفحة واحدة">📄 كشف العقار</button>
+              <button className="btn btn-ghost text-xs" onClick={() => openPropertyStatement("full")} title="بيانات العقار كاملة، مواصفات كل وحدة وعقودها وعدّاداتها، والدخل وتوزيع الحالات">📚 كشف العقار الشامل</button>
               <button className="btn btn-ghost text-xs" onClick={() => setQuoteOpen(true)}
                 title="إصدار عرض سعر تأجير لمستأجر محتمل قبل التعاقد">📋 عرض سعر</button>
               <button className="btn btn-ghost text-xs" onClick={exportCSV} title="تنزيل ملف Excel/CSV بكل الوحدات وحالتها">⬇️ CSV</button>
