@@ -256,6 +256,31 @@ export async function contractsInState(db: DB, profile: any, key: string): Promi
   return rows.filter((r) => r.key === key).map(cardOf);
 }
 
+/**
+ * البحث الحر من تليجرام.
+ *
+ * أكثر سؤال يواجه صاحب المكتب وهو خارج مكتبه: «فلان دفع أو لا؟». قبل هذا
+ * كان يفتح اللوحة لأجله. الآن يكتب الاسم أو آخر أربعة أرقام من الجوال
+ * فيصله جواب فوري. البحث يشمل: الاسم · الجوال · رقم الوحدة · الهوية ·
+ * رقم العقد — نفس حقول بحث اللوحة، فلا يجد شيئًا هنا ويعجز عنه هناك.
+ */
+export async function searchTenants(db: DB, profile: any, query: string): Promise<{ cards: ContractCard[]; total: number }> {
+  const q = String(query || "").trim().toLowerCase()
+    .replace(/[٠-٩]/g, (d) => String("٠١٢٣٤٥٦٧٨٩".indexOf(d)));   // أرقام عربية
+  /* رقم واحد مقبول لأن أرقام الوحدات غالبًا خانة واحدة («3»)، أما الحرف
+     الواحد فيُرفض لأنه يطابق نصف المستأجرين ولا يفيد. */
+  if (!q || (q.length < 2 && !/^\d$/.test(q))) return { cards: [], total: 0 };
+  const { rows } = await enrichedTenants(db, profile);
+  const exactUnit = /^\d{1,4}$/.test(q)
+    ? rows.filter((r) => String((r.t as any).unit || "").toLowerCase() === q) : [];
+  const hits = exactUnit.length ? exactUnit : rows.filter((r) => {
+    const t: any = r.t;
+    return [t.name, t.unit, t.phone, t.national_id, t.contract_no]
+      .some((v) => v && String(v).toLowerCase().includes(q));
+  });
+  return { cards: hits.slice(0, 8).map((r) => cardOf(r)), total: hits.length };
+}
+
 export async function contractCard(db: DB, profile: any, tenantId: string): Promise<ContractCard | null> {
   const { rows } = await enrichedTenants(db, profile);
   const r = rows.find((x) => x.t.id === tenantId);
