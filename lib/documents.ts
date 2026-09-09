@@ -660,7 +660,8 @@ export function propertyStatementHTML(p: Property & { tenants: Tenant[] }, issue
   const vFor = (t: any) => vatOf(p, t);
   const totalPaid = rows.reduce((s, r) => s + r.st.paid * splitVat(Number(r.t.rent_amount) || 0, vFor(r.t)).total, 0);
   const totalVat = rows.reduce((s, r) => s + splitVat(r.st.amountDue, vFor(r.t)).vat, 0);
-  const late = rows.filter((r) => r.st.status === "late").length;
+  // المُخلاة ذات الدين لا تُعدّ «وحدة متأخرة» — دينها على من غادر
+  const late = rows.filter((r) => !r.st.vacant && r.st.status === "late").length;
   const vacantCount = rows.filter((r) => isVacant(r.t)).length;
   const occupied = p.tenants.length - vacantCount;
   const annual = annualExpected(p.tenants as any[]);
@@ -1629,7 +1630,7 @@ ${totalDue > 0 || expiring > 0 ? `<div class="note">${[
       <td>${vc ? "—" : sar(splitVat(Number(t.rent_amount) || 0, vatOf(p, t)).total)}</td>
       <td>${vc ? "—" : freqLabel(t.payment_frequency)}</td>
       <td>${vc ? "—" : arDate(st.endDate)}</td>
-      <td>${!vc && st.amountDue ? sar(st.amountDue) : "—"}</td>
+      <td>${st.amountDue ? `${sar(st.amountDue)}${vc ? '<div style="font-size:.65rem;color:#5C6B67">على المستأجر السابق</div>' : ""}` : "—"}</td>
       <td>${vc ? '<span class="pill u">شاغرة</span>'
           : st.status === "late" ? '<span class="pill l">متأخر</span>'
           : st.inGrace ? '<span class="pill u">فترة سماح</span>'

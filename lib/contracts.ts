@@ -180,6 +180,10 @@ export type ContractState = {
   soonTier: "near" | "due" | "today" | null;
   /** العقد ينتهي خلال نافذة «تنتهي قريبًا» التي يحددها المكتب */
   expiringSoon: boolean;
+  /** الوحدة مُخلاة: لا استحقاق قادم ولا تجديد؛ وما بقي من مبلغ فهو متأخرات المستأجر السابق */
+  vacant: boolean;
+  /** متأخرات بقيت على مستأجر أخلى الوحدة — تُتابَع كدين لا كتذكير إيجار */
+  legacyArrears: number;
   /** سدّد كل دفعات العقد — لا استحقاق قادم قبل انتهائه، والقادم يكون مع التجديد */
   fullyPaid: boolean;
   inGrace: boolean;        // مرّ الاستحقاق لكن ضمن فترة السماح — لا يُعدّ متأخرًا
@@ -225,7 +229,7 @@ export function contractState(t: {
 
   if (!t.contract_start) {
     return {
-      due: 0, paid, unpaid: 0, amountDue: 0, grossDue: 0, partial, hasPartial: partial > 0, fullyPaid: false, soonTier: null, expiringSoon: false,
+      due: 0, paid, unpaid: 0, amountDue: 0, grossDue: 0, partial, hasPartial: partial > 0, fullyPaid: false, soonTier: null, expiringSoon: false, vacant: isVacant(t), legacyArrears: 0,
       partialPct: rent ? Math.round((partial / rent) * 100) : 0,
       nextDueDate: null, daysToNextDue: null,
       endDate: t.contract_end || null,
@@ -291,14 +295,35 @@ export function contractState(t: {
   }
   /* سدّد العقد كله مقدّمًا (سنة كاملة مثلًا): لا «القادمة» بعد اليوم — ما يهم
      المكتب أن يرى «مسدَّد كامل العقد» ومتى ينتهي ليجدّده، لا صفًا صامتًا */
-  const fullyPaid = unpaid === 0 && paid >= totalPeriods;
+  let fullyPaid = unpaid === 0 && paid >= totalPeriods;
   const expWin = Math.max(1, Math.min(180, Number(opts.expiringDays) || 60));
-  const expiringSoon = daysToEnd !== null && daysToEnd >= 0 && daysToEnd <= expWin;
+  let expiringSoon = daysToEnd !== null && daysToEnd >= 0 && daysToEnd <= expWin;
   if (fullyPaid && status === "ok") statusLabel = "مسدَّد كامل العقد";
 
+  /**
+   * الوحدة المُخلاة — تُحسم هنا مرة واحدة لا في عشرين مستهلكًا:
+   * كانت تظهر «متأخر» و«ينتهي قريبًا» و«مستحق» كأن فيها ساكنًا، فتدخل في
+   * تذكيرات واتساب والملخص اليومي وقوائم التجديد، وتُعدّ ضمن المتأخرين.
+   * الصحيح: لا استحقاق قادم ولا تجديد ولا «مسدَّد كاملًا»؛ وما بقي عليها
+   * دين على من أخلاها (legacyArrears) يُتابَع كدين لا كإيجار متأخر.
+   */
+  const vacant = isVacant(t);
+  const legacyArrears = vacant ? amountDue : 0;
+  let nextDueOut: string | null = nextDueDate;
+  let daysToNextOut: number | null = daysToNextDue;
+  let daysToEndOut: number | null = daysToEnd;
+  if (vacant) {
+    nextDueOut = null; daysToNextOut = null; daysToEndOut = null;
+    soonTier = null; expiringSoon = false; fullyPaid = false;
+    status = amountDue > 0 ? "late" : "ok";
+    statusLabel = amountDue > 0
+      ? `شاغرة — متأخرات على المستأجر السابق ${Math.round(amountDue).toLocaleString("en-US")}`
+      : "شاغرة";
+  }
+
   return {
-    due, paid, unpaid, amountDue, grossDue, partial, hasPartial, partialPct, fullyPaid, soonTier, expiringSoon,
-    nextDueDate, daysToNextDue, endDate, daysToEnd, status, statusLabel, progress,
+    due, paid, unpaid, amountDue, grossDue, partial, hasPartial, partialPct, fullyPaid, soonTier, expiringSoon, vacant, legacyArrears,
+    nextDueDate: nextDueOut, daysToNextDue: daysToNextOut, endDate, daysToEnd: daysToEndOut, status, statusLabel, progress,
     inGrace, graceDaysLeft,
   };
 }
