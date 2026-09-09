@@ -139,6 +139,21 @@ export function auditOffice(properties: P[], payments: any[] = [], expenses: any
         push({ severity: "critical", title: "إيجار سالب", ...base,
           why: "يقلب كل الحسابات المبنية عليه.", fix: "صحّح قيمة الدفعة." });
       }
+      const FREQS = ["daily", "weekly", "monthly", "quarterly", "semiannual", "annual"];
+      if (t.payment_frequency && !FREQS.includes(String(t.payment_frequency))) {
+        push({ severity: "warn", title: `دورة سداد غير معروفة: ${t.payment_frequency}`, ...base,
+          why: "يُستعمل «شهري» افتراضًا — وقد لا يطابق عقدك فتخرج الاستحقاقات خاطئة.",
+          fix: "اختر دورة السداد الصحيحة من بطاقة الوحدة." });
+      }
+      if (t.calendar && !["hijri", "gregorian"].includes(String(t.calendar))) {
+        push({ severity: "warn", title: `تقويم غير معروف: ${t.calendar}`, ...base,
+          why: "تُحسب الأقساط بالميلادي افتراضًا — وإن كان عقدك هجريًّا انزاحت المواعيد.",
+          fix: "حدّد التقويم (هجري أو ميلادي) في بطاقة الوحدة." });
+      }
+      if (num(t.paid_periods) < 0) {
+        push({ severity: "critical", title: "عدد الدفعات المسدَّدة سالب", ...base,
+          why: "رقم مستحيل يفسد حساب المتأخرات.", fix: "صحّح «الدفعات المسدَّدة» في بطاقة الوحدة." });
+      }
       if (!vac && !(num(t.contract_periods) > 0)) {
         push({ severity: "warn", title: "عدد الدفعات غير محدّد", ...base,
           why: "يُستعمل الافتراضي (سنة) وقد لا يطابق مدة عقدك الحقيقية.",

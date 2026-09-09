@@ -286,14 +286,37 @@ export function contractState(t: {
   const partial = Math.min(Math.max(0, Number(t.partial_amount) || 0), rent || Infinity);
   const today = new Date();
 
-  if (!t.contract_start) {
+  /**
+   * «بيانات ناقصة» تشمل كل ما يمنع حسابًا موثوقًا — لا غياب التاريخ وحده.
+   *
+   * اختبار البيانات القذرة أظهر أن سبعة أنماط عطب كانت تُعرض «منتظم» أخضر:
+   * تاريخ نصّي لا يُفهم (١٥/٣/٢٠٢٦) فيُستبدل باليوم فيبدو العقد جديدًا،
+   * وتاريخ مستحيل (2026-02-31) ينزلق لمارس، وإيجار صفر أو سالب فلا يُحتسب
+   * له مستحق. في كل هذه الوحدة خارج المتابعة بينما المكتب يراها سليمة.
+   */
+  const startTxt = String(t.contract_start || "").slice(0, 10);
+  const startY = Number(startTxt.slice(0, 4)) || 0;
+  const startOk = /^\d{4}-\d{2}-\d{2}$/.test(startTxt) && (() => {
+    const [y, m, d] = startTxt.split("-").map(Number);
+    const dt = new Date(y, m - 1, d);
+    return dt.getFullYear() === y && dt.getMonth() === m - 1 && dt.getDate() === d;
+  })() && startY >= 1900 && startY <= 2100;
+  const rentOk = Number(t.rent_amount) > 0;
+  /* دورة سداد غير معروفة تكسر جدول الدفعات كله: الافتراضي «شهري» قد يخالف
+     عقدًا نصف سنوي فتخرج كل التواريخ غلطًا — وهذا نقص لا افتراض آمن. */
+  const freqOk = !t.payment_frequency || FREQUENCIES.some((f) => f.value === t.payment_frequency);
+  if (!t.contract_start || !startOk || !freqOk || (!isVacant(t) && !rentOk)) {
     return {
       due: 0, paid, unpaid: 0, amountDue: 0, grossDue: 0, partial, hasPartial: partial > 0, fullyPaid: false, soonTier: null, expiringSoon: false, vacant: isVacant(t), legacyArrears: 0, carriedDebt: Math.max(0, Number(t.carried_debt) || 0), totalOwed: Math.max(0, Number(t.carried_debt) || 0),
       partialPct: rent ? Math.round((partial / rent) * 100) : 0,
       nextDueDate: null, daysToNextDue: null,
       endDate: t.contract_end || null,
       daysToEnd: t.contract_end ? daysBetween(new Date(t.contract_end), today) : null,
-      status: "ok", statusLabel: "بيانات العقد ناقصة", incomplete: true, progress: 0,
+      status: "ok", incomplete: true, progress: 0,
+      statusLabel: !t.contract_start ? "بيانات ناقصة — لا تاريخ بداية"
+        : !startOk ? `بيانات ناقصة — تاريخ بداية غير صحيح (${startTxt || "—"})`
+        : !freqOk ? `بيانات ناقصة — دورة سداد غير معروفة (${t.payment_frequency})`
+        : "بيانات ناقصة — الإيجار غير محدَّد",
       inGrace: false, graceDaysLeft: 0,
     };
   }
