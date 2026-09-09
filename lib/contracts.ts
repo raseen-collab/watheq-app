@@ -6,6 +6,20 @@
 /** تقريب لمنزلتين — قاعدة العرض والحساب في كل المبالغ */
 const r2 = (n: number) => Math.round(n * 100) / 100;
 
+/**
+ * «اليوم» بتوقيت الرياض — لا بتوقيت خادم Vercel (UTC) ولا جهاز المستخدم.
+ * بدونه تختلف حالة الوحدة بين منتصف الليل والثالثة فجرًا، وبين موظف في
+ * المكتب وآخر مسافر. اليوم التجاري واحد للجميع.
+ */
+const RIYADH_DAY = typeof Intl !== "undefined"
+  ? new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Riyadh", year: "numeric", month: "2-digit", day: "2-digit" })
+  : null;
+function riyadhNow(): Date {
+  if (!RIYADH_DAY) return new Date();
+  const [y, m, d] = RIYADH_DAY.format(new Date()).split("-").map(Number);
+  return new Date(y, (m || 1) - 1, d || 1);
+}
+
 export type Frequency = "daily" | "weekly" | "monthly" | "quarterly" | "semiannual" | "annual";
 
 export const FREQUENCIES: { value: Frequency; label: string; short: string }[] = [
@@ -42,7 +56,7 @@ export function parseDate(v: string | Date): Date {
   const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(v));
   if (m) return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
   const d = new Date(String(v));
-  return isNaN(d.getTime()) ? startOfDay(new Date()) : startOfDay(d);
+  return isNaN(d.getTime()) ? startOfDay(riyadhNow()) : startOfDay(d);
 }
 
 /** كتابة تاريخ بمكوّناته المحلية — البديل الآمن عن toISOString().slice(0,10) */
@@ -165,7 +179,7 @@ export function periodsElapsed(
 ): number {
   if (!startISO) return 0;
   const start = parseDate(startISO);
-  const today = startOfDay(asOf || new Date());
+  const today = startOfDay(asOf || riyadhNow());
   if (today < start) return 0;
   let n = 0;
   /* الدفعة تُعدّ متأخرة من اليوم التالي لاستحقاقها، لا في يوم الاستحقاق
@@ -285,7 +299,7 @@ export function contractState(t: {
   const schedStart = scheduleStart(t) as string;
   const start = parseDate(schedStart);
   // مرجع الاحتساب: اليوم، أو تاريخ الإخلاء إن كانت الوحدة مُخلاة (أيّهما أسبق)
-  const now = new Date();
+  const now = riyadhNow();
   const cutoff = vacated ? new Date(Math.min(Date.parse(String(t.move_out_date)), now.getTime())) : now;
   // فترة السماح: تُحتسب الدفعة مستحقّة رسميًّا بعد مرور أيام السماح
   const graceRef = new Date(cutoff); graceRef.setDate(graceRef.getDate() - grace);
@@ -405,7 +419,7 @@ export function buildSchedule(t: {
   const paid = Math.max(0, Number(t.paid_periods) || 0);
   const rent = Number(t.rent_amount) || 0;
   const partial = Math.min(Math.max(0, Number(t.partial_amount) || 0), rent || Infinity);
-  const today = startOfDay(new Date());
+  const today = startOfDay(riyadhNow());
 
   return Array.from({ length: Math.min(total, 400) }, (_, i) => {
     const date = addPeriods(start, freq, i, anchor, (t.calendar === "hijri" ? "hijri" : "gregorian"));
@@ -446,7 +460,7 @@ export function renewContract(t: {
   const freq = (opts.newFrequency || oldFreq) as Frequency;
   const st = contractState(t);
   // المدة الجديدة تبدأ من نهاية الحالية (أو من اليوم إن كانت منتهية منذ زمن)
-  const startISO = st.endDate || isoDate(new Date());
+  const startISO = st.endDate || isoDate(riyadhNow());
   const periods = opts.periods && opts.periods > 0 ? opts.periods : (t.contract_periods || defaultTermPeriods(freq));
   const amount = opts.newAmount && opts.newAmount > 0 ? opts.newAmount : (Number(t.rent_amount) || 0);
   return {
