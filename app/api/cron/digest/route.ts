@@ -53,7 +53,9 @@ export async function GET(req: Request) {
   const processProfile = async (p: any): Promise<boolean> => {
    try {
     const { data: props } = await db
-      .from("properties").select("*, tenants(*)").eq("user_id", p.id);
+      .from("properties").select("*, tenants(*)").eq("user_id", p.id)
+      // مكتب بمئات الوحدات: بلا هذا الحدّ الصريح قد تُقصّ الوحدات بصمت فيخرج ملخّص ناقص
+      .limit(2000, { referencedTable: "tenants" });
     if (!props?.length) return false;
 
     const within = p.notify_days_before ?? 5;
