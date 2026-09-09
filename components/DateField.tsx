@@ -75,7 +75,10 @@ export default function DateField({ value, onChange, id }: {
             onChange={(e) => pushHijri(hy, hm, e.target.value.replace(/\D/g, "").slice(0, 2))} />
           <select className="fld" value={hm} onChange={(e) => pushHijri(hy, e.target.value, hd)}>
             <option value="">الشهر</option>
-            {MONTHS.map((n, i) => <option key={n} value={i + 1}>{n}</option>)}
+            {/* الرقم مع الاسم: المكتب يكتب في عقده «1448/2/18» ويعرف أن 2 هو
+                الشهر الثاني، لكنه قد لا يعرف أن اسمه «صفر» فيختار «محرم» —
+                خطأ شهر كامل في بداية العقد. الرقم يزيل اللبس. */}
+            {MONTHS.map((n, i) => <option key={n} value={i + 1}>{i + 1} — {n}</option>)}
           </select>
           <input className="fld" inputMode="numeric" placeholder="السنة" value={hy}
             onChange={(e) => pushHijri(e.target.value.replace(/\D/g, "").slice(0, 4), hm, hd)} />
