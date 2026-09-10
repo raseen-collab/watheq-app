@@ -390,7 +390,9 @@ export function contractState(t: {
   let fullyPaid = unpaid === 0 && paid >= totalPeriods;
   const expWin = Math.max(1, Math.min(180, Number(opts.expiringDays) || 60));
   let expiringSoon = daysToEnd !== null && daysToEnd >= 0 && daysToEnd <= expWin;
-  if (fullyPaid && status === "ok") statusLabel = "مسدَّد كامل العقد";
+  /* «مسدَّد كامل العقد» وحدها تُخفي خطأ الإدخال: مكتب استلم 3 دفعات من 4
+     رأى «كامل» لأن مدة العقد مسجّلة 3. إظهار العدّاد يكشف الخلل في نظرة. */
+  if (fullyPaid && status === "ok") statusLabel = `مسدَّد ${paid} من ${totalPeriods}`;
 
   /**
    * الوحدة المُخلاة — تُحسم هنا مرة واحدة لا في عشرين مستهلكًا:
