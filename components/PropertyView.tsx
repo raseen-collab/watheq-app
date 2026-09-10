@@ -325,12 +325,13 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
    * معًا أو لا شيء. لا حساب في المتصفح ولا كتابات متفرقة — فلا سباق
    * بين موظفين ولا رفض صامت للمحصّل. القيم المعروضة تأتي من القاعدة.
    */
-  async function recordPayment(t: Tenant, amount: number, method = "transfer", note?: string) {
+  async function recordPayment(t: Tenant, amount: number, method = "transfer", note?: string, paidOn?: string, reference?: string) {
     const amt = Math.max(0, Number(amount) || 0);
     if (!amt || !active) return;
     return once(`pay:${t.id}`, async () => {
     const { data, error } = await supabase.rpc("watheq_record_payment", {
-      p_tenant: t.id, p_amount: amt, p_method: method, p_note: note || null, p_paid_on: today(),
+      p_tenant: t.id, p_amount: amt, p_method: method, p_note: note || null,
+      p_paid_on: paidOn || today(), p_reference: reference || null,
     });
     if (error) {
       const m = String(error.message || "");
@@ -683,7 +684,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
     if (!period) { openDoc(propertyStatementHTML(active as any, issuer || {}, mode)); return; }
     /* الأرقام من السجل الفعلي للفترة — لا من الحالة اللحظية، فيطابق تقرير المالك */
     const [pay, exp] = await Promise.all([
-      supabase.from("payments").select("id, paid_on, amount, method, note, tenant_id, unit:tenant_id")
+      supabase.from("payments").select("id, paid_on, reference, created_at, amount, method, note, tenant_id, unit:tenant_id")
         .eq("property_id", active.id).gte("paid_on", period.from).lte("paid_on", period.to).limit(5000),
       supabase.from("expenses").select("id, spent_on, amount, category, note, unit")
         .eq("property_id", active.id).gte("spent_on", period.from).lte("spent_on", period.to).limit(5000),
@@ -1245,7 +1246,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                                 ) : (<>
                                   {canCollect && <QuickBtn title={isBusy(`pay:${t.id}`) ? "جارٍ التسجيل…" : "تأكيد استلام الدفعة كاملة"} cls={`btn-primary ${isBusy(`pay:${t.id}`) ? "opacity-50 pointer-events-none" : ""}`} onClick={() => {
                                     const amt = Number(t.rent_amount) || 0;
-                                    if (confirm(`تسجيل استلام دفعة كاملة؟\n\n${sar(amt)} ريال من ${t.name} — ${ul} ${t.unit || "—"} — ${active?.name}\n\n(تُسجَّل باسمك في سجل العمليات)`)) recordPayment(t, amt);
+                                    if (confirm(`تسجيل استلام دفعة كاملة؟\n\n${sar(amt)} ريال من ${t.name} — ${ul} ${t.unit || "—"} — ${active?.name}\n\nتاريخ السداد: اليوم (${today()})\nلتاريخ مختلف أو مرجع حوالة استعمل زر ½.\n\n(تُسجَّل باسمك في سجل العمليات)`)) recordPayment(t, amt);
                                   }}>&#10004;</QuickBtn>}
                                   {canCollect && <QuickBtn title="سداد جزئي" cls="btn-ghost" onClick={() => setPaying(t)}>&#189;</QuickBtn>}
                                   <a href={remindLink(t)} target="_blank" rel="noreferrer" className="btn btn-wa text-xs px-2.5" title="إرسال تذكير واتساب">&#128172;</a>
@@ -1355,7 +1356,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                       <QuickBtn title="تأكيد استلام الدفعة كاملة" cls="btn-primary" onClick={() => {
                         /* دفعة بضغطة واحدة بلا تأكيد = أخطاء لا تُكتشف إلا في كشف المالك. نسمّي المبلغ والمستأجر والوحدة قبل التسجيل */
                         const amt = Number(t.rent_amount) || 0;
-                        if (confirm(`تسجيل استلام دفعة كاملة؟\n\n${sar(amt)} ريال من ${t.name} — ${ul} ${t.unit || "—"} — ${active?.name}\n\n(تُسجَّل باسمك في سجل العمليات)`)) recordPayment(t, amt);
+                        if (confirm(`تسجيل استلام دفعة كاملة؟\n\n${sar(amt)} ريال من ${t.name} — ${ul} ${t.unit || "—"} — ${active?.name}\n\nتاريخ السداد: اليوم (${today()})\nلتاريخ مختلف أو مرجع حوالة استعمل زر ½.\n\n(تُسجَّل باسمك في سجل العمليات)`)) recordPayment(t, amt);
                       }}>&#10004;</QuickBtn>
                       <QuickBtn title="سداد جزئي" cls="btn-ghost" onClick={() => setPaying(t)}>&#189;</QuickBtn>
                       <a href={remindLink(t)} target="_blank" rel="noreferrer" className="btn btn-wa text-xs px-2.5" title="إرسال تذكير واتساب">&#128172;</a>
@@ -1464,10 +1465,10 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
         onClose={() => setEnforcing(null)}
         onSubmit={(no, order) => { patchTenant(enforcing.id, { litigation: true, enforcement_no: no || null, enforcement_order: order || null }); setEnforcing(null); }} />}
       {paying && <PaymentModal tenant={paying} unitWord={ul} onClose={() => setPaying(null)}
-        onSubmit={(amt, method, note) => { recordPayment(paying, amt, method, note); setPaying(null); }} />}
+        onSubmit={(amt, method, note, paidOn, reference) => { recordPayment(paying, amt, method, note, paidOn, reference); setPaying(null); }} />}
       {turnover && <TurnoverModal key={turnover.id} tenant={turnover} unitWord={ul} onClose={() => setTurnover(null)}
         onSubmit={(d) => saveTurnover(turnover, d)} />}
-      {history && <HistoryModal data={history} unitWord={ul} onClose={() => setHistory(null)} />}
+      {history && <HistoryModal data={history} unitWord={ul} canEdit={may("record_payments")} onClose={() => setHistory(null)} />}
       {remindAll && <RemindAllModal rows={lateRows} unitWord={ul} linkOf={remindLink}
         onClose={() => setRemindAll(false)} />}
       {doc && <DocModal doc={doc} onClose={() => setDoc(null)} />}
@@ -1521,7 +1522,7 @@ export const methodLabel = (v?: string | null) => METHODS.find((m) => m.v === v)
 
 function PaymentModal({ tenant, unitWord, onClose, onSubmit }: {
   tenant: Tenant; unitWord: string; onClose: () => void;
-  onSubmit: (amount: number, method: string, note?: string) => void;
+  onSubmit: (amount: number, method: string, note?: string, paidOn?: string, reference?: string) => void;
 }) {
   const rent = Number(tenant.rent_amount) || 0;
   const already = Number(tenant.partial_amount) || 0;
@@ -1529,6 +1530,9 @@ function PaymentModal({ tenant, unitWord, onClose, onSubmit }: {
   const [amount, setAmount] = useState<string>(String(remaining || rent));
   const [method, setMethod] = useState("transfer");
   const [note, setNote] = useState("");
+  /* تاريخ وصول المال ومرجع الحوالة — أساس مطابقة كشف البنك */
+  const [paidOn, setPaidOn] = useState(today());
+  const [reference, setReference] = useState("");
   const amt = Number(amount) || 0;
   const pool = already + amt;
   const completed = rent > 0 ? Math.floor(pool / rent) : 0;
@@ -1564,8 +1568,19 @@ function PaymentModal({ tenant, unitWord, onClose, onSubmit }: {
             {METHODS.map((m) => <option key={m.v} value={m.v}>{m.l}</option>)}
           </select>
         </Field>
+        {/* تاريخ وصول المال لا تاريخ إدخاله: المستأجر يحوّل الخميس والمكتب
+            يسجّل الأحد، فيبحث في كشف البنك عن حوالة الأحد ولا يجدها. */}
+        <Field label="تاريخ السداد" hint="يوم وصول المال — لا يوم التسجيل">
+          <DateField value={paidOn} onChange={(v) => v && setPaidOn(v)} />
+        </Field>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3 mt-3">
+        <Field label="مرجع الحوالة" hint="آخر أرقام العملية — لمطابقة كشف البنك">
+          <input className="fld" dir="ltr" value={reference} onChange={(e) => setReference(e.target.value)} placeholder="…4417" />
+        </Field>
         <Field label="ملاحظة" hint="اختياري">
-          <input className="fld" value={note} onChange={(e) => setNote(e.target.value)} placeholder="رقم الحوالة…" />
+          <input className="fld" value={note} onChange={(e) => setNote(e.target.value)} placeholder="سداد شهر رجب" />
         </Field>
       </div>
 
@@ -1579,7 +1594,7 @@ function PaymentModal({ tenant, unitWord, onClose, onSubmit }: {
 
       <div className="flex gap-2 mt-5">
         <button type="button" className="btn btn-ghost flex-1 justify-center" onClick={onClose}>إلغاء</button>
-        <button type="button" className="btn btn-gold flex-1 justify-center" disabled={!amt} onClick={() => onSubmit(amt, method, note.trim() || undefined)}>تسجيل</button>
+        <button type="button" className="btn btn-gold flex-1 justify-center" disabled={!amt} onClick={() => onSubmit(amt, method, note.trim() || undefined, paidOn, reference.trim() || undefined)}>تسجيل</button>
       </div>
     </Shell>
   );
@@ -1695,15 +1710,43 @@ function TurnoverModal({ tenant, unitWord, onClose, onSubmit }: {
 }
 
 /** سجل المدفوعات — التاريخ والمبلغ والطريقة، أساس الإثبات عند الخلاف */
-function HistoryModal({ data, unitWord, onClose }: {
-  data: { tenant: Tenant; rows: any[] }; unitWord: string; onClose: () => void;
+/**
+ * سجل المدفوعات — مع تصحيح تاريخ الحوالة ومرجعها.
+ *
+ * زر ✔ السريع يسجّل بتاريخ اليوم لأنه الغالب. لكن من يراجع كشف بنكه بعد
+ * أسبوع يحتاج تصحيح تاريخ وصول المال أو إضافة مرجعه — بلا مساس بالمبلغ
+ * (تغييره يفسد عدّاد الدفعات). القاعدة تسمح بهذين العمودين فقط.
+ */
+function HistoryModal({ data, unitWord, onClose, canEdit = true }: {
+  data: { tenant: Tenant; rows: any[] }; unitWord: string; onClose: () => void; canEdit?: boolean;
 }) {
-  const { tenant, rows } = data;
+  const { tenant } = data;
+  const supabase = useMemo(() => createClient(), []);
+  const [rows, setRows] = useState<any[]>(data.rows);
+  const [editing, setEditing] = useState<string | null>(null);
+  const [eDate, setEDate] = useState("");
+  const [eRef, setERef] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  async function saveEdit(id: string) {
+    setBusy(true); setErr(null);
+    const { data: up, error } = await supabase.from("payments")
+      .update({ paid_on: eDate || null, reference: eRef.trim() || null })
+      .eq("id", id).select("id, paid_on, reference");
+    setBusy(false);
+    if (error) { setErr(error.message); return; }
+    if (!up?.length) { setErr("هذا التعديل يحتاج صلاحية أعلى."); return; }
+    setRows((cur) => cur.map((r) => (r.id === id ? { ...r, paid_on: up[0].paid_on, reference: up[0].reference } : r)));
+    setEditing(null);
+  }
+
   const total = rows.reduce((s, r) => s + (Number(r.amount) || 0), 0);
   return (
     <Shell onClose={onClose} wide>
       <h3 className="font-display font-bold text-deep text-lg mb-1">سجل المدفوعات — {tenant.name}</h3>
       <p className="text-sm text-muted mb-4">{unitWord} {tenant.unit || "—"} · {rows.length} عملية · الإجمالي {sar(total)} ريال</p>
+      {err && <div className="bg-[#FBE9E7] border border-[#F5C6C2] text-[#a5322c] rounded-xl p-2.5 text-xs mb-3">{err}</div>}
 
       {!rows.length ? (
         <div className="text-center text-muted py-10 text-sm">
@@ -1717,17 +1760,47 @@ function HistoryModal({ data, unitWord, onClose }: {
               <th className="p-2 text-right font-semibold">التاريخ</th>
               <th className="p-2 text-right font-semibold">المبلغ</th>
               <th className="p-2 text-right font-semibold">الطريقة</th>
+              <th className="p-2 text-right font-semibold">المرجع</th>
               <th className="p-2 text-right font-semibold">اكتملت</th>
               <th className="p-2 text-right font-semibold">ملاحظة</th>
+              {canEdit && <th className="p-2"></th>}
             </tr></thead>
             <tbody>
               {rows.map((r) => (
                 <tr key={r.id} className="border-t border-line">
-                  <td className="p-2 tabular-nums">{r.paid_on}</td>
+                  <td className="p-2 tabular-nums">
+                    {editing === r.id
+                      ? <input className="fld !py-0.5 !text-xs !w-32" type="date" value={eDate} onChange={(e) => setEDate(e.target.value)} />
+                      : r.paid_on}
+                    {r.created_at && String(r.created_at).slice(0, 10) !== String(r.paid_on) && (
+                      <div className="text-[10px] text-muted">سُجّل {String(r.created_at).slice(0, 10)}</div>
+                    )}
+                  </td>
                   <td className="p-2 tabular-nums font-semibold">{sar(r.amount)}</td>
                   <td className="p-2">{methodLabel(r.method)}</td>
+                  {/* المرجع ووقت التسجيل: مطابقة كشف البنك تحتاج الاثنين —
+                      تاريخ وصول المال أعلاه، ولحظة إدخاله هنا للتدقيق. */}
+                  <td className="p-2 tabular-nums text-xs" dir="ltr">
+                    {editing === r.id
+                      ? <input className="fld !py-0.5 !text-xs !w-24" dir="ltr" value={eRef} onChange={(e) => setERef(e.target.value)} placeholder="المرجع" />
+                      : (r.reference || "—")}
+                  </td>
                   <td className="p-2 text-muted">{r.periods_covered || "—"}</td>
                   <td className="p-2 text-muted text-xs">{r.note || "—"}</td>
+                  {canEdit && (
+                    <td className="p-2 whitespace-nowrap">
+                      {editing === r.id ? (
+                        <span className="flex gap-1">
+                          <button className="btn btn-primary text-[10px] px-2 py-0.5" disabled={busy} onClick={() => saveEdit(r.id)}>حفظ</button>
+                          <button className="btn btn-ghost text-[10px] px-2 py-0.5" onClick={() => setEditing(null)}>إلغاء</button>
+                        </span>
+                      ) : (
+                        <button className="btn btn-ghost text-[10px] px-2 py-0.5"
+                          onClick={() => { setEditing(r.id); setEDate(String(r.paid_on || "").slice(0, 10)); setERef(r.reference || ""); }}
+                          title="تصحيح تاريخ وصول الحوالة أو مرجعها — المبلغ لا يُعدَّل">✎ تاريخ/مرجع</button>
+                      )}
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>
@@ -2186,7 +2259,7 @@ function OwnerReportModal({ property, unitWord, issuer, onClose }: {
     const byId: Record<string, Tenant> = {};
     (property.tenants || []).forEach((t) => { byId[t.id] = t; });
     const payments: OwnerReportPayment[] = (data || []).map((x: any) => ({
-      id: x.id, paid_on: x.paid_on, amount: x.amount, method: x.method,
+      id: x.id, paid_on: x.paid_on, amount: x.amount, method: x.method, reference: x.reference, created_at: x.created_at,
       periods_covered: x.periods_covered, note: x.note,
       tenant_name: byId[x.tenant_id]?.name || null,
       unit: byId[x.tenant_id]?.unit || null,
