@@ -599,7 +599,21 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
   }
 
   async function deleteTenant(id: string) {
-    if (!active || !confirm("حذف هذه الوحدة؟")) return;
+    if (!active) return;
+    /**
+     * الحذف لا يمحو الدفعات — تبقى في السجل بلا وحدة (on delete set null).
+     * فالمال لا يضيع، لكنه يختفي من كشوف الوحدة ومن تقرير المالك. لذلك
+     * نُظهر عدد الدفعات المسجّلة قبل السؤال: من يحذف صفًّا مكرّرًا يجب أن
+     * يحذف الفارغ منهما لا المحمّل بالسجل.
+     */
+    const t = active.tenants.find((x) => x.id === id);
+    const { count } = await supabase.from("payments")
+      .select("id", { count: "exact", head: true }).eq("tenant_id", id);
+    const n = Number(count) || 0;
+    const msg = n > 0
+      ? `حذف «${t?.name || "الوحدة"}» — ${ul} ${t?.unit || "—"}؟\n\n⚠️ عليها ${n} دفعة مسجّلة.\nالدفعات لن تُحذف، لكنها ستبقى في السجل بلا وحدة، وتختفي من كشف الوحدة ومن تقرير المالك.\n\nإن كنت تحذف صفًّا مكرّرًا فاحذف الصفّ الذي لا دفعات عليه.\n\nمتابعة الحذف؟`
+      : `حذف «${t?.name || "الوحدة"}» — ${ul} ${t?.unit || "—"}؟\n\nلا دفعات مسجّلة عليها.`;
+    if (!confirm(msg)) return;
     const { data: _del, error } = await supabase.from("tenants").delete().eq("id", id).select("id");
     /* حذف رفضته السياسات يرجع بلا خطأ وبصفر صفوف — لا نوهم الموظف أنه نجح */
     if (!error && (!_del || _del.length === 0)) { notify("err", "هذا الإجراء يحتاج صلاحية أعلى — اطلبه من صاحب المكتب."); return; }
@@ -1213,7 +1227,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                                 <div className="text-[11px] text-muted">{hijriShort(st.nextDueDate)}</div>
                               </>) : <span className="text-muted">—</span>}
                             </td>
-                            <td className={`px-3 ${cellY}`}><span className={`inline-block text-[11px] font-semibold px-2.5 py-0.5 rounded-full border ${badge(key)}`}>{key === "ok" && st.fullyPaid ? "✓ مسدَّد كاملًا" : label(key)}</span></td>
+                            <td className={`px-3 ${cellY}`}><span className={`inline-block text-[11px] font-semibold px-2.5 py-0.5 rounded-full border ${badge(key)}`}>{key === "ok" && st.fullyPaid ? `✓ مسدَّد ${st.paid}/${t.contract_periods || st.paid}` : label(key)}</span></td>
                             <td className={`px-3 ${cellY} text-left tabular-nums whitespace-nowrap ${st.totalOwed > 0 ? "font-bold text-late" : "text-muted"}`}>
                               {st.totalOwed > 0 ? (<>
                                 {sar(st.amountDue)}
@@ -1317,7 +1331,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                         : key === "due" ? <span className="text-[#9A4B00] font-semibold">{st.statusLabel}{st.nextDueDate ? <span className="font-normal text-muted"> · {st.nextDueDate}</span> : null}</span>
                         : key === "expiring" && st.daysToEnd !== null ? <span className="text-[#5B21B6] font-semibold">ينتهي بعد {st.daysToEnd} يوم</span>
                         : key === "litigation" ? <span className="text-[#475569]">{t.enforcement_no ? `طلب ${t.enforcement_no}` : "متابعة نظامية"}</span>
-                        : st.fullyPaid ? <span className="text-[#137a50] font-semibold">✓ سدّد كامل العقد{st.endDate ? <span className="font-normal text-muted"> · ينتهي {st.endDate}{st.daysToEnd !== null && st.daysToEnd >= 0 ? ` (بعد ${st.daysToEnd} يوم)` : ""} — القسط القادم مع التجديد</span> : null}</span>
+                        : st.fullyPaid ? <span className="text-[#137a50] font-semibold">✓ سدّد كامل العقد ({st.paid} من {t.contract_periods || st.paid}){st.endDate ? <span className="font-normal text-muted"> · ينتهي {st.endDate}{st.daysToEnd !== null && st.daysToEnd >= 0 ? ` (بعد ${st.daysToEnd} يوم)` : ""} — القسط القادم مع التجديد</span> : null}</span>
                         : st.nextDueDate ? <span className="text-muted">القادمة {st.nextDueDate}{st.nextDueDate ? ` · ${hijriShort(st.nextDueDate)}` : ""}</span> : null}
                     </div>
                   </div>
