@@ -565,12 +565,28 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
           + `\n\nإن كان السعر الجديد يبدأ من مدة قادمة فالأفضل «تجديد العقد» بدل التعديل.\n\nمتابعة التعديل؟`
         )) return;
       }
+      /* الرصيد الافتتاحي يُعدَّل يدويًّا، لكنه لا يقابله سجل دفعات — فإن
+         كان للوحدة دفعات مسجّلة ننبّه، لأن التعديل يفكّ ارتباط العدّاد
+         بالسجل ويجعل تقرير المالك يخالف حالة الوحدة. */
+      const paidNew = Math.max(0, Math.floor(Number(d.paid_periods) || 0));
+      if (prev && paidNew !== (prev.paid_periods || 0)) {
+        const { count } = await supabase.from("payments")
+          .select("id", { count: "exact", head: true }).eq("tenant_id", id);
+        const recorded = Number(count) || 0;
+        if (recorded > 0 && !confirm(
+          `تغيير «الدفعات المسدَّدة» من ${prev.paid_periods || 0} إلى ${paidNew}؟\n\n`
+          + `على هذه الوحدة ${recorded} دفعة مسجّلة في السجل.\n`
+          + `التعديل اليدوي لا يضيف ولا يحذف دفعة — فقد يختلف العدّاد عن سجل المدفوعات وتقرير المالك.\n\n`
+          + `للتراجع عن دفعة سُجّلت خطأً استعمل «↩︎ تراجع عن آخر دفعة».\n\nمتابعة؟`
+        )) return;
+      }
+
       const reletting = prev && isVacant(prev);
       const full: any = reletting
         ? { ...payload, status: "active", paid_periods: 0, partial_amount: 0,
             notice_date: null, move_out_date: null, deposit_deductions: 0,
             meter_elec_out: null, meter_water_out: null, turnover_checklist: [] }
-        : payload;
+        : { ...payload, paid_periods: paidNew };
       const { data: _u2, error } = await supabase.from("tenants").update(full).eq("id", id).select("id");
       if (error) { console.error("Watheq save error:", error); return notify("err", error.message); }
       if (!_u2 || _u2.length === 0) return notify("err", "هذا الإجراء يحتاج صلاحية أعلى — اطلبه من صاحب المكتب.");
@@ -2159,13 +2175,23 @@ function TenantModal({ open, initial, unitWord, onClose, onSubmit }: {
           <Field label="المكيفات"><input className="fld" type="number" min={0} value={d.acs ?? ""} onChange={(e) => setD({ ...d, acs: e.target.value })} /></Field>
         </div>
         <Field label="رقم العقد" hint="رقمه لديكم أو في «إيجار» — يظهر في كشوف الحساب والخطابات"><input className="fld" dir="ltr" value={d.contract_no || ""} onChange={(e) => setD({ ...d, contract_no: e.target.value })} /></Field>
-        {!initial && (
-          /* عقد قائم يُضاف اليوم: بدون هذا الرقم يُعدّ لم يُسدَّد منه شيء منذ بدايته،
-             فيظهر «متأخرًا» بكل دفعاته الماضية — أشهر صدمة عند نقل محفظة كاملة */
-          <Field label="دفعات سُدّدت حتى اليوم" hint="للعقد القائم فقط — عقد شهري من يناير مدفوع حتى أغسطس = 8. عقد جديد = 0">
-            <input className="fld" type="number" min={0} value={d.paid_periods ?? ""} onChange={(e) => setD({ ...d, paid_periods: e.target.value })} placeholder="0" />
-          </Field>
-        )}
+        {/* كان يظهر عند الإضافة فقط، فمن أخطأ في الرقم — أو استورده خطأً من
+            إكسل — لا يستطيع تصحيحه من اللوحة إطلاقًا، وتبقى الوحدة تشير إلى
+            دفعة خاطئة أبدًا. الآن يظهر في الحالتين بنصّ يناسب كلًّا منهما. */}
+        <Field label="دفعات سُدّدت حتى اليوم"
+          hint={initial
+            ? "صحّحه إن كان الرقم غلطًا. الدفعات المسجَّلة بزر ✔ تُضاف فوقه تلقائيًّا"
+            : "للعقد القائم — عقد شهري من يناير مدفوع حتى أغسطس = 8. عقد جديد = 0"}>
+          <input className="fld" type="number" min={0} value={d.paid_periods ?? ""}
+            onChange={(e) => setD({ ...d, paid_periods: e.target.value })} placeholder="0" />
+          {Number(d.paid_periods) > 0 && Number(d.contract_periods) > 0 && (
+            <span className="block text-[11px] text-muted mt-1">
+              {Number(d.paid_periods) > Number(d.contract_periods)
+                ? `⚠️ أكبر من مدة العقد (${d.contract_periods} دفعة) — سداد مقدَّم لمدة قادمة؟`
+                : `المتبقي ${Number(d.contract_periods) - Number(d.paid_periods)} دفعة من ${d.contract_periods}`}
+            </span>
+          )}
+        </Field>
         <details className="mt-3 border border-line rounded-xl p-3 bg-paper">
           <summary className="cursor-pointer text-sm font-semibold text-deep">⚡ المرافق — حساب الكهرباء والماء وقراءات التسليم</summary>
           <div className="grid sm:grid-cols-2 gap-3 mt-3">
@@ -2449,6 +2475,25 @@ function QuoteModal({ property, unitWord, issuer, onClose }: {
             })()}
           </Field>
         </div>
+
+        {/**
+          * الرصيد الافتتاحي: عدد الدفعات المستلمة قبل الدخول على وثيق.
+          *
+          * كان يُدخَل عند الرفع من إكسل فقط، فمن أخطأ فيه لا يستطيع تصحيحه
+          * من اللوحة — والوحدة تبقى تشير إلى دفعة خاطئة إلى الأبد. متاح
+          * للمدير وحده لأنه يغيّر المتأخرات بلا سجل دفعة يقابله.
+          */}
+        <Field label="الدفعات المسدَّدة" hint="عدد الدفعات المستلمة حتى الآن. الدفعات التي تُسجَّل بزر ✔ تُضاف فوقها تلقائيًّا">
+          <input className="fld" type="number" min={0} max={999}
+            value={d.paid_periods ?? ""} onChange={(e) => setD({ ...d, paid_periods: e.target.value })} placeholder="0" />
+          {Number(d.paid_periods) > 0 && Number(d.contract_periods) > 0 && (
+            <span className="block text-[11px] text-muted mt-1">
+              {Number(d.paid_periods) > Number(d.contract_periods)
+                ? `⚠️ أكبر من مدة العقد (${d.contract_periods}) — سداد مقدَّم لمدة قادمة؟`
+                : `المتبقي ${Number(d.contract_periods) - Number(d.paid_periods)} دفعة`}
+            </span>
+          )}
+        </Field>
 
         <Field label="دورة السداد">
           <div className="grid grid-cols-3 gap-2">
