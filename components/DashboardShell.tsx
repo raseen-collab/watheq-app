@@ -7,12 +7,16 @@ import type { AccountType } from "@/lib/roles";
 import type { SubState } from "@/lib/subscription";
 import OfficeChat from "@/components/OfficeChat";
 
+const WA_RENEW = "https://wa.me/966596300591?text=" + encodeURIComponent("أبغى أجدّد اشتراكي في وثيق");
+
 export default function DashboardShell({
-  userName, accountType, showSwitcher, trialEndsAt, sub, children,
+  userName, accountType, showSwitcher, trialEndsAt, sub, isOwner = true, children,
 }: {
   userName: string;
   accountType: AccountType;
   showSwitcher: boolean;
+  /** الإعدادات تخصّ المكتب كله — تُخفى عن الموظفين بدل عرض باب مقفل */
+  isOwner?: boolean;
   trialEndsAt?: string | null;
   sub?: SubState;
   children: React.ReactNode;
@@ -90,7 +94,7 @@ export default function DashboardShell({
           </div>
 
           <div className="flex items-center gap-2 text-sm">
-            <Link href="/settings" className="text-[#CFE0DB] hover:text-white text-sm">الإعدادات</Link>
+            {isOwner && <Link href="/settings" className="text-[#CFE0DB] hover:text-white text-sm">الإعدادات</Link>}
             <span className="text-[#9FB8B3] hidden sm:inline max-w-[130px] truncate">{userName}</span>
             <button onClick={signOut} className="btn text-sm bg-white/10 text-[#EAF1EE] hover:bg-white/20 border border-white/15">خروج</button>
           </div>
@@ -104,12 +108,25 @@ export default function DashboardShell({
         </div>
       )}
 
+      {/* دورة التذكير بالتجديد: 7 أيام قبل (ذهبي) → سماح 5 أيام (أحمر بعدّاد) → انتهى */}
+      {sub?.kind === "paid_soon" && sub.subDaysLeft !== null && (
+        <div className="text-center text-sm py-2 px-4 bg-[#FBF1DF] text-[#8a5a11] border-b border-[#EBD9AA]">
+          💳 اشتراكك ينتهي {sub.subDaysLeft <= 0 ? "اليوم" : sub.subDaysLeft === 1 ? "غدًا" : `خلال ${sub.subDaysLeft} أيام`}.
+          {" "}<a href={WA_RENEW} target="_blank" rel="noreferrer" className="underline font-bold">جدّد الآن</a> ولا ينقطع شيء.
+        </div>
+      )}
+      {sub?.grace && sub.graceDaysLeft !== null && (
+        <div className="text-center text-sm py-2 px-4 bg-[#FBE9E7] text-[#8f2b26] border-b border-[#F5C6C2]">
+          ⏳ انتهى اشتراكك — كل المزايا تعمل لـ<b>{sub.graceDaysLeft}</b> {sub.graceDaysLeft === 1 ? "يوم" : "أيام"} أخرى، ثم تعود المستندات بعلامة «نسخة تجريبية».
+          {" "}<a href={WA_RENEW} target="_blank" rel="noreferrer" className="underline font-bold">جدّد الآن</a>
+        </div>
+      )}
       {sub?.expired && (
         <div className="text-center text-sm py-2 px-4 bg-[#FBE9E7] text-[#8f2b26] border-b border-[#F5C6C2]">
           {sub.planPaid
             ? <>انتهى اشتراكك — المستندات تُطبع بعلامة «نسخة تجريبية» وحصة المستشار ٣ أسئلة يوميًا. </>
             : <>انتهت تجربتك المجانية. </>}
-          <a href="https://wa.me/966596300591?text=%D8%A3%D8%A8%D8%BA%D9%89%20%D8%A3%D8%AC%D8%AF%D8%AF%20%D8%A7%D8%B4%D8%AA%D8%B1%D8%A7%D9%83%D9%8A%20%D9%81%D9%8A%20%D9%88%D8%AB%D9%8A%D9%82" target="_blank" rel="noreferrer" className="underline font-bold">راسلنا للتفعيل</a>
+          <a href={WA_RENEW} target="_blank" rel="noreferrer" className="underline font-bold">راسلنا للتفعيل</a>
         </div>
       )}
 
