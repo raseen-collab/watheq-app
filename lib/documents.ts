@@ -759,10 +759,10 @@ ${totalDue > 0 ? `<div class="due"><span class="l">إجمالي المستحق �
 ${period && mode === "full" && periodPayments.length ? `
 <h1 style="font-size:1rem">تفصيل دفعات الفترة</h1>
 <div class="scrollx"><table>
-  <thead><tr><th>التاريخ</th><th>${ul}</th><th>المستأجر</th><th>المبلغ</th><th>الطريقة</th></tr></thead>
+  <thead><tr><th>التاريخ</th><th>${ul}</th><th>المستأجر</th><th>المبلغ</th><th>الطريقة</th><th>المرجع</th></tr></thead>
   <tbody>
     ${periodPayments.slice().sort((a, b) => String(a.paid_on).localeCompare(String(b.paid_on)))
-      .map((x: any) => `<tr><td>${arDate(x.paid_on)}</td><td>${x.unit || "—"}</td><td>${x.tenant_name || "—"}</td><td>${sar(Number(x.amount) || 0)}</td><td>${payMethod(x.method)}</td></tr>`).join("")}
+      .map((x: any) => `<tr><td>${arDate(x.paid_on)}</td><td>${x.unit || "—"}</td><td>${x.tenant_name || "—"}</td><td>${sar(Number(x.amount) || 0)}</td><td>${payMethod(x.method)}</td><td dir="ltr">${(x as any).reference || "—"}</td></tr>`).join("")}
     <tr><td colspan="3"><b>إجمالي المُحصَّل</b></td><td colspan="2"><b>${sar(periodCollected)}</b></td></tr>
   </tbody>
 </table></div>` : ""}
