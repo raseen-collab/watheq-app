@@ -33,6 +33,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
    * بنوع حساب المكتب، وسياسات القاعدة تحدّ ما يفعله هناك.
    */
   let subProfile: any = profile || {};
+  let isOwner = true;
   let name = profile?.org_name || profile?.full_name || (user.user_metadata?.name as string) || user.email || "";
   if (!accountType) {
     const { data: office } = await supabase.rpc("watheq_my_office");
@@ -43,6 +44,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
       // ويظهر اسم المكتب في الترويسة ليعرف أين هو
       subProfile = m;
       name = m.org_name || name;
+      isOwner = false;   // الإعدادات تخصّ المكتب — تُخفى عنه
     }
   }
   if (!accountType) redirect("/onboarding");
@@ -54,6 +56,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
       showSwitcher={canSwitch(accountType)}
       trialEndsAt={subProfile?.trial_ends_at}
       sub={subState(subProfile)}
+      isOwner={isOwner}
     >
       {children}
     </DashboardShell>
