@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase-server";
 import { createClient as createAdmin } from "@supabase/supabase-js";
-import { buildDemo, demoPayments } from "@/lib/demo-data";
+import { buildDemo, demoPayments, setDemoPhone } from "@/lib/demo-data";
 
 export const dynamic = "force-dynamic";
 
@@ -36,6 +36,17 @@ export async function POST() {
   // شرط لا يُلتفّ عليه: حساب بلا أي عقار — فلا تكرار ولا خلط
   const { count } = await db.from("properties").select("id", { count: "exact", head: true }).eq("user_id", user.id);
   if ((count || 0) > 0) return NextResponse.json({ error: "الحساب فيه عقارات — البيانات التجريبية للحساب الفارغ فقط." }, { status: 409 });
+
+  /* جوال المستخدم نفسه على كل المستأجرين التجريبيين — فيجرّب التذكير على
+     واتسابه هو. بلا جوال مسجّل تبقى فارغة، ولا رقم غريب يُطرَق بابه. */
+  const { data: prof } = await db.from("profiles").select("billing_phone").eq("id", user.id).maybeSingle();
+  const own = String(prof?.billing_phone || "").replace(/\D/g, "");
+  setDemoPhone(/^0?5\d{8}$/.test(own) || /^9665\d{8}$/.test(own) ? own : null);
+  /* المستأجرون التجريبيون يحملون جوال صاحب الحساب إن كان مسجَّلًا: فيجرّب زر
+     التذكير ويصله على واتسابه ويرى كيف يبدو للمستأجر — بلا إزعاج أحد.
+     وإن لم يُسجَّل، تبقى الخانة فارغة ويفتح واتساب بالرسالة ليختار المستلم. */
+  const { data: me } = await db.from("profiles").select("billing_phone").eq("id", user.id).maybeSingle();
+  setDemoPhone((me?.billing_phone as string) || null);
 
   const props = buildDemo(new Date());
   let units = 0, pays = 0;
