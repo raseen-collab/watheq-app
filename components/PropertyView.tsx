@@ -1066,7 +1066,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
         <div className="bg-[#FBF1DF] border-2 border-dashed border-gold rounded-2xl px-4 py-3 mb-4 flex flex-wrap items-center justify-between gap-3">
           <div className="text-sm">
             <b className="text-deep">🎯 أنت في مكتب تجريبي</b>
-            <span className="text-muted"> — عقارات ووحدات ودفعات وهمية لتجرّب كل شيء. لا تدخل الملخّص اليومي ولا تقارير الإدارة.</span>
+            <span className="text-muted"> — عقارات ووحدات ودفعات وهمية بلا أرقام جوال أو هويات حقيقية. لا تدخل الملخّص اليومي ولا تقارير الإدارة.</span>
           </div>
           <button className="btn btn-gold text-xs" onClick={() => clearDemo()}>🗑 احذفها وابدأ ببياناتي</button>
         </div>
