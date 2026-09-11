@@ -11,6 +11,9 @@ import { complianceState } from "@/lib/compliance";
 import { arDate } from "@/lib/documents";
 
 /** تليجرام يقرأ الرسالة كـHTML: اسم فيه < أو & يُسقط الرسالة كلها للحساب. نهرّب النصوص الحرة */
+/** يوم الرياض — نفس أساس بقية النظام */
+const todayISO = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Riyadh", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+
 const esc = (v: any) => String(v ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
 export const dynamic = "force-dynamic";
@@ -94,6 +97,28 @@ export async function GET(req: Request) {
 
     // ⚖️ التزامات المكتب: عقود وساطة تنتهي/في نافذة الشهرين، تراخيص إعلانات، فال.
     // داخل try حتى لا يُسقط غيابُ جدول schema-v6 الملخّصَ اليومي كله.
+    /* مهام العقار المفتوحة: مصدر طلب المكتب — «مشاكل وإصلاحات وتكون تذكير».
+       الملاحظة بلا موعد أرشيف؛ وبموعد تصير سطرًا في ملخص الصباح حتى تُغلق. */
+    let tasks: string[] = [];
+    try {
+      const propIds = (props || []).map((x: any) => x.id);
+      if (propIds.length) {
+        const { data: notes } = await db.from("property_notes")
+          .select("property_id, text, due_date, kind, unit")
+          .in("property_id", propIds).is("done_at", null).not("due_date", "is", null)
+          .lte("due_date", todayISO()).order("due_date", { ascending: true }).limit(40);
+        const nameOf: Record<string, string> = {};
+        (props || []).forEach((x: any) => { nameOf[x.id] = x.name; });
+        const KIND: Record<string, string> = { maintenance: "🔧", renewal: "🔁", government: "🏛️", financial: "💰", other: "📌" };
+        tasks = (notes || []).map((n: any) => {
+          const late = String(n.due_date) < todayISO();
+          const days = Math.round((Date.parse(todayISO()) - Date.parse(String(n.due_date))) / 86400000);
+          return `• ${KIND[String(n.kind)] || "📌"} <b>${esc(nameOf[n.property_id] || "عقار")}</b>${n.unit ? ` · ${esc(n.unit)}` : ""} — ${esc(String(n.text).slice(0, 80))}`
+            + (late ? ` <i>(متأخرة ${days} يومًا)</i>` : " <i>(اليوم)</i>");
+        });
+      }
+    } catch { /* التذكيرات ثانوية — لا تُعطّل الملخص */ }
+
     let compliance: string[] = [];
     let brokerages: ComplianceItem[] = [];
     try {
@@ -134,6 +159,7 @@ export async function GET(req: Request) {
     if (lateList.length) parts.push(`🔴 <b>متأخرة (${lateList.length})</b> — إجمالي ${sar(totalDue)} ريال`, ...lateList.slice(0, 12), ...more(lateList.length), "");
     if (expiring.length) parts.push(`📄 <b>عقود تنتهي قريبًا (${expiring.length})</b>`, ...expiring.slice(0, 12), ...more(expiring.length), "");
     if (legacyList.length) parts.push(`💼 <b>ديون على مستأجرين سابقين (${legacyList.length})</b>`, ...legacyList.slice(0, 8), "");
+    if (tasks.length) parts.push(`🔧 <b>مهام العقارات (${tasks.length})</b>`, ...tasks.slice(0, 10), ...more(tasks.length), "");
     if (litigationList.length) parts.push(`⚖️ <b>في التنفيذ القضائي (${litigationList.length})</b> — لا تُرسل لهم تذكيرات`, ...litigationList.slice(0, 8), "");
     if (compliance.length) parts.push(`⚖️ <b>التزامات المكتب (${compliance.length})</b>`, ...compliance.slice(0, 12), "");
     if (listings.length) parts.push(`📋 <b>المعروضات</b>`, ...listings, "");
