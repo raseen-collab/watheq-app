@@ -54,7 +54,7 @@ async function handle(req: Request) {
   const [profiles, newProfiles, props, assoc, tenants, owners, pays, newPays] = await Promise.all([
     db.from("profiles").select("id", { count: "exact", head: true }),
     db.from("profiles").select("id,full_name,org_name,account_type,created_at").gte("created_at", sinceISO),
-    db.from("properties").select("user_id"),
+    db.from("properties").select("user_id").eq("is_demo", false),
     db.from("associations").select("user_id"),
     db.from("tenants").select("id", { count: "exact", head: true }),
     db.from("owners").select("id", { count: "exact", head: true }),
