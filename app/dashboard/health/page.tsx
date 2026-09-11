@@ -11,7 +11,7 @@ export default async function HealthPage() {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect("/login");
 
-  const { data: propsRaw } = await supabase.from("properties").select("*").order("created_at", { ascending: false });
+  const { data: propsRaw } = await supabase.from("properties").select("*").eq("is_demo", false).order("created_at", { ascending: false });
   const allTenants = await fetchAllRows(supabase, "tenants", "*");
   const byProp: Record<string, any[]> = {};
   allTenants.forEach((t: any) => { (byProp[t.property_id] ||= []).push(t); });
