@@ -21,13 +21,24 @@ const FIRST = ["محمد", "أحمد", "عبدالله", "خالد", "فهد", "
 const LAST = ["الحربي", "العتيبي", "القحطاني", "الشمري", "الدوسري", "المطيري", "الزهراني", "الغامدي", "السبيعي", "الجهني", "الأحمدي", "الصاعدي", "العنزي", "البلوي", "الرشيدي"];
 const COMPANIES = ["مؤسسة النخبة التجارية", "شركة الأفق للمقاولات", "مكتب البناء الهندسي", "صيدلية الشفاء", "مطعم ريف الشام", "مركز نور للتجميل", "معرض الأناقة للأثاث", "مؤسسة الرواد للتقنية", "مكتب المستقبل للمحاماة", "شركة الأمانة العقارية"];
 const person = () => `${pick(FIRST)} ${pick(LAST)}`;
-const phone = () => "05" + String(int(10000000, 99999999));
+/**
+ * لا أرقام جوال ولا هويات عشوائية — إطلاقًا.
+ *
+ * أي رقم بصيغة 05xxxxxxxx يخصّ إنسانًا حقيقيًّا في الغالب، وزائر يجرّب زر 💬
+ * يرسل تذكير إيجار لغريب باسم مستأجر لا يعرفه. وكذلك رقم الهوية.
+ *
+ * البديل الأفضل: المستأجر التجريبي يحمل جوال المستخدم نفسه إن كان مسجَّلًا —
+ * فيضغط 💬 ويصله التذكير على واتسابه ويرى كيف يبدو للمستأجر. وإن لم يكن
+ * مسجَّلًا تبقى الخانة فارغة، فيفتح واتساب بالرسالة جاهزة ويختار المستلم.
+ */
+let DEMO_PHONE: string | null = null;
+export const setDemoPhone = (p: string | null) => { DEMO_PHONE = p || null; };
 
 type Freq = "monthly" | "quarterly" | "semiannual" | "annual";
 const PER: Record<Freq, number> = { monthly: 12, quarterly: 4, semiannual: 2, annual: 1 };
 
 export type DemoTenant = {
-  unit: string; name: string; phone: string; national_id: string; contract_no: string;
+  unit: string; name: string; phone: string | null; national_id: string | null; contract_no: string;
   rent_amount: number; payment_frequency: Freq; contract_start: string; contract_periods: number;
   paid_periods: number; partial_amount: number; calendar: "hijri" | "gregorian";
   unit_type: string; rooms: number; baths: number; acs: number;
@@ -49,7 +60,8 @@ export type DemoProperty = {
 export function buildDemo(today = new Date()): DemoProperty[] {
   seed = 1448;
   const shift = (n: number) => { const d = new Date(today); d.setDate(d.getDate() + n); return iso(d); };
-  let idCounter = 1000000000 + int(1, 9999);
+  /* هوية بصيغة لا يقبلها النظام السعودي (تبدأ بـ9): تُقرأ رقمًا ولا تطابق أحدًا */
+  let idCounter = 9000000001;
   const nid = () => String(idCounter++);
   let ej = 4100;
   const ejar = () => "EJ-" + String(ej++);
@@ -58,13 +70,13 @@ export function buildDemo(today = new Date()): DemoProperty[] {
   const mk = (unit: string, o: Partial<DemoTenant> & { rent_amount: number; payment_frequency: Freq; unit_type: string }): DemoTenant => {
     const per = PER[o.payment_frequency];
     return {
-      unit, name: o.name ?? person(), phone: phone(), national_id: nid(), contract_no: ejar(),
+      unit, name: o.name ?? person(), phone: DEMO_PHONE, national_id: null, contract_no: ejar(),
       contract_periods: per, paid_periods: Math.min(per, o.paid_periods ?? int(0, per)),
       partial_amount: 0, calendar: o.calendar ?? (rnd() < 0.6 ? "hijri" : "gregorian"),
       contract_start: o.contract_start ?? shift(-int(20, 330)),
       rooms: o.rooms ?? int(2, 4), baths: o.baths ?? int(1, 3), acs: o.acs ?? int(1, 4),
       status: "active", move_out_date: null, litigation: false, carried_debt: 0,
-      elec_account: "3001" + String(int(100000, 999999)), water_account: "4001" + String(int(100000, 999999)),
+      elec_account: "DEMO-E-" + unit, water_account: "DEMO-W-" + unit,   // ظاهرة الوهمية لا تشبه حسابًا حقيقيًّا
       deposit_amount: o.rent_amount, ...o,
     } as DemoTenant;
   };
