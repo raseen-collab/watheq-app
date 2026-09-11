@@ -44,7 +44,20 @@ type Tenant = {
   meter_water_in?: string | null; meter_water_out?: string | null;
   turnover_checklist?: { label: string; done?: boolean; note?: string | null }[] | null;
 };
-type Note = { id: string; note_date: string; text: string };
+/** ملاحظة السجل صارت مهمة قابلة للمتابعة: موعد وحالة ونوع */
+type Note = {
+  id: string; note_date: string; text: string;
+  due_date?: string | null; done_at?: string | null; kind?: string | null; unit?: string | null;
+};
+
+/** أنواع المهام — للفرز وللونها في السجل */
+const NOTE_KINDS: Record<string, { label: string; icon: string }> = {
+  maintenance: { label: "صيانة", icon: "🔧" },
+  renewal:     { label: "تجديد", icon: "🔁" },
+  government:  { label: "حكومي", icon: "🏛️" },
+  financial:   { label: "مالي", icon: "💰" },
+  other:       { label: "أخرى", icon: "📌" },
+};
 type Property = {
   id: string; name: string; address: string | null; city: string | null; manager: string | null;
   property_type: string | null; collected: number;
@@ -638,12 +651,26 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
     setItems(items.map((p) => (p.id === active.id ? { ...p, tenants: p.tenants.filter((t) => t.id !== id) } : p)));
   }
 
-  async function addNote(text: string) {
+  async function addNote(text: string, extra?: { due_date?: string | null; kind?: string; unit?: string | null }) {
     if (!active || !text.trim()) return;
     const { data, error } = await supabase.from("property_notes")
-      .insert({ property_id: active.id, text: text.trim(), note_date: today() }).select("*").single();
+      .insert({ property_id: active.id, text: text.trim(), note_date: today(),
+                due_date: extra?.due_date || null, kind: extra?.kind || "other", unit: extra?.unit || null })
+      .select("*").single();
     if (error) { console.error("Watheq save error:", error); return notify("err", error.message); }
     setItems(items.map((p) => (p.id === active.id ? { ...p, property_notes: [data as Note, ...p.property_notes] } : p)));
+  }
+
+  /** إغلاق المهمة أو إعادة فتحها — المتابعة تحتاج «تمّت» وإلا تتراكم وتُهمل */
+  async function toggleNote(n: Note) {
+    if (!active) return;
+    const done_at = n.done_at ? null : new Date().toISOString();
+    const { data, error } = await supabase.from("property_notes")
+      .update({ done_at }).eq("id", n.id).select("*");
+    if (error) return notify("err", error.message);
+    if (!data?.length) return notify("err", "هذا الإجراء يحتاج صلاحية أعلى.");
+    setItems(items.map((p) => (p.id === active.id
+      ? { ...p, property_notes: p.property_notes.map((x) => (x.id === n.id ? (data[0] as Note) : x)) } : p)));
   }
 
   async function deleteNote(id: string) {
@@ -1425,14 +1452,58 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
         <div className="bg-white border border-line rounded-2xl shadow-sm">
           <div className="border-b border-line px-5 py-4"><h2 className="font-semibold">📝 سجل العقار <span className="text-xs font-normal text-muted">— ملاحظات الصيانة والتجديد والإخلاء</span></h2></div>
           <div className="p-4">
-            <AddNote onAdd={addNote} />
-            {notes.length ? notes.map((n) => (
-              <div key={n.id} className="flex gap-2.5 py-2.5 border-b border-dashed border-line last:border-0 text-sm">
-                <span className="text-xs font-semibold text-[#8a5a11] w-16 shrink-0">{n.note_date}</span>
-                <span className="flex-1 text-[#33413d]">{n.text}</span>
-                <button className="text-muted opacity-60 hover:opacity-100 hover:text-late" onClick={() => deleteNote(n.id)}>حذف</button>
-              </div>
-            )) : <div className="text-center text-muted py-6 text-sm">لا ملاحظات بعد.</div>}
+            <AddNote onAdd={addNote} unitWord={ul} />
+            {(() => {
+              /* المهام المفتوحة أولًا مرتّبة بموعدها، ثم بقية السجل — القائمة
+                 التي لا تُرتّب بالإلحاح تُقرأ مرة وتُهمل. */
+              const open = notes.filter((n) => !n.done_at && n.due_date)
+                .sort((a, b) => String(a.due_date).localeCompare(String(b.due_date)));
+              const rest = notes.filter((n) => n.done_at || !n.due_date);
+              const t0 = today();
+              if (!notes.length) return <div className="text-center text-muted py-6 text-sm">لا ملاحظات بعد.</div>;
+              const row = (n: Note) => {
+                const late = !n.done_at && n.due_date && n.due_date < t0;
+                const soon = !n.done_at && n.due_date === t0;
+                return (
+                  <div key={n.id} className={`flex items-start gap-2.5 py-2.5 border-b border-dashed border-line last:border-0 text-sm ${n.done_at ? "opacity-55" : ""}`}>
+                    <button className={`mt-0.5 w-4 h-4 rounded border shrink-0 grid place-items-center text-[10px] ${n.done_at ? "bg-[#137a50] border-[#137a50] text-white" : "border-line hover:border-deep"}`}
+                      title={n.done_at ? "إعادة فتح" : "تمّت"} onClick={() => toggleNote(n)}>{n.done_at ? "✓" : ""}</button>
+                    <span className="text-xs font-semibold w-24 shrink-0 tabular-nums">
+                      {n.due_date ? (
+                        <span className={late ? "text-late" : soon ? "text-[#9A4B00]" : "text-[#8a5a11]"}>
+                          {late ? "متأخرة · " : soon ? "اليوم · " : ""}{n.due_date}
+                        </span>
+                      ) : <span className="text-muted">{n.note_date}</span>}
+                    </span>
+                    <span className={`flex-1 text-[#33413d] ${n.done_at ? "line-through" : ""}`}>
+                      {n.kind && n.kind !== "other" && <span className="me-1">{NOTE_KINDS[n.kind]?.icon}</span>}
+                      {n.text}
+                    </span>
+                    <button className="text-muted opacity-60 hover:opacity-100 hover:text-late text-xs" onClick={() => deleteNote(n.id)}>حذف</button>
+                  </div>
+                );
+              };
+              return (
+                <>
+                  {open.length > 0 && (
+                    <div className="mb-3">
+                      <div className="text-xs font-bold text-deep mb-1">
+                        مهام مفتوحة ({open.length})
+                        {open.filter((n) => String(n.due_date) < t0).length > 0 &&
+                          <span className="text-late font-normal"> · {open.filter((n) => String(n.due_date) < t0).length} متأخرة</span>}
+                      </div>
+                      {open.map(row)}
+                    </div>
+                  )}
+                  {rest.length > 0 && (
+                    <>
+                      {open.length > 0 && <div className="text-xs font-bold text-muted mt-3 mb-1">السجل</div>}
+                      {rest.map(row)}
+                    </>
+                  )}
+                </>
+              );
+            })()}
           </div>
         </div>
       </div>
@@ -1951,13 +2022,45 @@ function RowMenu({ items }: { items: { label?: string; run?: () => void; danger?
 }
 
 
-function AddNote({ onAdd }: { onAdd: (t: string) => void }) {
+/**
+ * إضافة ملاحظة أو مهمة.
+ *
+ * الملاحظة بلا موعد توثيق يُقرأ حين يُبحث عنه؛ ومع موعد تصير متابعة تأتي
+ * إليك — تظهر على بطاقة العقار وفي ملخّص تليجرام الصباحي حتى تُغلق.
+ */
+function AddNote({ onAdd, unitWord }: {
+  onAdd: (t: string, extra?: { due_date?: string | null; kind?: string }) => void;
+  unitWord: string;
+}) {
   const [t, setT] = useState("");
+  const [kind, setKind] = useState("maintenance");
+  const [due, setDue] = useState("");
+  const submit = () => { if (t.trim()) { onAdd(t, { due_date: due || null, kind }); setT(""); setDue(""); } };
   return (
-    <div className="flex gap-2 mb-3">
-      <input className="fld" value={t} onChange={(e) => setT(e.target.value)} placeholder="ملاحظة (صيانة، تجديد عقد...)"
-        onKeyDown={(e) => { if (e.key === "Enter" && t.trim()) { onAdd(t); setT(""); } }} />
-      <button className="btn btn-primary text-sm" onClick={() => { if (t.trim()) { onAdd(t); setT(""); } }}>حفظ</button>
+    <div className="border border-line rounded-xl p-3 mb-3 bg-paper">
+      <div className="flex gap-2 mb-2">
+        <input className="fld" value={t} onChange={(e) => setT(e.target.value)}
+          placeholder={`ما الذي حدث أو يجب عمله؟ (تسريب في ${unitWord} 12 · تجديد رخصة · دهان السلالم)`}
+          onKeyDown={(e) => { if (e.key === "Enter") submit(); }} />
+        <button className="btn btn-primary text-sm shrink-0" onClick={submit}>حفظ</button>
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="flex gap-1">
+          {Object.entries(NOTE_KINDS).map(([k, v]) => (
+            <button key={k} type="button" onClick={() => setKind(k)}
+              className={`text-[11px] px-2 py-1 rounded-full border ${kind === k ? "bg-deep text-goldSoft border-deep" : "border-line text-muted hover:text-deep"}`}>
+              {v.icon} {v.label}
+            </button>
+          ))}
+        </div>
+        <label className="flex items-center gap-1.5 text-[11px] text-muted ms-auto">
+          ذكّرني في
+          <input className="fld !py-1 !text-xs !w-36" type="date" value={due} onChange={(e) => setDue(e.target.value)} />
+        </label>
+      </div>
+      <p className="text-[10px] text-muted mt-1.5">
+        بموعد: تصير مهمة تظهر على العقار وفي ملخّص تليجرام حتى تُغلق · بلا موعد: ملاحظة في السجل فقط.
+      </p>
     </div>
   );
 }
