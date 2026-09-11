@@ -23,7 +23,7 @@ export default function DataHealth({ initial }: { initial: any[] }) {
   async function run() {
     setBusy(true);
     const [pr, pa, ex] = await Promise.all([
-      supabase.from("properties").select("*, tenants(*)").limit(2000, { referencedTable: "tenants" }),
+      supabase.from("properties").select("*, tenants(*)").eq("is_demo", false).limit(2000, { referencedTable: "tenants" }),
       supabase.from("payments").select("id,tenant_id,property_id,amount,paid_on").limit(5000),
       supabase.from("expenses").select("id,property_id,amount,spent_on").limit(5000),
     ]);

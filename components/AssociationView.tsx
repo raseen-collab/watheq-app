@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase-client";
 import { officeId } from "@/lib/office";
-import { sar, daysLeft, waLink, WATHEQ_WA, today } from "@/lib/utils";
+import { sar, daysLeft, waLink, WATHEQ_WA, today, openExternal } from "@/lib/utils";
 import { ownerStatementHTML, associationStatementHTML, budgetHTML, foundingMinutesHTML,
   renewalMinutesHTML, DEFAULT_BUDGET_ITEMS, openDoc, type BudgetItem } from "@/lib/documents";
 import DateField from "@/components/DateField";
@@ -1757,7 +1757,7 @@ function RemindAllOwnersModal({ owners, fee, linkOf, onClose }: {
                 </div>
                 {sent[o.id] && <span className="text-xs font-bold text-paid">✓ أُرسل</span>}
                 <a href={linkOf(o)} target="_blank" rel="noreferrer" className="btn btn-wa text-xs"
-                  onClick={() => setSent((s) => ({ ...s, [o.id]: true }))}>فتح واتساب</a>
+                  onClick={(e) => { e.preventDefault(); openExternal(linkOf(o)); setSent((s) => ({ ...s, [o.id]: true })); }}>فتح واتساب</a>
               </div>
             );
           })}

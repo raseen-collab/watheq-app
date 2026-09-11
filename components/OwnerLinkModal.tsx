@@ -8,7 +8,7 @@
 import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase-client";
 import { officeId } from "@/lib/office";
-import { waLink } from "@/lib/utils";
+import { waLink, openExternal } from "@/lib/utils";
 import { arDate } from "@/lib/documents";
 
 type LinkRow = {
@@ -137,7 +137,7 @@ export default function OwnerLinkModal({ propertyId, propertyName, ownerPhoneHin
                   {!x.revoked && (
                     <>
                       <button className="btn btn-ghost text-xs" onClick={() => copy(x.token)}>📋 نسخ</button>
-                      <a className="btn btn-ghost text-xs" target="_blank" rel="noreferrer" href={waLink(ownerPhoneHint || "", waText(x.token))}>واتساب</a>
+                      <a className="btn btn-ghost text-xs" target="_blank" rel="noreferrer" href={waLink(ownerPhoneHint || "", waText(x.token))} onClick={(e) => { e.preventDefault(); openExternal(waLink(ownerPhoneHint || "", waText(x.token))); }}>واتساب</a>
                       <a className="btn btn-ghost text-xs" target="_blank" rel="noreferrer" href={urlOf(x.token)}>معاينة</a>
                     </>
                   )}

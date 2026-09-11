@@ -169,7 +169,7 @@ export default function OfficeChat() {
     <>
       {/* الزر العائم */}
       <button type="button" onClick={() => { setOpen(true); markSeen(); }}
-        className="fixed z-40 bottom-[calc(4.5rem+env(safe-area-inset-bottom,0px))] end-4 lg:bottom-6 lg:end-6 bg-deep text-goldSoft rounded-full shadow-lg border border-goldSoft/30 px-4 py-3 text-sm font-semibold flex items-center gap-2"
+        className="wq-chat-fab fixed z-40 bottom-[calc(4.5rem+env(safe-area-inset-bottom,0px))] end-4 lg:bottom-6 lg:end-6 bg-deep text-goldSoft rounded-full shadow-lg border border-goldSoft/30 px-4 py-3 text-sm font-semibold flex items-center gap-2"
         title="تواصل الفريق">
         💬 الفريق
         {unread > 0 && <span className="bg-late text-white rounded-full text-[11px] px-1.5 py-0.5 min-w-[20px]">{unread}</span>}

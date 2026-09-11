@@ -6,7 +6,7 @@ import { createClient } from "@/lib/supabase-client";
 import { officeId, getOffice, ROLE_LABEL, OWNER_PERMS } from "@/lib/office";
 import { arDate } from "@/lib/documents";
 import { hijriShort, hijriText, parseHijriInput } from "@/lib/hijri";
-import { sar, waLink, today, WATHEQ_WA } from "@/lib/utils";
+import { sar, waLink, today, WATHEQ_WA, openExternal } from "@/lib/utils";
 import { contractState, buildSchedule, FREQUENCIES, freqLabel, freqShort, derivedEndDate, renewContract, needsRenewal, applyPayment, splitVat, isCommercial, isVacant, settleDeposit, unitVatApplies,
   vacancyDays, TURNOVER_CHECKLIST, type Frequency } from "@/lib/contracts";
 import { PROPERTY_TYPES, typeLabel, unitLabel, typeIcon } from "@/lib/domain";
@@ -17,6 +17,7 @@ import OwnerStatementModal from "@/components/OwnerStatementModal";
 import ActivityLog from "@/components/ActivityLog";
 import StatusLegend from "@/components/StatusLegend";
 import PropertyStatementModal, { type StatementPeriod } from "@/components/PropertyStatementModal";
+import DemoGuide from "@/components/DemoGuide";
 import ExpensesModal from "@/components/ExpensesModal";
 import OwnerLinkModal from "@/components/OwnerLinkModal";
 import type { ExpenseRow } from "@/lib/expenses";
@@ -443,6 +444,11 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
     setHistory({ tenant: t, rows: data || [] });
   }
   async function saveProperty(d: any, id?: string) {
+    /* أول عقار حقيقي بينما التجريبي قائم: نسأل ونحذف — الخلط بين الاثنين
+       أخطر ما في الفكرة، ولا نتركه لذاكرة المستخدم. */
+    if (!id && hasDemo && confirm("تضيف عقارك الحقيقي الأول — نحذف البيانات التجريبية الآن؟\n\nموافق = حذف التجريبي والبدء نظيفًا\nإلغاء = إبقاؤه مؤقتًا")) {
+      await clearDemo(true);
+    }
     const payload = {
       name: d.name, address: d.address || null, city: d.city || null,
       manager: d.manager || orgName || null, property_type: d.property_type || "residential",
@@ -721,6 +727,35 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
   }
 
   const [stmtOpen, setStmtOpen] = useState(false);
+  const [seeding, setSeeding] = useState(false);
+  const hasDemo = items.some((p) => (p as any).is_demo);
+
+  async function seedDemo() {
+    setSeeding(true);
+    try {
+      const r = await fetch("/api/demo", { method: "POST" });
+      const j = await r.json();
+      if (!r.ok) { notify("err", j.error || "تعذّر التجهيز"); return; }
+      notify("ok", `جاهز — ${j.properties} عقارات و${j.units} وحدة. تجوّل وجرّب كل شيء.`);
+      router.refresh();
+    } finally { setSeeding(false); }
+  }
+  /** أفعال دليل التجربة: كل خطوة تفتح ما تشرحه بدل أن تصفه */
+  function onGuideEvent(ev: string) {
+    if (ev === "filter:late") { setFilter("late"); setSort("amount"); window.scrollTo({ top: 400, behavior: "smooth" }); }
+    else if (ev === "open:statement") setStmtOpen(true);
+    else if (ev === "open:owner") setReporting(true);
+    else if (ev === "clear-demo") void clearDemo();
+  }
+
+  async function clearDemo(silent = false) {
+    if (!silent && !confirm("حذف كل البيانات التجريبية؟\n\nتُحذف العقارات الخمسة ووحداتها ودفعاتها ومصروفاتها — ولا تمسّ أي بيانات حقيقية.")) return;
+    const r = await fetch("/api/demo", { method: "DELETE" });
+    const j = await r.json();
+    if (!r.ok) return notify("err", j.error || "تعذّر الحذف");
+    if (!silent) notify("ok", "حُذفت البيانات التجريبية — ابدأ ببياناتك.");
+    router.refresh();
+  }
   async function openPropertyStatement(mode: "brief" | "full", period: StatementPeriod) {
     if (!active) return;
     setStmtOpen(false);
@@ -920,8 +955,25 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
           ))}
         </div>
 
+        {/**
+          * الزائر من إعلان لا وقت عنده ليدخل بياناته ليرى شيئًا — فيغادر أمام
+          * لوحة فارغة. البيانات التجريبية تعطيه مكتبًا حيًّا في ثلاث ثوانٍ:
+          * خمسة عقارات وثمانون وحدة بكل الحالات، تُحذف بضغطة أو تلقائيًّا
+          * حين يضيف أول عقار حقيقي.
+          */}
+        <div className="bg-[#FBF1DF] border border-goldSoft rounded-xl p-4 mb-4 text-right">
+          <div className="font-semibold text-deep text-sm mb-1">🎯 تبغى تشوفها تشتغل قبل ما تدخل بياناتك؟</div>
+          <p className="text-xs text-muted mb-3 leading-relaxed">
+            نجهّز لك مكتبًا تجريبيًّا: 5 عقارات و80 وحدة بحالات حقيقية — متأخرون ومنتظمون وشواغر
+            وتقارير مُلّاك ومصروفات. تتجوّل فيه، وتحذفه بضغطة وتبدأ ببياناتك.
+          </p>
+          <button className="btn btn-gold w-full justify-center" disabled={seeding} onClick={seedDemo}>
+            {seeding ? "جارٍ التجهيز…" : "🚀 جرّب ببيانات تجريبية"}
+          </button>
+        </div>
+
         <div className="flex gap-2 justify-center flex-wrap">
-          <button className="btn btn-gold" onClick={() => setModal({ kind: "newProp" })}>+ إضافة عقار</button>
+          <button className="btn btn-ghost" onClick={() => setModal({ kind: "newProp" })}>+ إضافة عقار</button>
           <Link href="/dashboard/property/import" className="btn btn-ghost">رفع من ملف Excel</Link>
         </div>
 
@@ -929,7 +981,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
         <div className="bg-paper border border-line rounded-xl p-3 mt-5 text-sm text-right">
           <b className="text-deep">ما عندك وقت للإدخال؟</b> أرسل لنا بياناتك بأي شكل (ملف إكسل، صورة دفتر، أو حتى رسالة) ونجهّز حسابك كاملًا خلال يوم — بلا أي التزام.
           <a href={waLink(WATHEQ_WA, "السلام عليكم، أبغى أجهّز حسابي في وثيق وعندي بيانات عقاراتي.")} target="_blank" rel="noreferrer"
-             className="btn btn-wa text-xs mt-2">💬 أرسل بياناتك على واتساب</a>
+             className="btn btn-wa text-xs mt-2" onClick={(e) => { e.preventDefault(); openExternal(waLink(WATHEQ_WA, "السلام عليكم، أبغى أجهّز حسابي في وثيق وعندي بيانات عقاراتي.")); }}>💬 أرسل بياناتك على واتساب</a>
         </div>
         <PropertyModal open={modal?.kind === "newProp"} orgName={orgName} onClose={() => setModal(null)} onSubmit={(d) => saveProperty(d)} />
       </div>
@@ -1010,7 +1062,18 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
         </div>
       )}
 
+      {hasDemo && (
+        <div className="bg-[#FBF1DF] border-2 border-dashed border-gold rounded-2xl px-4 py-3 mb-4 flex flex-wrap items-center justify-between gap-3">
+          <div className="text-sm">
+            <b className="text-deep">🎯 أنت في مكتب تجريبي</b>
+            <span className="text-muted"> — عقارات ووحدات ودفعات وهمية لتجرّب كل شيء. لا تدخل الملخّص اليومي ولا تقارير الإدارة.</span>
+          </div>
+          <button className="btn btn-gold text-xs" onClick={() => clearDemo()}>🗑 احذفها وابدأ ببياناتي</button>
+        </div>
+      )}
+
       {items.length > 1 && (
+
         <div className="bg-deep text-[#EAF1EE] rounded-2xl p-4 mb-5 flex flex-wrap items-center gap-x-6 gap-y-3">
           <div className="font-display font-bold text-sm text-goldSoft">محفظتك · {plural(items.length, "عقار واحد", "عقاران", "عقارات", "عقارًا")}</div>
           <PortfolioStat v={String(portfolio.units)} l={portfolio.units === 1 ? "وحدة" : portfolio.units === 2 ? "وحدتان" : portfolio.units <= 10 ? "وحدات" : "وحدة"} />
@@ -1292,7 +1355,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                                     if (confirm(`تسجيل استلام دفعة كاملة؟\n\n${sar(amt)} ريال من ${t.name} — ${ul} ${t.unit || "—"} — ${active?.name}\n\nتاريخ السداد: اليوم (${today()})\nلتاريخ مختلف أو مرجع حوالة استعمل زر ½.\n\n(تُسجَّل باسمك في سجل العمليات)`)) recordPayment(t, amt);
                                   }}>&#10004;</QuickBtn>}
                                   {canCollect && <QuickBtn title="سداد جزئي" cls="btn-ghost" onClick={() => setPaying(t)}>&#189;</QuickBtn>}
-                                  <a href={remindLink(t)} target="_blank" rel="noreferrer" className="btn btn-wa text-xs px-2.5" title="إرسال تذكير واتساب">&#128172;</a>
+                                  <a href={remindLink(t)} target="_blank" rel="noreferrer" className="btn btn-wa text-xs px-2.5" title="إرسال تذكير واتساب" onClick={(e) => { e.preventDefault(); openExternal(remindLink(t)); }}>&#128172;</a>
                                 </>)}
                                 <RowMenu items={[
                                   /* ثلاث مجموعات بترتيب الاستعمال لا بترتيب البناء:
@@ -1402,7 +1465,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                         if (confirm(`تسجيل استلام دفعة كاملة؟\n\n${sar(amt)} ريال من ${t.name} — ${ul} ${t.unit || "—"} — ${active?.name}\n\nتاريخ السداد: اليوم (${today()})\nلتاريخ مختلف أو مرجع حوالة استعمل زر ½.\n\n(تُسجَّل باسمك في سجل العمليات)`)) recordPayment(t, amt);
                       }}>&#10004;</QuickBtn>
                       <QuickBtn title="سداد جزئي" cls="btn-ghost" onClick={() => setPaying(t)}>&#189;</QuickBtn>
-                      <a href={remindLink(t)} target="_blank" rel="noreferrer" className="btn btn-wa text-xs px-2.5" title="إرسال تذكير واتساب">&#128172;</a>
+                      <a href={remindLink(t)} target="_blank" rel="noreferrer" className="btn btn-wa text-xs px-2.5" title="إرسال تذكير واتساب" onClick={(e) => { e.preventDefault(); openExternal(remindLink(t)); }}>&#128172;</a>
                       {t.phone && <a href={`tel:${String(t.phone).replace(/[^0-9+]/g, "")}`} className="btn btn-ghost text-xs px-2.5 sm:hidden" title="اتصال مباشر">&#128222;</a>}
                       <QuickBtn title="إصدار فاتورة" cls="btn-ghost" onClick={() => openInvoice(t)}>&#128196;</QuickBtn>
                       {st.unpaid > 0 && <button className="btn btn-gold text-xs" onClick={() => makeNotice(t)}>نموذج إشعار</button>}
@@ -1529,6 +1592,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
 
       {ownerStmtOpen && <OwnerStatementModal properties={items} issuer={issuer} onClose={() => setOwnerStmtOpen(false)} />}
       {logOpen && <ActivityLog properties={items} onClose={() => setLogOpen(false)} />}
+      {hasDemo && <DemoGuide onEvent={onGuideEvent} />}
       {stmtOpen && active && <PropertyStatementModal propertyName={active.name} onClose={() => setStmtOpen(false)} onIssue={openPropertyStatement} />}
 
       {compOpen && (
@@ -1596,7 +1660,7 @@ function Stat({ v, l, kpi = "plain", icon, onClick, active }: {
 function QuickBtn({ children, title, cls, onClick }: { children: React.ReactNode; title: string; cls: string; onClick: () => void }) {
   return (
     <button type="button" title={title} aria-label={title} onClick={onClick}
-      className={`btn ${cls} text-xs px-2.5`}>{children}</button>
+      className={`btn wq-quick ${cls} text-xs px-2.5`}>{children}</button>
   );
 }
 
@@ -1928,8 +1992,12 @@ function MenuBtn({ label, items, badge = 0 }: {
     const r = ref.current?.getBoundingClientRect();
     if (r) {
       const H = Math.min(items.length * 34 + 16, 300);
+      const W = 210;                       // عرض القائمة الأدنى
       const below = window.innerHeight - r.bottom;
-      setPos({ top: below > H + 12 ? r.bottom + 4 : Math.max(8, r.top - H - 4), left: Math.max(8, r.left) });
+      /* على الجوال يقع الزر قرب الحافة، فتخرج القائمة خارج الشاشة ويُقصّ نصفها.
+         نحاذيها بيمين الزر ونقصّها داخل حدود النافذة. */
+      const left = Math.min(Math.max(8, r.right - W), window.innerWidth - W - 8);
+      setPos({ top: below > H + 12 ? r.bottom + 4 : Math.max(8, r.top - H - 4), left: Math.max(8, left) });
     }
     const close = () => setOpen(false);
     window.addEventListener("scroll", close, true);
@@ -1947,7 +2015,7 @@ function MenuBtn({ label, items, badge = 0 }: {
         <>
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
           <div style={{ top: pos.top, left: pos.left }}
-            className="fixed z-50 min-w-[210px] bg-white border border-line rounded-xl shadow-lg py-1">
+            className="fixed z-50 min-w-[210px] max-w-[calc(100vw-16px)] bg-white border border-line rounded-xl shadow-lg py-1">
             {items.map((it, i) => it.href ? (
               <Link key={i} href={it.href} className="block px-3.5 py-2 text-xs font-semibold text-deep hover:bg-paper2">{it.label}</Link>
             ) : (
@@ -1977,9 +2045,12 @@ function RowMenu({ items }: { items: { label?: string; run?: () => void; danger?
     const r = btnRef.current?.getBoundingClientRect();
     if (!r) return;
     const H = Math.min(items.length * 30 + 24, 320);
+    const W = 190;
     const below = window.innerHeight - r.bottom;
     const top = below > H + 12 ? r.bottom + 4 : Math.max(8, r.top - H - 4);
-    setPos({ top, left: Math.max(8, r.left) });
+    /* داخل حدود الشاشة دائمًا — على الجوال كانت تُقصّ من الحافة */
+    const left = Math.min(Math.max(8, r.right - W), window.innerWidth - W - 8);
+    setPos({ top, left: Math.max(8, left) });
   }
   useEffect(() => {
     if (!open) return;
@@ -2000,7 +2071,7 @@ function RowMenu({ items }: { items: { label?: string; run?: () => void; danger?
         <>
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
           <div style={{ top: pos.top, left: pos.left }}
-            className="fixed z-50 min-w-[190px] max-h-[70vh] overflow-y-auto bg-white border border-line rounded-xl shadow-lg py-1">
+            className="fixed z-50 min-w-[190px] max-w-[calc(100vw-16px)] max-h-[70vh] overflow-y-auto bg-white border border-line rounded-xl shadow-lg py-1">
             {items.map((it, i) => it.sep ? (
               /* لا نعرض عنوان قسم لا عناصر بعده — يحدث مع الموظف محدود الصلاحيات */
               items.slice(i + 1).findIndex((x) => !x.sep) === -1 ? null : (

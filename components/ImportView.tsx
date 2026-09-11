@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase-client";
 import { derivedEndDate, FREQUENCIES, type Frequency } from "@/lib/contracts";
 import { typeIcon, unitLabel } from "@/lib/domain";
-import { sar } from "@/lib/utils";
+import { sar, openExternal } from "@/lib/utils";
 import { parseHijriInput, hijriShort } from "@/lib/hijri";
 import { waLink, WATHEQ_WA } from "@/lib/utils";
 
@@ -371,7 +371,7 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
           <div className="bg-paper border border-line rounded-xl p-3 text-sm">
             <b className="text-deep">أو وفّر على نفسك الوقت:</b> أرسل لنا ملفك بأي شكل (إكسل، صورة دفتر، أي شيء) ونجهّز حسابك كاملًا خلال يوم — بلا أي التزام.
             <a href={waLink(WATHEQ_WA, "السلام عليكم، عندي ملف بيانات عقارات وأبغى أجهّز حسابي في وثيق.")} target="_blank" rel="noreferrer"
-               className="btn btn-wa text-xs mt-2">💬 أرسل ملفك على واتساب</a>
+               className="btn btn-wa text-xs mt-2" onClick={(e) => { e.preventDefault(); openExternal(waLink(WATHEQ_WA, "السلام عليكم، عندي ملف بيانات عقارات وأبغى أجهّز حسابي في وثيق.")); }}>💬 أرسل ملفك على واتساب</a>
           </div>
         </div>
       ) : (
