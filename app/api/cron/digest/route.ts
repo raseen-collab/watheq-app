@@ -41,6 +41,16 @@ export async function GET(req: Request) {
 
   const db = createAdmin(url, key, { auth: { persistSession: false } });
 
+  /**
+   * الملخص لصاحب المكتب وحده.
+   *
+   * الموظف لا عقارات باسمه، فكان يستلم رسالة فارغة كل صباح لو ربط حسابه —
+   * ضجيج بلا فائدة. والأهم: أرقام المكتب (المتأخرات والتحصيل) قرار صاحبه
+   * أن يشاركها لا أن تُرسَل تلقائيًّا لمن ربط البوت.
+   */
+  const { data: staff } = await db.from("team_members").select("member_id");
+  const staffIds = new Set((staff || []).map((x: any) => String(x.member_id)));
+
   const { data: profiles } = await db
     .from("profiles")
     .select("id, telegram_chat_id, notify_enabled, notify_days_before, due_soon_days, due_imminent_days, expiring_days, org_name")
@@ -55,8 +65,10 @@ export async function GET(req: Request) {
    */
   const processProfile = async (p: any): Promise<boolean> => {
    try {
+    if (staffIds.has(String(p.id))) return false;   // موظف — التنبيهات لصاحب المكتب وحده
     const { data: props } = await db
       .from("properties").select("*, tenants(*)").eq("user_id", p.id)
+      .eq("is_demo", false)                                   // التجريبي لا يوقظ أحدًا فجرًا
       // مكتب بمئات الوحدات: بلا هذا الحدّ الصريح قد تُقصّ الوحدات بصمت فيخرج ملخّص ناقص
       .limit(2000, { referencedTable: "tenants" });
     if (!props?.length) return false;
