@@ -139,7 +139,20 @@ html[data-theme="dark"] .wq-theme-btn {
   display: flex; flex-direction: column; gap: 8px; align-items: flex-start;
 }
 @media (max-width: 640px) {
+  /* حدّ اللمس: زر أصغر من 40px يُخطئه الإبهام. نرفع الحد الأدنى لكل زر
+     في اللوحة بلا تكبير النصّ — الأزرار الصغيرة (⋯ · ½ · ✔) هي الأكثر
+     استعمالًا يوميًّا وأكثرها عرضةً للنقر الخاطئ على الجوال. */
+  .btn, button.btn, a.btn { min-height: 40px; }
+  .wq-quick { min-width: 44px; min-height: 44px; }
+
   .wq-fab { flex-direction: row; gap: 6px; inset-inline-start: 10px; bottom: calc(10px + env(safe-area-inset-bottom, 0px)); }
+  /* الأزرار الثابتة تغطّي سطور المستأجرين وأنت تقرأ. تختفي مع التمرير لأسفل
+     وتعود فور التمرير لأعلى — كما تفعل أشرطة التطبيقات. */
+  .wq-fab, .wq-chat-fab { transition: transform .2s ease, opacity .2s ease; }
+  body.wq-scrolling .wq-fab,
+  body.wq-scrolling .wq-chat-fab,
+  body.wq-guide-open .wq-fab,
+  body.wq-guide-open .wq-chat-fab { transform: translateY(140%); opacity: 0; pointer-events: none; }
   .wq-fab a, .wq-fab button { padding: 7px 11px !important; font-size: .72rem !important; }
   /* مساحة أسفل الصفحة حتى يمكن تمرير آخر صف فوق الأزرار */
   body { padding-bottom: calc(64px + env(safe-area-inset-bottom, 0px)); }

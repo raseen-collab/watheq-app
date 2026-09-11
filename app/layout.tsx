@@ -40,6 +40,20 @@ if(!t)t=window.matchMedia&&window.matchMedia("(prefers-color-scheme: dark)").mat
 if(t==="dark")document.documentElement.setAttribute("data-theme","dark");
 }catch(e){}})();`;
 
+/* إخفاء الأزرار العائمة أثناء التمرير لأسفل على الجوال — تعود عند التمرير
+   لأعلى أو التوقف. بدونها تغطّي آخر سطرين من كل قائمة أثناء القراءة. */
+const fabScroll = `(function(){
+  if (window.innerWidth > 640) return;
+  var last = 0, t;
+  addEventListener("scroll", function(){
+    var y = window.scrollY || 0;
+    if (y > last + 8 && y > 80) document.body.classList.add("wq-scrolling");
+    else if (y < last - 8) document.body.classList.remove("wq-scrolling");
+    last = y;
+    clearTimeout(t); t = setTimeout(function(){ document.body.classList.remove("wq-scrolling"); }, 900);
+  }, { passive: true });
+})();`;
+
 const THEME_TOGGLE = `(function(){
 var K="watheq_theme";
 document.addEventListener("click",function(e){
@@ -115,6 +129,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         {children}
         <FloatingLinks />
         <script dangerouslySetInnerHTML={{ __html: THEME_TOGGLE }} />
+        <script dangerouslySetInnerHTML={{ __html: fabScroll }} />
       </body>
     </html>
   );
