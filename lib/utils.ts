@@ -32,6 +32,23 @@ export function waLink(phone: string | undefined | null, text: string) {
 }
 
 /**
+ * فتح رابط خارجي — يعمل داخل تليجرام كما يعمل في المتصفح.
+ *
+ * حين تُفتح اللوحة كتطبيق مصغّر داخل تليجرام، يُعيد تليجرام ترميز الرابط
+ * قبل تسليمه للنظام: فيصير %D8 مرة أخرى %25D8، وتصل رسالة واتساب مشوّهة
+ * («%25D8%25A7%25D9…» بدل «السلام عليكم»). واجهة تليجرام نفسها تمرّره كما هو
+ * فنستعملها عند وجودها، ونعود للسلوك العادي في المتصفح.
+ */
+export function openExternal(url: string) {
+  const tg = (globalThis as any)?.Telegram?.WebApp;
+  if (tg?.openLink) { try { tg.openLink(url); return; } catch { /* نكمل بالطريقة العادية */ } }
+  if (typeof window !== "undefined") window.open(url, "_blank", "noopener,noreferrer");
+}
+
+/** هل نحن داخل تطبيق تليجرام المصغّر؟ */
+export const inTelegram = () => !!(globalThis as any)?.Telegram?.WebApp?.initData;
+
+/**
  * «اليوم» بتوقيت الرياض دائمًا — لا بتوقيت الخادم ولا بتوقيت جهاز المستخدم.
  *
  * الخادم على Vercel يعمل بـUTC، والفارق ثلاث ساعات: بين منتصف الليل والثالثة
