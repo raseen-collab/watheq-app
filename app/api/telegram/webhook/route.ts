@@ -23,6 +23,12 @@ type DB = ReturnType<typeof admin>;
 
 async function findProfileByChat(db: DB, chatId: number | string) {
   const { data } = await db.from("profiles").select("*").eq("telegram_chat_id", String(chatId)).maybeSingle();
+  /* الموظف قد يكون ربط البوت قبل قصر الإعدادات على صاحب المكتب: نكشفه هنا
+     فلا تخرج أرقام المكتب لمن لم يقرّر صاحبه مشاركتها معه. */
+  if (data?.id) {
+    const { data: tm } = await db.from("team_members").select("owner_id").eq("member_id", data.id).maybeSingle();
+    if (tm?.owner_id) return { ...(data as any), _isStaff: true };
+  }
   return data;
 }
 
@@ -89,6 +95,15 @@ async function handleMessage(db: DB, msg: any) {
   if (!p) {
     if (/^[A-Za-z0-9]{6,12}$/.test(text)) return linkAccount(db, chatId, text, username);
     return tgSend(chatId, "حسابك غير مربوط بعد. افتح «الإعدادات» في منصة وثيق واضغط «ربط تليجرام»، ثم أرسل الرمز هنا.");
+  }
+  /* تنبيهات البوت لصاحب المكتب وحده: المتأخرات والتحصيل أرقام مكتب يقرّر
+     صاحبه مع من يشاركها — لا تُرسَل لمن ربط البوت. والموظف يعمل من اللوحة
+     بصلاحياته الخمس عشرة كما هي. */
+  if ((p as any)._isStaff) {
+    return tgSend(chatId,
+      "تنبيهات وثيق على تليجرام لصاحب المكتب وحده.\n\n"
+      + "أنت مسجَّل كموظف — استعمل لوحة وثيق من المتصفح، وصلاحياتك فيها كما هي.\n"
+      + "وإن احتجت تنبيهات على جوالك فاطلبها من صاحب المكتب.");
   }
 
   const cmd = text.replace(/^\//, "").split(/[\s@]/)[0].toLowerCase();
@@ -178,6 +193,7 @@ async function handleCallback(db: DB, cq: any) {
 
   const p = await findProfileByChat(db, chatId);
   if (!p) return tgEdit(chatId, messageId, "حسابك غير مربوط. افتح «الإعدادات» في المنصة.");
+  if ((p as any)._isStaff) return tgEdit(chatId, messageId, "تنبيهات وثيق لصاحب المكتب وحده — استعمل اللوحة من المتصفح.");
 
   const [action, a1, a2] = data.split(":");
   switch (action) {
