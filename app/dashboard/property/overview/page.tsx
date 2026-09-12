@@ -3,7 +3,7 @@ import { fetchAllRows } from "@/lib/fetch-all";
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import PortfolioView from "@/components/PortfolioView";
-import { withClockSkewRetry, isClockSkew } from "@/lib/db-retry";
+import { withClockSkewRetry, isTransient } from "@/lib/db-retry";
 import RetryScreen from "@/components/RetryScreen";
 
 export const dynamic = "force-dynamic";
@@ -16,7 +16,7 @@ export default async function OverviewPage() {
 
   const { data: profile, error } = await withClockSkewRetry(() =>
     supabase.from("profiles").select("due_soon_days, due_imminent_days, expiring_days").eq("id", user.id).maybeSingle());
-  if (error && isClockSkew(error.message)) return <RetryScreen detail={error.message} />;
+  if (error && isTransient(error.message)) return <RetryScreen detail={error.message} />;
 
   // الوحدات على دفعات — لا قصّ صامت عند 1000 صف (انظر lib/fetch-all.ts)
   const { data: propsRaw } = await supabase
