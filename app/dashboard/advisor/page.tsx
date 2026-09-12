@@ -1,7 +1,7 @@
 import { createClient } from "@/lib/supabase-server";
 import { redirect } from "next/navigation";
 import { normalizeAccountType, defaultDashboard } from "@/lib/roles";
-import { withClockSkewRetry, isClockSkew } from "@/lib/db-retry";
+import { withClockSkewRetry, isTransient } from "@/lib/db-retry";
 import RetryScreen from "@/components/RetryScreen";
 
 export const dynamic = "force-dynamic";
@@ -25,7 +25,7 @@ export default async function AdvisorRedirect() {
    * شاشة الترحيب. الخطأ الصريح أهون: تحديث الصفحة يحلّه، ويصلنا أثره.
    */
   /* انحراف الساعة بعد المحاولات: شاشة لطيفة تعيد التحميل تلقائيًّا بدل صفحة خطأ */
-  if (profileErr && isClockSkew(profileErr.message)) return <RetryScreen detail={profileErr.message} />;
+  if (profileErr && isTransient(profileErr.message)) return <RetryScreen detail={profileErr.message} />;
   if (profileErr) throw new Error(`تعذّر قراءة ملف الحساب: ${profileErr.message}`);
 
   let type = normalizeAccountType(profile || {});
