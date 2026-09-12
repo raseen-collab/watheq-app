@@ -189,6 +189,37 @@ export function periodsElapsed(
   return n;
 }
 
+/**
+ * الدخل المتوقع خلال اثني عشر شهرًا قادمة — لا «الإيجار مضروبًا في دفعات السنة».
+ *
+ * الحساب القديم يفترض أن كل عقد يدوم سنة: عقد ثلاثة أشهر بتسعة آلاف كان
+ * يُعرض 36,000 (أربعة أضعاف)، وعقد ستة أشهر ضِعفين. ومع المدد المرنة التي
+ * أضفناها صار الخطأ شائعًا.
+ *
+ * الصحيح: نجمع الدفعات المجدولة فعلًا التي تقع في السنة القادمة — فينتهي
+ * العقد القصير عند نهايته، والطويل يُحسب سنةً فقط، والشاغرة بصفر.
+ */
+export function expectedNext12(t: {
+  rent_amount?: number | null; payment_frequency?: string | null;
+  contract_start?: string | null; contract_periods?: number | null; paid_periods?: number | null;
+  status?: string | null; calendar?: string | null; billing_anchor_day?: number | null; first_due?: string | null;
+}): number {
+  if (isVacant(t)) return 0;
+  const rent = Number(t.rent_amount) || 0;
+  if (rent <= 0) return 0;
+  const sched = buildSchedule(t);
+  if (!sched.length) return 0;
+  const from = riyadhNow();
+  const to = new Date(from); to.setFullYear(to.getFullYear() + 1);
+  const inWindow = sched.filter((x) => {
+    const d = parseDate(x.date);
+    return d >= from && d < to;
+  }).length;
+  /* عقد ينتهي قبل سنة: ما بقي من دفعاته فقط. وعقد بدأ قبل سنوات ولم يُجدَّد:
+     صفر — لأن جدوله انتهى، وهذا صحيح لا نقص. */
+  return r2(inWindow * rent);
+}
+
 /** المدة الافتراضية للعقد: سنة واحدة بعدد فترات الدورة */
 export const defaultTermPeriods = (freq: Frequency) => PERIODS_PER_YEAR[freq];
 

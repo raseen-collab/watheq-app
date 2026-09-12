@@ -1,4 +1,4 @@
-import { contractState, buildSchedule, freqLabel, splitVat, settleDeposit, vacancyDays, isVacant, unitVatApplies } from "./contracts";
+import { contractState, buildSchedule, freqLabel, splitVat, settleDeposit, vacancyDays, isVacant, unitVatApplies, expectedNext12 } from "./contracts";
 import { complianceState, brokerageEnd, expectedCommission, UI_LEGAL, LEGAL_DISCLAIMER, DEFAULT_COMMISSION_PCT, type ComplianceItem } from "./compliance";
 import { KIND_META as L_KIND, OFFER_LABEL, STATUS_META, freshness, pricePerMeter, shortDesc, sortListings, summarize, STALE_DAYS, type Listing } from "./listings";
 import { ownerNet, sumByCategory, catLabel, sumAllExpenses, sumDue, isBillable, PAID_BY, type ExpenseRow } from "./expenses";
@@ -97,13 +97,15 @@ function unitDesc(t: any, p: any): string {
   return `${type} رقم (${t.unit || "—"})${specs ? ` — ${specs}` : ""}`;
 }
 
-const PER_YEAR: Record<string, number> = { daily: 365, weekly: 52, monthly: 12, quarterly: 4, semiannual: 2, annual: 1 };
+/**
+ * الدخل المتوقع خلال اثني عشر شهرًا — من جدول الدفعات الفعلي.
+ *
+ * كان «الإيجار × دفعات السنة»، فيفترض أن كل عقد يدوم سنة: عقد ثلاثة أشهر
+ * بتسعة آلاف يُعرض 36,000 في كشف العقار وتقرير المالك. والمالك يقرأ رقمًا
+ * لن يصله.
+ */
 function annualExpected(tenants: any[]): number {
-  return (tenants || []).reduce((a, t) => {
-    if (isVacant(t)) return a;
-    const per = PER_YEAR[String(t.payment_frequency || "monthly")] ?? 12;
-    return a + (Number(t.rent_amount) || 0) * per;
-  }, 0);
+  return (tenants || []).reduce((a, t) => a + expectedNext12(t as any), 0);
 }
 
 const payMethod = (x: { method?: string | null; amount?: number | null }) =>
