@@ -113,7 +113,14 @@ function plural(n: number, one: string, two: string, few: string, many = one): s
 
 const URGENCY: Record<RowKey, number> = { incomplete: 0, late: 1, partial: 2, due: 3, soon: 4, expiring: 5, litigation: 6, vacant: 7, ok: 8 };
 
-export default function PropertyView({ initial, orgName, issuer, compliance, dueSoonDays, dueImminentDays, expiringDays }: { initial: Property[]; orgName: string; issuer?: any; compliance?: ComplianceItem[]; dueSoonDays?: number | null; dueImminentDays?: number | null; expiringDays?: number | null }) {
+export default function PropertyView({ initial, orgName, issuer, compliance, dueSoonDays, dueImminentDays, expiringDays, db, demo = false }: {
+  initial: Property[]; orgName: string; issuer?: any; compliance?: ComplianceItem[];
+  dueSoonDays?: number | null; dueImminentDays?: number | null; expiringDays?: number | null;
+  /** عميل بديل — صفحة التجربة العامة تمرّر قاعدة في الذاكرة بلا خادم */
+  db?: any;
+  /** وضع التجربة قبل التسجيل: لا حفظ دائم، وبعض المسارات تُستبدل بدعوة للتسجيل */
+  demo?: boolean;
+}) {
   const officeExpiring = Math.max(1, Math.min(180, Number(expiringDays) || 60));
   // نوافذ الحالة: افتراضي المكتب، وكل عقار يستطيع تجاوزه من إعداداته
   const officeSoon = Math.max(1, Math.min(60, Number(dueSoonDays) || 10));
@@ -123,7 +130,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
     imminentDays: Number(p?.imminent_days) || officeImminent,
     expiringDays: Number(p?.expiring_days) || officeExpiring,
   });
-  const supabase = createClient();
+  const supabase: any = useMemo(() => db || createClient(), [db]);
   const router = useRouter();
   /** يضمن أن كل عقار يحمل مصفوفتيه — يمنع انكسار العرض عند صفٍّ جديد */
   const normalize = (list: Property[]): Property[] =>
@@ -171,7 +178,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
   useEffect(() => {
     let alive = true;
     supabase.from("office_messages").select("tenant_id").not("tenant_id", "is", null).limit(2000)
-      .then(({ data }) => {
+      .then(({ data }: any) => {
         if (!alive) return;
         const m: Record<string, number> = {};
         (data || []).forEach((x: any) => { if (x.tenant_id) m[x.tenant_id] = (m[x.tenant_id] || 0) + 1; });
@@ -195,7 +202,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
     const to = `${now.getFullYear()}-${p2(now.getMonth() + 1)}-${p2(now.getDate())}`;
     let alive = true;
     supabase.from("payments").select("amount").eq("property_id", activeId).gte("paid_on", from).lte("paid_on", to).limit(5000)
-      .then(({ data }) => { if (alive) setCollectedThisMonth((data || []).reduce((a: number, x: any) => a + (Number(x.amount) || 0), 0)); });
+      .then(({ data }: any) => { if (alive) setCollectedThisMonth((data || []).reduce((a: number, x: any) => a + (Number(x.amount) || 0), 0)); });
     return () => { alive = false; };
   }, [activeId, items, supabase]);
   useEffect(() => {
@@ -207,7 +214,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       : iso(new Date(now.getFullYear() - 1, now.getMonth(), now.getDate() + 1));
     let alive = true;
     supabase.from("payments").select("amount").eq("property_id", activeId).gte("paid_on", from).lte("paid_on", iso(now)).limit(5000)
-      .then(({ data }) => { if (alive) setCollectedInPeriod((data || []).reduce((a: number, x: any) => a + (Number(x.amount) || 0), 0)); });
+      .then(({ data }: any) => { if (alive) setCollectedInPeriod((data || []).reduce((a: number, x: any) => a + (Number(x.amount) || 0), 0)); });
     return () => { alive = false; };
   }, [activeId, incPeriod, items, supabase]);
   /**
@@ -740,6 +747,14 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       router.refresh();
     } finally { setSeeding(false); }
   }
+  /* الصفحة العامة ترسم الدليل وتبعث أفعاله — واللوحة تنفّذها */
+  useEffect(() => {
+    const h = (e: any) => onGuideEvent(String(e?.detail || ""));
+    window.addEventListener("watheq:guide", h);
+    return () => window.removeEventListener("watheq:guide", h);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   /** أفعال دليل التجربة: كل خطوة تفتح ما تشرحه بدل أن تصفه */
   function onGuideEvent(ev: string) {
     if (ev === "filter:late") { setFilter("late"); setSort("amount"); window.scrollTo({ top: 400, behavior: "smooth" }); }
@@ -749,6 +764,8 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
   }
 
   async function clearDemo(silent = false) {
+    /* التجربة العامة بلا حساب: لا شيء يُحذف من خادم — ندعوه للتسجيل */
+    if (demo) { window.dispatchEvent(new CustomEvent("watheq:demo-join")); return; }
     if (!silent && !confirm("حذف كل البيانات التجريبية؟\n\nتُحذف العقارات الخمسة ووحداتها ودفعاتها ومصروفاتها — ولا تمسّ أي بيانات حقيقية.")) return;
     const r = await fetch("/api/demo", { method: "DELETE" });
     const j = await r.json();
@@ -1062,7 +1079,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
         </div>
       )}
 
-      {hasDemo && (
+      {hasDemo && !demo && (
         <div className="bg-[#FBF1DF] border-2 border-dashed border-gold rounded-2xl px-4 py-3 mb-4 flex flex-wrap items-center justify-between gap-3">
           <div className="text-sm">
             <b className="text-deep">🎯 أنت في مكتب تجريبي</b>
@@ -1592,7 +1609,8 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
 
       {ownerStmtOpen && <OwnerStatementModal properties={items} issuer={issuer} onClose={() => setOwnerStmtOpen(false)} />}
       {logOpen && <ActivityLog properties={items} onClose={() => setLogOpen(false)} />}
-      {hasDemo && <DemoGuide onEvent={onGuideEvent} />}
+      {/* الصفحة العامة ترسم دليلها بنفسها — لا نكرّره هنا */}
+      {hasDemo && !demo && <DemoGuide onEvent={onGuideEvent} />}
       {stmtOpen && active && <PropertyStatementModal propertyName={active.name} onClose={() => setStmtOpen(false)} onIssue={openPropertyStatement} />}
 
       {compOpen && (
