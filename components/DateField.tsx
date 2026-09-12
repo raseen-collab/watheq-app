@@ -47,11 +47,24 @@ export default function DateField({ value, onChange, id }: {
     try { localStorage.setItem(PREF, next); } catch { /* */ }
   }
 
+  /**
+   * يوم لا يوجد في الشهر الهجري (مثل 30 في شهر مدته 29) كان يمسح التاريخ
+   * بصمت — والقوائم تبقى تعرض اختيار المستخدم، فيضغط «حفظ» ويُقال له «أدخل
+   * تاريخ بداية العقد» وهو يراه أمامه. الآن يُقال له ما الخطأ في مكانه.
+   */
+  const [hErr, setHErr] = useState<string | null>(null);
   function pushHijri(y: string, m: string, d: string) {
     setHy(y); setHm(m); setHd(d);
+    if (!y || !m || !d) { setHErr(null); return; }      // لم يكمل الاختيار بعد
     const iso = fromHijri(Number(y), Number(m), Number(d));
-    if (iso) onChange(iso, "h");
-    else if (y && m && d) onChange("", "h");   // تاريخ غير موجود في التقويم
+    if (iso) { setHErr(null); onChange(iso, "h"); return; }
+    /* نبحث عن آخر يوم موجود فعلًا في هذا الشهر لنقترحه بدل رسالة عامة */
+    let last = 0;
+    for (let k = Number(d) - 1; k >= 27; k--) { if (fromHijri(Number(y), Number(m), k)) { last = k; break; } }
+    setHErr(last
+      ? `اليوم ${d} لا يوجد في ${MONTHS[Number(m) - 1]} ${y}هـ — آخر يوم فيه ${last}.`
+      : `التاريخ ${y}/${m}/${d}هـ غير موجود في التقويم.`);
+    onChange("", "h");
   }
 
   return (
@@ -85,12 +98,18 @@ export default function DateField({ value, onChange, id }: {
         </div>
       )}
 
-      {/* المقابل في التقويم الآخر — يرى المستخدم ما سيُحفظ قبل أن يحفظ */}
-      <p className="text-[11px] text-muted mt-1">
-        {value
-          ? (cal === "g" ? `الموافق ${hijriText(value)}` : `الموافق ${value} ميلادي`)
-          : (cal === "h" && (hd || hm || hy) ? "أكمل اليوم والشهر والسنة" : "—")}
-      </p>
+      {/* المقابل في التقويم الآخر — يرى المستخدم ما سيُحفظ قبل أن يحفظ.
+          وإن كان اليوم غير موجود في الشهر الهجري يُقال له هنا بدل أن يُمسح
+          التاريخ بصمت ويفاجأ برسالة «أدخل تاريخ البداية» عند الحفظ. */}
+      {hErr ? (
+        <p className="text-[11px] text-late mt-1 leading-relaxed font-semibold">⚠️ {hErr}</p>
+      ) : (
+        <p className="text-[11px] text-muted mt-1">
+          {value
+            ? (cal === "g" ? `الموافق ${hijriText(value)}` : `الموافق ${value} ميلادي`)
+            : (cal === "h" && (hd || hm || hy) ? "أكمل اليوم والشهر والسنة" : "—")}
+        </p>
+      )}
     </div>
   );
 }

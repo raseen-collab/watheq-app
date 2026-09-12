@@ -195,6 +195,17 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
   const [collectedInPeriod, setCollectedInPeriod] = useState<number | null>(null);
   /* الدخل الشهري في البطاقة = ما قُبض فعلًا هذا الشهر (طلب مكتب تميز)، والمتوقع بجانبه */
   const [collectedThisMonth, setCollectedThisMonth] = useState<number | null>(null);
+  /**
+   * مفتاح إعادة الجلب: كان الاعتماد على «items» نفسها — وهي مصفوفة تتغيّر
+   * هويتها مع كل رسم، فيتكرّر الاستعلام مرتين وثلاثًا في كل تنقّل (ظهر في
+   * سجل Sentry). الرقم المجمَّع يتغيّر عند تسجيل دفعة فعلًا لا قبلها،
+   * فتُجلب الأرقام مرة واحدة ويخفّ الحمل على القاعدة إلى النصف.
+   */
+  const paidKey = useMemo(
+    () => items.reduce((a, p) => a + (Number(p.collected) || 0)
+      + (p.tenants || []).reduce((b, t) => b + (Number(t.paid_periods) || 0), 0), 0),
+    [items],
+  );
   useEffect(() => {
     if (!activeId) return;
     const now = new Date(); const p2 = (n: number) => String(n).padStart(2, "0");
@@ -204,7 +215,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
     supabase.from("payments").select("amount").eq("property_id", activeId).gte("paid_on", from).lte("paid_on", to).limit(5000)
       .then(({ data }: any) => { if (alive) setCollectedThisMonth((data || []).reduce((a: number, x: any) => a + (Number(x.amount) || 0), 0)); });
     return () => { alive = false; };
-  }, [activeId, items, supabase]);
+  }, [activeId, paidKey, supabase]);
   useEffect(() => {
     if (!activeId) return;
     const now = new Date(); const p2 = (n: number) => String(n).padStart(2, "0");
@@ -216,7 +227,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
     supabase.from("payments").select("amount").eq("property_id", activeId).gte("paid_on", from).lte("paid_on", iso(now)).limit(5000)
       .then(({ data }: any) => { if (alive) setCollectedInPeriod((data || []).reduce((a: number, x: any) => a + (Number(x.amount) || 0), 0)); });
     return () => { alive = false; };
-  }, [activeId, incPeriod, items, supabase]);
+  }, [activeId, incPeriod, paidKey, supabase]);
   /**
    * عرض الوحدات: بطاقات (الجوال دائمًا) أو جدول (الكمبيوتر). الجدول يعرض
    * 25 وحدة في شاشة بدل 5، والعين تمسح عمود الحالة في ثانية — وهو ما
@@ -511,6 +522,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
 
   async function saveTenant(d: any, id?: string) {
     if (!active) return;
+    setSaveErr(null); setSaving(true);
     /**
      * تحذير التكرار: مع 100+ وحدة يسهل إدخال نفس رقم الوحدة مرتين، فتظهر
      * وحدتان بالرقم نفسه وتنقسم بينهما الدفعات. لا نمنع (قد يكون تأجيرًا
@@ -519,20 +531,20 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
     const unitTxt = String(d.unit || "").trim();
     if (unitTxt) {
       const clash = active.tenants.find((t) => t.id !== id && String(t.unit || "").trim() === unitTxt && !isVacant(t));
-      if (clash && !confirm(`${ul} ${unitTxt} مشغولة حاليًّا بـ«${clash.name}».\n\nإن كان مستأجرًا جديدًا، سجّل إخلاء السابق أولًا حتى لا تظهر الوحدة مرتين.\n\nمتابعة الإضافة على أي حال؟`)) return;
+      if (clash && !confirm(`${ul} ${unitTxt} مشغولة حاليًّا بـ«${clash.name}».\n\nإن كان مستأجرًا جديدًا، سجّل إخلاء السابق أولًا حتى لا تظهر الوحدة مرتين.\n\nمتابعة الإضافة على أي حال؟`)) { setSaving(false); return; }
     }
     /* أشيع خطأ عند النقل من إكسل: كتابة 1447-03-15 في منتقي التاريخ الميلادي.
        المتصفح يقبلها كسنة 1447 ميلادية فيصير العقد قبل ستة قرون. */
     const y0 = Number(String(d.contract_start || "").slice(0, 4));
     if (y0 && y0 < 1900) {
-      notify("err", `تاريخ البداية «${d.contract_start}» يبدو هجريًّا أُدخل في خانة ميلادية. اضغط زر «هجري» فوق الخانة ثم أدخله.`);
+      fail(`تاريخ البداية «${d.contract_start}» يبدو هجريًّا أُدخل في خانة ميلادية. اضغط زر «هجري» فوق الخانة ثم أدخله.`);
       return;
     }
-    if (y0 && y0 > 2100) { notify("err", `تاريخ البداية «${d.contract_start}» غير معقول.`); return; }
+    if (y0 && y0 > 2100) { fail(`تاريخ البداية «${d.contract_start}» غير معقول.`); return; }
     /* الوحدة المؤجّرة بلا تاريخ بداية لا تُحسب لها أقساط ولا استحقاق — وكان
        الحفظ يمرّ بصمت فتبقى الوحدة بلا مواعيد ويظن الموظف أن التعديل «لا يعمل». */
     if (!d.contract_start && String(d.status || "active") !== "vacated") {
-      notify("err", "أدخل تاريخ بداية العقد — بدونه لا يستطيع النظام حساب الاستحقاقات لهذه الوحدة.");
+      fail("أدخل تاريخ بداية العقد — بدونه لا يستطيع النظام حساب الاستحقاقات لهذه الوحدة.");
       return;
     }
     const freq = (d.payment_frequency || "monthly") as Frequency;
@@ -589,7 +601,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
           + `على هذا العقد ${prev.paid_periods} دفعة مسجَّلة، وستُقيَّم بالسعر الجديد — `
           + (diff > 0 ? `فيرتفع المتأخر ${sar(diff)} ريال.` : diff < 0 ? `فينخفض المتأخر ${sar(-diff)} ريال.` : "بلا أثر على المتأخر.")
           + `\n\nإن كان السعر الجديد يبدأ من مدة قادمة فالأفضل «تجديد العقد» بدل التعديل.\n\nمتابعة التعديل؟`
-        )) return;
+        )) { setSaving(false); return; }
       }
       /* الرصيد الافتتاحي يُعدَّل يدويًّا، لكنه لا يقابله سجل دفعات — فإن
          كان للوحدة دفعات مسجّلة ننبّه، لأن التعديل يفكّ ارتباط العدّاد
@@ -604,7 +616,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
           + `على هذه الوحدة ${recorded} دفعة مسجّلة في السجل.\n`
           + `التعديل اليدوي لا يضيف ولا يحذف دفعة — فقد يختلف العدّاد عن سجل المدفوعات وتقرير المالك.\n\n`
           + `للتراجع عن دفعة سُجّلت خطأً استعمل «↩︎ تراجع عن آخر دفعة».\n\nمتابعة؟`
-        )) return;
+        )) { setSaving(false); return; }
       }
 
       const reletting = prev && isVacant(prev);
@@ -614,16 +626,17 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
             meter_elec_out: null, meter_water_out: null, turnover_checklist: [] }
         : { ...payload, paid_periods: paidNew };
       const { data: _u2, error } = await supabase.from("tenants").update(full).eq("id", id).select("id");
-      if (error) { console.error("Watheq save error:", error); return notify("err", error.message); }
-      if (!_u2 || _u2.length === 0) return notify("err", "هذا الإجراء يحتاج صلاحية أعلى — اطلبه من صاحب المكتب.");
+      if (error) { console.error("Watheq save error:", error); return fail(error.message); }
+      if (!_u2 || _u2.length === 0) return fail("هذا الإجراء يحتاج صلاحية أعلى — اطلبه من صاحب المكتب.");
       setItems(items.map((p) => p.id === active.id
         ? { ...p, tenants: p.tenants.map((t) => (t.id === id ? { ...t, ...full } as Tenant : t)) } : p));
     } else {
       const paidSoFar = Math.max(0, Math.min(Math.floor(Number(d.paid_periods) || 0), periods || 9999));
       const { data, error } = await supabase.from("tenants").insert({ ...payload, paid_periods: paidSoFar }).select("*").single();
-      if (error) { console.error("Watheq save error:", error); return notify("err", error.message); }
+      if (error) { console.error("Watheq save error:", error); return fail(error.message); }
       setItems(items.map((p) => (p.id === active.id ? { ...p, tenants: [...p.tenants, data as Tenant] } : p)));
     }
+    setSaving(false); setSaveErr(null);
     setModal(null);
   }
 
@@ -735,6 +748,12 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
 
   const [stmtOpen, setStmtOpen] = useState(false);
   const [seeding, setSeeding] = useState(false);
+  /* خطأ الحفظ يُعرض داخل النموذج لا إشعارًا عائمًا في أعلى الصفحة: على
+     الجوال يكون المستخدم منزلًا داخل نموذج طويل، فيضغط «حفظ» ويظهر الإشعار
+     خارج نظره — فيقول «ضغطت ولا صار شي». */
+  const [saveErr, setSaveErr] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const fail = (m: string) => { setSaveErr(m); notify("err", m); setSaving(false); };
   const hasDemo = items.some((p) => (p as any).is_demo);
 
   async function seedDemo() {
@@ -1599,7 +1618,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
           onClose={() => setModal(null)} onSubmit={(d) => saveProperty(d, active.id)} onDelete={deleteProperty} />
       )}
       {modal?.kind === "tenant" && (
-        <TenantModal open initial={editing} unitWord={ul}
+        <TenantModal open initial={editing} unitWord={ul} error={saveErr} saving={saving}
           onClose={() => setModal(null)} onSubmit={(d) => saveTenant(d, editing?.id)} />
       )}
 
@@ -2280,8 +2299,11 @@ function PropertyModal({ open, initial, orgName, ownerNames = [], officeSoon = 1
   );
 }
 
-function TenantModal({ open, initial, unitWord, onClose, onSubmit }: {
+function TenantModal({ open, initial, unitWord, error, saving, onClose, onSubmit }: {
   open: boolean; initial?: Tenant; unitWord: string; onClose: () => void; onSubmit: (d: any) => void;
+  /** سبب فشل الحفظ — يُعرض بجانب الزر لا في أعلى الصفحة */
+  error?: string | null;
+  saving?: boolean;
 }) {
   const [d, setD] = useState<any>(initial || { payment_frequency: "monthly", contract_start: today() });
   if (!open) return null;
@@ -2412,9 +2434,16 @@ function TenantModal({ open, initial, unitWord, onClose, onSubmit }: {
           </div>
         )}
       </div>
+      {/* سبب الفشل بجانب الزر: الإشعار العائم في أعلى الصفحة لا يراه من كان
+          منزلًا داخل النموذج على الجوال، فيظن أن الزر لا يعمل. */}
+      {error && (
+        <div className="bg-[#FBE9E7] border border-[#F5C6C2] text-[#a5322c] rounded-xl p-3 text-sm mt-4 leading-relaxed">
+          <b>لم يُحفظ:</b> {error}
+        </div>
+      )}
       <div className="flex gap-2 mt-6">
         <button type="button" className="btn btn-ghost flex-1 justify-center" onClick={onClose}>إلغاء</button>
-        <button type="button" className="btn btn-gold flex-1 justify-center" disabled={!(d.name || "").trim()}
+        <button type="button" className="btn btn-gold flex-1 justify-center" disabled={!(d.name || "").trim() || !!saving}
           title={!(d.name || "").trim() ? "أدخل اسم المستأجر أولًا" : "حفظ"}
           style={!(d.name || "").trim() ? { opacity: .5, cursor: "not-allowed" } : undefined}
           onClick={() => onSubmit(d)}>حفظ</button>
