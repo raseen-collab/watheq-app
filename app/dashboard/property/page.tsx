@@ -3,7 +3,7 @@ import PropertyView from "@/components/PropertyView";
 import { redirect } from "next/navigation";
 import { normalizeAccountType, canAccess } from "@/lib/roles";
 import { issuerMarks } from "@/lib/subscription";
-import { withClockSkewRetry, isClockSkew } from "@/lib/db-retry";
+import { withClockSkewRetry, isClockSkew, isTransient } from "@/lib/db-retry";
 import RetryScreen from "@/components/RetryScreen";
 import { fetchAllRows } from "@/lib/fetch-all";
 
@@ -25,7 +25,9 @@ export default async function PropertyPage() {
    * شاشة الترحيب. الخطأ الصريح أهون: تحديث الصفحة يحلّه، ويصلنا أثره.
    */
   /* انحراف الساعة بعد المحاولات: شاشة لطيفة تعيد التحميل تلقائيًّا بدل صفحة خطأ */
-  if (profErr && isClockSkew(profErr.message)) return <RetryScreen detail={profErr.message} />;
+  /* المهلة والبوابة عابرتان مثل انحراف الساعة: شاشة تعيد المحاولة أفضل من
+     صفحة خطأ خادم — المستخدم لا يفهم «504» ولا ذنب له فيها. */
+  if (profErr && isTransient(profErr.message)) return <RetryScreen detail={profErr.message} />;
   if (profErr) throw new Error(`تعذّر قراءة ملف الحساب: ${profErr.message}`);
   let type = normalizeAccountType(prof || {});
   /**
