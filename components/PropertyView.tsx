@@ -359,6 +359,29 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
    * بين موظفين ولا رفض صامت للمحصّل. القيم المعروضة تأتي من القاعدة.
    */
   async function recordPayment(t: Tenant, amount: number, method = "transfer", note?: string, paidOn?: string, reference?: string) {
+    /**
+     * حارس التكرار.
+     *
+     * سجل مكتب حقيقي أظهر 35,000 مسجَّلة أربع مرات في يوم واحد لنفس الوحدة،
+     * و2,500 أربع مرات لوحدة أخرى — فانتفخ «المحصَّل هذا الشهر» وظنّ المكتب
+     * أن الحساب خاطئ. حارس النقر المزدوج يمنع النقرتين المتتاليتين، لا
+     * التسجيل المتكرر بعد دقائق أو من موظف آخر.
+     *
+     * تنبيه لا منع: قد يدفع مستأجر دفعتين فعلًا في يوم واحد.
+     */
+    const day = paidOn || today();
+    const { data: dup } = await supabase.from("payments")
+      .select("id, amount, paid_on, method")
+      .eq("tenant_id", t.id).eq("paid_on", day).limit(20);
+    const same = (dup || []).filter((x: any) => Math.abs(Number(x.amount) - amount) < 0.01);
+    if (same.length && !confirm(
+      `⚠️ سُجّلت دفعة مطابقة اليوم نفسه لهذه الوحدة.\n\n`
+      + `${t.name} — ${ul} ${t.unit || "—"}\n`
+      + `${sar(amount)} ريال بتاريخ ${day}${same.length > 1 ? ` (مسجّلة ${same.length} مرات)` : ""}\n\n`
+      + `تسجيلها مرة أخرى يضاعف المحصَّل ويقدّم عدّاد الدفعات.\n`
+      + `راجع «سجل المدفوعات» قبل المتابعة.\n\nتسجيلها على أي حال؟`
+    )) return;
+
     const amt = Math.max(0, Number(amount) || 0);
     if (!amt || !active) return;
     return once(`pay:${t.id}`, async () => {
@@ -395,13 +418,16 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       const m = String(error.message || "");
       return notify("err", /not authorized/.test(m) ? "التراجع عن الدفعات للمدير أو صاحب المكتب." : m);
     }
-    const r = data as { paid_periods: number; reversed: number };
+    const r = data as { paid_periods: number; reversed: number; paid_on?: string };
     setItems(items.map((p) => p.id === active.id ? {
       ...p,
       collected: (p.collected || 0) - (r.reversed || amt),
       tenants: p.tenants.map((x) => (x.id === t.id ? { ...x, paid_periods: r.paid_periods } : x)),
     } : p));
-    notify("ok", `تم التراجع — خُصم ${sar(r.reversed || amt)} ريال وسُجّل في سجل العمليات`);
+    /* نذكر شهر الدفعة الأصلية: التراجع يُصحّح الشهر الذي دخلت فيه لا الشهر
+       الجاري، وبدون ذكره يظن المكتب أن تحصيل هذا الشهر نقص بلا سبب. */
+    notify("ok", `تم التراجع — خُصم ${sar(r.reversed || amt)} ريال`
+      + (r.paid_on ? ` من تحصيل ${r.paid_on}` : "") + " وسُجّل في سجل العمليات");
     });
   }
 
