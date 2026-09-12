@@ -246,7 +246,19 @@ function zatcaQrBlock(sellerName: string, vatNo: string, total: number, vat: num
   </div>
 </div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"><\/script>
-<script>try{new QRCode(document.getElementById("zatca-qr"),{text:document.getElementById("zatca-tlv").textContent,width:120,height:120,correctLevel:QRCode.CorrectLevel.M});document.getElementById("zatca-tlv").style.display="none";}catch(e){}<\/script>`;
+<script>(function(){
+  /* حمولة زاتكا تبقى مخفية دائمًا: كانت تظهر نصًّا خامًا طويلًا لو تعذّر
+     تحميل مكتبة الرمز (شبكة ضعيفة أو حجب CDN)، فتخرج الفاتورة مشوّهة أمام
+     المستأجر. الآن إمّا رمز سليم أو سطر يشرح، ولا شيء بينهما. */
+  var tlv=document.getElementById("zatca-tlv");
+  if(tlv) tlv.style.display="none";
+  try{
+    new QRCode(document.getElementById("zatca-qr"),{text:tlv.textContent,width:120,height:120,correctLevel:QRCode.CorrectLevel.M});
+  }catch(e){
+    var box=document.getElementById("zatca-qr");
+    if(box) box.innerHTML='<span style="font-size:.62rem;color:#8A8477">رمز الاستجابة السريعة يظهر عند فتح المستند متصلًا بالإنترنت</span>';
+  }
+})();<\/script>`;
 }
 
 /** إعدادات الضريبة — وإن مُرّرت الوحدة تُقرَّر بحسبها (العمارة المختلطة) */
