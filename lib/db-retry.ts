@@ -16,6 +16,22 @@
 // يجب أن تظهر فورًا لا أن تنتظر.
 const SKEW = /issued at future/i;
 
+/**
+ * أخطاء عابرة تستحق إعادة المحاولة.
+ *
+ * رصد Sentry «Gateway Timeout» عند قراءة ملف الحساب: القاعدة في فرانكفورت
+ * والدوال في منطقة أخرى، وأي بطء لحظي يُسقط الصفحة كلها بخطأ خادم — بينما
+ * المحاولة الثانية تنجح غالبًا. والمستخدم لا ذنب له، ولا يفهم «504».
+ *
+ * النمط ضيّق عمدًا: مهلة وبوابة وشبكة فقط. أخطاء الصلاحيات والبيانات
+ * تظهر فورًا كما هي، لأن إعادة المحاولة معها تأخير بلا فائدة.
+ */
+const TRANSIENT = /gateway timeout|timeout|timed out|fetch failed|ECONNRESET|ETIMEDOUT|socket hang up|502|503|504|upstream/i;
+
+export function isTransient(msg?: string | null): boolean {
+  return !!msg && (SKEW.test(msg) || TRANSIENT.test(msg));
+}
+
 type Result<T> = { data: T; error: { message: string } | null };
 
 export function isClockSkew(msg?: string | null): boolean {
@@ -34,7 +50,7 @@ export async function withClockSkewRetry<T>(
 ): Promise<Result<T>> {
   let last = await run();
   for (const w of waits) {
-    if (!last.error || !SKEW.test(last.error.message)) return last;
+    if (!last.error || !isTransient(last.error.message)) return last;
     await new Promise((r) => setTimeout(r, w));
     last = await run();
   }
