@@ -7,7 +7,7 @@ import { officeId, getOffice, ROLE_LABEL, OWNER_PERMS } from "@/lib/office";
 import { arDate } from "@/lib/documents";
 import { hijriShort, hijriText, parseHijriInput } from "@/lib/hijri";
 import { sar, waLink, today, WATHEQ_WA, openExternal } from "@/lib/utils";
-import { contractState, buildSchedule, FREQUENCIES, freqLabel, freqShort, derivedEndDate, renewContract, needsRenewal, applyPayment, splitVat, isCommercial, isVacant, settleDeposit, unitVatApplies,
+import { contractState, expectedNext12, buildSchedule, FREQUENCIES, freqLabel, freqShort, derivedEndDate, renewContract, needsRenewal, applyPayment, splitVat, isCommercial, isVacant, settleDeposit, unitVatApplies,
   vacancyDays, TURNOVER_CHECKLIST, type Frequency } from "@/lib/contracts";
 import { PROPERTY_TYPES, typeLabel, unitLabel, typeIcon } from "@/lib/domain";
 import { statementHTML, invoiceHTML, propertyStatementHTML, moveOutSettlementHTML, quotationHTML, ownerReportHTML, DEFAULT_CHARGES, openDoc, type ChargeRow, type OwnerReportPayment } from "@/lib/documents";
@@ -18,6 +18,7 @@ import ActivityLog from "@/components/ActivityLog";
 import StatusLegend from "@/components/StatusLegend";
 import PropertyStatementModal, { type StatementPeriod } from "@/components/PropertyStatementModal";
 import DemoGuide from "@/components/DemoGuide";
+import MonthlyCollection from "@/components/MonthlyCollection";
 import ExpensesModal from "@/components/ExpensesModal";
 import OwnerLinkModal from "@/components/OwnerLinkModal";
 import type { ExpenseRow } from "@/lib/expenses";
@@ -1060,8 +1061,10 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
    * (شهري ×12، ربع سنوي ×4...). و«المحصَّل منه» يُقرأ من سجل الدفعات
    * للفترة التي يختارها المكتب — هذه السنة أو آخر 12 شهرًا أو هذا الشهر.
    */
-  const annualIncome = tenants.reduce((sum, t) =>
-    sum + (isVacant(t) ? 0 : (Number(t.rent_amount) || 0) * PERIODS_PER_MONTH[(t.payment_frequency || "monthly") as Frequency] * 12), 0);
+  /* من جدول الدفعات الفعلي لا من «الإيجار × دفعات السنة»: عقد ثلاثة أشهر
+     بتسعة آلاف كان يُعرض 36,000 — أربعة أضعاف. الآن يُجمع ما يستحق فعلًا
+     خلال الاثني عشر شهرًا القادمة، فينتهي القصير عند نهايته. */
+  const annualIncome = tenants.reduce((sum, t) => sum + expectedNext12(t as any), 0);
   const pct = allRows.length ? Math.round(((allRows.length - lateRows.length) / allRows.length) * 100) : 100;
 
 
@@ -1186,7 +1189,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
           <div className="bg-white border border-line rounded-2xl p-4 mb-5">
             <div className="flex items-center justify-between gap-3 flex-wrap mb-2">
               <div>
-                <div className="text-xs text-muted">الدخل السنوي المتوقع للعقار</div>
+                <div className="text-xs text-muted">الدخل المتوقع خلال 12 شهرًا</div>
                 <div className="text-2xl font-bold text-deep tabular-nums">{sar(Math.round(annualIncome))} <span className="text-sm font-normal text-muted">ريال / سنة</span></div>
               </div>
               <div className="inline-flex items-center gap-0.5 border border-line rounded-lg p-0.5 text-[11px]">
@@ -1198,7 +1201,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
             </div>
             <div className="flex items-baseline justify-between text-sm mb-1">
               <span>المحصَّل {label}: <b className="tabular-nums text-[#137a50]">{collectedInPeriod === null ? "…" : sar(Math.round(col))}</b> ريال</span>
-              <span className={`text-xs tabular-nums ${pctOfAnnual > 100 ? "text-[#137a50] font-semibold" : "text-muted"}`}>{pctOfAnnual}% من الدخل السنوي{pctOfAnnual > 100 ? " — يشمل سدادًا مقدَّمًا أو دفعات سنوات سابقة" : ""}</span>
+              <span className={`text-xs tabular-nums ${pctOfAnnual > 100 ? "text-[#137a50] font-semibold" : "text-muted"}`}>{pctOfAnnual}% من المتوقع{pctOfAnnual > 100 ? " — يشمل سدادًا مقدَّمًا أو دفعات سنوات سابقة" : ""}</span>
             </div>
             <div className="h-2.5 bg-paper2 rounded-full overflow-hidden">
               <div className="h-full bg-[#1E9E6A] rounded-full transition-all" style={{ width: `${barPct}%` }} />
@@ -1215,6 +1218,14 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
 
       {/* الوحدات تأخذ العرض كاملًا: مكتب بمئات الوحدات يحتاج كل بكسل للجدول،
           وسجل العقار (ملاحظات نصية) ينتقل أسفلها — يُقرأ حين يُطلب لا دائمًا. */}
+      {/* طلب المكتب: «اللي يهمني تحصيل كل شهر بشهره» — رقم الشهر الجاري وحده
+          يُخفي من دفع قبل شهرين ويجعل الشهر يبدو فارغًا بلا تفسير. */}
+      {active && may("view_financials") && (
+        <div className="mb-4">
+          <MonthlyCollection propertyId={active.id} propertyName={active.name} db={demo ? (supabase as any) : undefined} />
+        </div>
+      )}
+
       <div className="grid grid-cols-1 gap-5 items-start">
         <div className="bg-white border border-line rounded-2xl shadow-sm">
           <div className="flex items-center justify-between border-b border-line px-5 py-4 gap-2 flex-wrap">
