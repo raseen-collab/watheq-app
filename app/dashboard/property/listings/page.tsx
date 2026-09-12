@@ -3,7 +3,7 @@ import ListingsView from "@/components/ListingsView";
 import { redirect } from "next/navigation";
 import { normalizeAccountType, canAccess } from "@/lib/roles";
 import { issuerMarks } from "@/lib/subscription";
-import { withClockSkewRetry, isClockSkew } from "@/lib/db-retry";
+import { withClockSkewRetry, isTransient } from "@/lib/db-retry";
 import RetryScreen from "@/components/RetryScreen";
 
 export const dynamic = "force-dynamic";
@@ -24,7 +24,7 @@ export default async function ListingsPage() {
    * شاشة الترحيب. الخطأ الصريح أهون: تحديث الصفحة يحلّه، ويصلنا أثره.
    */
   /* انحراف الساعة بعد المحاولات: شاشة لطيفة تعيد التحميل تلقائيًّا بدل صفحة خطأ */
-  if (profileErr && isClockSkew(profileErr.message)) return <RetryScreen detail={profileErr.message} />;
+  if (profileErr && isTransient(profileErr.message)) return <RetryScreen detail={profileErr.message} />;
   if (profileErr) throw new Error(`تعذّر قراءة ملف الحساب: ${profileErr.message}`);
 
   let type = normalizeAccountType(profile || {});
