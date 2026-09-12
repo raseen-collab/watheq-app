@@ -1,7 +1,7 @@
 import { createClient } from "@/lib/supabase-server";
 import { redirect } from "next/navigation";
 import { normalizeAccountType, defaultDashboard, dashboardPath } from "@/lib/roles";
-import { withClockSkewRetry, isClockSkew } from "@/lib/db-retry";
+import { withClockSkewRetry, isTransient } from "@/lib/db-retry";
 import RetryScreen from "@/components/RetryScreen";
 
 export const dynamic = "force-dynamic";
@@ -22,7 +22,7 @@ export default async function Dashboard() {
    * وهو ما يبدو للمستخدم حلقة لا نهاية لها.
    */
   /* انحراف الساعة بعد المحاولات: شاشة لطيفة تعيد التحميل تلقائيًّا بدل صفحة خطأ */
-  if (error && isClockSkew(error.message)) return <RetryScreen detail={error.message} />;
+  if (error && isTransient(error.message)) return <RetryScreen detail={error.message} />;
   if (error) {
     throw new Error(`تعذّر قراءة ملف الحساب: ${error.message}`);
   }
