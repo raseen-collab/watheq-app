@@ -696,7 +696,7 @@ export default function AssociationView({ initial, issuer }: { initial: Associat
           <div className="p-4">
             <AddOwner onAdd={addOwner} />
             <div className="flex justify-end -mt-1 mb-3">
-              <button type="button" className="text-xs font-semibold text-gold hover:underline" onClick={() => setBulk(true)}>
+              <button type="button" className="text-xs font-semibold text-goldInk hover:underline" onClick={() => setBulk(true)}>
                 📋 عندك قائمة جاهزة؟ الصقها وأضف كل الملّاك دفعة واحدة
               </button>
             </div>

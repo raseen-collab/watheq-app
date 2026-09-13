@@ -94,7 +94,7 @@ export default function DemoGuide({ onEvent }: { onEvent: (event: string) => voi
   return (
     <div className="fixed z-[45] inset-x-2 sm:inset-x-auto sm:start-4 sm:w-[360px] bottom-[calc(0.75rem+env(safe-area-inset-bottom,0px))] sm:bottom-24 bg-white border-2 border-gold rounded-2xl shadow-2xl p-4">
       <div className="flex items-center justify-between mb-2">
-        <span className="text-[11px] font-bold text-gold">🧭 دليل التجربة · {step + 1} من {STEPS.length}</span>
+        <span className="text-[11px] font-bold text-goldInk">🧭 دليل التجربة · {step + 1} من {STEPS.length}</span>
         <div className="flex gap-1">
           <button className="text-muted text-xs px-2" onClick={() => setOpen(false)} title="طيّ">▁</button>
           <button className="text-muted text-xs px-2" onClick={finish} title="إنهاء الدليل">✕</button>

@@ -323,7 +323,7 @@ export default function AdvisorChat({
           <p className="text-sm text-muted mb-3">جرّب سؤالًا من هذي، أو اكتب سؤالك:</p>
           {[...SUGGESTIONS].sort((a, b) => (a.scope === scope ? -1 : b.scope === scope ? 1 : 0)).map((g) => (
             <div key={g.group} className="mb-3">
-              <div className="text-xs font-semibold text-gold mb-1.5">{g.group}</div>
+              <div className="text-xs font-semibold text-goldInk mb-1.5">{g.group}</div>
               <div className="flex flex-wrap gap-1.5">
                 {g.items.map((s) => (
                   <button key={s} type="button" onClick={() => ask(s)}

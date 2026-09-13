@@ -353,17 +353,17 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
           <p className="text-sm text-muted mb-4">حمّل القالب وعبّئه، واكتب اسم العقار في عمود «العقار» لكل وحدة. ثم أنشئ العقارات بالأسماء نفسها وارفع الملف مرة واحدة.</p>
           <div className="grid sm:grid-cols-3 gap-3 mb-5">
             <div className="border border-line rounded-xl p-3">
-              <div className="text-xs font-bold text-gold mb-1">١</div>
+              <div className="text-xs font-bold text-goldInk mb-1">١</div>
               <div className="text-sm font-semibold text-deep mb-2">حمّل القالب</div>
               <a href="/watheq-template.xlsx" download className="btn btn-gold text-xs justify-center w-full">⬇ قالب Excel</a>
             </div>
             <div className="border border-line rounded-xl p-3">
-              <div className="text-xs font-bold text-gold mb-1">٢</div>
+              <div className="text-xs font-bold text-goldInk mb-1">٢</div>
               <div className="text-sm font-semibold text-deep mb-2">أنشئ عقاراتك</div>
               <a href="/dashboard/property" className="btn btn-ghost text-xs justify-center w-full">+ إضافة عقار</a>
             </div>
             <div className="border border-line rounded-xl p-3">
-              <div className="text-xs font-bold text-gold mb-1">٣</div>
+              <div className="text-xs font-bold text-goldInk mb-1">٣</div>
               <div className="text-sm font-semibold text-deep mb-2">ارجع وارفع</div>
               <span className="text-[11px] text-muted">كل صف يذهب لعقاره تلقائيًّا</span>
             </div>

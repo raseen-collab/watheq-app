@@ -413,7 +413,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
     if (isBusy(`pay:${t.id}`) || isBusy(`undo:${t.id}`)) return;
     return once(`undo:${t.id}`, async () => {
     const amt = Number(t.rent_amount) || 0;
-    if (!confirm(`التراجع عن آخر دفعة مسجّلة؟\n\n${t.name} — ${ul} ${t.unit || "—"} — ${active.name}\nسيُخصم ${sar(amt)} ريال من المحصَّل ويُسجَّل التراجع باسمك في سجل العمليات.`)) return;
+    if (!confirm(`التراجع عن آخر دفعة مسجّلة؟\n\n${t.name} — ${ul} ${t.unit || "—"} — ${active.name}\nسيُخصم ${sar(amt)} ريال من المحصَّل ويُسجَّل التراجع باسمك في سجل الحركات المالية.`)) return;
     const { data, error } = await supabase.rpc("watheq_undo_payment", { p_tenant: t.id });
     if (error) {
       const m = String(error.message || "");
@@ -428,7 +428,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
     /* نذكر شهر الدفعة الأصلية: التراجع يُصحّح الشهر الذي دخلت فيه لا الشهر
        الجاري، وبدون ذكره يظن المكتب أن تحصيل هذا الشهر نقص بلا سبب. */
     notify("ok", `تم التراجع — خُصم ${sar(r.reversed || amt)} ريال`
-      + (r.paid_on ? ` من تحصيل ${r.paid_on}` : "") + " وسُجّل في سجل العمليات");
+      + (r.paid_on ? ` من تحصيل ${r.paid_on}` : "") + " وسُجّل في سجل الحركات المالية");
     });
   }
 
@@ -1015,7 +1015,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
             ["٢", "أدخل وحداته", "يدويًّا أو رفع Excel دفعة واحدة"],
             ["٣", "سجّل أول دفعة", "وتبدأ اللوحة تعمل لك"]].map(([n, t, d]) => (
             <div key={n} className="border border-line rounded-xl p-3 bg-paper">
-              <div className="text-xs font-bold text-gold mb-0.5">{n}</div>
+              <div className="text-xs font-bold text-goldInk mb-0.5">{n}</div>
               <div className="text-sm font-semibold text-deep">{t}</div>
               <div className="text-[11px] text-muted mt-0.5">{d}</div>
             </div>
@@ -1430,7 +1430,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                                 ) : (<>
                                   {canCollect && <QuickBtn title={isBusy(`pay:${t.id}`) ? "جارٍ التسجيل…" : "تأكيد استلام الدفعة كاملة"} cls={`btn-primary ${isBusy(`pay:${t.id}`) ? "opacity-50 pointer-events-none" : ""}`} onClick={() => {
                                     const amt = Number(t.rent_amount) || 0;
-                                    if (confirm(`تسجيل استلام دفعة كاملة؟\n\n${sar(amt)} ريال من ${t.name} — ${ul} ${t.unit || "—"} — ${active?.name}\n\nتاريخ السداد: اليوم (${today()})\nلتاريخ مختلف أو مرجع حوالة استعمل زر ½.\n\n(تُسجَّل باسمك في سجل العمليات)`)) recordPayment(t, amt);
+                                    if (confirm(`تسجيل استلام دفعة كاملة؟\n\n${sar(amt)} ريال من ${t.name} — ${ul} ${t.unit || "—"} — ${active?.name}\n\nتاريخ السداد: اليوم (${today()})\nلتاريخ مختلف أو مرجع حوالة استعمل زر ½.\n\n(تُسجَّل باسمك في سجل الحركات المالية)`)) recordPayment(t, amt);
                                   }}>&#10004;</QuickBtn>}
                                   {canCollect && <QuickBtn title="سداد جزئي" cls="btn-ghost" onClick={() => setPaying(t)}>&#189;</QuickBtn>}
                                   <a href={remindLink(t)} target="_blank" rel="noreferrer" className="btn btn-wa text-xs px-2.5" title="إرسال تذكير واتساب" onClick={(e) => { e.preventDefault(); openExternal(remindLink(t)); }}>&#128172;</a>
@@ -1540,7 +1540,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                       <QuickBtn title="تأكيد استلام الدفعة كاملة" cls="btn-primary" onClick={() => {
                         /* دفعة بضغطة واحدة بلا تأكيد = أخطاء لا تُكتشف إلا في كشف المالك. نسمّي المبلغ والمستأجر والوحدة قبل التسجيل */
                         const amt = Number(t.rent_amount) || 0;
-                        if (confirm(`تسجيل استلام دفعة كاملة؟\n\n${sar(amt)} ريال من ${t.name} — ${ul} ${t.unit || "—"} — ${active?.name}\n\nتاريخ السداد: اليوم (${today()})\nلتاريخ مختلف أو مرجع حوالة استعمل زر ½.\n\n(تُسجَّل باسمك في سجل العمليات)`)) recordPayment(t, amt);
+                        if (confirm(`تسجيل استلام دفعة كاملة؟\n\n${sar(amt)} ريال من ${t.name} — ${ul} ${t.unit || "—"} — ${active?.name}\n\nتاريخ السداد: اليوم (${today()})\nلتاريخ مختلف أو مرجع حوالة استعمل زر ½.\n\n(تُسجَّل باسمك في سجل الحركات المالية)`)) recordPayment(t, amt);
                       }}>&#10004;</QuickBtn>
                       <QuickBtn title="سداد جزئي" cls="btn-ghost" onClick={() => setPaying(t)}>&#189;</QuickBtn>
                       <a href={remindLink(t)} target="_blank" rel="noreferrer" className="btn btn-wa text-xs px-2.5" title="إرسال تذكير واتساب" onClick={(e) => { e.preventDefault(); openExternal(remindLink(t)); }}>&#128172;</a>
