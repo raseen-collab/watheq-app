@@ -36,17 +36,34 @@ async function call(method: string, payload: Record<string, any>) {
  * الأخيرة فقط. الرسائل القصيرة تمرّ كما كانت تمامًا.
  */
 const TG_MAX = 3900;
+/**
+ * إصلاح HTML بعد أي قصّ: يحذف وسمًا مشطورًا في الذيل ويغلق ما بقي مفتوحًا.
+ * تليجرام يرفض الرسالة كلها إن اختلّ الترميز — فلا يصل شيء للمكتب.
+ */
+function balanceHtml(s: string): string {
+  let out = s.replace(/<\/?[a-zA-Z]*$/, "");
+  const open: string[] = [];
+  for (const m of out.matchAll(/<(\/?)([a-zA-Z]+)[^>]*>/g)) {
+    const [, slash, tag] = m;
+    const k = tag.toLowerCase();
+    if (slash) { const i = open.lastIndexOf(k); if (i >= 0) open.splice(i, 1); }
+    else if (["b", "i", "u", "s", "code", "pre", "a"].includes(k)) open.push(k);
+  }
+  return out + open.reverse().map((k) => `</${k}>`).join("");
+}
+
 function splitTelegram(text: string): string[] {
   if (text.length <= TG_MAX) return [text];
   const out: string[] = [];
   let cur = "";
   for (const line of text.split("\n")) {
-    const piece = line.length > TG_MAX ? line.slice(0, TG_MAX) : line;
+    /* سطر واحد أطول من الحد: القصّ قد يشطر وسمًا — نوازنه */
+    const piece = line.length > TG_MAX ? balanceHtml(line.slice(0, TG_MAX)) : line;
     if ((cur + "\n" + piece).length > TG_MAX && cur) { out.push(cur); cur = piece; }
     else cur = cur ? cur + "\n" + piece : piece;
   }
   if (cur) out.push(cur);
-  return out;
+  return out.map(balanceHtml);
 }
 
 /**
@@ -56,13 +73,27 @@ function splitTelegram(text: string): string[] {
  * المتأخرين كان ينتج 18 ألف حرف، أي أن التقرير يفشل عند من يحتاجه أكثر.
  * التقارير مقصوصة عند مصدرها، وهذا يحمي أي رسالة جديدة تُنسى.
  */
+/**
+ * قصّ آمن لـHTML.
+ *
+ * القصّ عند حرف خام قد يشطر وسمًا («…<b» بلا إغلاق) أو يترك وسمًا مفتوحًا،
+ * فيرفض تليجرام الرسالة كلها بخطأ «Can't parse entities» — ويبقى الزرّ بلا
+ * استجابة أمام المكتب. نقصّ ثم نُصلح: نحذف أي وسم مشطور، ونغلق ما بقي
+ * مفتوحًا بترتيب عكسي.
+ */
 function clipTg(t: string): string {
   const MAX = 4000;
   if (!t || t.length <= MAX) return t;
-  const cut = t.slice(0, MAX);
+  let cut = t.slice(0, MAX);
   const nl = cut.lastIndexOf("\n");
-  return (nl > MAX * 0.6 ? cut.slice(0, nl) : cut) + "\n\n<i>… بقية القائمة في اللوحة.</i>";
+  if (nl > MAX * 0.6) cut = cut.slice(0, nl);
+
+  return balanceHtml(cut) + "\n\n<i>… بقية القائمة في اللوحة.</i>";
 }
+
+/** للفحص فقط — يُصدَّران ليُختبر القصّ والتقسيم مباشرةً */
+export const __clipTgForTest = clipTg;
+export const __splitForTest = splitTelegram;
 
 export async function tgSend(chatId: string | number, text: string, buttons?: TgKeyboard) {
   const parts = splitTelegram(text);
