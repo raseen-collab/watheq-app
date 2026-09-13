@@ -1,4 +1,5 @@
 import { createClient as createAdmin } from "@supabase/supabase-js";
+import { fetchAllRows } from "@/lib/fetch-all";
 import { ownerReportHTML, ownerConsolidatedStatementHTML, type OwnerStatementSection } from "@/lib/documents";
 import { issuerMarks } from "@/lib/subscription";
 
@@ -142,12 +143,19 @@ export async function GET(_req: Request, { params }: { params: { token: string }
     ? `${AR_MONTHS[Number(fromYm.slice(5, 7)) - 1]} ${fromYm.slice(0, 4)}${toYm === ymNow ? " (حتى اليوم)" : ""}`
     : `${AR_MONTHS[Number(fromYm.slice(5, 7)) - 1]} ${fromYm.slice(0, 4)} — ${AR_MONTHS[Number(toYm.slice(5, 7)) - 1]} ${toYm.slice(0, 4)}`;
 
-  const [{ data: pays }, { data: exps }, { data: profile }] = await Promise.all([
-    db.from("payments").select("id,paid_on,amount,method,periods_covered,note,tenant_id")
-      .eq("property_id", link.property_id).gte("paid_on", from).lte("paid_on", to)
-      .order("paid_on", { ascending: true }).limit(1000),
-    db.from("expenses").select("*").eq("property_id", link.property_id)
-      .gte("spent_on", from).lte("spent_on", to).order("spent_on", { ascending: true }).limit(500),
+  /**
+   * بلا قصّ صامت.
+   *
+   * الحدّان السابقان (1000 دفعة و500 مصروف) يكفيان سنةً ويسقطان عند «منذ
+   * البداية» لعقار كبير بعد سنوات: يفتح المالك رابطه فيرى صافيًا ناقصًا،
+   * ولا أحد يعلم — لا هو ولا المكتب. وهذا أخطر مسار في المنصة لأنه يخرج
+   * من يد المكتب تمامًا. الجلب على دفعات حتى ينتهي الجدول فعلًا.
+   */
+  const [pays, exps, { data: profile }] = await Promise.all([
+    fetchAllRows(db as any, "payments", "id,paid_on,amount,method,periods_covered,note,tenant_id",
+      (q) => q.eq("property_id", link.property_id).gte("paid_on", from).lte("paid_on", to).order("paid_on", { ascending: true })),
+    fetchAllRows(db as any, "expenses", "*",
+      (q) => q.eq("property_id", link.property_id).gte("spent_on", from).lte("spent_on", to).order("spent_on", { ascending: true })),
     db.from("profiles").select("org_name, billing_name, vat_number, cr_number, billing_phone, plan, trial_ends_at, subscribed_until")
       .eq("id", link.user_id).maybeSingle(),
   ]);
