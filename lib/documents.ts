@@ -686,7 +686,20 @@ export function propertyStatementHTML(
   const late = rows.filter((r) => !r.st.vacant && r.st.status === "late").length;
   const vacantCount = rows.filter((r) => isVacant(r.t)).length;
   const occupied = p.tenants.length - vacantCount;
-  const annual = annualExpected(p.tenants as any[]);
+  /**
+   * كشف الحساب يذكر ما حدث لا ما يُتوقَّع.
+   *
+   * كان يعرض «الدخل السنوي المتوقع» — رقمًا تقديريًّا وسط مستند يُسلَّم
+   * للمالك كبيان حساب، فيُقرأ كالتزام. والمكتب طلبها صراحةً: «أبغى كشف
+   * حساب العمارة بالضبط، ما أحتاج المتوقع».
+   *
+   * بدلها حقائق: ما تأخّر فعلًا، وما حُصِّل خلال الفترة إن حُدّدت.
+   */
+  const arrearsTotal = (p.tenants || []).reduce((a: number, t: any) => {
+    const st = contractState(t, { graceDays: Number(p.grace_days) || 0 });
+    return a + (Number(st.totalOwed) || 0);
+  }, 0);
+  const collectedInPeriod = (payments || []).reduce((a, x) => a + (Number(x.amount) || 0), 0);
   const soonCount = rows.filter((r) => r.st.status === "soon").length;
   /* أرقام الفترة: تُحسب من الدفعات والمصروفات المسجّلة داخلها فقط —
      لا من الحالة اللحظية، وإلا اختلف الرقم عن تقرير المالك لنفس المدة. */
@@ -738,7 +751,8 @@ ${mode === "full" ? `
   <div class="box">
     <div class="r"><span>الوحدات</span><span>${p.tenants.length} (${occupied} مؤجّرة · ${vacantCount} شاغرة)</span></div>
     <div class="r"><span>نسبة الإشغال</span><span>${p.tenants.length ? Math.round((occupied / p.tenants.length) * 100) : 0}%</span></div>
-    <div class="r"><span>الدخل السنوي المتوقع</span><span><b>${sar(annual)} ريال</b></span></div>
+    <div class="r"><span>إجمالي المتأخرات</span><span><b style="color:${arrearsTotal > 0 ? "#a5322c" : "#137a50"}">${sar(arrearsTotal)} ريال</b></span></div>
+    ${period ? `<div class="r"><span>المحصَّل خلال الفترة</span><span><b>${sar(collectedInPeriod)} ريال</b></span></div>` : ""}
     ${(p as any).mgmt_fee_pct ? `<div class="r"><span>أتعاب الإدارة</span><span>${(p as any).mgmt_fee_pct}%</span></div>` : ""}
     ${Number(p.grace_days) > 0 ? `<div class="r"><span>فترة السماح</span><span>${p.grace_days} أيام</span></div>` : ""}
     ${p.vat_enabled ? `<div class="r"><span>ضريبة القيمة المضافة</span><span>${Number(p.vat_rate) || 15}% على الوحدات التجارية</span></div>` : ""}
@@ -792,7 +806,7 @@ ${mode === "full" ? `
   </tbody>
 </table>` : ""}
 
-<div class="note">كشف استرشادي صادر آليًّا من بيانات العقود المسجّلة بتاريخ ${today()}.${mode === "full" ? " الدخل السنوي المتوقع يُحسب من الوحدات المؤجّرة فقط." : ""}</div>
+<div class="note">كشف استرشادي صادر آليًّا من بيانات العقود المسجّلة بتاريخ ${today()}.${mode === "full" ? " المتأخرات والمحصَّل من السجلات المسجّلة في وثيق." : ""}</div>
 <div class="sign"><div>المؤجّر / الوكيل: ${who}<br><br>التوقيع: ________________</div><div>تاريخ الإصدار: ${today()}</div></div>
 ${footer()}`;
   return SHELL(`كشف حساب — ${p.name}`, body, markOf(issuer));
