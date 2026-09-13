@@ -19,6 +19,7 @@ import StatusLegend from "@/components/StatusLegend";
 import PropertyStatementModal, { type StatementPeriod } from "@/components/PropertyStatementModal";
 import DemoGuide from "@/components/DemoGuide";
 import MonthlyCollection from "@/components/MonthlyCollection";
+import DebtFollowUp from "@/components/DebtFollowUp";
 import ExpensesModal from "@/components/ExpensesModal";
 import OwnerLinkModal from "@/components/OwnerLinkModal";
 import type { ExpenseRow } from "@/lib/expenses";
@@ -775,6 +776,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
 
   const [stmtOpen, setStmtOpen] = useState(false);
   const [seeding, setSeeding] = useState(false);
+  const [debtOpen, setDebtOpen] = useState(false);
   /* خطأ الحفظ يُعرض داخل النموذج لا إشعارًا عائمًا في أعلى الصفحة: على
      الجوال يكون المستخدم منزلًا داخل نموذج طويل، فيضغط «حفظ» ويظهر الإشعار
      خارج نظره — فيقول «ضغطت ولا صار شي». */
@@ -782,6 +784,8 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
   const [saving, setSaving] = useState(false);
   const fail = (m: string) => { setSaveErr(m); notify("err", m); setSaving(false); };
   const hasDemo = items.some((p) => (p as any).is_demo);
+  /* إجمالي الديون المرحَّلة — رقم يتراكم بصمت ولا يظهر في أي شاشة */
+  const carriedTotal = items.reduce((a, p) => a + (p.tenants || []).reduce((b, t) => b + Math.max(0, Number((t as any).carried_debt) || 0), 0), 0);
 
   async function seedDemo() {
     setSeeding(true);
@@ -1286,6 +1290,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                 { label: "كشف مالك مجمّع", run: () => setOwnerStmtOpen(true) },
                 { label: "رابط المالك", run: () => setOwnerLinkOpen(true) },
                 ...(may("manage_expenses") ? [{ label: "المصروفات", run: () => setExpensesOpen(true) }] : []),
+                { label: `الديون المرحَّلة${carriedTotal > 0 ? ` (${sar(carriedTotal)})` : ""}`, run: () => setDebtOpen(true) },
               ]} />}
 
               <MenuBtn label="🗂️ البيانات" items={[
@@ -1666,6 +1671,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       {ownerStmtOpen && <OwnerStatementModal properties={items} issuer={issuer} onClose={() => setOwnerStmtOpen(false)} />}
       {logOpen && <ActivityLog properties={items} onClose={() => setLogOpen(false)} />}
       {/* الصفحة العامة ترسم دليلها بنفسها — لا نكرّره هنا */}
+      {debtOpen && <DebtFollowUp properties={items.map((p) => ({ id: p.id, name: p.name }))} orgName={orgName} onClose={() => setDebtOpen(false)} />}
       {hasDemo && !demo && <DemoGuide onEvent={onGuideEvent} />}
       {stmtOpen && active && <PropertyStatementModal propertyName={active.name} onClose={() => setStmtOpen(false)} onIssue={openPropertyStatement} />}
 
