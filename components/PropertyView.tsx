@@ -1693,7 +1693,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
         onSubmit={(amt, method, note, paidOn, reference) => { recordPayment(paying, amt, method, note, paidOn, reference); setPaying(null); }} />}
       {turnover && <TurnoverModal key={turnover.id} tenant={turnover} unitWord={ul} onClose={() => setTurnover(null)}
         onSubmit={(d) => saveTurnover(turnover, d)} />}
-      {history && <HistoryModal data={history} unitWord={ul} canEdit={may("record_payments")} onClose={() => setHistory(null)} />}
+      {history && <HistoryModal data={history} unitWord={ul} canEdit={may("undo_actions")} onChanged={() => router.refresh()} onClose={() => setHistory(null)} />}
       {remindAll && <RemindAllModal rows={lateRows} unitWord={ul} linkOf={remindLink}
         onClose={() => setRemindAll(false)} />}
       {doc && <DocModal doc={doc} onClose={() => setDoc(null)} />}
@@ -1942,8 +1942,10 @@ function TurnoverModal({ tenant, unitWord, onClose, onSubmit }: {
  * أسبوع يحتاج تصحيح تاريخ وصول المال أو إضافة مرجعه — بلا مساس بالمبلغ
  * (تغييره يفسد عدّاد الدفعات). القاعدة تسمح بهذين العمودين فقط.
  */
-function HistoryModal({ data, unitWord, onClose, canEdit = true }: {
+function HistoryModal({ data, unitWord, onClose, canEdit = true, onChanged }: {
   data: { tenant: Tenant; rows: any[] }; unitWord: string; onClose: () => void; canEdit?: boolean;
+  /** تُستدعى بعد عكس دفعة ليُعاد تحميل أرقام اللوحة */
+  onChanged?: () => void;
 }) {
   const { tenant } = data;
   const supabase = useMemo(() => createClient(), []);
@@ -1953,6 +1955,31 @@ function HistoryModal({ data, unitWord, onClose, canEdit = true }: {
   const [eRef, setERef] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+
+  /**
+   * عكس دفعة بعينها — لا آخر دفعة فقط.
+   *
+   * من اكتشف بعد شهرين أن دفعة قديمة سُجّلت بمبلغ أكبر مما استُلم، كان
+   * عليه التراجع عن كل ما بعدها. الآن يعكس الخاطئة وحدها، ثم يسجّل المبلغ
+   * الصحيح دفعةً عادية. الصفّان يبقيان في السجل للتدقيق.
+   */
+  async function reverseOne(r: any) {
+    if (!confirm(
+      `عكس هذه الدفعة؟\n\n${sar(Number(r.amount))} ريال بتاريخ ${r.paid_on}\n\n`
+      + `سيُضاف صفّ سالب مطابق، ويُنقص عدّاد الدفعات المسدَّدة، ويعود المبلغ مستحقًّا.\n`
+      + `الدفعة الأصلية تبقى في السجل للتدقيق.\n\n`
+      + `إن كان المستأجر سدّد مبلغًا أقل، اعكسها ثم سجّل المبلغ الصحيح بزر ½.`
+    )) return;
+    setBusy(true); setErr(null);
+    const { data, error } = await supabase.rpc("watheq_reverse_payment", { p_payment: r.id });
+    setBusy(false);
+    if (error) { setErr(/does not exist|function/i.test(error.message) ? "شغّل schema-v35 في قاعدة البيانات أولًا." : error.message); return; }
+    const res = data as any;
+    setRows((cur) => [{ id: res?.payment_id || `rev_${r.id}`, tenant_id: r.tenant_id, paid_on: r.paid_on,
+      amount: -Number(r.amount), method: "other", periods_covered: -1,
+      note: `عكس دفعة ${r.paid_on}`, created_at: new Date().toISOString() }, ...cur]);
+    onChanged?.();
+  }
 
   async function saveEdit(id: string) {
     setBusy(true); setErr(null);
@@ -2023,6 +2050,11 @@ function HistoryModal({ data, unitWord, onClose, canEdit = true }: {
                         <button className="btn btn-ghost text-[10px] px-2 py-0.5"
                           onClick={() => { setEditing(r.id); setEDate(String(r.paid_on || "").slice(0, 10)); setERef(r.reference || ""); }}
                           title="تصحيح تاريخ وصول الحوالة أو مرجعها — المبلغ لا يُعدَّل">✎ تاريخ/مرجع</button>
+                      )}
+                      {canEdit && editing !== r.id && Number(r.amount) > 0 && (
+                        <button className="btn btn-ghost text-[10px] px-2 py-0.5 ms-1 text-late" disabled={busy}
+                          onClick={() => reverseOne(r)}
+                          title="يُعيد مبلغ هذه الدفعة مستحقًّا — للدفعة المسجّلة بمبلغ خاطئ">↩︎ اعكسها</button>
                       )}
                     </td>
                   )}
@@ -2533,7 +2565,7 @@ function OwnerReportModal({ property, unitWord, issuer, onClose }: {
 
     // دفعات العقار الموثّقة خلال الشهر — نفس السجل الذي يغذّي كشف حساب المستأجر
     const { data, error } = await supabase.from("payments")
-      .select("id,paid_on,amount,method,periods_covered,note,tenant_id")
+      .select("id,paid_on,amount,method,periods_covered,note,tenant_id,reference,created_at")
       .eq("property_id", property.id)
       .gte("paid_on", from).lte("paid_on", to)
       .order("paid_on", { ascending: true }).limit(5000);
