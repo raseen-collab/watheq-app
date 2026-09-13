@@ -104,6 +104,36 @@ function unitDesc(t: any, p: any): string {
  * بتسعة آلاف يُعرض 36,000 في كشف العقار وتقرير المالك. والمالك يقرأ رقمًا
  * لن يصله.
  */
+/**
+ * ما يراه المالك من الدفعات — لا سجلّ عمليات المكتب.
+ *
+ * كان الجدول يعرض كل صفّ كما هو: صفوفًا سالبة بعنوان «تراجع عن دفعة»،
+ * وملاحظات داخلية مثل «سُجّلت عبر بوت تليجرام». والمالك يقرأها فيسأل عن
+ * سبب التراجع ومن سجّله، ويتحوّل تقرير حساب إلى مراجعة أداء للمكتب.
+ *
+ * القاعدة: نُسقِط كل عكسٍ مع دفعته المقابلة (فلا يبقى إلا ما استُلم فعلًا
+ * ولم يُعكس)، ونحذف الملاحظات التشغيلية. المبلغ النهائي لا يتغيّر — لأن
+ * الصفّين كانا يلغيان بعضهما في المجموع أصلًا.
+ */
+function ownerVisiblePayments<T extends { amount: number; paid_on: string; tenant_name?: string | null; note?: string | null }>(rows: T[]): T[] {
+  const src = [...(rows || [])];
+  const reversals = src.filter((x) => Number(x.amount) < 0);
+  const positives = src.filter((x) => Number(x.amount) > 0);
+  const dropped = new Set<number>();
+  for (const rev of reversals) {
+    const amt = Math.abs(Number(rev.amount));
+    const i = positives.findIndex((x, k) => !dropped.has(k)
+      && Math.abs(Number(x.amount) - amt) < 0.01
+      && String(x.tenant_name || "") === String(rev.tenant_name || ""));
+    if (i >= 0) dropped.add(i);
+  }
+  /* ملاحظات المكتب الداخلية لا تخرج للمالك */
+  const INTERNAL = /تراجع|تليجرام|بوت|عكس دفعة|رصيد افتتاحي/i;
+  return positives
+    .filter((_, k) => !dropped.has(k))
+    .map((x) => (x.note && INTERNAL.test(String(x.note)) ? { ...x, note: null } : x));
+}
+
 function annualExpected(tenants: any[]): number {
   return (tenants || []).reduce((a, t) => a + expectedNext12(t as any), 0);
 }
@@ -1659,6 +1689,8 @@ export function ownerReportHTML(
   const late = rows.filter((r) => !r.vacant && r.st.status === "late").length;
   const totalDue = rows.reduce((s, r) => s + (r.vacant ? 0 : r.st.amountDue), 0);
   const collected = payments.reduce((s, x) => s + (Number(x.amount) || 0), 0);
+  /* المالك يرى ما استُلم فعلًا: العكس يُسقَط مع دفعته، والملاحظات الداخلية تُحذف */
+  const shownPays = ownerVisiblePayments(payments as any[]);
   const exp = extra.expenses || [];
   /* الضريبة داخل المقبوض تُستبعد: أمانة للهيئة لا إيراد للمالك.
      ونحسبها لكل دفعة بحسب وحدتها (العمارة المختلطة). */
@@ -1709,7 +1741,8 @@ ${mode === "full" ? `
   </div>
   <div class="box">
     <div class="r"><span>عدد الوحدات</span><span>${p.tenants.length}</span></div>
-    <div class="r"><span>الدخل السنوي المتوقع</span><span><b>${sar(annualExpected(p.tenants as any[]))}</b> ريال</span></div>
+    <div class="r"><span>المحصَّل خلال الفترة</span><span><b style="color:#137a50">${sar(fin.collected)}</b> ريال</span></div>
+    <div class="r"><span>المتأخرات القائمة</span><span><b style="color:${totalDue > 0 ? "#a5322c" : "#137a50"}">${sar(totalDue)}</b> ريال</span></div>
     ${extra.fee_pct ? `<div class="r"><span>أتعاب الإدارة</span><span>${extra.fee_pct}%</span></div>` : ""}
     ${Number(p.grace_days) > 0 ? `<div class="r"><span>فترة السماح</span><span>${p.grace_days} أيام</span></div>` : ""}
   </div>
@@ -1740,11 +1773,11 @@ ${mode === "full" ? `
   </tr></tfoot>
 </table></div>
 
-<h2>الدفعات المستلمة خلال الفترة (${payments.length})</h2>
-${payments.length ? `<div class="scrollx"><table>
+<h2>الدفعات المستلمة خلال الفترة (${shownPays.length})</h2>
+${shownPays.length ? `<div class="scrollx"><table>
   <thead><tr><th>التاريخ</th><th>المستأجر</th><th>${ul}</th><th>المبلغ</th><th>الطريقة</th><th>ملاحظة</th></tr></thead>
   <tbody>
-    ${payments.map((x) => `<tr>
+    ${shownPays.map((x) => `<tr>
       <td>${arDate(x.paid_on)}</td>
       <td>${x.tenant_name || "—"}</td>
       <td>${x.unit || "—"}</td>
@@ -1775,11 +1808,9 @@ ${exp.length ? `<div class="scrollx"><table>
 <h2>الحساب الختامي للمالك</h2>
 <table>
   <tbody>
-    ${(() => { const y = annualExpected(p.tenants as any[]); return y > 0
-      ? `<tr><td>الدخل السنوي المتوقع للعقار <span style="font-size:.72rem;color:#5C6B67">(الوحدات المشغولة)</span></td><td style="text-align:left">${sar(y)}</td></tr>` : ""; })()}
     ${(fin.vatCollected || 0) > 0 ? `<tr><td>إجمالي المقبوض خلال الفترة</td><td style="text-align:left">${sar(fin.grossCollected || 0)}</td></tr>
     <tr><td>(−) ضريبة القيمة المضافة المحصَّلة <span style="font-size:.72rem;color:#5C6B67">(تُورَّد للهيئة — ليست إيرادًا للمالك)</span></td><td style="text-align:left">${sar(fin.vatCollected || 0)}</td></tr>` : ""}
-    <tr><td>${(fin.vatCollected || 0) > 0 ? "صافي إيراد المالك من الإيجار" : "المحصَّل خلال الفترة"}</td><td style="text-align:left"><b>${sar(fin.collected)}</b>${(() => { const y = annualExpected(p.tenants as any[]); return y > 0 ? ` <span style="font-size:.72rem;color:#5C6B67">(${Math.min(100, Math.round((fin.collected / y) * 100))}% من السنوي)</span>` : ""; })()}</td></tr>
+    <tr><td>${(fin.vatCollected || 0) > 0 ? "صافي إيراد المالك من الإيجار" : "المحصَّل خلال الفترة"}</td><td style="text-align:left"><b>${sar(fin.collected)}</b></td></tr>
     <tr><td>(−) مصروفات الفترة</td><td style="text-align:left">${sar(fin.expenses)}</td></tr>
     ${fin.feePct !== null ? `<tr><td>(−) أتعاب الإدارة (${fin.feePct}% من صافي الإيجار)</td><td style="text-align:left">${sar(fin.feeBase ?? fin.fee)}</td></tr>${(fin.feeVat || 0) > 0 ? `<tr><td>(−) ضريبة على أتعاب الإدارة (${feeVatRate}%)</td><td style="text-align:left">${sar(fin.feeVat || 0)}</td></tr>` : ""}` : ""}
     <tr><td><b>صافي المالك عن ${period.label}</b></td><td style="text-align:left"><b style="font-size:1.1rem">${sar(fin.net)} ريال</b></td></tr>
@@ -1854,11 +1885,9 @@ export function ownerConsolidatedStatementHTML(
     return { s, units, vacant, due, collected, fin };
   });
 
-  const annualAll = rows.reduce((a, r) => a + annualExpected(r.s.property.tenants as any[]), 0);
   /* المالك يقارن «المحصَّل» بشيء: بلا مرجع للفترة يبدو التحصيل كارثيًّا
      (122,900 مقابل دخل سنوي 3.4 مليون). المتوقع للفترة يعطيه المرجع. */
   const periodDays = Math.max(1, Math.round((Date.parse(period.to) - Date.parse(period.from)) / 86400000) + 1);
-  const expectedInPeriod = Math.round((annualAll / 365) * periodDays);
   const T = rows.reduce((a, r) => ({
     units: a.units + r.units, vacant: a.vacant + r.vacant, due: a.due + r.due,
     collected: a.collected + r.fin.collected, expenses: a.expenses + r.fin.expenses,
@@ -1880,21 +1909,21 @@ ${header("كشف حساب مالك — مجمّع", ownerName)}
 </div>
 
 <div class="box" style="margin:12px 0 6px">
-  <div class="r"><span>المتوقع تحصيله خلال الفترة</span><span><b>${sar(expectedInPeriod)}</b> ريال — حُصّل منه <b>${sar(T.collected)}</b> (${expectedInPeriod > 0 ? Math.round((T.collected / expectedInPeriod) * 100) : 0}%)</span></div>
+  <!-- حقائق لا تقديرات: المستند يُسلَّم للمالك كبيان حساب -->
+  <div class="r"><span>المُحصَّل خلال الفترة</span><span><b style="color:#137a50">${sar(T.collected)}</b> ريال من ${rows.length} ${rows.length === 1 ? "عقار" : "عقارات"}</span></div>
   ${T.vat > 0 ? `<div class="r"><span>إجمالي المقبوض من المستأجرين</span><span>${sar(T.gross)} ريال — منه ${sar(T.vat)} ضريبة تُورَّد للهيئة</span></div>` : ""}
-  <div class="r"><span>الدخل السنوي المتوقع للمحفظة</span><span>${sar(annualAll)} ريال / سنة — من الوحدات المؤجّرة</span></div>
+  <div class="r"><span>المتأخرات القائمة</span><span><b style="color:${T.due > 0 ? "#a5322c" : "#137a50"}">${sar(T.due)}</b> ريال — تراكمية لكل المدد لا الفترة</span></div>
 </div>
 <div class="note" style="margin-bottom:12px">
-  المُحصَّل والمصروفات والأتعاب عن <b>الفترة المحددة وحدها</b>؛ أما «متأخرات قائمة» و«الدخل السنوي» فأرقام تراكمية لكامل العقود — فلا تُقارن ببعضها مباشرة.
+  المُحصَّل والمصروفات والأتعاب عن <b>الفترة المحددة وحدها</b>؛ أما «المتأخرات القائمة» فرقم تراكمي لكامل العقود — فلا يُقارن بها مباشرة.
 </div>
 <h2>ملخص العقارات</h2>
 <div class="scrollx"><table>
-  <thead><tr><th>العقار</th><th>الوحدات</th><th>شاغرة</th><th>الدخل السنوي المتوقع</th><th>المُحصَّل</th><th>المصروفات</th>${anyFee ? "<th>الأتعاب</th>" : ""}<th>الصافي</th><th>متأخرات قائمة<div style="font-size:.62rem;font-weight:400;opacity:.8">كل المدد لا الفترة</div></th></tr></thead>
+  <thead><tr><th>العقار</th><th>الوحدات</th><th>شاغرة</th><th>المُحصَّل</th><th>المصروفات</th>${anyFee ? "<th>الأتعاب</th>" : ""}<th>الصافي</th><th>متأخرات قائمة<div style="font-size:.62rem;font-weight:400;opacity:.8">كل المدد لا الفترة</div></th></tr></thead>
   <tbody>
     ${rows.map((r) => `<tr>
       <td><b>${r.s.property.name}</b><div style="font-size:.72rem;color:#5C6B67">${typeLabel(r.s.property.property_type)}${r.s.property.city ? ` · ${r.s.property.city}` : ""}</div></td>
       <td>${r.units}</td><td>${r.vacant || "—"}</td>
-      <td>${sar(annualExpected(r.s.property.tenants as any[]))}</td>
       <td>${sar(r.fin.collected)}</td><td>${sar(r.fin.expenses)}</td>
       ${anyFee ? `<td>${r.fin.feePct !== null ? `${sar(r.fin.fee)} <span style="font-size:.7rem;color:#5C6B67">(${r.fin.feePct}%)</span>` : "—"}</td>` : ""}
       <td><b>${sar(r.fin.net)}</b></td>
@@ -1902,7 +1931,6 @@ ${header("كشف حساب مالك — مجمّع", ownerName)}
     </tr>`).join("")}
     <tr>
       <td><b>الإجمالي</b></td><td><b>${T.units}</b></td><td>${T.vacant || "—"}</td>
-      <td><b>${sar(rows.reduce((a, r) => a + annualExpected(r.s.property.tenants as any[]), 0))}</b></td>
       <td><b>${sar(T.collected)}</b></td><td><b>${sar(T.expenses)}</b></td>
       ${anyFee ? `<td><b>${sar(T.fee)}</b></td>` : ""}
       <td><b style="font-size:1.05rem">${sar(T.net)}</b></td>
@@ -1934,10 +1962,10 @@ ${detail === "full" ? `
     }).join("")}
   </tbody>
 </table></div>` : ""}
-${r.s.payments.length ? `<div class="scrollx"><table>
+${ownerVisiblePayments(r.s.payments as any[]).length ? `<div class="scrollx"><table>
   <thead><tr><th>التاريخ</th><th>المستأجر</th><th>${unitLabel(r.s.property.property_type)}</th><th>المبلغ</th><th>الطريقة</th></tr></thead>
   <tbody>
-    ${r.s.payments.map((x) => `<tr><td>${arDate(x.paid_on)}</td><td>${x.tenant_name || "—"}</td><td>${x.unit || "—"}</td><td><b>${sar(x.amount)}</b></td><td>${payMethod(x)}</td></tr>`).join("")}
+    ${ownerVisiblePayments(r.s.payments as any[]).map((x: any) => `<tr><td>${arDate(x.paid_on)}</td><td>${x.tenant_name || "—"}</td><td>${x.unit || "—"}</td><td><b>${sar(x.amount)}</b></td><td>${payMethod(x)}</td></tr>`).join("")}
     <tr><td colspan="3"><b>إجمالي المُحصَّل</b></td><td colspan="2"><b>${sar(r.fin.collected)}</b></td></tr>
   </tbody>
 </table></div>` : `<div class="sub">لا دفعات مسجّلة لهذا العقار خلال الفترة.</div>`}
