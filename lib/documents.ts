@@ -1748,6 +1748,16 @@ ${mode === "full" ? `
   </div>
 </div>` : ""}
 
+${(fin.feeExceedsCollected || (fin.feePct !== null && fin.feePct >= 30)) ? `
+<div class="note" style="border-inline-start-color:#a5322c;background:#FBE9E7;color:#a5322c">
+  <b>راجع نسبة أتعاب الإدارة (${fin.feePct}%):</b>
+  ${fin.feeExceedsCollected
+    ? `الأتعاب وضريبتها (${sar(fin.fee)} ريال) تتجاوز المُحصَّل خلال الفترة (${sar(fin.collected)} ريال)، فيظهر الصافي سالبًا.`
+    : `الأتعاب (${sar(fin.fee)} ريال) تلتهم أغلب المُحصَّل (${sar(fin.collected)} ريال).`}
+  وأتعاب الإدارة في السوق 2.5–15% عادةً، فالأرجح أن النسبة أُدخلت خطأً —
+  صحّحها من إعدادات العقار وأعد إصدار التقرير.
+</div>` : ""}
+
 <h2>حالة الوحدات في نهاية الفترة</h2>
 <div class="scrollx"><table>
   <thead><tr><th>${ul}</th><th>المستأجر</th><th>الدفعة</th><th>الدورة</th><th>نهاية العقد</th><th>المتأخر</th><th>الحالة</th></tr></thead>

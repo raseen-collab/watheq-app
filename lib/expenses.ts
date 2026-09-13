@@ -93,6 +93,8 @@ export type OwnerNet = {
   feePct: number | null;  // نسبة أتعاب الإدارة المطبَّقة (null = لا أتعاب)
   fee: number;            // قيمة الأتعاب = المحصَّل × النسبة
   net: number;            // الصافي للمالك
+  /** الأتعاب + ضريبتها تتجاوز ما حُصّل — خطأ إدخال شبه مؤكّد في النسبة */
+  feeExceedsCollected: boolean;
 };
 
 /**
@@ -128,6 +130,15 @@ export function ownerNet(
   const feeBase = validPct ? r2((c * validPct) / 100) : 0;
   const feeVat = feeBase > 0 && feeVatRate > 0 ? r2((feeBase * feeVatRate) / 100) : 0;
   const fee = r2(feeBase + feeVat);
+  /**
+   * الأتعاب تتجاوز المحصَّل؟ لا نُخفيها ولا نقصّها.
+   *
+   * نسبة 100% (وهي في الواقع خطأ إدخال: من كتب «100» يقصد ريالات لا نسبة)
+   * تُنتج أتعابًا 115% بعد الضريبة، فيقرأ المالك أنه مدين للمكتب. القصّ
+   * الصامت يُخفي خطأ البيانات ويُنتج رقمًا جميلًا كاذبًا؛ والصواب أن يبقى
+   * الحساب صادقًا وأن يُرفع علم صريح يراه المكتب في التقرير.
+   */
+  const feeExceedsCollected = fee > c + 0.01;
   return { collected: c, grossCollected: gross, vatCollected: vat, expenses: e,
-           feePct: validPct, fee, feeBase, feeVat, net: r2(c - e - fee) };
+           feePct: validPct, fee, feeBase, feeVat, feeExceedsCollected, net: r2(c - e - fee) };
 }

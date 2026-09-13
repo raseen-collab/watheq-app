@@ -83,9 +83,9 @@ export function auditOffice(properties: P[], payments: any[] = [], expenses: any
       push({ severity: "warn", title: "الضريبة مفعّلة بنسبة صفر", propertyId: p.id, propertyName: p.name,
         why: "الفواتير ستخرج بلا ضريبة رغم تفعيلها.", fix: "حدّد نسبة الضريبة في إعدادات العقار (15% غالبًا)." });
     }
-    if (num(p.mgmt_fee_pct) > 50) {
+    if (num(p.mgmt_fee_pct) > 30) {
       push({ severity: "warn", title: `أتعاب إدارة مرتفعة (${p.mgmt_fee_pct}%)`, propertyId: p.id, propertyName: p.name,
-        why: "تُخصم من صافي المالك في كل تقرير — تحقّق أنها ليست خطأ إدخال.", fix: "راجع النسبة في إعدادات العقار." });
+        why: "تُخصم من صافي المالك في كل تقرير. أتعاب الإدارة في السوق 2.5–15% عادةً، وما فوق 30% يكاد يكون خطأ إدخال (من كتب «100» يقصد ريالات لا نسبة).", fix: "راجع النسبة في إعدادات العقار." });
     }
 
     // ── تكرار أرقام الوحدات المؤجّرة ──
