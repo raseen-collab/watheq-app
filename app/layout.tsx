@@ -54,6 +54,14 @@ const fabScroll = `(function(){
   }, { passive: true });
 })();`;
 
+/* بكسل إعلانات X (معرّف البكسل: rearl) — يقيس زيارات الحملات المدفوعة.
+   يُحقن مرّة واحدة في <head> فيغطّي كل مسارات التطبيق بما فيها /demo.
+   ملف uwt.js يُحمَّل async فلا يؤخّر رسم الصفحة. */
+const X_PIXEL = `!function(e,t,n,s,u,a){e.twq||(s=e.twq=function(){s.exe?s.exe.apply(s,arguments):s.queue.push(arguments);
+},s.version='1.1',s.queue=[],u=t.createElement(n),u.async=!0,u.src='https://static.ads-twitter.com/uwt.js',
+a=t.getElementsByTagName(n)[0],a.parentNode.insertBefore(u,a))}(window,document,'script');
+twq('config','rearl');`;
+
 const THEME_TOGGLE = `(function(){
 var K="watheq_theme";
 document.addEventListener("click",function(e){
@@ -123,6 +131,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
         <link href="https://fonts.googleapis.com/css2?family=Readex+Pro:wght@400;500;600;700&family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&display=swap" rel="stylesheet" />
+        <script dangerouslySetInnerHTML={{ __html: X_PIXEL }} />
       </head>
       <body>
         <PWARegister />
