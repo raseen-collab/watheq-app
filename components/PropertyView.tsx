@@ -1388,7 +1388,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                           <th className="px-3 py-2.5 text-right font-semibold text-xs text-muted whitespace-nowrap w-[15%]">الإيجار</th>
                           <Th k="due" label="الاستحقاق القادم" cls="w-[16%]" />
                           <Th k="urgent" label="الحالة" cls="w-[11%]" />
-                          <Th k="amount" label="المستحق" cls="text-left w-[12%]" />
+                          <Th k="amount" label="المبلغ" cls="text-left w-[12%]" />
                           <th className="px-3 py-2.5 w-[150px]"></th>
                         </tr>
                       </thead>
@@ -1425,7 +1425,16 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                                 {st.carriedDebt > 0 && <div className="text-[10px] font-normal text-[#9A4B00]">+ {sar(st.carriedDebt)} دين مرحَّل</div>}
                                 {/* الوحدة فارغة والمبلغ على من سكنها قبل الإخلاء — تسميته «المستحق» توهم أن الشاغرة مدينة */}
                                 {key === "vacant" && <div className="text-[10px] font-normal text-muted">على المستأجر السابق</div>}
-                              </>) : "—"}
+                              </>)
+                                /* الشارة تقول «مستحق خلال 4 أيام» والعمود فارغ — فيسأل المكتب:
+                                   مستحق كم؟ نعرض قيمة الدفعة القادمة بلون خافت حتى لا تختلط
+                                   بالمتأخرات الحمراء، ولا تُجمع معها في إجمالي المتأخر. */
+                                : (!st.vacant && !st.incomplete && st.nextDueDate && Number(t.rent_amount) > 0) ? (
+                                  <span className="font-normal text-muted">
+                                    {sar(Number(t.rent_amount))}
+                                    <div className="text-[10px]">قادمة</div>
+                                  </span>
+                                ) : "—"}
                             </td>
                             <td className={`px-2 ${dense ? "py-1" : "py-1.5"} text-left whitespace-nowrap`}>
                               <div className="inline-flex items-center gap-1">
@@ -1519,11 +1528,19 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                         : st.inGrace ? <span className="text-[#8a5a11] font-semibold">فترة سماح — {st.graceDaysLeft} يوم</span>
                         : key === "partial" ? <span className="text-[#9A5B00] font-semibold">دُفع {sar(st.partial)} · متبقٍ {sar(st.amountDue)}</span>
                         : key === "late" ? <span className="text-late font-bold">متأخر {sar(st.amountDue)}</span>
-                        : key === "due" ? <span className="text-[#9A4B00] font-semibold">{st.statusLabel}{st.nextDueDate ? <span className="font-normal text-muted"> · {st.nextDueDate}</span> : null}</span>
+                        : key === "due" ? <span className="text-[#9A4B00] font-semibold">
+                            {st.statusLabel}
+                            {/* «مستحق خلال 4 أيام» بلا مبلغ يجعل المكتب يسأل: كم؟ */}
+                            {Number(t.rent_amount) > 0 && <span> · {sar(Number(t.rent_amount))} ريال</span>}
+                            {st.nextDueDate ? <span className="font-normal text-muted"> · {st.nextDueDate}</span> : null}
+                          </span>
                         : key === "expiring" && st.daysToEnd !== null ? <span className="text-[#5B21B6] font-semibold">ينتهي بعد {st.daysToEnd} يوم</span>
                         : key === "litigation" ? <span className="text-[#475569]">{t.enforcement_no ? `طلب ${t.enforcement_no}` : "متابعة نظامية"}</span>
                         : st.fullyPaid ? <span className="text-[#137a50] font-semibold">✓ سدّد كامل العقد ({st.paid} من {t.contract_periods || st.paid}){st.endDate ? <span className="font-normal text-muted"> · ينتهي {st.endDate}{st.daysToEnd !== null && st.daysToEnd >= 0 ? ` (بعد ${st.daysToEnd} يوم)` : ""} — القسط القادم مع التجديد</span> : null}</span>
-                        : st.nextDueDate ? <span className="text-muted">القادمة {st.nextDueDate}{st.nextDueDate ? ` · ${hijriShort(st.nextDueDate)}` : ""}</span> : null}
+                        : st.nextDueDate ? <span className="text-muted">
+                            القادمة {st.nextDueDate}{` · ${hijriShort(st.nextDueDate)}`}
+                            {Number(t.rent_amount) > 0 && <span> · {sar(Number(t.rent_amount))} ريال</span>}
+                          </span> : null}
                     </div>
                   </div>
                 </div>
