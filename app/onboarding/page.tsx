@@ -4,6 +4,32 @@ import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase-client";
 import { ACCOUNT_TYPES, defaultDashboard, dashboardPath, type AccountType } from "@/lib/roles";
 
+/**
+ * تحويل «تسجيل مكتمل» لبكسل إعلانات X — الحدث tw-rearl-rfa0m (نوعه Lead).
+ *
+ * موضعه مقصود: لا يُطلق عند فتح /onboarding بل بعد نجاح حفظ نوع الحساب
+ * فعلًا، وإلا احتُسب كل زائر تحويلًا وفسد الرقم كله. ولا يُطلق في مسار
+ * رمز الدعوة: الموظف المنضم لمكتب قائم ليس عميلًا جديدًا.
+ *
+ * ومهلة الـ250ms قبل التنقّل الصلب ليست زينة: window.location.assign
+ * يُلغي الطلبات الجارية، وطلب البكسل يُرسل بعد نداء twq بلحظة، فبدونها
+ * تضيع أغلب التحويلات صامتة.
+ *
+ * وكل خطأ هنا يُبتلع: القياس لا يجوز أن يمنع مستخدمًا من دخول لوحته.
+ */
+function trackSignUp(): Promise<void> {
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = () => { if (!done) { done = true; resolve(); } };
+    try {
+      const twq = (window as unknown as { twq?: (...args: unknown[]) => void }).twq;
+      if (typeof twq !== "function") { finish(); return; }
+      twq("event", "tw-rearl-rfa0m", {});
+    } catch { /* تجاهل */ }
+    setTimeout(finish, 250);
+  });
+}
+
 export default function OnboardingPage() {
   const router = useRouter();
   const [type, setType] = useState<AccountType | null>(null);
@@ -98,6 +124,9 @@ export default function OnboardingPage() {
      * وذاكرة موجّه App Router قد تُعيد نسخة اللوحة المخزّنة من قبل الحفظ
      * (وهي حينها إعادة توجيه إلى /onboarding) فتبدو الصفحة عالقة.
      */
+    // تحويل مؤكَّد: الحساب صار له نوع محفوظ في القاعدة، فالتسجيل اكتمل
+    await trackSignUp();
+
     window.location.assign(dashboardPath(defaultDashboard(type)));
   }
 
