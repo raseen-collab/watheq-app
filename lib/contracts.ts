@@ -336,15 +336,20 @@ export function contractState(t: {
   /* دورة سداد غير معروفة تكسر جدول الدفعات كله: الافتراضي «شهري» قد يخالف
      عقدًا نصف سنوي فتخرج كل التواريخ غلطًا — وهذا نقص لا افتراض آمن. */
   const freqOk = !t.payment_frequency || FREQUENCIES.some((f) => f.value === t.payment_frequency);
-  if (!t.contract_start || !startOk || !freqOk || (!isVacant(t) && !rentOk)) {
+  /* الشاغرة بلا عقد ليست «ناقصة» بل شاغرة عمدًا: مكتب يُدخل عمارة جديدة
+     نصفها فارغ يسجّل شواغره قبل أن يؤجّرها، ولا معنى لتاريخ بداية لها.
+     أما الشاغرة التي كان لها عقد فتاريخها موجود ويبقى للسجل. */
+  const vacantNoContract = isVacant(t) && !t.contract_start;
+  if (vacantNoContract || !t.contract_start || !startOk || !freqOk || (!isVacant(t) && !rentOk)) {
     return {
       due: 0, paid, unpaid: 0, amountDue: 0, grossDue: 0, partial, hasPartial: partial > 0, fullyPaid: false, soonTier: null, expiringSoon: false, vacant: isVacant(t), legacyArrears: 0, carriedDebt: Math.max(0, Number(t.carried_debt) || 0), totalOwed: Math.max(0, Number(t.carried_debt) || 0),
       partialPct: rent ? Math.round((partial / rent) * 100) : 0,
       nextDueDate: null, daysToNextDue: null,
       endDate: t.contract_end || null,
       daysToEnd: t.contract_end ? daysBetween(new Date(t.contract_end), today) : null,
-      status: "ok", incomplete: true, progress: 0,
-      statusLabel: !t.contract_start ? "بيانات ناقصة — لا تاريخ بداية"
+      status: "ok", incomplete: !vacantNoContract, progress: 0,
+      statusLabel: vacantNoContract ? "شاغرة"
+        : !t.contract_start ? "بيانات ناقصة — لا تاريخ بداية"
         : !startOk ? `بيانات ناقصة — تاريخ بداية غير صحيح (${startTxt || "—"})`
         : !freqOk ? `بيانات ناقصة — دورة سداد غير معروفة (${t.payment_frequency})`
         : "بيانات ناقصة — الإيجار غير محدَّد",

@@ -182,7 +182,9 @@ export function auditOffice(properties: P[], payments: any[] = [], expenses: any
         push({ severity: "warn", title: "أول استحقاق قبل بداية العقد", ...base,
           why: "جدول الدفعات سيبدأ قبل سريان العقد.", fix: "امسح «أول استحقاق» أو صحّحه." });
       }
-      if (vac && !t.move_out_date) {
+      /* شاغرة سُجّلت ابتداءً (بلا عقد سابق) لا تحتاج تاريخ إخلاء —
+         لم يُخلِها أحد. الشكوى تخصّ من كان لها عقد وأُخليت. */
+      if (vac && !t.move_out_date && t.contract_start) {
         push({ severity: "info", title: "وحدة شاغرة بلا تاريخ إخلاء", ...base,
           why: "لا تُحسب مدة الشغور ولا تتوقف المتأخرات في تاريخها الصحيح.",
           fix: "أدخل تاريخ الإخلاء من بطاقة الوحدة." });
