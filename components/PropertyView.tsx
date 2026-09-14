@@ -571,6 +571,12 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
     if (y0 && y0 > 2100) { fail(`تاريخ البداية «${d.contract_start}» غير معقول.`); return; }
     /* الوحدة المؤجّرة بلا تاريخ بداية لا تُحسب لها أقساط ولا استحقاق — وكان
        الحفظ يمرّ بصمت فتبقى الوحدة بلا مواعيد ويظن الموظف أن التعديل «لا يعمل». */
+    /* الوحدة الشاغرة: لا مستأجر ولا عقد. عمود الاسم NOT NULL في القاعدة،
+       فنضع «شاغرة» بدل اسم وهمي يختلط ببيانات حقيقية. */
+    if (String(d.status || "active") === "vacated") {
+      d = { ...d, name: (d.name || "").trim() || "شاغرة", contract_start: d.contract_start || null,
+            paid_periods: 0, partial_amount: 0, move_out_date: d.move_out_date || today() };
+    }
     if (!d.contract_start && String(d.status || "active") !== "vacated") {
       fail("أدخل تاريخ بداية العقد — بدونه لا يستطيع النظام حساب الاستحقاقات لهذه الوحدة.");
       return;
@@ -2387,6 +2393,26 @@ function TenantModal({ open, initial, unitWord, error, saving, onClose, onSubmit
   return (
     <Shell onClose={onClose}>
       <h2 className="font-display font-bold text-deep text-xl mb-1">{initial ? "تعديل الوحدة" : `${unitWord} جديدة`}</h2>
+      {/**
+        * وحدة شاغرة بلا مستأجر.
+        *
+        * كان النموذج يشترط اسم مستأجر، فمكتب يُدخل عمارة جديدة نصفها فارغ
+        * لا يستطيع تسجيل الشواغر إلا باسم وهمي — فتختلط ببيانات حقيقية
+        * ويُحسب لها إيجار. المفتاح يُسقط ما لا معنى له في الشاغرة ويُبقي
+        * «الإيجار المطلوب» لأنه يفيد في عرض السعر وحساب الشغور.
+        */}
+      <label className="flex items-center gap-2.5 bg-paper border border-line rounded-xl p-3 mb-4 cursor-pointer">
+        <input type="checkbox" className="w-4 h-4" checked={String(d.status) === "vacated"}
+          onChange={(e) => setD({
+            ...d,
+            status: e.target.checked ? "vacated" : "active",
+            ...(e.target.checked ? { paid_periods: 0, partial_amount: 0 } : {}),
+          })} />
+        <span className="text-sm">
+          <b className="text-deep">الوحدة شاغرة</b>
+          <span className="text-muted"> — بلا مستأجر حاليًّا. سجّلها الآن وأجّرها لاحقًا بزر «تأجير».</span>
+        </span>
+      </label>
       <p className="text-sm text-muted mb-4">أدخل تاريخ البداية والدورة والقيمة — والنظام يستنتج بقية التواريخ والدفعات تلقائيًّا.</p>
       <div className="space-y-3">
         <div className="grid grid-cols-2 gap-3">
@@ -2518,12 +2544,12 @@ function TenantModal({ open, initial, unitWord, error, saving, onClose, onSubmit
       )}
       <div className="flex gap-2 mt-6">
         <button type="button" className="btn btn-ghost flex-1 justify-center" onClick={onClose}>إلغاء</button>
-        <button type="button" className="btn btn-gold flex-1 justify-center" disabled={!(d.name || "").trim() || !!saving}
-          title={!(d.name || "").trim() ? "أدخل اسم المستأجر أولًا" : "حفظ"}
+        <button type="button" className="btn btn-gold flex-1 justify-center" disabled={(String(d.status) !== "vacated" && !(d.name || "").trim()) || !!saving}
+          title={String(d.status) !== "vacated" && !(d.name || "").trim() ? "أدخل اسم المستأجر أولًا" : "حفظ"}
           style={!(d.name || "").trim() ? { opacity: .5, cursor: "not-allowed" } : undefined}
           onClick={() => onSubmit(d)}>حفظ</button>
       </div>
-      {!(d.name || "").trim() && <p className="text-xs text-late mt-3 text-center">اسم المستأجر مطلوب لتفعيل الحفظ.</p>}
+      {String(d.status) !== "vacated" && !(d.name || "").trim() && <p className="text-xs text-late mt-3 text-center">اسم المستأجر مطلوب لتفعيل الحفظ.</p>}
     </Shell>
   );
 }
