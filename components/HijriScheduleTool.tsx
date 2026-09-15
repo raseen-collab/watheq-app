@@ -86,7 +86,7 @@ export default function HijriScheduleTool() {
     if (!rows.length) return "";
     const head = `جدول دفعات العقد\nالبداية: ${rows[0].hijriText} (${rows[0].hijriDate})\nالدورة: ${FREQUENCIES.find((f) => f.value === freq)?.label} · المدة: ${months} شهرًا · ${periods} دفعة\n`;
     const body = rows.map((r) => `${r.n}. ${r.hijriText} — ${r.hijriDate}${amount ? ` — ${sar(amount)} ريال` : ""}`).join("\n");
-    return `${head}\n${body}\n\nحُسب بحاسبة وثيق المجانية: watheqapp.com/tools/hijri`;
+    return `${head}\n${body}\n\nحُسب بحاسبة وثيق المجانية: app.watheqapp.com/tools/hijri`;
   }, [rows, freq, months, periods, amount]);
 
   const copy = async () => {
