@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { subState } from "@/lib/subscription";
 import { createClient } from "@supabase/supabase-js";
 import { tgSend, tgEdit, tgAnswer, navButtons, TgKeyboard } from "@/lib/telegram";
 import {
@@ -49,10 +50,22 @@ function reportButtons(scope: string): TgKeyboard {
 
 const backBtn = (scope: string): TgKeyboard[number] => [{ text: "⬅️ رجوع", callback_data: `back:${scope}` }];
 
+/** آخر نقرة لكل (محادثة + زر) — لمنع تكرار الفعل عند النقر المزدوج */
+const RECENT_TAPS = new Map<string, number>();
+
 /** ربط حساب بالرمز */
 async function linkAccount(db: DB, chatId: number, code: string, username: string | null) {
   const { data: p } = await db.from("profiles").select("id, telegram_chat_id").eq("telegram_link_code", code).maybeSingle();
   if (!p) return tgSend(chatId, "رمز الربط غير صحيح أو منتهٍ. افتح «الإعدادات» في المنصة واطلب رمزًا جديدًا.");
+
+  /* محادثة واحدة لحساب واحد.
+     بدون هذا السطر يبقى ارتباط سابق قائمًا فيصير صفّان بنفس المحادثة،
+     والبحث بها يستعمل maybeSingle فيفشل مع صفّين — فيتعطّل البوت
+     للحسابين معًا ويقول «حسابك غير مربوط» لمن ربط للتوّ. */
+  await db.from("profiles")
+    .update({ telegram_chat_id: null, telegram_username: null, telegram_linked_at: null })
+    .eq("telegram_chat_id", String(chatId)).neq("id", p.id);
+
   await db.from("profiles").update({
     telegram_chat_id: String(chatId),
     telegram_username: username,
@@ -87,6 +100,12 @@ async function handleMessage(db: DB, msg: any) {
     const code = text.split(/\s+/)[1];
     if (code) return linkAccount(db, chatId, code, username);
     const p = await findProfileByChat(db, chatId);
+    /* المنتهي يرى رسالة التجديد لا قائمةً أزرارها معطّلة */
+    if (p && subState(p as any).kind === "expired") {
+      return tgSend(chatId,
+        "⏳ <b>اشتراكك في وثيق منتهٍ.</b>\n\nبياناتك محفوظة كما هي، وأوامر البوت متوقّفة حتى التجديد.",
+        [[{ text: "💬 تجديد الاشتراك", url: "https://wa.me/966596300591?text=" + encodeURIComponent("أبغى أجدد اشتراكي في وثيق") }]]);
+    }
     if (p) return tgSend(chatId, "أهلًا بك من جديد 👋 اختر من القائمة:", navButtons());
     return tgSend(chatId, "أهلًا بك في <b>وثيق</b> 👋\n\nلربط حسابك: افتح <b>الإعدادات</b> في المنصة، اضغط «ربط تليجرام»، وأرسل الرمز الظاهر هنا.");
   }
@@ -121,6 +140,25 @@ async function handleMessage(db: DB, msg: any) {
     if (code) return linkAccount(db, chatId, code, username);
     return tgSend(chatId, "حسابك غير مربوط بعد. افتح «الإعدادات» في منصة وثيق واضغط «ربط تليجرام»، ثم أرسل الرمز هنا.");
   }
+  /**
+   * الاشتراك المنتهي: البوت يتوقّف.
+   *
+   * كان يعمل كاملًا لمن انتهى اشتراكه — يقرأ الأرقام ويسجّل الدفعات —
+   * بينما اللوحة تقيّده. القطع هنا يجعل الحدّ واحدًا في الواجهتين.
+   *
+   * والتجربة المجانية ليست «منتهية»: subState تُرجع لها paid=false مع
+   * kind=trial، فالقطع على «expired» وحدها — وإلا قُطع عن كل مجرِّب.
+   * وكذلك فترة السماح تبقى عاملة كاملةً.
+   */
+  const sub = subState(p as any);
+  if (sub.kind === "expired") {
+    return tgSend(chatId,
+      "⏳ <b>اشتراكك في وثيق منتهٍ.</b>\n\n"
+      + "بياناتك محفوظة كما هي ولم يُحذف منها شيء، لكن تنبيهات البوت وأوامره متوقّفة حتى التجديد.\n\n"
+      + "للتجديد راسلنا على واتساب: +966596300591",
+      [[{ text: "💬 تجديد الاشتراك", url: "https://wa.me/966596300591?text=" + encodeURIComponent("أبغى أجدد اشتراكي في وثيق") }]]);
+  }
+
   /* تنبيهات البوت لصاحب المكتب وحده: المتأخرات والتحصيل أرقام مكتب يقرّر
      صاحبه مع من يشاركها — لا تُرسَل لمن ربط البوت. والموظف يعمل من اللوحة
      بصلاحياته الخمس عشرة كما هي. */
@@ -222,6 +260,22 @@ async function handleCallback(db: DB, cq: any) {
   const p = await findProfileByChat(db, chatId);
   if (!p) return tgEdit(chatId, messageId, "حسابك غير مربوط. افتح «الإعدادات» في المنصة.");
   if ((p as any)._isStaff) return tgEdit(chatId, messageId, "تنبيهات وثيق لصاحب المكتب وحده — استعمل اللوحة من المتصفح.");
+  if (subState(p as any).kind === "expired")
+    return tgEdit(chatId, messageId, "⏳ اشتراكك منتهٍ — أوامر البوت متوقّفة حتى التجديد. بياناتك محفوظة.\n\nللتجديد: +966596300591");
+
+  /**
+   * حارس النقر المزدوج.
+   *
+   * تليجرام يُبقي الزرّ دائرًا حتى يُجاب الاستدعاء، فيعيد المكتب النقر —
+   * وكل نقرة تسجّل دفعة. اللوحة لها حارسها، والبوت كان بلا حارس.
+   * نتذكّر آخر نداء لكل محادثة لثوانٍ ونتجاهل تكراره.
+   */
+  const dedupeKey = `${chatId}:${data}`;
+  const nowMs = Date.now();
+  const prev = RECENT_TAPS.get(dedupeKey);
+  if (prev !== undefined && nowMs - prev < 6000) return;   // 0 قيمة صالحة، فلا نعتمد على الصدق
+  RECENT_TAPS.set(dedupeKey, nowMs);
+  if (RECENT_TAPS.size > 3000) RECENT_TAPS.clear();
 
   const [action, a1, a2] = data.split(":");
   switch (action) {
