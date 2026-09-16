@@ -241,7 +241,7 @@ export default async function AdminPage({ searchParams }: { searchParams?: { vie
       <AdminBrief />
 
       {/* ═══ يحتاج تصرّفًا اليوم ═══ */}
-      <section className="bg-deep text-[#EAF1EE] rounded-2xl p-5 mb-6">
+      <section className="bg-deep text-[#EAF1EE] rounded-2xl p-5 mb-6 wq-safe-top">
         <div className="font-display font-bold text-goldSoft mb-3">يحتاج تصرّفًا اليوم</div>
         {nothingUrgent ? <div className="text-sm opacity-80">لا شيء عاجل — يوم هادئ.</div> : (
           <div className="grid md:grid-cols-2 gap-4">
