@@ -151,8 +151,13 @@ html[data-theme="dark"] .wq-theme-btn {
   .wq-fab, .wq-chat-fab { transition: transform .2s ease, opacity .2s ease; }
   body.wq-scrolling .wq-fab,
   body.wq-scrolling .wq-chat-fab,
+  body.wq-scrolling .wq-help-fab,
   body.wq-guide-open .wq-fab,
-  body.wq-guide-open .wq-chat-fab { transform: translateY(140%); opacity: 0; pointer-events: none; }
+  body.wq-guide-open .wq-chat-fab,
+  body.wq-guide-open .wq-help-fab,
+  /* المساعد مفتوح: يحتل أسفل الشاشة على الجوال، فتُخفى بقية الأزرار */
+  body.wq-help-open .wq-fab,
+  body.wq-help-open .wq-chat-fab { transform: translateY(140%); opacity: 0; pointer-events: none; }
   .wq-fab a, .wq-fab button { padding: 7px 11px !important; font-size: .72rem !important; }
   /* مساحة أسفل الصفحة حتى يمكن تمرير آخر صف فوق الأزرار */
   body { padding-bottom: calc(64px + env(safe-area-inset-bottom, 0px)); }

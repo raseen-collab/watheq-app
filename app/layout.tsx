@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import PWARegister from "@/components/PWARegister";
+import HelpAssistant from "@/components/HelpAssistant";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase-server";
 import "./globals.css";
@@ -137,6 +138,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <PWARegister />
         {children}
         <FloatingLinks />
+        {/* مساعد الموقع — يجيب من قاعدة معرفة مكتوبة، بلا نموذج ولا تكلفة */}
+        <HelpAssistant />
         <script dangerouslySetInnerHTML={{ __html: THEME_TOGGLE }} />
         <script dangerouslySetInnerHTML={{ __html: fabScroll }} />
       </body>
