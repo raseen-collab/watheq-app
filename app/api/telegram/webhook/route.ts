@@ -91,9 +91,34 @@ async function handleMessage(db: DB, msg: any) {
     return tgSend(chatId, "أهلًا بك في <b>وثيق</b> 👋\n\nلربط حسابك: افتح <b>الإعدادات</b> في المنصة، اضغط «ربط تليجرام»، وأرسل الرمز الظاهر هنا.");
   }
 
+  /**
+   * استخراج رمز الربط من أي صيغة يرسلها المستخدم.
+   *
+   * العطل الذي عطّل الربط: صفحة الإعدادات تعطيه «/link ABC123» وزرّ النسخ
+   * ينسخها كاملة، بينما البوت كان يقبل الرمز مجرّدًا فقط. وأي نصّ يبدأ
+   * بشرطة مائلة يُعامَل أمرًا، و«link» ليس أمرًا معروفًا — فتسقط الرسالة
+   * بصمت ويظن المكتب أن الرمز خاطئ.
+   *
+   * نقبل الآن: «ABC123» · «/link ABC123» · «link ABC123» · وبمسافات زائدة.
+   */
+  const codeOf = (t: string): string | null => {
+    let clean = t.trim()
+      .replace(/@\w+/g, " ")                       // لصق مع اسم البوت
+      .replace(/^\/?link\b[\s:]*/i, "")            // /link أو link
+      .replace(/^(رمز|الرمز|كود|الكود)[\s:]*/i, "")  // «رمز ABC123»
+      .trim();
+    /* رمز وحيد وسط كلام: نأخذه إن كان هو الشيء الوحيد الذي يشبه رمزًا */
+    if (!/^[A-Za-z0-9]{6,12}$/.test(clean)) {
+      const cands = clean.split(/\s+/).filter((w) => /^[A-Za-z0-9]{6,12}$/.test(w));
+      if (cands.length === 1) clean = cands[0];
+    }
+    return /^[A-Za-z0-9]{6,12}$/.test(clean) ? clean : null;
+  };
+
   const p = await findProfileByChat(db, chatId);
   if (!p) {
-    if (/^[A-Za-z0-9]{6,12}$/.test(text)) return linkAccount(db, chatId, text, username);
+    const code = codeOf(text);
+    if (code) return linkAccount(db, chatId, code, username);
     return tgSend(chatId, "حسابك غير مربوط بعد. افتح «الإعدادات» في منصة وثيق واضغط «ربط تليجرام»، ثم أرسل الرمز هنا.");
   }
   /* تنبيهات البوت لصاحب المكتب وحده: المتأخرات والتحصيل أرقام مكتب يقرّر
@@ -108,6 +133,9 @@ async function handleMessage(db: DB, msg: any) {
 
   const cmd = text.replace(/^\//, "").split(/[\s@]/)[0].toLowerCase();
   switch (cmd) {
+    /* حسابه مربوط أصلًا وأرسل رمزًا مرة أخرى — نقولها بدل أن تسقط الرسالة */
+    case "link":
+      return tgSend(chatId, "حسابك مربوط بوثيق أصلًا ✅\n\nلو تبغى تربطه بحساب آخر، افتح «الإعدادات» في المنصة واضغط «فكّ الربط» أولًا.", navButtons());
     case "today": case "late": case "summary": {
       const r = await buildReport(db, p, cmd);
       return tgSend(chatId, r, reportButtons(cmd));
