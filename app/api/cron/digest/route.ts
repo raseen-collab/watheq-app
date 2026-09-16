@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { subState } from "@/lib/subscription";
 import * as Sentry from "@sentry/nextjs";
 import { createClient as createAdmin } from "@supabase/supabase-js";
 import { sendTelegram } from "@/lib/telegram";
@@ -53,7 +54,7 @@ export async function GET(req: Request) {
 
   const { data: profiles } = await db
     .from("profiles")
-    .select("id, telegram_chat_id, notify_enabled, notify_days_before, due_soon_days, due_imminent_days, expiring_days, org_name")
+    .select("id, telegram_chat_id, notify_enabled, notify_days_before, due_soon_days, due_imminent_days, expiring_days, org_name, last_digest_at, plan, trial_ends_at, subscribed_until")
     .not("telegram_chat_id", "is", null)
     .eq("notify_enabled", true);
 
@@ -66,6 +67,18 @@ export async function GET(req: Request) {
   const processProfile = async (p: any): Promise<boolean> => {
    try {
     if (staffIds.has(String(p.id))) return false;   // موظف — التنبيهات لصاحب المكتب وحده
+
+    /* منتهي الاشتراك: أوامر البوت متوقّفة، فلا معنى لإيقاظه بملخّص لا
+       يستطيع التصرّف بناءً عليه. والتجربة والسماح يبقيان عاملَين. */
+    if (subState(p as any).kind === "expired") return false;
+
+    /* «last_digest_at» كان يُكتب ولا يُقرأ: أي إعادة تشغيل للمهمة (محاولة
+       ثانية من Vercel، أو استدعاء يدوي) تُرسل الملخّص مرتين في اليوم نفسه.
+       نقارن بتاريخ الرياض لا بـ24 ساعة، حتى لا ينزاح الموعد يوميًّا. */
+    const riyadhDay = (d: Date | string) =>
+      new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Riyadh", year: "numeric", month: "2-digit", day: "2-digit" })
+        .format(typeof d === "string" ? new Date(d) : d);
+    if (p.last_digest_at && riyadhDay(p.last_digest_at) === riyadhDay(new Date())) return false;
     const { data: props } = await db
       .from("properties").select("*, tenants(*)").eq("user_id", p.id)
       .eq("is_demo", false)                                   // التجريبي لا يوقظ أحدًا فجرًا
