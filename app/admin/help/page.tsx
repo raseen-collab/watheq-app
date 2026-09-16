@@ -73,7 +73,7 @@ export default async function HelpMonitorPage() {
 
   return (
     <main className="min-h-screen bg-paper">
-      <div className="bg-deep text-[#EAF1EE] px-5 py-4">
+      <div className="bg-deep text-[#EAF1EE] px-5 py-4 wq-safe-top">
         <div className="max-w-5xl mx-auto flex items-center justify-between gap-3">
           <div>
             <div className="font-display font-bold text-goldSoft">🛟 مراقب المساعد</div>
