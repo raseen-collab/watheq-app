@@ -51,7 +51,7 @@ export default function DemoClient() {
   return (
     <div className="min-h-screen bg-paper">
       {/* شريط علوي يشرح أين هو ويعرض التسجيل — بلا إلحاح */}
-      <div className="bg-deep text-[#EAF1EE] sticky top-0 z-30">
+      <div className="bg-deep text-[#EAF1EE] sticky top-0 z-30 wq-safe-top">
         <div className="max-w-6xl mx-auto px-4 py-2.5 flex items-center justify-between gap-3">
           <div className="flex items-center gap-2 min-w-0">
             <span className="font-display font-bold text-goldSoft">وثيق</span>

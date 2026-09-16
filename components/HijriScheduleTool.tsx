@@ -95,7 +95,7 @@ export default function HijriScheduleTool() {
 
   return (
     <main className="min-h-screen bg-paper">
-      <header className="bg-deep text-[#EAF1EE]">
+      <header className="bg-deep text-[#EAF1EE] wq-safe-top">
         <div className="max-w-3xl mx-auto px-4 py-5 flex items-center justify-between gap-3">
           <div className="flex items-center gap-2.5">
             <span className="w-9 h-9 rounded-xl border border-goldSoft/50 grid place-items-center text-goldSoft font-display font-bold">و</span>
