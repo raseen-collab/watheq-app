@@ -53,6 +53,7 @@ export default function SettingsView({ profile }: { profile: any }) {
       vat_number: p.vat_number || null,
       notify_enabled: p.notify_enabled ?? true,
       notify_days_before: Number(p.notify_days_before) || 5,
+      default_calendar: p.default_calendar === "hijri" ? "hijri" : "gregorian",
       due_soon_days: Math.max(1, Math.min(60, Number(p.due_soon_days) || 10)),
       due_imminent_days: Math.max(1, Math.min(60, Number(p.due_imminent_days) || 5)),
       expiring_days: Math.max(1, Math.min(180, Number(p.expiring_days) || 60)),
@@ -116,6 +117,26 @@ export default function SettingsView({ profile }: { profile: any }) {
       </section>
 
       {/* تنبيهات تليجرام */}
+      <section className="bg-white border border-line rounded-2xl p-5 mb-4">
+        <h2 className="font-semibold text-deep text-lg mb-1">🗓️ تقويم العقود</h2>
+        <p className="text-xs text-muted mb-3 leading-relaxed">
+          التقويم الذي تُحسب به أقساط عقودك. المكتب الذي عقوده هجرية يضبطه مرة هنا فترثه
+          كل الوحدات الجديدة — والفرق ليس شكليًّا: السنة الهجرية 354 يومًا والميلادية 365،
+          فالخطأ يزحف بالاستحقاق 11 يومًا كل سنة.
+        </p>
+        <div className="inline-flex border border-line rounded-lg p-0.5 text-sm">
+          {(["hijri", "gregorian"] as const).map((c) => (
+            <button key={c} type="button" onClick={() => setP({ ...p, default_calendar: c })}
+              className={`px-4 py-1.5 rounded-md ${(p.default_calendar || "gregorian") === c ? "bg-deep text-goldSoft" : "text-muted hover:text-deep"}`}>
+              {c === "hijri" ? "هجري" : "ميلادي"}
+            </button>
+          ))}
+        </div>
+        <p className="text-[11px] text-muted mt-2">
+          يمكن تغييره لأي وحدة على حدة من بطاقتها — هذا الافتراضي فقط.
+        </p>
+      </section>
+
       <section className="bg-white border border-line rounded-2xl p-6 mb-5">
         <div className="flex items-start justify-between gap-3 flex-wrap mb-1">
           <h2 className="font-semibold text-deep text-lg">📨 بوت تليجرام</h2>
@@ -156,7 +177,12 @@ export default function SettingsView({ profile }: { profile: any }) {
                   <button onClick={copyCode} className="btn btn-ghost text-sm">{copied ? "✓ نُسخ" : "نسخ"}</button>
                   <button onClick={regen} className="text-xs text-muted underline hover:text-deep">رمز جديد</button>
                 </div>
-                <p className="text-xs text-muted mt-2">سيردّ عليك البوت بتأكيد الربط فورًا، ثم حدّث هذه الصفحة.</p>
+                <p className="text-xs text-muted mt-2 leading-relaxed">
+                  سيردّ عليك البوت بتأكيد الربط فورًا، ثم حدّث هذه الصفحة.
+                  {/* البوت يقبل الرمز بأي صيغة — نقولها لأن من يفشل مرة يظن أن الرمز خاطئ */}
+                  <br />وإن لم يردّ: أرسل <b className="text-deep">الرمز وحده</b> بلا كلمة /link — كلاهما يعمل.
+                  وتأكد أنك في محادثة <b className="text-deep">@Watheqapp_bot</b> لا في مجموعة.
+                </p>
               </div>
             </div>
           </div>
