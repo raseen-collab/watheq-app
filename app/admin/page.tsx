@@ -222,6 +222,7 @@ export default async function AdminPage({ searchParams }: { searchParams?: { vie
           <Link href="/admin/ads" className="btn btn-gold text-xs">📣 الإعلانات والنمو</Link>
           <Link href="/admin/ads" className="btn btn-gold text-xs">📣 الإعلانات والنمو</Link>
           <Link href="/admin/subs" className="btn btn-ghost text-xs">💳 الاشتراكات</Link>
+          <Link href="/admin/help" className="btn btn-ghost text-xs">🛟 مراقب المساعد</Link>
           <a href="https://sentry.io/" target="_blank" rel="noreferrer" className="btn btn-ghost text-xs">🐞 الأخطاء (Sentry)</a>
           <Link href="/dashboard" className="btn btn-ghost text-xs">← اللوحة</Link>
         </div>
