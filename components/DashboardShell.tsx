@@ -52,7 +52,7 @@ export default function DashboardShell({
 
   return (
     <div className="min-h-screen bg-paper">
-      <header className="bg-deep text-[#EAF1EE] wq-safe-top">
+      <header className="bg-deep text-[#EAF1EE] wq-safe-top overflow-x-hidden">
         <div className="max-w-6xl mx-auto flex flex-wrap items-center justify-between gap-3 px-4 py-3">
           <a href="https://watheqapp.com" className="flex items-center gap-2.5 font-display font-bold hover:opacity-90" title="العودة إلى موقع وثيق">
             <span className="w-8 h-8 rounded-lg bg-deep2 grid place-items-center text-goldSoft">و</span>
@@ -64,10 +64,10 @@ export default function DashboardShell({
             </div>
           </a>
 
-          <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex items-center gap-2 flex-wrap min-w-0 order-3 w-full sm:order-none sm:w-auto">
             {/* مبدّل اللوحتين — للحساب المزدوج فقط */}
             {showSwitcher && (
-              <div className="inline-flex bg-white/10 border border-white/15 rounded-xl p-1" role="tablist" aria-label="تبديل اللوحة">
+              <div className="flex flex-wrap gap-1 bg-white/10 border border-white/15 rounded-xl p-1 max-w-full" role="tablist" aria-label="تبديل اللوحة">
                 <Link href="/dashboard/property" role="tab" aria-selected={onProperty}
                   className={`px-3.5 py-1.5 rounded-lg text-sm font-semibold transition ${
                     onProperty ? "bg-goldSoft text-deep2" : "text-[#CFE0DB] hover:bg-white/10"}`}>
@@ -82,10 +82,13 @@ export default function DashboardShell({
             )}
 
             {/* روابط اللوحة الحالية */}
-            <nav className="inline-flex bg-white/5 border border-white/10 rounded-xl p-1">
+            {/* الروابط كانت inline-flex فلا تلتفّ ولا تُمرَّر: على الجوال يفيض
+                آخر رابط («المستشار») خارج الشاشة فيظهر نصفه مقصوصًا.
+                الآن تلتفّ إلى سطر ثانٍ، ومع ذلك تُمرَّر أفقيًّا كشبكة أمان. */}
+            <nav className="flex flex-wrap gap-1 bg-white/5 border border-white/10 rounded-xl p-1 max-w-full overflow-x-auto">
               {nav.map((n) => (
                 <Link key={n.href} href={n.href}
-                  className={`px-3.5 py-1.5 rounded-lg text-sm font-semibold transition ${
+                  className={`px-3 py-1.5 rounded-lg text-sm font-semibold transition whitespace-nowrap shrink-0 ${
                     pathname === n.href ? "bg-white/15 text-white" : "text-[#CFE0DB] hover:bg-white/10"}`}>
                   {n.label}
                 </Link>
