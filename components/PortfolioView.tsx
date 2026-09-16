@@ -26,6 +26,25 @@ export default function PortfolioView({ properties, windows }: {
 }) {
   const supabase = createClient();
   const [q, setQ] = useState("");
+  /**
+   * «يحتاج إجراء» كان يقصّ عند ١٢ ويقول «افتح كل عقار لرؤيتهم» — وهذا
+   * يُبطل الغرض من الشاشة: صاحب المكتب جاء ليرى كل شيء في مكان واحد لا
+   * ليفتح عشرين عقارًا. والأسوأ أن «مستحق» و«تنتهي قريبًا» كانتا تُقصّان
+   * بلا أي تنبيه، فلا يعلم أن هناك المزيد.
+   *
+   * الآن: يُعرض اثنا عشر أولًا (حتى تبقى الشاشة قابلة للمسح بالعين)،
+   * وزرّ واحد يفتح البقية في مكانها.
+   */
+  const [showAll, setShowAll] = useState<Record<string, boolean>>({});
+  const CAP = 12;
+  const More = ({ k, n }: { k: string; n: number }) =>
+    n <= CAP ? null : (
+      <button type="button" onClick={() => setShowAll((s) => ({ ...s, [k]: !s[k] }))}
+        className="text-[11px] underline underline-offset-4 opacity-90 hover:opacity-100 mt-1">
+        {showAll[k] ? "إخفاء" : `عرض الباقي (${n - CAP})`}
+      </button>
+    );
+  const cut = <T,>(k: string, arr: T[]) => (showAll[k] ? arr : arr.slice(0, CAP));
   const [monthCollected, setMonthCollected] = useState<Record<string, number> | null>(null);
   const [expOpen, setExpOpen] = useState(false);
   /* جدول العقارات بلا ترقيم: مكتب بمئة عقار يرسم 100 صف دفعة واحدة ويطيل
@@ -79,7 +98,7 @@ export default function PortfolioView({ properties, windows }: {
   const needle = q.trim().toLowerCase().replace(/[٠-٩]/g, (d) => String("٠١٢٣٤٥٦٧٨٩".indexOf(d)));
   const hits = needle.length >= 2 ? rows.filter(({ p, t }) =>
     [t.name, t.unit, t.phone, t.national_id, t.contract_no, t.elec_account, t.water_account, p.name]
-      .some((v) => v && String(v).toLowerCase().includes(needle))).slice(0, 30) : [];
+      .some((v) => v && String(v).toLowerCase().includes(needle))) : [];
 
   const late = rows.filter(({ t, st }) => !isVacant(t) && !t.litigation && st.status === "late").sort((a, b) => b.st.amountDue - a.st.amountDue);
   const due = rows.filter(({ t, st }) => !isVacant(t) && st.status === "soon" && st.soonTier !== "near").sort((a, b) => (a.st.daysToNextDue ?? 0) - (b.st.daysToNextDue ?? 0));
@@ -131,11 +150,12 @@ export default function PortfolioView({ properties, windows }: {
           <div className="mt-3">
             {hits.length === 0 ? <p className="text-sm text-muted">لا نتائج لـ«{q}».</p> : (
               <div className="space-y-1.5">
-                {hits.map(({ p, t, st }) => (
+                {cut("hits", hits).map(({ p, t, st }) => (
                   <Item key={t.id} p={p} t={t} st={st}
                     note={`${st.statusLabel}${t.phone ? ` · ${t.phone}` : ""}${t.national_id ? ` · هوية ${t.national_id}` : ""}${t.contract_no ? ` · عقد ${t.contract_no}` : ""}`}
                     tone={st.status === "late" ? "late" : undefined} />
                 ))}
+                <More k="hits" n={hits.length} />
               </div>
             )}
           </div>
@@ -163,10 +183,10 @@ export default function PortfolioView({ properties, windows }: {
         <div className="font-display font-bold text-goldSoft mb-3">يحتاج إجراء — من كل العقارات</div>
         {!late.length && !due.length && !expiring.length && !vacant.length ? <p className="text-sm opacity-80">لا شيء عاجل في المحفظة كلها.</p> : (
           <div className="grid lg:grid-cols-2 gap-4">
-            {late.length > 0 && <div><div className="text-xs opacity-80 mb-1.5">🔴 متأخرون ({late.length}) — {sar(totals.overdue)} ريال</div><div className="space-y-1.5">{late.slice(0, 12).map(({ p, t, st }) => <Item key={t.id} p={p} t={t} st={st} tone="late" note={`${st.statusLabel} · ${sar(st.amountDue)} ريال`} />)}{late.length > 12 && <p className="text-[11px] opacity-70">و{late.length - 12} آخرون — افتح كل عقار لرؤيتهم</p>}</div></div>}
-            {due.length > 0 && <div><div className="text-xs opacity-80 mb-1.5">🟠 مستحق خلال {windows.imminent} أيام ({due.length})</div><div className="space-y-1.5">{due.slice(0, 12).map(({ p, t, st }) => <Item key={t.id} p={p} t={t} st={st} tone="due" note={`${st.statusLabel} · ${st.nextDueDate} (${hijriShort(st.nextDueDate || "")})`} />)}</div></div>}
-            {expiring.length > 0 && <div><div className="text-xs opacity-80 mb-1.5">⏳ عقود تنتهي خلال {windows.expiring} يومًا ({expiring.length})</div><div className="space-y-1.5">{expiring.slice(0, 12).map(({ p, t, st }) => <Item key={t.id} p={p} t={t} st={st} tone="exp" note={`ينتهي ${st.endDate} (بعد ${st.daysToEnd} يوم)`} />)}</div></div>}
-            {vacant.length > 0 && <div><div className="text-xs opacity-80 mb-1.5">⚪ شاغرة ({vacant.length})</div><div className="space-y-1.5">{vacant.slice(0, 8).map(({ p, t, st }) => <Item key={t.id} p={p} t={t} st={st} note={t.move_out_date ? `شاغرة منذ ${t.move_out_date}` : "شاغرة"} />)}</div></div>}
+            {late.length > 0 && <div><div className="text-xs opacity-80 mb-1.5">🔴 متأخرون ({late.length}) — {sar(totals.overdue)} ريال</div><div className="space-y-1.5">{cut("late", late).map(({ p, t, st }) => <Item key={t.id} p={p} t={t} st={st} tone="late" note={`${st.statusLabel} · ${sar(st.amountDue)} ريال`} />)}<More k="late" n={late.length} /></div></div>}
+            {due.length > 0 && <div><div className="text-xs opacity-80 mb-1.5">🟠 مستحق خلال {windows.imminent} أيام ({due.length})</div><div className="space-y-1.5">{cut("due", due).map(({ p, t, st }) => <Item key={t.id} p={p} t={t} st={st} tone="due" note={`${st.statusLabel} · ${st.nextDueDate} (${hijriShort(st.nextDueDate || "")})`} />)}<More k="due" n={due.length} /></div></div>}
+            {expiring.length > 0 && <div><div className="text-xs opacity-80 mb-1.5">⏳ عقود تنتهي خلال {windows.expiring} يومًا ({expiring.length})</div><div className="space-y-1.5">{cut("exp", expiring).map(({ p, t, st }) => <Item key={t.id} p={p} t={t} st={st} tone="exp" note={`ينتهي ${st.endDate} (بعد ${st.daysToEnd} يوم)`} />)}<More k="exp" n={expiring.length} /></div></div>}
+            {vacant.length > 0 && <div><div className="text-xs opacity-80 mb-1.5">⚪ شاغرة ({vacant.length})</div><div className="space-y-1.5">{cut("vac", vacant).map(({ p, t, st }) => <Item key={t.id} p={p} t={t} st={st} note={t.move_out_date ? `شاغرة منذ ${t.move_out_date}` : "شاغرة"} />)}<More k="vac" n={vacant.length} /></div></div>}
           </div>
         )}
       </div>
