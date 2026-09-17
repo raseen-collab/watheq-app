@@ -2229,3 +2229,107 @@ ${Object.entries(byProp).map(([name, items]) => `
 function sumExpensesLocal(rows: ExpenseRow[]): number {
   return Math.round((rows || []).reduce((s, x) => s + (Number(x.amount) || 0), 0) * 100) / 100;
 }
+
+// ============================================================
+// كشف التحصيل — على نمط الكشف الذي يعدّه المكتب بيده
+//
+// المكتب كان يكتبه في إكسل: صفٌّ لكل دفعة عبر كل العمائر، ثم المصروفات،
+// ثم صافي الدخل. وهو مختلف عن كشوفنا: تلك تعرض حالة العقد، وهذا يعرض
+// حركة النقد في فترة.
+//
+// حافظتُ على ترتيب أعمدته كما هي — لأن المكتب يقرأها بعينه من سنوات،
+// وتغيير الترتيب يجعله يعيد التعلّم بلا سبب.
+// ============================================================
+
+export type CollectionRow = {
+  property: string;
+  unit?: string | null;
+  tenant?: string | null;
+  paid_on: string;
+  amount: number;
+  /** «القسط الأول» · «جزء من القسط الثاني باقي 2,500» */
+  statement?: string | null;
+  /** رقم عقد إيجار، أو «ورقي» حين لا يوجد */
+  contract_no?: string | null;
+  calendar?: string | null;
+};
+
+export function collectionStatementHTML(
+  rows: CollectionRow[],
+  expenses: { note?: string | null; category?: string | null; amount: number }[],
+  period: { label: string; from: string; to: string },
+  issuer: any,
+  opts?: { title?: string; feePct?: number | null },
+) {
+  const round2 = (n: number) => Math.round(n * 100) / 100;
+  const esc = (v: any) => String(v ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  const sorted = [...(rows || [])].sort((a, b) => String(a.paid_on).localeCompare(String(b.paid_on)));
+  const collected = round2(sorted.reduce((a, x) => a + (Number(x.amount) || 0), 0));
+  const exp = (expenses || []).filter((e) => Number(e.amount) > 0);
+  const expTotal = round2(exp.reduce((a, x) => a + (Number(x.amount) || 0), 0));
+  const net = round2(collected - expTotal);
+
+  /* التاريخ بالتقويمين: المكتب يكتب الهجري، والمحاسب يحتاج الميلادي */
+  const both = (iso: string, cal?: string | null) => {
+    if (!iso) return "—";
+    return String(cal) === "hijri"
+      ? `${hijriText(iso)}<div style="font-size:.62rem;color:#5C6B67">${iso}</div>`
+      : `${iso}<div style="font-size:.62rem;color:#5C6B67">${hijriText(iso)}</div>`;
+  };
+
+  const inner = `
+${header(esc(opts?.title || "كشف حساب لعمائر المكتب"), esc(period.label))}
+
+<div class="sub" style="margin-bottom:14px">
+  تاريخ التحصيل من <b>${arDate(period.from)}</b> إلى <b>${arDate(period.to)}</b>
+  · ${sorted.length} ${sorted.length === 1 ? "عملية" : "عملية"} تحصيل
+</div>
+
+${sorted.length ? `<div class="scrollx"><table>
+  <thead><tr>
+    <th>عمارة</th><th>رقم الوحدة</th><th>اسم المستأجر</th>
+    <th>تاريخ السداد</th><th>البيان</th><th>المبلغ</th><th>رقم العقد</th>
+  </tr></thead>
+  <tbody>
+    ${sorted.map((x) => `<tr>
+      <td>${esc(x.property || "—")}</td>
+      <td>${esc(String(x.unit ?? "—"))}</td>
+      <td>${esc(x.tenant || "—")}</td>
+      <td>${both(x.paid_on, x.calendar)}</td>
+      <td>${esc(x.statement || "—")}</td>
+      <td><b>${sar(Number(x.amount) || 0)}</b></td>
+      <td style="font-size:.7rem">${esc(x.contract_no || "ورقي")}</td>
+    </tr>`).join("")}
+    <tr style="background:#F6F2E8">
+      <td colspan="5"><b>رصيد السداد المتاح</b></td>
+      <td><b>${sar(collected)}</b></td><td>—</td>
+    </tr>
+  </tbody>
+</table></div>` : `<div class="sub">لم تُسجَّل عمليات تحصيل في هذه الفترة.</div>`}
+
+<h2>كشف مصروفات</h2>
+<div class="scrollx"><table>
+  <thead><tr><th>البيان</th><th>المبلغ</th></tr></thead>
+  <tbody>
+    ${exp.length ? exp.map((e) => `<tr>
+      <td>${esc(e.note || catLabel(e.category || "other"))}</td>
+      <td><b>${sar(Number(e.amount) || 0)}</b></td>
+    </tr>`).join("") : `<tr><td>لا مصروفات في الفترة</td><td>0</td></tr>`}
+    <tr style="background:#F6F2E8"><td><b>إجمالي المبلغ</b></td><td><b>${sar(expTotal)}</b></td></tr>
+  </tbody>
+</table></div>
+
+<div class="box" style="margin-top:16px;background:#0E3A37;color:#EAF1EE;border:0">
+  <div class="r" style="border:0">
+    <span style="font-size:1rem">صافي الدخل</span>
+    <span style="font-size:1.35rem;font-weight:800;color:#E7C877">${sar(net)} ريال</span>
+  </div>
+</div>
+
+<div class="note">
+  صافي الدخل = رصيد السداد المتاح (${sar(collected)}) − إجمالي المصروفات (${sar(expTotal)}).
+  والمبالغ من الدفعات المسجَّلة في وثيق بتاريخ استلامها.
+</div>
+`;
+  return SHELL(`كشف حساب لعمائر المكتب — ${esc(period.label)}`, inner + footer(), markOf(issuer));
+}
