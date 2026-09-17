@@ -20,6 +20,7 @@ import PropertyStatementModal, { type StatementPeriod } from "@/components/Prope
 import DemoGuide from "@/components/DemoGuide";
 import MonthlyCollection from "@/components/MonthlyCollection";
 import DebtFollowUp from "@/components/DebtFollowUp";
+import CollectionStatementModal from "@/components/CollectionStatementModal";
 import ExpensesModal from "@/components/ExpensesModal";
 import OwnerLinkModal from "@/components/OwnerLinkModal";
 import type { ExpenseRow } from "@/lib/expenses";
@@ -783,6 +784,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
   const [stmtOpen, setStmtOpen] = useState(false);
   const [seeding, setSeeding] = useState(false);
   const [debtOpen, setDebtOpen] = useState(false);
+  const [collOpen, setCollOpen] = useState(false);
   /* خطأ الحفظ يُعرض داخل النموذج لا إشعارًا عائمًا في أعلى الصفحة: على
      الجوال يكون المستخدم منزلًا داخل نموذج طويل، فيضغط «حفظ» ويظهر الإشعار
      خارج نظره — فيقول «ضغطت ولا صار شي». */
@@ -1297,6 +1299,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                 { label: "رابط المالك", run: () => setOwnerLinkOpen(true) },
                 ...(may("manage_expenses") ? [{ label: "المصروفات", run: () => setExpensesOpen(true) }] : []),
                 { label: `الديون المرحَّلة${carriedTotal > 0 ? ` (${sar(carriedTotal)})` : ""}`, run: () => setDebtOpen(true) },
+                { label: "كشف التحصيل", run: () => setCollOpen(true) },
               ]} />}
 
               <MenuBtn label="🗂️ البيانات" items={[
@@ -1694,6 +1697,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       {ownerStmtOpen && <OwnerStatementModal properties={items} issuer={issuer} onClose={() => setOwnerStmtOpen(false)} />}
       {logOpen && <ActivityLog properties={items} onClose={() => setLogOpen(false)} />}
       {/* الصفحة العامة ترسم دليلها بنفسها — لا نكرّره هنا */}
+      {collOpen && <CollectionStatementModal properties={items.map((p) => ({ id: p.id, name: p.name, owner_name: (p as any).owner_name }))} issuer={issuer} onClose={() => setCollOpen(false)} />}
       {debtOpen && <DebtFollowUp properties={items.map((p) => ({ id: p.id, name: p.name }))} orgName={orgName} onClose={() => setDebtOpen(false)} />}
       {hasDemo && !demo && <DemoGuide onEvent={onGuideEvent} />}
       {stmtOpen && active && <PropertyStatementModal propertyName={active.name} onClose={() => setStmtOpen(false)} onIssue={openPropertyStatement} />}
