@@ -185,12 +185,21 @@ export async function summaryReport(db: DB, profile: any): Promise<string> {
       const soon = rows.filter((r) => r.key === "due_soon");
       const overdue = late.reduce((s, r) => s + (r.st.amountDue || 0), 0);
       const pct = rows.length ? Math.round(((rows.length - late.length) / rows.length) * 100) : 100;
+      /**
+       * الدين المرحَّل لا يظهر في /late: المستأجر الحالي الذي سدّد شهره
+       * ليس متأخرًا، والشاغرة لا تُدرج أصلًا — فيبقى مالٌ مستحقّ لا يعرف
+       * عنه من يتابع بالبوت وحده شيئًا. سطر واحد في الملخّص يكفي، ولا
+       * نُقحمه في المتأخرات لأنه صنف آخر يُطالَب به بطريقة أخرى.
+       */
+      const carried = rows.reduce((s, r) => s + (r.st.carriedDebt || 0), 0);
+      const carriedN = rows.filter((r) => (r.st.carriedDebt || 0) > 0).length;
       return [
         `📊 <b>ملخّص وثيق — العقارات</b>`, ``,
         `• العقارات: <b>${properties.length}</b> · الوحدات: <b>${rows.length}</b>`,
         `• نسبة الانتظام: <b>${pct}٪</b>`,
         `• محصّل: <b>${sar(collected)}</b> ريال`,
         `• متأخرات: <b>${sar(overdue)}</b> ريال (${late.length} عقد)`,
+        ...(carried > 0 ? [`• ديون مرحَّلة: <b>${sar(carried)}</b> ريال (${carriedN} وحدة)`] : []),
         `• تستحق خلال 7 أيام: <b>${soon.length}</b>`,
       ].join("\n");
     }
