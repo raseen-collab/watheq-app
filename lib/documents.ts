@@ -1767,7 +1767,8 @@ ${(fin.feeExceedsCollected || (fin.feePct !== null && fin.feePct >= 30)) ? `
       <td>${vc ? "—" : t.name}</td>
       <td>${vc ? "—" : sar(splitVat(Number(t.rent_amount) || 0, vatOf(p, t)).total)}</td>
       <td>${vc ? "—" : freqLabel(t.payment_frequency)}</td>
-      <td>${vc ? "—" : arDate(st.endDate)}</td>
+      <td>${vc ? "—" : `${arDate(st.endDate)}${String((t as any).calendar) === "hijri" && st.endDate
+        ? `<div style="font-size:.62rem;color:#5C6B67">${hijriText(st.endDate)}</div>` : ""}`}</td>
       <td>${st.totalOwed ? `${sar(st.amountDue)}${st.carriedDebt > 0 ? `<div style="font-size:.62rem;color:#9A4B00">+ ${sar(st.carriedDebt)} دين مرحَّل</div>` : ""}${vc ? '<div style="font-size:.65rem;color:#5C6B67">على المستأجر السابق</div>' : ""}` : "—"}</td>
       <td>${vc ? '<span class="pill u">شاغرة</span>'
           : st.status === "late" ? '<span class="pill l">متأخر</span>'

@@ -55,6 +55,10 @@ const isoOf = (dt: Date) => dt.toISOString().slice(0, 10);
  * غير موجود في التقويم (مثل 30 من شهر عدّته 29 يومًا).
  */
 export function fromHijri(hy: number, hm: number, hd: number): string {
+  /* NaN يمرّ عبر أي مقارنة: «NaN < 1» كاذبة و«NaN > 12» كاذبة — فكان
+     الحارس السابق يسمح به فينتج تاريخًا غير صالح وينهار التحويل. نشترط
+     أعدادًا صحيحة منتهية صراحةً. */
+  if (![hy, hm, hd].every((v) => Number.isInteger(v))) return "";
   if (!(hy >= 1300 && hy <= 1600) || hm < 1 || hm > 12 || hd < 1 || hd > 30) return "";
   // 1 محرم 1300 ≈ 1882-11-12 ميلادي — نقطة انطلاق التقدير
   const approx = Date.UTC(1882, 10, 12) + ((hy - 1300) * 354.367 + (hm - 1) * 29.53 + (hd - 1)) * dayMs;

@@ -53,9 +53,13 @@ const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDat
  */
 export function parseDate(v: string | Date): Date {
   if (v instanceof Date) return startOfDay(v);
-  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(v));
+  /* المسافات الزائدة: تاريخ من إكسل أو CSV يحمل مسافة بادئة كثيرًا، وكان
+     النمط المُثبَّت في البداية يفشل معها فيسقط إلى «اليوم» — فتظهر الوحدة
+     «منتظمة» وعليها دفعات. المسافة ليست فسادًا، والتشذيب يحلّها. */
+  const raw = String(v ?? "").trim();
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(raw);
   if (m) return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
-  const d = new Date(String(v));
+  const d = new Date(raw);
   return isNaN(d.getTime()) ? startOfDay(riyadhNow()) : startOfDay(d);
 }
 
@@ -325,7 +329,7 @@ export function contractState(t: {
    * وتاريخ مستحيل (2026-02-31) ينزلق لمارس، وإيجار صفر أو سالب فلا يُحتسب
    * له مستحق. في كل هذه الوحدة خارج المتابعة بينما المكتب يراها سليمة.
    */
-  const startTxt = String(t.contract_start || "").slice(0, 10);
+  const startTxt = String(t.contract_start ?? "").trim().slice(0, 10);   /* التشذيب أولًا: المسافة لا تُبطل تاريخًا صحيحًا، والقصّ يقبل صيغة datetime */
   const startY = Number(startTxt.slice(0, 4)) || 0;
   const startOk = /^\d{4}-\d{2}-\d{2}$/.test(startTxt) && (() => {
     const [y, m, d] = startTxt.split("-").map(Number);
