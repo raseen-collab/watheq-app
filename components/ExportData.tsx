@@ -22,6 +22,22 @@ const FREQ_AR: Record<string, string> = {
   semiannual: "نصف سنوي", annual: "سنوي", yearly: "سنوي",
 };
 const METHOD_AR: Record<string, string> = { cash: "نقدًا", transfer: "تحويل بنكي", card: "بطاقة", other: "أخرى" };
+/* مسمّيات عربية للحقول المضافة — الملف يُقرأ بيد الإنسان لا بالكود */
+const EXP_CAT_AR: Record<string, string> = {
+  maintenance: "صيانة", utilities: "فواتير", cleaning: "نظافة",
+  government: "رسوم حكومية", security: "أمن", insurance: "تأمين", other: "أخرى",
+};
+const PAID_BY_AR: Record<string, string> = {
+  collections: "من التحصيل", office: "المكتب", owner: "المالك",
+};
+const DEBT_ST_AR: Record<string, string> = {
+  open: "مفتوح", promised: "وعد بالسداد", settled: "سُوّي", written_off: "شُطب", legal: "أُحيل للتنفيذ",
+};
+const NOTE_KIND_AR: Record<string, string> = {
+  maintenance: "صيانة", government: "حكومي", financial: "مالي",
+  contract: "عقود", other: "أخرى",
+};
+
 const STATUS_AR: Record<string, string> = { active: "نشط", notice: "إشعار إخلاء", vacated: "مُخلاة", litigation: "في التنفيذ" };
 
 export default function ExportData() {
@@ -113,6 +129,8 @@ export default function ExportData() {
         "نوع الوحدة": UNIT_AR[t.unit_type] || "", "الغرف": t.rooms ?? "", "دورات المياه": t.baths ?? "", "المكيفات": t.acs ?? "",
         "الضريبة": t.vat_mode === "on" ? "تُطبَّق" : t.vat_mode === "off" ? "معفاة" : "تلقائي",
         "دين مرحَّل": Number(t.carried_debt) || 0, "سبب الدين المرحَّل": t.carried_debt_note || "",
+        /* متابعة الدين (v36): بلا حالته وتاريخه لا يستطيع المكتب استئناف المطالبة */
+        "حالة الدين": DEBT_ST_AR[(t as any).debt_status] || "", "نشأ الدين": (t as any).debt_since || "", "آخر متابعة": (t as any).debt_note || "",
         "في التنفيذ": t.litigation ? "نعم" : "", "رقم طلب التنفيذ": t.enforcement_no || "",
         "ملاحظات التأمين": t.deposit_notes || "", "تاريخ الإشعار": t.notice_date || "",
       })), [22, 10, 22, 14, 14, 12, 10, 12, 12, 10, 10, 10, 12, 12, 10, 12, 14, 14, 12, 12, 12, 12, 10, 12, 14, 8, 10, 10, 10, 12, 20, 10, 14, 20, 12]);
@@ -121,23 +139,34 @@ export default function ExportData() {
         "التاريخ": x.paid_on, "العقار": pName[x.property_id] || pName[tById[x.tenant_id]?.property_id] || "",
         "الوحدة": tById[x.tenant_id]?.unit || "", "المستأجر": tById[x.tenant_id]?.name || "",
         "المبلغ": x.amount, "الطريقة": METHOD_AR[x.method] || x.method || "", "الدفعات المغطاة": x.periods_covered || "",
-        "ملاحظة": x.note || "",
-      })), [12, 22, 10, 22, 12, 12, 10, 24]);
+        /* مرجع الحوالة يُطابق به المكتب كشف بنكه — وكان يسقط من التصدير */
+        "مرجع الحوالة": x.reference || "", "ملاحظة": x.note || "",
+      })), [12, 22, 10, 22, 12, 12, 10, 14, 24]);
 
       add("الفواتير", invoices.map((x) => ({
         "رقم الفاتورة": x.invoice_no, "التاريخ": (x.created_at || "").slice(0, 10), "العقار": pName[x.property_id] || "",
         "المستأجر": tById[x.tenant_id]?.name || "", "الوحدة": tById[x.tenant_id]?.unit || "",
         "الفترة": x.period_label || "", "المبلغ": x.amount, "الاستحقاق": x.due_date || "",
-      })), [16, 12, 22, 22, 10, 16, 12, 12]);
+        "الحالة": x.status || "", "ملاحظات": x.notes || "",
+      })), [16, 12, 22, 22, 10, 16, 12, 12, 12, 30]);
 
+      /* المصروفات: «يُخصم من المالك» و«من دفعه» و«الحالة» هي جوهر التصنيف
+         المالي — وبدونها لا يستطيع المكتب إعادة بناء صافي أي مالك من الملف. */
       add("المصروفات", expenses.map((x) => ({
         "التاريخ": x.spent_on, "العقار": pName[x.property_id] || "", "الوحدة": x.unit || "",
-        "التصنيف": x.category || "", "المبلغ": x.amount, "ملاحظة": x.note || "",
-      })), [12, 22, 10, 14, 12, 30]);
+        "التصنيف": EXP_CAT_AR[x.category] || x.category || "", "المبلغ": x.amount,
+        "يُخصم من المالك": x.billable === false ? "لا" : "نعم",
+        "من دفعه": PAID_BY_AR[x.paid_by] || x.paid_by || "",
+        "الحالة": x.status === "due" ? "مستحق" : "مدفوع",
+        "المورّد": x.vendor || "", "رقم الفاتورة": x.invoice_no || "",
+        "ملاحظة": x.note || "",
+      })), [12, 22, 10, 14, 12, 14, 14, 10, 18, 14, 30]);
 
       add("سجل العقار", notes.map((n) => ({
-        "التاريخ": n.note_date, "العقار": pName[n.property_id] || "", "الملاحظة": n.text,
-      })), [12, 22, 60]);
+        "التاريخ": n.note_date, "العقار": pName[n.property_id] || "", "الوحدة": n.unit || "",
+        "النوع": NOTE_KIND_AR[n.kind] || n.kind || "", "الملاحظة": n.text,
+        "الموعد": n.due_date || "", "أُنجزت": n.done_at ? (n.done_at || "").slice(0, 10) : "لا",
+      })), [12, 22, 10, 14, 50, 12, 12]);
 
       add("المعروضات", listings.map((l) => ({
         "الكود": l.code, "النوع": l.kind, "العرض": l.offer_type, "المدينة": l.city || "", "الحي": l.district || "",
