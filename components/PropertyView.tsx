@@ -1510,27 +1510,41 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                     <div className="min-w-0 flex-1">
                       <div className="font-semibold truncate">{t.name}</div>
                       <div className="text-xs text-muted">
-                        {t.unit_type ? UNIT_TYPES[t.unit_type] || ul : ul} {t.unit || "—"} · {sar(t.rent_amount)} ريال / {freqShort(t.payment_frequency)}{(t.rooms || t.baths || t.acs) ? <span className="text-[11px]"> · {[t.rooms ? `${t.rooms} غرف` : "", t.baths ? `${t.baths} دورات مياه` : "", t.acs ? `${t.acs} مكيف` : ""].filter(Boolean).join(" · ")}</span> : null}
-                        {t.contract_no && <> · عقد <span dir="ltr">{t.contract_no}</span></>}
+                        {/* الجوال يرى ما يميّز الوحدة؛ والتفاصيل الثانوية (الغرف
+                            ورقم العقد) تظهر على الشاشة الأوسع. سطر واحد مكتظّ
+                            بسبعة أرقام لا يُقرأ على الجوال — فلا يُقرأ منه شيء. */}
+                        {t.unit_type ? UNIT_TYPES[t.unit_type] || ul : ul} {t.unit || "—"} · {sar(t.rent_amount)} ريال / {freqShort(t.payment_frequency)}
+                        {(t.rooms || t.baths || t.acs) ? <span className="text-[11px] hidden sm:inline"> · {[t.rooms ? `${t.rooms} غرف` : "", t.baths ? `${t.baths} دورات مياه` : "", t.acs ? `${t.acs} مكيف` : ""].filter(Boolean).join(" · ")}</span> : null}
+                        {t.contract_no && <span className="hidden sm:inline"> · عقد <span dir="ltr">{t.contract_no}</span></span>}
                         {msgCount[t.id] > 0 && <span className="ms-1 text-[10px] bg-deep text-goldSoft rounded-full px-1.5 py-0.5" title="رسائل الفريق على هذه الوحدة">💬 {msgCount[t.id]}</span>}
                       </div>
                       {active && unitVatApplies(t, active) && (() => { const v = splitVat(Number(t.rent_amount) || 0, vat); return (
-                        <div className="text-[.7rem] text-muted mt-0.5">
+                        <div className="text-[.7rem] text-muted mt-0.5 hidden sm:block">
                           أساسي {sar(v.base)} + ضريبة {sar(v.vat)} = <b className="text-deep">{sar(v.total)}</b>
                         </div>
                       ); })()}
                     </div>
                   </div>
                   {/* الحالة + الرقم المهم — تنتقل لسطر مستقل على الجوال */}
-                  <div className="text-right sm:text-left shrink-0">
-                    <StatusPill k={key} />
+                  {/* الشارة والمبلغ في صفّ واحد على الجوال، وتحتهما التفصيل.
+                      الرقم هو ما يبحث عنه المكتب أولًا — فيكون المرساة البصرية
+                      بدل نصّ صغير بجانب الشارة. */}
+                  <div className="text-right sm:text-left shrink-0 border-t sm:border-0 border-line/70 pt-2 sm:pt-0">
+                    <div className="flex sm:block items-center justify-between gap-2">
+                      <StatusPill k={key} />
+                      {(key === "late" || key === "partial") && st.amountDue > 0 && (
+                        <span className={`sm:block sm:mt-1 tabular-nums font-bold leading-none ${key === "late" ? "text-late text-lg" : "text-[#9A5B00] text-base"}`}>
+                          {sar(st.amountDue)}<span className="text-[10px] font-normal text-muted"> ريال</span>
+                        </span>
+                      )}
+                    </div>
                     <div className="text-xs mt-1 tabular-nums">
                       {key === "vacant" ? (() => { const v = vacancyDays(t.move_out_date); return (
                           <span className="text-[#475569] font-semibold">شاغرة{v !== null ? ` منذ ${v} يوم` : ""}</span>
                         ); })()
                         : st.inGrace ? <span className="text-[#8a5a11] font-semibold">فترة سماح — {st.graceDaysLeft} يوم</span>
-                        : key === "partial" ? <span className="text-[#9A5B00] font-semibold">دُفع {sar(st.partial)} · متبقٍ {sar(st.amountDue)}</span>
-                        : key === "late" ? <span className="text-late font-bold">متأخر {sar(st.amountDue)}</span>
+                        : key === "partial" ? <span className="text-[#9A5B00] font-semibold">دُفع {sar(st.partial)} — والباقي أعلاه</span>
+                        : key === "late" ? <span className="text-late font-semibold">{st.unpaid} {st.unpaid === 1 ? "دفعة" : "دفعات"} متأخرة</span>
                         : key === "due" ? <span className="text-[#9A4B00] font-semibold">
                             {st.statusLabel}
                             {/* «مستحق خلال 4 أيام» بلا مبلغ يجعل المكتب يسأل: كم؟ */}

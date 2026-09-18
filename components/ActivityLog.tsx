@@ -93,15 +93,18 @@ export default function ActivityLog({ properties, onClose }: { properties: any[]
 
   return (
     <div className="fixed inset-0 z-50 bg-black/40 grid place-items-center p-4" onClick={onClose}>
-      <div className="w-full max-w-3xl bg-white rounded-2xl border border-line shadow-xl p-5 max-h-[88vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-start justify-between gap-3 mb-3">
-          <div>
-            <h2 className="font-display font-bold text-deep text-xl">🕘 سجل الحركات المالية</h2>
-            <p className="text-xs text-muted">كل دفعة ومصروف وتراجع — بمن سجّله ولأي وحدة وبأي ساعة. آخر 300 حركة. (تعديلات العقود لا تُدرج هنا.)</p>
+      <div className="w-full max-w-3xl bg-white rounded-2xl border border-line shadow-xl p-4 sm:p-5 max-h-[88vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+        {/* الترويسة لاصقة: زرّ الإغلاق يبقى في متناول الإبهام مهما طال السجل */}
+        <div className="flex items-start justify-between gap-3 mb-3 sticky top-0 bg-white z-10 shrink-0">
+          <div className="min-w-0">
+            <h2 className="font-display font-bold text-deep text-lg sm:text-xl">🕘 سجل الحركات المالية</h2>
+            {/* الشرح الطويل يزاحم الزرّ على الشاشة الصغيرة */}
+            <p className="text-xs text-muted hidden sm:block">كل دفعة ومصروف وتراجع — بمن سجّله ولأي وحدة وبأي ساعة. آخر 300 حركة. (تعديلات العقود لا تُدرج هنا.)</p>
+            <p className="text-[11px] text-muted sm:hidden">آخر 300 حركة</p>
           </div>
-          <button className="btn btn-ghost text-sm shrink-0" onClick={onClose}>إغلاق</button>
+          <button className="btn btn-ghost text-sm shrink-0 !px-3" onClick={onClose} aria-label="إغلاق">✕</button>
         </div>
-        <input className="fld mb-3" placeholder="ابحث باسم المستأجر أو الوحدة أو العقار أو الموظف…" value={q} onChange={(e) => setQ(e.target.value)} />
+        <input className="fld mb-3 shrink-0" placeholder="ابحث باسم المستأجر أو الوحدة أو العقار أو الموظف…" value={q} onChange={(e) => setQ(e.target.value)} />
 
         <div className="overflow-auto flex-1 border border-line rounded-xl">
           {loading ? <div className="p-6 text-center text-muted text-sm">جارٍ التحميل…</div>
