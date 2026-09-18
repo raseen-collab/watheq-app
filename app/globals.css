@@ -196,3 +196,28 @@ html[data-theme="dark"] .wq-theme-btn {
 /* زر الوضع الليلي: النص من CSS لا من JS — يمنع أي تعارض ترطيب في Next */
 .wq-theme-btn::after { content: "☾ ليلي"; }
 html[data-theme="dark"] .wq-theme-btn::after { content: "☀ نهاري"; }
+
+/* ===== اللوحات المنبثقة على الجوال =====
+   العلّة: «88vh» على متصفح الجوال تقيس الشاشة بلا أشرطة المتصفح، فاللوحة
+   تتجاوز المرئي ويخرج زرّ الإغلاق خارج الشاشة — يفتح المكتب السجل فلا
+   يستطيع الخروج منه.
+   العلاج: «dvh» تقيس المرئي فعلًا وتتغيّر مع ظهور الأشرطة واختفائها،
+   وتُطرح منها الحافة الآمنة. القاعدة على النمط المشترك فتشمل كل اللوحات
+   دفعة واحدة — 18 موضعًا — بدل تعديل كل ملف على حدة. */
+@media (max-width: 640px) {
+  [class*="fixed"][class*="inset-0"] > [class*="max-h-["] {
+    /* min() تأخذ الأصغر: تُبقي مساحة التنفّس (88%) حيث يكفي، وتقصّ إلى
+       المرئي الحقيقي حيث لا يكفي. الاستبدال المباشر بـ«100dvh - هامش»
+       كان يوسّع اللوحة حيث لم تكن ضيّقة أصلًا. */
+    max-height: min(88dvh,
+                    calc(100dvh - 1rem
+                         - env(safe-area-inset-top, 0px)
+                         - env(safe-area-inset-bottom, 0px))) !important;
+  }
+  /* الحاوية نفسها: لا تتجاوز المرئي ولا تدفع المحتوى خارجه */
+  [class*="fixed"][class*="inset-0"][class*="place-items-center"],
+  [class*="fixed"][class*="inset-0"][class*="items-center"] {
+    padding-top: calc(0.5rem + env(safe-area-inset-top, 0px));
+    padding-bottom: calc(0.5rem + env(safe-area-inset-bottom, 0px));
+  }
+}
