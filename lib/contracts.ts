@@ -20,13 +20,17 @@ function riyadhNow(): Date {
   return new Date(y, (m || 1) - 1, d || 1);
 }
 
-export type Frequency = "daily" | "weekly" | "monthly" | "quarterly" | "semiannual" | "annual";
+/* «كل 4 أشهر» (ثلث سنوي) — 3 دفعات في السنة. دورة شائعة في العقود
+   السعودية وكانت ناقصة: من عنده عقد بثلاث دفعات كان يضطر لاختيار
+   «كل 3 أشهر» فينزاح جدوله شهرًا عن كل دفعة. */
+export type Frequency = "daily" | "weekly" | "monthly" | "quarterly" | "trimester" | "semiannual" | "annual";
 
 export const FREQUENCIES: { value: Frequency; label: string; short: string }[] = [
   { value: "daily",      label: "يومي",        short: "يوم" },
   { value: "weekly",     label: "أسبوعي",      short: "أسبوع" },
   { value: "monthly",    label: "شهري",        short: "شهر" },
   { value: "quarterly",  label: "كل 3 أشهر",   short: "3 أشهر" },
+  { value: "trimester",  label: "كل 4 أشهر",   short: "4 أشهر" },
   { value: "semiannual", label: "كل 6 أشهر",   short: "6 أشهر" },
   { value: "annual",     label: "سنوي",        short: "سنة" },
 ];
@@ -38,7 +42,7 @@ export const freqShort = (f?: string | null) =>
 
 /** عدد الفترات في السنة — لحساب المدة الافتراضية للعقد */
 const PERIODS_PER_YEAR: Record<Frequency, number> = {
-  daily: 365, weekly: 52, monthly: 12, quarterly: 4, semiannual: 2, annual: 1,
+  daily: 365, weekly: 52, monthly: 12, quarterly: 4, trimester: 3, semiannual: 2, annual: 1,
 };
 
 const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
@@ -153,7 +157,7 @@ function addHijriMonths(date: Date, months: number, anchorDay?: number | null): 
 export function addPeriods(date: Date, freq: Frequency, n: number, anchorDay?: number | null, cal?: ContractCalendar | null): Date {
   const d = new Date(date.getTime());
   if (cal === "hijri" && freq !== "daily" && freq !== "weekly") {
-    const months = freq === "monthly" ? 1 : freq === "quarterly" ? 3 : freq === "semiannual" ? 6 : 12;
+    const months = freq === "monthly" ? 1 : freq === "quarterly" ? 3 : freq === "trimester" ? 4 : freq === "semiannual" ? 6 : 12;
     /* يوم المرساة الميلادي (7 في 2025-09-07) لا معنى له في الهجري — اليوم الهجري
        للتاريخ نفسه (15 في 1447/03/15) هو المرساة. كان هذا يزحف الاستحقاق 8 أيام. */
     return n === 0 ? d : addHijriMonths(d, months * n, null);
@@ -162,7 +166,7 @@ export function addPeriods(date: Date, freq: Frequency, n: number, anchorDay?: n
     case "daily":  d.setDate(d.getDate() + n); break;
     case "weekly": d.setDate(d.getDate() + n * 7); break;
     default: {
-      const months = freq === "monthly" ? 1 : freq === "quarterly" ? 3 : freq === "semiannual" ? 6 : 12;
+      const months = freq === "monthly" ? 1 : freq === "quarterly" ? 3 : freq === "trimester" ? 4 : freq === "semiannual" ? 6 : 12;
       // المرساة تمنع «زحف التواريخ»: عقد يبدأ 31 يناير يُقصّ إلى 28 فبراير،
       // فلولا المرساة لبقي يوم السداد 28 في كل الفترات التالية وعند كل تجديد.
       const anchor = Number(anchorDay) || 0;

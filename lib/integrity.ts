@@ -148,7 +148,7 @@ export function auditOffice(properties: P[], payments: any[] = [], expenses: any
         push({ severity: "critical", title: "إيجار سالب", ...base,
           why: "يقلب كل الحسابات المبنية عليه.", fix: "صحّح قيمة الدفعة." });
       }
-      const FREQS = ["daily", "weekly", "monthly", "quarterly", "semiannual", "annual"];
+      const FREQS = ["daily", "weekly", "monthly", "quarterly", "trimester", "semiannual", "annual"];
       if (t.payment_frequency && !FREQS.includes(String(t.payment_frequency))) {
         push({ severity: "warn", title: `دورة سداد غير معروفة: ${t.payment_frequency}`, ...base,
           why: "يُستعمل «شهري» افتراضًا — وقد لا يطابق عقدك فتخرج الاستحقاقات خاطئة.",
