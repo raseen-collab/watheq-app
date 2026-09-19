@@ -17,7 +17,7 @@ import { hijriShort } from "@/lib/hijri";
 import ExpensesOverview from "@/components/ExpensesOverview";
 
 type Tenant = any; type Property = any;
-const PER_MONTH: Record<string, number> = { daily: 30, weekly: 4.33, monthly: 1, quarterly: 1 / 3, semiannual: 1 / 6, annual: 1 / 12 };
+const PER_MONTH: Record<string, number> = { daily: 30, weekly: 4.33, monthly: 1, quarterly: 1 / 3, trimester: 1 / 4, semiannual: 1 / 6, annual: 1 / 12 };
 const UNIT_AR: Record<string, string> = { residential: "شقة", commercial: "محل", office: "مكتب", warehouse: "مستودع", land: "أرض", villa: "فيلا" };
 
 export default function PortfolioView({ properties, windows }: {

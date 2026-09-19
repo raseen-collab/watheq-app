@@ -30,10 +30,13 @@ const HEADERS = ["اسم المستأجر", "رقم الوحدة", "قيمة ا�
 const FREQ_MAP: Record<string, Frequency> = {
   "يومي": "daily", "اسبوعي": "weekly", "شهري": "monthly",
   "ربع سنوي": "quarterly", "كل 3 اشهر": "quarterly", "ربعي": "quarterly", "كل ثلاثة اشهر": "quarterly",
+  /* الثلث السنوي: المكتب يكتبها بصيغ كثيرة — نقبلها كلها */
+  "كل 4 اشهر": "trimester", "كل اربعة اشهر": "trimester", "ثلث سنوي": "trimester",
+  "ثلاث دفعات": "trimester", "3 دفعات": "trimester", "كل ٤ اشهر": "trimester",
   "نصف سنوي": "semiannual", "كل 6 اشهر": "semiannual", "نصفي": "semiannual", "كل ستة اشهر": "semiannual",
   "سنوي": "annual", "سنويا": "annual",
   daily: "daily", weekly: "weekly", monthly: "monthly",
-  quarterly: "quarterly", semiannual: "semiannual", annual: "annual", yearly: "annual",
+  quarterly: "quarterly", trimester: "trimester", semiannual: "semiannual", annual: "annual", yearly: "annual",
 };
 
 /**
@@ -225,7 +228,7 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
         : hijriStart ? "hijri" : "gregorian";
       /* «مدة العقد بالأشهر» بديل مريح عن «عدد الدفعات»: عقد سنتين نصف سنوي
          = 4 دفعات، وحسابها بيد المكتب مصدر خطأ. العمود الصريح يتقدّم. */
-      const PER_YEAR: Record<string, number> = { daily: 365, weekly: 52, monthly: 12, quarterly: 4, semiannual: 2, annual: 1 };
+      const PER_YEAR: Record<string, number> = { daily: 365, weekly: 52, monthly: 12, quarterly: 4, trimester: 3, semiannual: 2, annual: 1 };
       const monthsN = Number(toEnDigits(String(monthsTxt || "").replace(/[^\d.]/g, ""))) || 0;
       const prFromMonths = monthsN > 0 ? Math.max(1, Math.round(monthsN * (PER_YEAR[frequency] || 12) / 12)) : null;
       const pr = Number(toEnDigits(periods)) || prFromMonths;

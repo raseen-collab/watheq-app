@@ -32,7 +32,7 @@ const TERMS = [
   { months: 12, label: "سنة" }, { months: 18, label: "سنة ونصف" },
   { months: 24, label: "سنتان" }, { months: 36, label: "٣ سنوات" },
 ];
-const PER_YEAR: Record<string, number> = { monthly: 12, quarterly: 4, semiannual: 2, annual: 1 };
+const PER_YEAR: Record<string, number> = { monthly: 12, quarterly: 4, trimester: 3, semiannual: 2, annual: 1 };
 
 export default function HijriScheduleTool() {
   const [cal, setCal] = useState<"h" | "g">("h");
@@ -146,7 +146,7 @@ export default function HijriScheduleTool() {
 
           <div>
             <label className="text-sm font-semibold block mb-2">دورة السداد</label>
-            <div className="grid grid-cols-4 gap-2">
+            <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
               {FREQUENCIES.filter((f) => PER_YEAR[f.value]).map((f) => (
                 <button key={f.value} type="button" onClick={() => setFreq(f.value)}
                   className={`border-2 rounded-lg py-2 text-xs font-semibold ${freq === f.value ? "border-gold bg-[#FBF1DF]" : "border-line hover:border-goldSoft"}`}>

@@ -28,7 +28,7 @@ import DateField from "@/components/DateField";
 
 /** تحويل كل دورة إلى مكافئ شهري لحساب الدخل التقريبي */
 const PERIODS_PER_MONTH: Record<Frequency, number> = {
-  daily: 30, weekly: 4.33, monthly: 1, quarterly: 1 / 3, semiannual: 1 / 6, annual: 1 / 12,
+  daily: 30, weekly: 4.33, monthly: 1, quarterly: 1 / 3, trimester: 1 / 4, semiannual: 1 / 6, annual: 1 / 12,
 };
 
 type Tenant = {
@@ -2491,7 +2491,7 @@ function TenantModal({ open, initial, unitWord, error, saving, onClose, onSubmit
             const n = Number(d.contract_periods) || 0;
             const f = (d.payment_frequency || "monthly") as Frequency;
             if (!n) return "فارغ = سنة كاملة. اكتب 24 لعقد سنتين، أو 6 لعقد نصف سنة.";
-            const months = n * ({ daily: 0, weekly: 0, monthly: 1, quarterly: 3, semiannual: 6, annual: 12 } as any)[f];
+            const months = n * ({ daily: 0, weekly: 0, monthly: 1, quarterly: 3, trimester: 4, semiannual: 6, annual: 12 } as any)[f];
             const dur = !months ? `${n} دفعة`
               : months % 12 === 0 ? plural(months / 12, "سنة واحدة", "سنتان", "سنوات", "سنة")
               : months < 12 ? plural(months, "شهر واحد", "شهران", "أشهر", "شهرًا")
@@ -2798,7 +2798,7 @@ function QuoteModal({ property, unitWord, issuer, onClose }: {
               /* المكتب يفكّر بالمدة («سنتان»)، لا بعدد الدفعات («4»). تحويلها
                  بيده مصدر خطأ: عقد سنتين نصف سنوي = 4 دفعات لا 2. نأخذ المدة
                  ونحسب العدد، ونعرض النتيجة ليراها قبل الحفظ. */
-              const perYear = { daily: 365, weekly: 52, monthly: 12, quarterly: 4, semiannual: 2, annual: 1 }[
+              const perYear = { daily: 365, weekly: 52, monthly: 12, quarterly: 4, trimester: 3, semiannual: 2, annual: 1 }[
                 (d.payment_frequency || "monthly") as Frequency] || 12;
               const months = Math.round((Number(d.contract_periods) || 0) * (12 / perYear));
               const setMonths = (m: number) => {

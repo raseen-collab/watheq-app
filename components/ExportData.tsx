@@ -18,7 +18,7 @@ import { getOffice } from "@/lib/office";
 const UNIT_AR: Record<string, string> = { apartment: "شقة", annex: "شقة ملحق", studio: "استديو", room: "غرفة", shop: "محل", office: "مكتب", warehouse: "مستودع", land: "أرض", villa: "فيلا", other: "أخرى" };
 
 const FREQ_AR: Record<string, string> = {
-  daily: "يومي", weekly: "اسبوعي", monthly: "شهري", quarterly: "كل 3 اشهر",
+  daily: "يومي", weekly: "اسبوعي", monthly: "شهري", quarterly: "كل 3 اشهر", trimester: "كل 4 اشهر",
   semiannual: "نصف سنوي", annual: "سنوي", yearly: "سنوي",
 };
 const METHOD_AR: Record<string, string> = { cash: "نقدًا", transfer: "تحويل بنكي", card: "بطاقة", other: "أخرى" };
