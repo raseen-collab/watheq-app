@@ -1224,31 +1224,17 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
         const barPct = Math.min(100, pctOfAnnual);
         const label = incPeriod === "year" ? `هذه السنة (${new Date().getFullYear()})` : incPeriod === "month" ? "هذا الشهر" : "آخر 12 شهرًا";
         return (
-          <div className="bg-white border border-line rounded-2xl p-4 mb-5">
-            <div className="flex items-center justify-between gap-3 flex-wrap mb-2">
-              <div>
-                <div className="text-xs text-muted">الدخل المتوقع خلال 12 شهرًا</div>
-                <div className="text-2xl font-bold text-deep tabular-nums">{sar(Math.round(annualIncome))} <span className="text-sm font-normal text-muted">ريال / سنة</span></div>
+          <div className="bg-white border border-line rounded-xl px-4 py-2.5 mb-4 flex items-center justify-between gap-3 flex-wrap">
+            <div className="text-sm">
+              المحصَّل {label}: <b className="tabular-nums text-[#137a50]">{collectedInPeriod === null ? "…" : sar(Math.round(col))}</b> ريال
+              <span className="text-xs text-muted"> من متوقَّع {sar(Math.round(annualIncome))} سنويًّا</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="h-2 w-24 bg-paper2 rounded-full overflow-hidden">
+                <div className="h-full bg-[#1E9E6A] rounded-full" style={{ width: `${barPct}%` }} />
               </div>
-              <div className="inline-flex items-center gap-0.5 border border-line rounded-lg p-0.5 text-[11px]">
-                {([["year", "هذه السنة"], ["12m", "آخر 12 شهرًا"], ["month", "هذا الشهر"]] as const).map(([k, l]) => (
-                  <button key={k} type="button" onClick={() => setIncPeriod(k)}
-                    className={`px-2.5 py-1 rounded-md ${incPeriod === k ? "bg-deep text-goldSoft" : "text-muted hover:text-deep"}`}>{l}</button>
-                ))}
-              </div>
-            </div>
-            <div className="flex items-baseline justify-between text-sm mb-1">
-              <span>المحصَّل {label}: <b className="tabular-nums text-[#137a50]">{collectedInPeriod === null ? "…" : sar(Math.round(col))}</b> ريال</span>
-              <span className={`text-xs tabular-nums ${pctOfAnnual > 100 ? "text-[#137a50] font-semibold" : "text-muted"}`}>{pctOfAnnual}% من المتوقع{pctOfAnnual > 100 ? " — يشمل سدادًا مقدَّمًا أو دفعات سنوات سابقة" : ""}</span>
-            </div>
-            <div className="h-2.5 bg-paper2 rounded-full overflow-hidden">
-              <div className="h-full bg-[#1E9E6A] rounded-full transition-all" style={{ width: `${barPct}%` }} />
-            </div>
-            <div className="text-[11px] text-muted mt-1.5">
-              {incPeriod === "year"
-                ? <>المتوقع حتى اليوم بنسبة الأيام المنقضية: <b className="tabular-nums">{sar(Math.round(expectedSoFar))}</b> — {col >= expectedSoFar ? <span className="text-[#137a50]">التحصيل في موعده أو أفضل ✓</span> : <span className="text-late">متأخر عن المتوقع بـ {sar(Math.round(expectedSoFar - col))} ريال</span>}</>
-                : <>المتوقع للفترة: <b className="tabular-nums">{sar(Math.round(expectedSoFar))}</b> ريال</>}
-              · يُحسب من الوحدات المشغولة فقط ومن الدفعات المسجّلة في وثيق.
+              <span className={`text-xs tabular-nums ${pctOfAnnual > 100 ? "text-[#137a50] font-semibold" : "text-muted"}`}>{pctOfAnnual}%</span>
+              <Link href="/dashboard/property/overview" className="text-[11px] text-goldInk underline underline-offset-4 whitespace-nowrap">التفصيل</Link>
             </div>
           </div>
         );
@@ -1256,13 +1242,9 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
 
       {/* الوحدات تأخذ العرض كاملًا: مكتب بمئات الوحدات يحتاج كل بكسل للجدول،
           وسجل العقار (ملاحظات نصية) ينتقل أسفلها — يُقرأ حين يُطلب لا دائمًا. */}
-      {/* طلب المكتب: «اللي يهمني تحصيل كل شهر بشهره» — رقم الشهر الجاري وحده
-          يُخفي من دفع قبل شهرين ويجعل الشهر يبدو فارغًا بلا تفسير. */}
-      {active && may("view_financials") && (
-        <div className="mb-4">
-          <MonthlyCollection propertyId={active.id} propertyName={active.name} db={demo ? (supabase as any) : undefined} />
-        </div>
-      )}
+      {/* التحصيل شهرًا بشهر والدخل المتوقع انتقلا إلى «نظرة عامة».
+          صفحة العقار للعمل اليومي: من تأخّر ومن أُحصّل منه. وتلك أرقامٌ
+          تُراجَع آخر الشهر — وجودها هنا كان يزاحم الجدول بلا داعٍ. */}
 
       <div className="grid grid-cols-1 gap-5 items-start">
         <div className="bg-white border border-line rounded-2xl shadow-sm">

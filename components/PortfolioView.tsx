@@ -11,10 +11,11 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase-client";
-import { contractState, isVacant, type Frequency } from "@/lib/contracts";
+import { contractState, isVacant, expectedNext12, type Frequency } from "@/lib/contracts";
 import { sar, waLink } from "@/lib/utils";
 import { hijriShort } from "@/lib/hijri";
 import ExpensesOverview from "@/components/ExpensesOverview";
+import MonthlyCollection from "@/components/MonthlyCollection";
 
 type Tenant = any; type Property = any;
 const PER_MONTH: Record<string, number> = { daily: 30, weekly: 4.33, monthly: 1, quarterly: 1 / 3, trimester: 1 / 4, semiannual: 1 / 6, annual: 1 / 12 };
@@ -93,6 +94,11 @@ export default function PortfolioView({ properties, windows }: {
     return T;
   }, [rows]);
   const collectedTotal = monthCollected ? Object.values(monthCollected).reduce((a, b) => a + b, 0) : null;
+  /* الدخل المتوقع للمحفظة كلها — من جدول الدفعات الفعلي لكل وحدة، فالعقد
+     القصير ينتهي عند نهايته ولا يُضرب في اثني عشر. */
+  const expected12 = useMemo(
+    () => rows.reduce((a, { t }) => a + expectedNext12(t as any), 0),
+    [rows]);
 
   // ---------- البحث الشامل ----------
   const needle = q.trim().toLowerCase().replace(/[٠-٩]/g, (d) => String("٠١٢٣٤٥٦٧٨٩".indexOf(d)));
@@ -142,6 +148,32 @@ export default function PortfolioView({ properties, windows }: {
         <button className="btn btn-ghost text-sm" onClick={() => setExpOpen(true)}
           title="كل مصروفات المكتب بفلترة على المالك والفترة — جاهزة للطباعة">💸 مصروفات كل العقارات</button>
       </div>
+      {/* المال: انتقل من صفحة العقار إلى هنا.
+          تلك صفحة العمل اليومي — من تأخّر ومن أُحصّل منه — وهذه صفحة
+          الأرقام التي يقرؤها المكتب آخر الشهر. ومجمّعًا على كل العقارات
+          يصير الرقم عن المكتب لا عن عمارة واحدة. */}
+      <div className="bg-white border border-line rounded-2xl p-4 mb-4">
+        <div className="flex items-baseline justify-between gap-3 flex-wrap mb-3">
+          <div>
+            <div className="text-xs text-muted">الدخل المتوقع خلال 12 شهرًا — كل العقارات</div>
+            <div className="text-2xl font-bold text-deep tabular-nums">
+              {sar(Math.round(expected12))} <span className="text-sm font-normal text-muted">ريال</span>
+            </div>
+          </div>
+          <div className="text-xs text-muted">
+            محصَّل هذا الشهر <b className="text-[#137a50] tabular-nums">{collectedTotal === null ? "…" : sar(Math.round(collectedTotal))}</b>
+            {expected12 > 0 && collectedTotal !== null && (
+              <span> · {Math.round((collectedTotal / (expected12 / 12)) * 100)}٪ من متوسط الشهر</span>
+            )}
+          </div>
+        </div>
+        <MonthlyCollection propertyIds={properties.map((p: any) => p.id)} months={12} />
+        <p className="text-[11px] text-muted mt-2 leading-relaxed">
+          المتوقع يُحسب من جدول دفعات كل وحدة مشغولة — لا من الإيجار مضروبًا في اثني عشر،
+          فالعقد القصير ينتهي عند نهايته.
+        </p>
+      </div>
+
       {expOpen && <ExpensesOverview properties={properties as any} onClose={() => setExpOpen(false)} />}
       <div className="bg-white border border-line rounded-2xl p-4 mb-4">
         <input className="fld text-base" value={q} onChange={(e) => setQ(e.target.value)} autoFocus

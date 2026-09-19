@@ -19,8 +19,18 @@ const p2 = (n: number) => String(n).padStart(2, "0");
 
 type Row = { paid_on: string; amount: number };
 
-export default function MonthlyCollection({ propertyId, propertyName, months = 6, db }: {
-  propertyId: string;
+/**
+ * يعمل على عقار واحد أو على المحفظة كلها.
+ *
+ * كان مقيَّدًا بعقار، ومكانه صفحة العقار — وهي صفحة العمل اليومي: من تأخر
+ * ومن أُحصّل منه. والتحصيل الشهري رقمٌ يُراجَع آخر الشهر لا كل يوم، فمكانه
+ * «نظرة عامة» حيث يقرأ المكتب أرقامه لا يعمل عليها.
+ *
+ * propertyIds: قائمة معرّفات — عقار واحد أو كلها.
+ */
+export default function MonthlyCollection({ propertyId, propertyIds, propertyName, months = 6, db }: {
+  propertyId?: string;
+  propertyIds?: string[];
   propertyName?: string;
   months?: number;
   db?: any;
@@ -31,21 +41,22 @@ export default function MonthlyCollection({ propertyId, propertyName, months = 6
   const [span, setSpan] = useState(months);
 
   useEffect(() => {
-    if (!propertyId) return;
+    const ids = propertyIds && propertyIds.length ? propertyIds : (propertyId ? [propertyId] : []);
+    if (!ids.length) { setRows([]); return; }
     let alive = true;
     setRows(null); setErr(null);
     const now = new Date();
     const first = new Date(now.getFullYear(), now.getMonth() - (span - 1), 1);
     const from = `${first.getFullYear()}-${p2(first.getMonth() + 1)}-01`;
     supabase.from("payments").select("paid_on, amount")
-      .eq("property_id", propertyId).gte("paid_on", from).limit(5000)
+      .in("property_id", ids).gte("paid_on", from).limit(20000)
       .then(({ data, error }: any) => {
         if (!alive) return;
         if (error) { setErr(error.message); setRows([]); return; }
         setRows((data || []) as Row[]);
       });
     return () => { alive = false; };
-  }, [propertyId, span, supabase]);
+  }, [propertyId, (propertyIds || []).join(","), span, supabase]);
 
   const buckets = useMemo(() => {
     const now = new Date();
