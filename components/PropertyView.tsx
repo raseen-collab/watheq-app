@@ -2,6 +2,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import Icon from "@/components/Icon";
 import { createClient } from "@/lib/supabase-client";
 import { officeId, getOffice, ROLE_LABEL, OWNER_PERMS } from "@/lib/office";
 import { arDate } from "@/lib/documents";
@@ -1269,22 +1270,24 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
             <div className="flex gap-2 flex-wrap">
               {/* ثلاث قوائم بدل تسعة أزرار: ما يُطبع · ما يخصّ المالك · ما يخصّ البيانات.
                   الأدوات نفسها — لكن العين تجد مكانها بدل أن تمسح صفًّا طويلًا. */}
-              <MenuBtn label="📄 مستندات" items={[
+              <MenuBtn label={<><Icon name="doc" className="me-1.5" />مستندات</>} items={[
                 { label: "كشف حساب العقار", run: () => setStmtOpen(true) },
                 { label: "عرض سعر لمستأجر محتمل", run: () => setQuoteOpen(true) },
                 ...(may("manage_compliance") ? [{ label: `التزامات المكتب${alertCount(comp) > 0 ? ` (${alertCount(comp)})` : ""}`, run: () => setCompOpen(true) }] : []),
               ]} badge={may("manage_compliance") ? alertCount(comp) : 0} />
 
-              {may("view_financials") && <MenuBtn label="👤 المالك" items={[
+              {may("view_financials") && <MenuBtn label={<><Icon name="owner" className="me-1.5" />المالك</>} items={[
+                { sep: "تُرسل للمالك" },
                 { label: "تقرير المالك", run: () => setReporting(true) },
                 { label: "كشف مالك مجمّع", run: () => setOwnerStmtOpen(true) },
                 { label: "رابط المالك", run: () => setOwnerLinkOpen(true) },
+                { sep: "متابعة المال" },
+                { label: "كشف التحصيل", run: () => setCollOpen(true) },
                 ...(may("manage_expenses") ? [{ label: "المصروفات", run: () => setExpensesOpen(true) }] : []),
                 { label: `الديون المرحَّلة${carriedTotal > 0 ? ` (${sar(carriedTotal)})` : ""}`, run: () => setDebtOpen(true) },
-                { label: "كشف التحصيل", run: () => setCollOpen(true) },
               ]} />}
 
-              <MenuBtn label="🗂️ البيانات" items={[
+              <MenuBtn label={<><Icon name="data" className="me-1.5" />البيانات</>} items={[
                 ...(may("edit_tenants") ? [{ label: "رفع من Excel", href: "/dashboard/property/import" }] : []),
                 { label: "تصدير CSV", run: exportCSV },
                 ...(may("view_activity") ? [{ label: "سجل الحركات المالية", run: () => setLogOpen(true) }] : []),
@@ -2115,8 +2118,10 @@ function StatusPill({ k }: { k: RowKey }) {
  * مثبّت بإحداثيات الشاشة كقائمة الصف، فلا يقصّه أي إطار متمرّر.
  */
 function MenuBtn({ label, items, badge = 0 }: {
-  label: string;
-  items: { label: string; run?: () => void; href?: string }[];
+  label: React.ReactNode;
+  /* «sep» عنوان قسم لا بند: قائمة بعشرة بنود متساوية تجعل العين تقرأ
+     الكل لتجد واحدًا. والعناوين تقسّمها إلى ثلاث وظائف تُمسح بنظرة. */
+  items: { label?: string; run?: () => void; href?: string; sep?: string }[];
   badge?: number;
 }) {
   const [open, setOpen] = useState(false);
@@ -2126,7 +2131,7 @@ function MenuBtn({ label, items, badge = 0 }: {
     if (!open) return;
     const r = ref.current?.getBoundingClientRect();
     if (r) {
-      const H = Math.min(items.length * 34 + 16, 300);
+      const H = Math.min(items.length * 34 + 16, 340);
       const W = 210;                       // عرض القائمة الأدنى
       const below = window.innerHeight - r.bottom;
       /* على الجوال يقع الزر قرب الحافة، فتخرج القائمة خارج الشاشة ويُقصّ نصفها.
@@ -2151,7 +2156,9 @@ function MenuBtn({ label, items, badge = 0 }: {
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
           <div style={{ top: pos.top, left: pos.left }}
             className="fixed z-50 min-w-[210px] max-w-[calc(100vw-16px)] bg-white border border-line rounded-xl shadow-lg py-1">
-            {items.map((it, i) => it.href ? (
+            {items.map((it, i) => it.sep ? (
+              <div key={i} className="px-3.5 pt-2.5 pb-1 text-[10px] font-bold text-muted tracking-wide border-t border-line/70 first:border-0 first:pt-1">{it.sep}</div>
+            ) : it.href ? (
               <Link key={i} href={it.href} className="block px-3.5 py-2 text-xs font-semibold text-deep hover:bg-paper2">{it.label}</Link>
             ) : (
               <button key={i} type="button" onClick={() => { setOpen(false); it.run?.(); }}
