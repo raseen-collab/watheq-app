@@ -69,16 +69,15 @@ export default function HelpAssistant() {
     return m;
   }, []);
 
-  if (!open) {
-    return (
-      <button type="button" onClick={() => setOpen(true)} aria-label="مساعدة"
-        className="wq-help-fab fixed z-40 end-4 bottom-[calc(4.5rem+env(safe-area-inset-bottom,0px))] sm:bottom-24
-                   bg-white border border-line shadow-lg rounded-full ps-3 pe-3.5 py-2.5 flex items-center gap-2">
-        <span className="w-7 h-7 rounded-full bg-deep grid place-items-center text-goldSoft text-sm font-bold">؟</span>
-        <span className="text-xs font-bold text-deep">مساعدة</span>
-      </button>
-    );
-  }
+  /* يُفتح من القائمة الموحَّدة — كان زرًّا ثالثًا عائمًا يتزاحم مع الاثنين */
+  useEffect(() => {
+    const h = () => setOpen(true);
+    window.addEventListener("watheq:help", h);
+    return () => window.removeEventListener("watheq:help", h);
+  }, []);
+
+  if (!open) return null;
+
 
   return (
     <div className="fixed z-[45] inset-x-2 sm:inset-x-auto sm:end-4 sm:w-[390px]

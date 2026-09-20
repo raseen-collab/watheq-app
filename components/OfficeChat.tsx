@@ -173,9 +173,24 @@ export default function OfficeChat() {
 
   return (
     <>
-      {/* الزرّ العائم أُلغي: صار «الفريق» بندًا في القائمة الموحَّدة، وكان
-          يتزاحم معها في الزاوية نفسها فيغطّي أحدهما الآخر. العدّاد انتقل
-          إلى بند القائمة عبر حدث watheq:unread. */}
+      {/* زرّ الفريق: أكثر ما يُستعمل من الأزرار العائمة، فيأخذ المكان
+          الظاهر. حجمه وشكله كزرّ القائمة تمامًا حتى يُقرآ كمجموعة واحدة،
+          وترتيبهما الرأسي في globals.css بفواصل ثابتة — كانا يتداخلان
+          على الجوال فلا يُميَّز أحدهما عن الآخر. */}
+      <button type="button" onClick={() => { setOpen(true); markSeen(); }}
+        className="wq-chat-fab bg-deep text-goldSoft rounded-full shadow-lg border border-goldSoft/30 w-12 h-12 grid place-items-center relative"
+        aria-label="تواصل الفريق" title="تواصل الفريق">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor"
+          strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M20 12a8 8 0 0 1-11.9 7L4 20l1.1-4A8 8 0 1 1 20 12z" />
+        </svg>
+        {(unread > 0 || myTasks > 0) && (
+          <span className="absolute -top-1 -start-1 bg-late text-white rounded-full text-[10px] leading-none px-1.5 py-1 min-w-[20px] font-bold">
+            {unread > 0 ? unread : `✓${myTasks}`}
+          </span>
+        )}
+      </button>
+
       {open && (
         <div className="fixed inset-0 z-50 bg-black/40 flex items-end sm:items-center justify-center p-0 sm:p-4" onClick={() => setOpen(false)}>
           <div className="bg-paper w-full sm:max-w-lg h-[85vh] sm:h-[80vh] rounded-t-2xl sm:rounded-2xl border border-line flex flex-col overflow-hidden"

@@ -49,13 +49,10 @@ export default function FloatingMenu({ isAdmin, signedIn }: { isAdmin: boolean; 
   }
 
   const items: Item[] = [
-    /* «الفريق» كان زرًّا عائمًا مستقلًّا في الزاوية نفسها فيتزاحم مع هذا
-       ويغطّي أحدهما الآخر — صار بندًا هنا يفتح المحادثة بالحدث نفسه. */
-    ...(signedIn ? [{
-      label: unread > 0 ? `الفريق (${unread})` : "الفريق",
-      icon: "owner" as IconName,
-      run: () => { window.dispatchEvent(new CustomEvent("watheq:chat")); setOpen(false); },
-    }] : []),
+    /* «الفريق» عاد زرًّا ظاهرًا (أكثر ما يُستعمل)، و«مساعدة» نزلت هنا
+       فبقي زرّان عائمان بدل ثلاثة متزاحمة. */
+    { label: "مساعدة", icon: "note" as IconName,
+      run: () => { window.dispatchEvent(new CustomEvent("watheq:help")); setOpen(false); } },
     ...(signedIn ? [{ label: "المستشار الذكي", icon: "chart" as IconName, href: "/dashboard/advisor" }] : []),
     { label: dark ? "الوضع النهاري" : "الوضع الليلي", icon: dark ? "check" : "shield", run: toggleTheme },
     ...(isAdmin ? [{ label: "لوحة الإدارة", icon: "settings" as IconName, href: "/admin" }] : []),

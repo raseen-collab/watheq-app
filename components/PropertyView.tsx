@@ -2677,7 +2677,11 @@ function TenantModal({ open, initial, unitWord, error, saving, onClose, onSubmit
         <button type="button" className="btn btn-ghost flex-1 justify-center" onClick={onClose}>إلغاء</button>
         <button type="button" className="btn btn-gold flex-1 justify-center" disabled={(String(d.status) !== "vacated" && !(d.name || "").trim()) || !!saving}
           title={String(d.status) !== "vacated" && !(d.name || "").trim() ? "أدخل اسم المستأجر أولًا" : "حفظ"}
-          style={!(d.name || "").trim() ? { opacity: .5, cursor: "not-allowed" } : undefined}
+          /* كان يتجاهل الشاغرة: الزرّ يعمل (disabled صحيح) لكنه يبدو
+             معطّلًا بشفافية 50% ومؤشر «ممنوع» — فلا يضغطه أحد. المظهر
+             يتبع الشرط نفسه الذي يتبعه التعطيل. */
+          style={String(d.status) !== "vacated" && !(d.name || "").trim()
+            ? { opacity: .5, cursor: "not-allowed" } : undefined}
           onClick={() => onSubmit(d)}>حفظ</button>
       </div>
       {String(d.status) !== "vacated" && !(d.name || "").trim() && (
