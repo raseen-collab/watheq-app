@@ -4,6 +4,8 @@ import { normalizeAccountType, defaultDashboard } from "@/lib/roles";
 import { withClockSkewRetry, isTransient } from "@/lib/db-retry";
 import RetryScreen from "@/components/RetryScreen";
 
+export const metadata = { title: "المستشار — وثيق" };
+
 export const dynamic = "force-dynamic";
 
 /**
