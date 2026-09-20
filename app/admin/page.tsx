@@ -7,6 +7,8 @@ import AdminBrief from "@/components/AdminBrief";
 import AdminMessage from "@/components/AdminMessage";
 import type { MsgKind } from "@/lib/admin-messages";
 
+export const metadata = { title: "الإدارة — وثيق" };
+
 export const dynamic = "force-dynamic";
 
 /**
