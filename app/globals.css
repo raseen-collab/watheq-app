@@ -131,13 +131,9 @@ html[data-theme="dark"] .wq-theme-btn {
 }
 
 
-/* ===== الأزرار العائمة (ليلي · المستشار · الإدارة) ===== */
-.wq-fab {
-  position: fixed; z-index: 40;
-  inset-inline-start: 18px;
-  bottom: calc(18px + env(safe-area-inset-bottom, 0px));
-  display: flex; flex-direction: column; gap: 8px; align-items: flex-start;
-}
+/* الأزرار العائمة: التعريف الموحَّد في آخر الملف (عمود بفواصل ثابتة).
+   القاعدة القديمة كانت تجعل الحاوية flex ممتدّة بلا عرض محدَّد، فتصير
+   شريطًا شفافًا بعرض 364px يعترض النقر عبر أسفل الشاشة كلها. */
 @media (max-width: 640px) {
   /* حدّ اللمس: زر أصغر من 40px يُخطئه الإبهام. نرفع الحد الأدنى لكل زر
      في اللوحة بلا تكبير النصّ — الأزرار الصغيرة (⋯ · ½ · ✔) هي الأكثر
@@ -145,23 +141,19 @@ html[data-theme="dark"] .wq-theme-btn {
   .btn, button.btn, a.btn { min-height: 40px; }
   .wq-quick { min-width: 44px; min-height: 44px; }
 
-  .wq-fab { flex-direction: row; gap: 6px; inset-inline-start: 10px; bottom: calc(10px + env(safe-area-inset-bottom, 0px)); }
   /* الأزرار الثابتة تغطّي سطور المستأجرين وأنت تقرأ. تختفي مع التمرير لأسفل
      وتعود فور التمرير لأعلى — كما تفعل أشرطة التطبيقات. */
   .wq-fab, .wq-chat-fab { transition: transform .2s ease, opacity .2s ease; }
   body.wq-scrolling .wq-fab,
   body.wq-scrolling .wq-chat-fab,
-  body.wq-scrolling .wq-help-fab,
   body.wq-guide-open .wq-fab,
   body.wq-guide-open .wq-chat-fab,
-  body.wq-guide-open .wq-help-fab,
   /* المساعد مفتوح: يحتل أسفل الشاشة على الجوال، فتُخفى بقية الأزرار */
   body.wq-help-open .wq-fab,
   body.wq-help-open .wq-chat-fab { transform: translateY(140%); opacity: 0; pointer-events: none; }
-  .wq-fab a, .wq-fab button { padding: 7px 11px !important; font-size: .72rem !important; }
   /* مساحة أسفل الصفحة حتى يمكن تمرير آخر صف فوق الأزرار */
-  /* الزرّ العائم يغطّي آخر سطر من الصفحة — مساحة بارتفاعه تُنهي ذلك */
-  body { padding-bottom: calc(80px + env(safe-area-inset-bottom, 0px)); }
+  /* مساحة بارتفاع الزرَّين معًا (16+48+12+48=124) حتى لا يغطّيا آخر سطر */
+  body { padding-bottom: calc(132px + env(safe-area-inset-bottom, 0px)); }
 }
 /* ===== الوضع المثبَّت: الحافة الآمنة على كل الجهات =====
    العيب الذي شُكي منه («الشاشة كأنها مقصوصة»): الحشو العلوي كان على
@@ -265,17 +257,26 @@ html[data-theme="dark"] {
 .btn-gold { background-color: #9A6314 !important; }
 .btn-wa   { background-color: #157F3F !important; }
 
-/* الزرّ العائم الموحَّد: زاوية واحدة، وفوق الحافة الآمنة */
-.wq-fab {
+/* ===== الأزرار العائمة: عمود واحد بفواصل ثابتة =====
+   كانت تُوضع بقيم bottom مختلفة في كل مكوّن، فتتداخل على الجوال ولا
+   يُميَّز أحدها عن الآخر. الآن مقاس واحد (48px) وفاصل واحد (12px)،
+   محسوبان من متغيّر واحد فلا ينزاح شيء عند تغيير أيٍّ منهما. */
+:root { --fab-size: 3rem; --fab-gap: .75rem; --fab-edge: 1rem; }
+@media (min-width: 1024px) { :root { --fab-edge: 1.5rem; } }
+
+.wq-fab, .wq-chat-fab {
   position: fixed;
-  inset-inline-end: 1rem;
-  bottom: calc(1rem + env(safe-area-inset-bottom, 0px));
+  inset-inline-end: var(--fab-edge);
+  inset-inline-start: auto;
+  width: var(--fab-size);
+  height: var(--fab-size);
   z-index: 40;
-  display: block;
 }
-@media (min-width: 1024px) {
-  .wq-fab { inset-inline-end: 1.5rem; bottom: 1.5rem; }
-}
+/* الحاوية بمقاس زرّها تمامًا — واللوحة المنبثقة تخرج منها بلا أن تمدّدها */
+.wq-fab > button, .wq-chat-fab { width: var(--fab-size); height: var(--fab-size); }
+/* الأسفل: قائمة الأدوات · فوقها: تواصل الفريق */
+.wq-fab      { bottom: calc(var(--fab-edge) + env(safe-area-inset-bottom, 0px)); }
+.wq-chat-fab { bottom: calc(var(--fab-edge) + var(--fab-size) + var(--fab-gap) + env(safe-area-inset-bottom, 0px)); }
 /* يختفي أثناء التمرير لأسفل ويعود عند التوقّف */
 body.wq-scrolling .wq-fab { transform: translateY(140%); opacity: 0; pointer-events: none; }
 .wq-fab { transition: transform .2s ease, opacity .2s ease; }
