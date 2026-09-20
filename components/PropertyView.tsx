@@ -1382,10 +1382,10 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
             </div>
           )}
 
-          {/* بطاقة واحدة ممتدة على 1150px تترك ~700px فراغًا بين الاسم
-              والأزرار. عمودان على الشاشة الواسعة يملآن العرض ويقصّران
-              المسافة التي تقطعها العين بين المعلومة وفعلها. */}
-          <div className="p-4 grid grid-cols-1 xl:grid-cols-2 gap-2 items-start">
+          {/* عمود واحد — جُرّب العمودان فكانا أسوأ: البطاقة تنضغط فتلتفّ
+              أسطرها، والعين تقفز يمينًا ويسارًا بين صفَّين بدل مسح عمود
+              واحد. الفراغ الأفقي عُولج داخل البطاقة نفسها بدل تقسيم الصف. */}
+          <div className="p-4 flex flex-col gap-2">
             {!tenants.length ? (
               <div className="text-center text-muted py-8 text-sm">
                 لا توجد وحدات بعد.
@@ -1561,7 +1561,10 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
             })() : rows.slice(0, cardsShown).map(({ t, st, key }) => (
               <div key={t.id} className={`rounded-xl border p-3 ${key === "litigation" ? "border-[#CBD5E1] bg-[#F8FAFC]" : "border-line bg-paper"}`}>
                 <div className="flex flex-col sm:flex-row sm:items-center gap-2.5 sm:gap-3">
-                  <div className="flex items-center gap-3 min-w-0 flex-1">
+                  {/* الاسم كان يتمدّد إلى عرض البطاقة كاملًا فينفتح فراغ
+                      يقارب 700px قبل الأزرار. حدّ أقصى للكتلة يُبقي المعلومة
+                      وحالتها متجاورتين، ويُدفع الباقي إلى اليسار بـms-auto. */}
+                  <div className="flex items-center gap-3 min-w-0 flex-1 sm:max-w-[540px]">
                     <span className="w-9 h-9 rounded-lg bg-paper2 grid place-items-center font-semibold text-deep shrink-0">{(t.name || "?").charAt(0)}</span>
                     <div className="min-w-0 flex-1">
                       <div className="font-semibold truncate">{t.name}</div>
@@ -1585,7 +1588,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                   {/* الشارة والمبلغ في صفّ واحد على الجوال، وتحتهما التفصيل.
                       الرقم هو ما يبحث عنه المكتب أولًا — فيكون المرساة البصرية
                       بدل نصّ صغير بجانب الشارة. */}
-                  <div className="text-right sm:text-left shrink-0 border-t sm:border-0 border-line/70 pt-2 sm:pt-0">
+                  <div className="text-right sm:text-left shrink-0 border-t sm:border-0 border-line/70 pt-2 sm:pt-0 sm:me-auto">
                     <div className="flex sm:block items-center justify-between gap-2">
                       <StatusPill k={key} />
                       {(key === "late" || key === "partial") && st.amountDue > 0 && (
