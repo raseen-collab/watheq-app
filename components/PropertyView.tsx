@@ -593,6 +593,15 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
     const freq = (d.payment_frequency || "monthly") as Frequency;
     const periods = d.contract_periods ? Number(d.contract_periods) : null;
     const payload = {
+      /**
+       * الحالة تُرسل صراحةً.
+       *
+       * كانت غائبة عن الحمولة كلها، فالوحدة التي يُعلَّم لها «الوحدة شاغرة»
+       * تُحفظ بالحالة الافتراضية «مؤجّرة» بلا تاريخ بداية — فتظهر «بيانات
+       * ناقصة — لا تاريخ بداية». المربع كان يعمل في النموذج ولا يصل للقاعدة.
+       */
+      status: String(d.status || "active") === "vacated" ? "vacated" : "active",
+      move_out_date: String(d.status || "active") === "vacated" ? (d.move_out_date || today()) : null,
       property_id: active.id, name: d.name, unit: d.unit || null, phone: d.phone || null,
       national_id: d.national_id || null, rent_amount: Number(d.rent_amount) || 0,
       contract_start: d.contract_start || null,
