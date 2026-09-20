@@ -7,6 +7,8 @@ import { withClockSkewRetry, isClockSkew, isTransient } from "@/lib/db-retry";
 import RetryScreen from "@/components/RetryScreen";
 import { fetchAllRows } from "@/lib/fetch-all";
 
+export const metadata = { title: "العقارات — وثيق" };
+
 export const dynamic = "force-dynamic";
 
 export default async function PropertyPage() {
