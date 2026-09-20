@@ -306,8 +306,11 @@ html[data-theme="dark"] .wq-fab-menu {
    النوافذ بدل تعديل ثمانيةَ عشرَ مكوّنًا. */
 [class*="fixed"][class*="inset-0"] {
   overscroll-behavior: contain;
-  touch-action: none;
+  touch-action: none;   /* الغطاء نفسه: يوقف تمرير الخلفية */
 }
+/* وكل ما بداخله يعود طبيعيًّا: «none» على النافذة كلها كان يعطّل اللمس
+   على أزرارها — وزرّ «طباعة السجل» توقّف عن الاستجابة بسببه. */
+[class*="fixed"][class*="inset-0"] > * { touch-action: auto; }
 /* طبقة ثانية: سفاري على iOS يتجاهل touch-action أحيانًا مع الغطاء
    الشفّاف. المكوّنات التي تفتح نافذة تضيف wq-modal-open على body. */
 body.wq-modal-open { overflow: hidden; }
