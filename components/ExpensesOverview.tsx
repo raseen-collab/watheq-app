@@ -225,8 +225,13 @@ export default function ExpensesOverview({ properties, issuer, onClose }: {
             الجوال — فينتقل تحته هناك ويبقى بجانبه على الشاشة الأوسع. */}
         <div className="border-t border-line bg-white p-3 shrink-0 flex flex-col sm:flex-row gap-2 sm:items-center"
           style={{ paddingBottom: "calc(0.75rem + env(safe-area-inset-bottom, 0px))" }}>
-          <button className="btn btn-gold w-full sm:w-auto justify-center shrink-0" onClick={print} disabled={!shown.length}>
-            🖨️ طباعة السجل
+          {/* كان يبدو قابلًا للضغط وهو معطَّل حين لا مصروفات في الفترة —
+              بلا سبب ظاهر. نقول السبب بدل تركه صامتًا. */}
+          <button className="btn btn-gold w-full sm:w-auto justify-center shrink-0"
+            onClick={print} disabled={!shown.length}
+            style={!shown.length ? { opacity: .5, cursor: "not-allowed" } : undefined}
+            title={!shown.length ? "لا مصروفات في هذه الفترة" : "طباعة السجل"}>
+            🖨️ طباعة السجل{!shown.length ? " — لا مصروفات في الفترة" : ""}
           </button>
           <span className="text-[11px] text-muted leading-relaxed">
             «تُخصم من المالك» تدخل في صافيه بتقرير المالك · «على المكتب» لا تدخل.
