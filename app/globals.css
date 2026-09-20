@@ -294,3 +294,30 @@ html[data-theme="dark"] .wq-fab-menu {
   background-color: var(--d-card) !important;
   border-color: var(--d-line) !important;
 }
+
+/* ===== النوافذ المنبثقة: التمرير يبقى داخلها =====
+   على الجوال كان الإصبع يُمرّر الصفحة خلف النافذة بدل محتواها — لأن
+   الغطاء لا يمنع اللمس من النفاذ إليها، ولأن وصول قائمة داخلية إلى
+   طرفها ينقل التمرير إلى ما تحتها (scroll chaining).
+
+   «touch-action: none» على الغطاء يوقف تمرير الخلفية، و«pan-y» على كل
+   منطقة قابلة للتمرير داخله يعيد لها تمريرها، و«overscroll-behavior:
+   contain» يمنع انتقال التمرير عند بلوغ الطرف. قاعدة واحدة تكفي كل
+   النوافذ بدل تعديل ثمانيةَ عشرَ مكوّنًا. */
+[class*="fixed"][class*="inset-0"] {
+  overscroll-behavior: contain;
+  touch-action: none;
+}
+/* طبقة ثانية: سفاري على iOS يتجاهل touch-action أحيانًا مع الغطاء
+   الشفّاف. المكوّنات التي تفتح نافذة تضيف wq-modal-open على body. */
+body.wq-modal-open { overflow: hidden; }
+[class*="fixed"][class*="inset-0"] [class*="overflow-auto"],
+[class*="fixed"][class*="inset-0"] [class*="overflow-y-auto"],
+[class*="fixed"][class*="inset-0"] [class*="overflow-x-auto"],
+[class*="fixed"][class*="inset-0"] textarea,
+[class*="fixed"][class*="inset-0"] select,
+[class*="fixed"][class*="inset-0"] input {
+  touch-action: pan-x pan-y;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
