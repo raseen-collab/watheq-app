@@ -6,6 +6,8 @@ import PortfolioView from "@/components/PortfolioView";
 import { withClockSkewRetry, isTransient } from "@/lib/db-retry";
 import RetryScreen from "@/components/RetryScreen";
 
+export const metadata = { title: "نظرة عامة — وثيق" };
+
 export const dynamic = "force-dynamic";
 
 /** نظرة عامة على المحفظة كلها — لمكتب بعشرات العقارات */
