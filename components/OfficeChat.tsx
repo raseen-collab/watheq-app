@@ -123,6 +123,12 @@ export default function OfficeChat() {
   const unread = msgs.filter((m) => m.author_id !== me && (!seenAt || m.created_at > seenAt)).length;
   const openTasks = msgs.filter((m) => m.assigned_to && !m.done_at);
   const myTasks = openTasks.filter((m) => m.assigned_to === me).length;
+
+  /* القائمة الموحَّدة تعرض العدّاد على بند «الفريق» — تُبلَّغ به هنا */
+  useEffect(() => {
+    window.dispatchEvent(new CustomEvent("watheq:unread", { detail: { unread, myTasks } }));
+  }, [unread, myTasks]);
+
   const unitMsgs = context?.tenantId ? msgs.filter((m) => m.tenant_id === context.tenantId)
     : context?.propertyId ? msgs.filter((m) => m.property_id === context.propertyId) : [];
   const shown = tab === "tasks" ? openTasks : tab === "unit" ? unitMsgs : msgs;
@@ -167,15 +173,9 @@ export default function OfficeChat() {
 
   return (
     <>
-      {/* الزر العائم */}
-      <button type="button" onClick={() => { setOpen(true); markSeen(); }}
-        className="wq-chat-fab fixed z-40 bottom-[calc(4.5rem+env(safe-area-inset-bottom,0px))] end-4 lg:bottom-6 lg:end-6 bg-deep text-goldSoft rounded-full shadow-lg border border-goldSoft/30 px-4 py-3 text-sm font-semibold flex items-center gap-2"
-        title="تواصل الفريق">
-        💬 الفريق
-        {unread > 0 && <span className="bg-late text-white rounded-full text-[11px] px-1.5 py-0.5 min-w-[20px]">{unread}</span>}
-        {myTasks > 0 && <span className="bg-gold text-white rounded-full text-[11px] px-1.5 py-0.5" title="مهام موكّلة لك">✓{myTasks}</span>}
-      </button>
-
+      {/* الزرّ العائم أُلغي: صار «الفريق» بندًا في القائمة الموحَّدة، وكان
+          يتزاحم معها في الزاوية نفسها فيغطّي أحدهما الآخر. العدّاد انتقل
+          إلى بند القائمة عبر حدث watheq:unread. */}
       {open && (
         <div className="fixed inset-0 z-50 bg-black/40 flex items-end sm:items-center justify-center p-0 sm:p-4" onClick={() => setOpen(false)}>
           <div className="bg-paper w-full sm:max-w-lg h-[85vh] sm:h-[80vh] rounded-t-2xl sm:rounded-2xl border border-line flex flex-col overflow-hidden"

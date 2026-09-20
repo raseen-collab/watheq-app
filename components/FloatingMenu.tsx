@@ -19,6 +19,15 @@ type Item = { label: string; icon: IconName; href?: string; run?: () => void };
 export default function FloatingMenu({ isAdmin, signedIn }: { isAdmin: boolean; signedIn: boolean }) {
   const [open, setOpen] = useState(false);
   const [dark, setDark] = useState(false);
+  const [unread, setUnread] = useState(0);
+
+  /* عدّاد رسائل الفريق يصل من OfficeChat — فالبند يحمل الرقم كما كان
+     يحمله الزرّ القديم. */
+  useEffect(() => {
+    const h = (e: any) => setUnread(Number(e.detail?.unread) || 0);
+    window.addEventListener("watheq:unread", h);
+    return () => window.removeEventListener("watheq:unread", h);
+  }, []);
 
   useEffect(() => {
     setDark(document.documentElement.getAttribute("data-theme") === "dark");
@@ -40,6 +49,13 @@ export default function FloatingMenu({ isAdmin, signedIn }: { isAdmin: boolean; 
   }
 
   const items: Item[] = [
+    /* «الفريق» كان زرًّا عائمًا مستقلًّا في الزاوية نفسها فيتزاحم مع هذا
+       ويغطّي أحدهما الآخر — صار بندًا هنا يفتح المحادثة بالحدث نفسه. */
+    ...(signedIn ? [{
+      label: unread > 0 ? `الفريق (${unread})` : "الفريق",
+      icon: "owner" as IconName,
+      run: () => { window.dispatchEvent(new CustomEvent("watheq:chat")); setOpen(false); },
+    }] : []),
     ...(signedIn ? [{ label: "المستشار الذكي", icon: "chart" as IconName, href: "/dashboard/advisor" }] : []),
     { label: dark ? "الوضع النهاري" : "الوضع الليلي", icon: dark ? "check" : "shield", run: toggleTheme },
     ...(isAdmin ? [{ label: "لوحة الإدارة", icon: "settings" as IconName, href: "/admin" }] : []),
@@ -50,15 +66,17 @@ export default function FloatingMenu({ isAdmin, signedIn }: { isAdmin: boolean; 
       {open && (
         <>
           <div className="fixed inset-0 z-[39]" onClick={() => setOpen(false)} />
-          <div className="absolute bottom-full mb-2 end-0 z-40 min-w-[190px] bg-white dark:bg-[#0F221F] border border-line rounded-xl shadow-xl py-1 overflow-hidden">
+          {/* كانت تُفتح ضيّقة بلون داكن جدًّا فتبدو كتلة سوداء لا قائمة.
+              سطح البطاقة نفسه بحدوده، وعرض يتّسع للنص، وظلّ يفصلها عمّا تحتها. */}
+          <div className="wq-fab-menu absolute bottom-full mb-3 end-0 z-40 w-[230px] bg-white border border-line rounded-2xl shadow-2xl py-1.5 overflow-hidden">
             {items.map((it, i) => it.href ? (
               <Link key={i} href={it.href} onClick={() => setOpen(false)}
-                className="flex items-center gap-2.5 px-3.5 py-3 text-xs font-semibold text-deep hover:bg-paper2">
+                className="flex items-center gap-2.5 px-4 py-3 text-sm font-semibold text-deep hover:bg-paper2 transition">
                 <Icon name={it.icon} /> {it.label}
               </Link>
             ) : (
               <button key={i} type="button" onClick={it.run}
-                className="flex w-full items-center gap-2.5 px-3.5 py-3 text-xs font-semibold text-deep hover:bg-paper2">
+                className="flex w-full items-center gap-2.5 px-4 py-3 text-sm font-semibold text-deep hover:bg-paper2 transition">
                 <Icon name={it.icon} /> {it.label}
               </button>
             ))}
