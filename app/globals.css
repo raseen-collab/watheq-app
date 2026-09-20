@@ -285,3 +285,11 @@ body.wq-scrolling .wq-fab { transform: translateY(140%); opacity: 0; pointer-eve
 input[type="checkbox"], input[type="radio"] { accent-color: #0E3A37; }
 html[data-theme="dark"] input[type="checkbox"],
 html[data-theme="dark"] input[type="radio"] { accent-color: #E7C877; }
+
+/* القائمة العائمة في الوضع الليلي: سطح البطاقة لا الأبيض، وحدّ يفصلها.
+   (المُحدِّد الأول كان «.wq-fab > div > div» ولا يطابق شيئًا — اللوحة
+   والغطاء شقيقان مباشران لا متداخلان.) */
+html[data-theme="dark"] .wq-fab-menu {
+  background-color: var(--d-card) !important;
+  border-color: var(--d-line) !important;
+}
