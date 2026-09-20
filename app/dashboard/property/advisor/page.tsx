@@ -1,5 +1,7 @@
 import AdvisorPage from "@/components/AdvisorPage";
 
+export const metadata = { title: "المستشار — وثيق" };
+
 export const dynamic = "force-dynamic";
 
 /** المستشار داخل لوحة إدارة الأملاك — يبقى المستخدم في سياق لوحته */
