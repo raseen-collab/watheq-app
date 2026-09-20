@@ -393,8 +393,8 @@ export function contractState(t: {
 
   // تاريخ الدفعة القادمة = بداية العقد + عدد الفترات المسدّدة
   const nextDue = addPeriods(start, freq, paid, anchor, cal);
-  const nextDueDate = isoDate(nextDue);
-  const daysToNextDue = daysBetween(nextDue, today);
+  let nextDueDate: string | null = isoDate(nextDue);
+  let daysToNextDue: number | null = daysBetween(nextDue, today);
 
   // نهاية العقد: يدوية أو مستنتجة
   // نهاية العقد تُعدّ من بداية العقد بيومها هي — لا من يوم أول استحقاق
@@ -421,7 +421,23 @@ export function contractState(t: {
     status = "soon";
     statusLabel = graceDaysLeft > 0 ? `فترة سماح — ${graceDaysLeft} يوم` : "فترة سماح";
   }
+  /**
+   * العقد المنتهي لا يُعدّ «مستحقًّا».
+   *
+   * العطل: وحدة عقدها انتهى قبل سنتين وسُدّدت دفعاته كلها كانت تُعرض
+   * «يستحق اليوم» — لأن «القادمة» تقع في الماضي فتدخل نافذة «قريب».
+   * فتُحتسب في «تستحق خلال 7 أيام» وفي فلتر «مستحق»، بينما صفحة فحص
+   * البيانات تقول عنها «عقد منتهٍ لا تُحتسب له دفعات». تناقض بين شاشتين.
+   *
+   * القاعدة: انتهت المدة وسُدّد كل ما استُحقّ ⇒ لا استحقاق قادم، بل عقد
+   * يحتاج تجديدًا — وهذا إجراء آخر يُعرض بلونه.
+   */
+  const termEnded = daysToEnd !== null && daysToEnd < 0;
   let soonTier: ContractState["soonTier"] = null;
+  if (termEnded && unpaid === 0) {
+    nextDueDate = null;
+    daysToNextDue = null;
+  }
   if (status === "ok" && daysToNextDue !== null && daysToNextDue <= soon) {
     status = "soon";
     soonTier = daysToNextDue <= 0 ? "today" : daysToNextDue <= imminent ? "due" : "near";
@@ -436,7 +452,13 @@ export function contractState(t: {
   let expiringSoon = daysToEnd !== null && daysToEnd >= 0 && daysToEnd <= expWin;
   /* «مسدَّد كامل العقد» وحدها تُخفي خطأ الإدخال: مكتب استلم 3 دفعات من 4
      رأى «كامل» لأن مدة العقد مسجّلة 3. إظهار العدّاد يكشف الخلل في نظرة. */
-  if (fullyPaid && status === "ok") statusLabel = `مسدَّد ${paid} من ${totalPeriods}`;
+  if (fullyPaid && status === "ok") {
+    /* المنتهي المسدَّد: العدّاد وحده يُخفي أن العقد انقضى — والمكتب يحتاج
+       أن يرى أنه يحتاج تجديدًا لا أن يطمئن لأنه «مسدَّد». */
+    statusLabel = termEnded
+      ? `مسدَّد ${paid} من ${totalPeriods} · انتهى العقد منذ ${Math.abs(daysToEnd!)} يومًا`
+      : `مسدَّد ${paid} من ${totalPeriods}`;
+  }
 
   /**
    * الوحدة المُخلاة — تُحسم هنا مرة واحدة لا في عشرين مستهلكًا:
