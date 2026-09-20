@@ -6,6 +6,8 @@ import { issuerMarks } from "@/lib/subscription";
 import { withClockSkewRetry, isTransient } from "@/lib/db-retry";
 import RetryScreen from "@/components/RetryScreen";
 
+export const metadata = { title: "الجمعيات — وثيق" };
+
 export const dynamic = "force-dynamic";
 
 export default async function AssociationPage() {
