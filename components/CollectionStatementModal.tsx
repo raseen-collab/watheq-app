@@ -12,7 +12,7 @@
 // المكتب إن كتبها، و«جزء من القسط» حين كان المبلغ أقل من الدفعة الكاملة.
 // ============================================================
 
-import { useMemo, useState } from "react";
+import {useEffect, useMemo, useState} from "react";
 import { createClient } from "@/lib/supabase-client";
 import { fetchAllRows } from "@/lib/fetch-all";
 import { collectionStatementHTML, type CollectionRow } from "@/lib/documents";
@@ -36,6 +36,12 @@ export default function CollectionStatementModal({ properties, issuer, onClose }
   issuer: any;
   onClose: () => void;
 }) {
+
+  /* قفل تمرير الصفحة خلف النافذة — يُزال حتمًا عند الإغلاق */
+  useEffect(() => {
+    document.body.classList.add("wq-modal-open");
+    return () => document.body.classList.remove("wq-modal-open");
+  }, []);
   const supabase = useMemo(() => createClient(), []);
   const [rangeKey, setRangeKey] = useState("m");
   const [from, setFrom] = useState(RANGES[0].from());

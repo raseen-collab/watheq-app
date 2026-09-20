@@ -23,6 +23,12 @@ export default function ExpensesOverview({ properties, issuer, onClose }: {
   issuer?: any;
   onClose: () => void;
 }) {
+
+  /* قفل تمرير الصفحة خلف النافذة — يُزال حتمًا عند الإغلاق */
+  useEffect(() => {
+    document.body.classList.add("wq-modal-open");
+    return () => document.body.classList.remove("wq-modal-open");
+  }, []);
   const supabase = useMemo(() => createClient(), []);
   const now = new Date();
   const [from, setFrom] = useState(`${now.getFullYear()}-${p2(now.getMonth() + 1)}-01`);

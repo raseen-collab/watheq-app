@@ -35,6 +35,12 @@ const fmtTime = (iso: string | null) => {
 };
 
 export default function ActivityLog({ properties, onClose }: { properties: any[]; onClose: () => void }) {
+
+  /* قفل تمرير الصفحة خلف النافذة — يُزال حتمًا عند الإغلاق */
+  useEffect(() => {
+    document.body.classList.add("wq-modal-open");
+    return () => document.body.classList.remove("wq-modal-open");
+  }, []);
   const supabase = createClient();
   const [rows, setRows] = useState<Entry[]>([]);
   const [names, setNames] = useState<Record<string, string>>({});

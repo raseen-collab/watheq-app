@@ -51,6 +51,12 @@ export default function DebtFollowUp({ properties, orgName, onClose }: {
   orgName?: string;
   onClose: () => void;
 }) {
+
+  /* قفل تمرير الصفحة خلف النافذة — يُزال حتمًا عند الإغلاق */
+  useEffect(() => {
+    document.body.classList.add("wq-modal-open");
+    return () => document.body.classList.remove("wq-modal-open");
+  }, []);
   const supabase = useMemo(() => createClient(), []);
   const [rows, setRows] = useState<Row[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
