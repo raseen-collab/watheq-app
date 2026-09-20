@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import PWARegister from "@/components/PWARegister";
+import FloatingMenu from "@/components/FloatingMenu";
 import HelpAssistant from "@/components/HelpAssistant";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase-server";
@@ -98,28 +99,8 @@ async function FloatingLinks() {
     /* تجاهل */
   }
 
-  return (
-    // الموضع والحجم في globals.css (.wq-fab): على الجوال صفٌّ واحد صغير فوق منطقة
-    // الحافة الآمنة، حتى لا تغطي الأزرار الثلاثة أسطر المستأجرين ولا يخفيها مؤشر آيفون
-    <div className="wq-fab">
-      {isAdmin && (
-        <Link href="/admin" title="لوحة الإدارة"
-          style={{ ...pill, background: "#0E3A37", color: "#E7C877", border: "1px solid rgba(231,200,119,.35)" }}>
-          ◆ الإدارة
-        </Link>
-      )}
-      {uid && (
-        <Link href="/dashboard/advisor" title="المستشار الذكي — إجابات استرشادية"
-          style={{ ...pill, background: "#B8791F", color: "#fff", border: "1px solid rgba(255,255,255,.2)" }}>
-          💬 المستشار
-        </Link>
-      )}
-      {/* نصّ الزر وaria يعيد paint() كتابتهما قبل الترطيب حسب الوضع المحفوظ */}
-      {/* التسمية تُرسم بـCSS من data-theme (انظر .wq-theme-btn في globals.css):
-          لا نصّ يكتبه سكربت على عقدة يملكها React، فلا تعارض ترطيب أصلًا. */}
-      <button type="button" className="wq-theme-btn" data-wq-theme aria-label="تبديل الوضع الليلي/النهاري" />
-    </div>
-  );
+  /* زرّ واحد بقائمة بدل خمسة — انظر components/FloatingMenu.tsx */
+  return <FloatingMenu isAdmin={isAdmin} signedIn={!!uid} />;
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
@@ -140,7 +121,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <FloatingLinks />
         {/* مساعد الموقع — يجيب من قاعدة معرفة مكتوبة، بلا نموذج ولا تكلفة */}
         <HelpAssistant />
-        <script dangerouslySetInnerHTML={{ __html: THEME_TOGGLE }} />
         <script dangerouslySetInnerHTML={{ __html: fabScroll }} />
       </body>
     </html>

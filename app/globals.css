@@ -160,7 +160,8 @@ html[data-theme="dark"] .wq-theme-btn {
   body.wq-help-open .wq-chat-fab { transform: translateY(140%); opacity: 0; pointer-events: none; }
   .wq-fab a, .wq-fab button { padding: 7px 11px !important; font-size: .72rem !important; }
   /* مساحة أسفل الصفحة حتى يمكن تمرير آخر صف فوق الأزرار */
-  body { padding-bottom: calc(64px + env(safe-area-inset-bottom, 0px)); }
+  /* الزرّ العائم يغطّي آخر سطر من الصفحة — مساحة بارتفاعه تُنهي ذلك */
+  body { padding-bottom: calc(80px + env(safe-area-inset-bottom, 0px)); }
 }
 /* ===== الوضع المثبَّت: الحافة الآمنة على كل الجهات =====
    العيب الذي شُكي منه («الشاشة كأنها مقصوصة»): الحشو العلوي كان على
@@ -221,3 +222,66 @@ html[data-theme="dark"] .wq-theme-btn::after { content: "☀ نهاري"; }
     padding-bottom: calc(0.5rem + env(safe-area-inset-bottom, 0px));
   }
 }
+
+/* ===== الوضع الليلي: الخلفيات المثبّتة في الكود =====
+   عشرات المواضع تستعمل ألوانًا فاتحة مكتوبة مباشرة (bg-[#FBF1DF] وغيرها)
+   بلا نسخة داكنة. النتيجة قِيست: نصّ فاتح على خلفية فاتحة بنسبة تباين
+   1.18 — قائمة ملاحظات العقار كانت غير مقروءة إطلاقًا ليلًا.
+
+   تصحيحها في كل ملف يعني خمسين تعديلًا؛ وقاعدة واحدة تُترجم كل لون
+   باستيل إلى نظيره الداكن مع إبقاء لون النص كما صُمّم. */
+html[data-theme="dark"] {
+  /* أصفر/ذهبي فاتح */
+  [class*="bg-[#FBF1DF]"], [class*="bg-[#FDF6E3]"], [class*="bg-[#FDECD2]"],
+  [class*="bg-[#FDF0DC]"] { background-color: #2B2413 !important; }
+  /* أحمر فاتح */
+  [class*="bg-[#FBE9E7]"], [class*="bg-[#FEE2E2]"], [class*="bg-[#FFF5F4]"]
+    { background-color: #2E1A18 !important; }
+  /* أخضر فاتح */
+  [class*="bg-[#E6F4EC]"] { background-color: #122E24 !important; }
+  /* رمادي/أزرق فاتح */
+  [class*="bg-[#F1F5F9]"], [class*="bg-[#F8FAFC]"], [class*="bg-[#EEF1F4]"],
+  [class*="bg-[#EEF4FB]"], [class*="bg-[#eef2f7]"] { background-color: #16292B !important; }
+  /* بنفسجي فاتح */
+  [class*="bg-[#F1EBFC]"] { background-color: #241F33 !important; }
+  /* أبيض شبه نقي في القوائم والصفوف */
+  [class*="bg-[#fafaf8]"], [class*="bg-[#FAF7EF]"], [class*="bg-white/70"]
+    { background-color: var(--d-soft) !important; }
+
+  /* نصوص داكنة مثبّتة على خلفيات صارت داكنة */
+  [class*="text-[#33413d]"] { color: var(--d-text) !important; }
+  [class*="text-[#475569]"], [class*="text-[#5C6B67]"] { color: var(--d-muted) !important; }
+  [class*="text-[#a5322c]"] { color: var(--d-late) !important; }
+  [class*="text-[#137a50]"] { color: var(--d-paid) !important; }
+  [class*="text-[#9A4B00]"], [class*="text-[#9A5B00]"], [class*="text-[#8a5a11]"],
+  [class*="text-goldInk"] { color: var(--d-gold) !important; }
+  [class*="text-[#5B21B6]"] { color: #C4B5FD !important; }
+  [class*="text-[#991B1B]"] { color: #FCA5A5 !important; }
+}
+
+/* ===== الوضع الفاتح: تباين الأزرار الأساسية =====
+   الذهبي #B8791F مع نص أبيض = 3.63، والأخضر #1FA855 = 3.09 — كلاهما
+   دون معيار AA (4.5). تغميقهما درجةً يرفعهما فوقه بلا تغيير الهوية. */
+.btn-gold { background-color: #9A6314 !important; }
+.btn-wa   { background-color: #157F3F !important; }
+
+/* الزرّ العائم الموحَّد: زاوية واحدة، وفوق الحافة الآمنة */
+.wq-fab {
+  position: fixed;
+  inset-inline-end: 1rem;
+  bottom: calc(1rem + env(safe-area-inset-bottom, 0px));
+  z-index: 40;
+  display: block;
+}
+@media (min-width: 1024px) {
+  .wq-fab { inset-inline-end: 1.5rem; bottom: 1.5rem; }
+}
+/* يختفي أثناء التمرير لأسفل ويعود عند التوقّف */
+body.wq-scrolling .wq-fab { transform: translateY(140%); opacity: 0; pointer-events: none; }
+.wq-fab { transition: transform .2s ease, opacity .2s ease; }
+
+/* مربعات الاختيار والراديو: كانت بالأزرق الافتراضي للمتصفح وسط لوحة
+   خضراء/ذهبية. accent-color سطر واحد يطبّق الهوية بلا تنسيق يدوي. */
+input[type="checkbox"], input[type="radio"] { accent-color: #0E3A37; }
+html[data-theme="dark"] input[type="checkbox"],
+html[data-theme="dark"] input[type="radio"] { accent-color: #E7C877; }
