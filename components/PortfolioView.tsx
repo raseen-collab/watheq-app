@@ -155,7 +155,7 @@ export default function PortfolioView({ properties, windows }: {
       <div className="bg-white border border-line rounded-2xl p-4 mb-4">
         <div className="flex items-baseline justify-between gap-3 flex-wrap mb-3">
           <div>
-            <div className="text-xs text-muted">الدخل المتوقع خلال 12 شهرًا — كل العقارات</div>
+            <div className="text-xs text-muted">المتبقي من عقودك خلال 12 شهرًا — كل العقارات</div>
             <div className="text-2xl font-bold text-deep tabular-nums">
               {sar(Math.round(expected12))} <span className="text-sm font-normal text-muted">ريال</span>
             </div>
@@ -163,11 +163,15 @@ export default function PortfolioView({ properties, windows }: {
           <div className="text-xs text-muted">
             محصَّل هذا الشهر <b className="text-[#137a50] tabular-nums">{collectedTotal === null ? "…" : sar(Math.round(collectedTotal))}</b>
             {expected12 > 0 && collectedTotal !== null && (
-              <span> · {Math.round((collectedTotal / (expected12 / 12)) * 100)}٪ من متوسط الشهر</span>
+              /* النسبة كانت تبلغ آلاف المئات حين يكون المقام صغيرًا (عقود
+                 أوشكت تنتهي) — رقمٌ بلا معنى. نعرضها فقط حين تكون مفهومة. */
+              (() => { const avg = expected12 / 12; const pc = avg > 0 ? Math.round((collectedTotal / avg) * 100) : 0;
+                return avg > 0 && pc <= 300 ? <span> · {pc}٪ من متوسط الشهر</span> : null; })()
             )}
           </div>
         </div>
-        <MonthlyCollection propertyIds={properties.map((p: any) => p.id)} months={12} />
+        {/* ستة أشهر افتراضيًّا: عشرة أشهر صفرية تأخذ مساحة الشهرين الحيَّين */}
+        <MonthlyCollection propertyIds={properties.map((p: any) => p.id)} months={6} />
         <p className="text-[11px] text-muted mt-2 leading-relaxed">
           المتوقع يُحسب من جدول دفعات كل وحدة مشغولة — لا من الإيجار مضروبًا في اثني عشر،
           فالعقد القصير ينتهي عند نهايته.

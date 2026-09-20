@@ -3,7 +3,7 @@
 // وثيق — دليل الحالات: ماذا تعني كل حالة، وبأرقام هذا المكتب تحديدًا
 // موظف جديد يفتحه مرة ويفهم النمط كله — لا شرح شفهي ولا تخمين.
 // ============================================================
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 export default function StatusLegend({ soonDays, imminentDays, expiringDays = 60, graceDays, scope }: {
   soonDays: number; imminentDays: number; expiringDays?: number; graceDays?: number | null; scope: string;
@@ -23,14 +23,26 @@ export default function StatusLegend({ soonDays, imminentDays, expiringDays = 60
     { dot: "bg-[#64748B]", name: "في التنفيذ", when: "أُحيل إلى محكمة التنفيذ — يُتابَع نظاميًّا لا بالتذكير." },
     { dot: "bg-[#94A3B8]", name: "شاغرة", when: "لا مستأجر — لا تدخل في الحسابات ولا التنبيهات." },
   ];
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open]);
   return (
     <>
       <button type="button" onClick={() => setOpen(true)} title="ماذا تعني الحالات؟"
-        className="text-[11px] border border-line rounded-full w-5 h-5 inline-grid place-items-center text-muted hover:text-deep hover:border-deep ms-1 align-middle">?</button>
+        className="text-xs border border-line rounded-full w-7 h-7 sm:w-5 sm:h-5 inline-grid place-items-center text-muted hover:text-deep hover:border-deep ms-1 align-middle">?</button>
       {open && (
         <div className="fixed inset-0 z-50 bg-black/40 grid place-items-center p-4" onClick={() => setOpen(false)}>
           <div className="bg-white rounded-2xl border border-line max-w-lg w-full p-5" onClick={(e) => e.stopPropagation()}>
-            <h3 className="font-display font-bold text-deep mb-1">دليل حالات المستأجر</h3>
+            {/* كان يُغلق بالنقر خارجه فقط — وقد لا يكتشفه المستخدم.
+                زر ✕ في الأعلى كبقية النوافذ، وEscape يعمل أيضًا. */}
+            <div className="flex items-start justify-between gap-3 mb-1">
+              <h3 className="font-display font-bold text-deep">دليل حالات المستأجر</h3>
+              <button type="button" onClick={() => setOpen(false)} aria-label="إغلاق"
+                className="btn btn-ghost text-sm !px-3 shrink-0">✕</button>
+            </div>
             <p className="text-[11px] text-muted mb-3">الأرقام أدناه هي إعدادات {scope} — تُغيَّر من الإعدادات، والحالات تتحدّث تلقائيًّا.</p>
             <ul className="space-y-2">
               {rows.map((r) => (

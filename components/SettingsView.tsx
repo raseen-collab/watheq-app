@@ -13,7 +13,12 @@ const BOT_USERNAME = "watheqapp_bot"; // غيّره لاسم بوتك من BotFa
 export default function SettingsView({ profile }: { profile: any }) {
   const supabase = createClient();
   const router = useRouter();
+  const initial = JSON.stringify({ ...profile, account_type: normalizeAccountType(profile) });
   const [p, setP] = useState<any>({ ...profile, account_type: normalizeAccountType(profile) });
+  /* الصفحة بطول خمس شاشات وزرّ الحفظ في آخرها: من يغيّر «نوع الحساب»
+     في الأعلى يمرّ بالصفحة كلها ليحفظ. الشريط يظهر عند أول تغيير ويبقى
+     في متناول اليد. */
+  const dirty = JSON.stringify(p) !== initial;
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<{ t: "ok" | "err"; m: string } | null>(null);
   const [testing, setTesting] = useState(false);
@@ -231,7 +236,13 @@ export default function SettingsView({ profile }: { profile: any }) {
             <span className="block text-sm font-semibold mb-1">تنبيه تليجرام قبل الاستحقاق بـ</span>
             <select className="fld" value={p.notify_days_before ?? 5}
               onChange={(e) => setP({ ...p, notify_days_before: e.target.value })}>
-              {[1, 3, 5, 7, 10, 14].map((d) => <option key={d} value={d}>{d} أيام</option>)}
+              {/* «1 أيام» و«14 أيام» خطأ: العربية تفرّق بين المفرد والمثنى و3–10
+                  و11 فأكثر. القاعدة مطبَّقة هنا كما في بقية الواجهة. */}
+              {[1, 2, 3, 5, 7, 10, 14].map((d) => (
+                <option key={d} value={d}>
+                  {d === 1 ? "يوم واحد" : d === 2 ? "يومين" : d <= 10 ? `${d} أيام` : `${d} يومًا`}
+                </option>
+              ))}
             </select>
           </label>
           <label className="flex items-center gap-2 mt-6">
@@ -277,6 +288,16 @@ export default function SettingsView({ profile }: { profile: any }) {
       <button onClick={save} disabled={saving} className="btn btn-gold w-full justify-center">
         {saving ? "..." : "حفظ الإعدادات"}
       </button>
+
+      {dirty && !saving && (
+        <div className="fixed inset-x-0 bottom-0 z-40 bg-deep text-[#EAF1EE] border-t border-goldSoft/30 shadow-2xl"
+          style={{ paddingBottom: "env(safe-area-inset-bottom, 0px)" }}>
+          <div className="max-w-3xl mx-auto flex items-center justify-between gap-3 px-4 py-3">
+            <span className="text-xs">لديك تغييرات لم تُحفظ</span>
+            <button onClick={save} className="btn btn-gold text-sm px-5">حفظ الإعدادات</button>
+          </div>
+        </div>
+      )}
 
       <p className="text-center text-xs text-muted mt-5 leading-relaxed">
         للدعم: <a href="mailto:watheqdocs@gmail.com" className="text-gold font-semibold">watheqdocs@gmail.com</a>

@@ -83,6 +83,21 @@ export default function ExpensesOverview({ properties, issuer, onClose }: {
     setFrom(iso(new Date(n.getFullYear(), n.getMonth() - months + 1, 1)));
     setTo(iso(n));
   };
+  /**
+   * أي شريحة تطابق الفترة الحالية؟
+   *
+   * كانت الأربع تبدو غير مفعّلة عند الفتح رغم أن الحقلين مضبوطان على
+   * «هذا الشهر» — فالحالة الافتراضية لم تكن معكوسة على الشرائح، والفرق
+   * بين النشطة وغيرها كان إطارًا رفيعًا لا يكاد يُرى.
+   */
+  const activePreset = (() => {
+    const n = new Date();
+    for (const m of [1, 3, 6, 12]) {
+      const f = iso(new Date(n.getFullYear(), n.getMonth() - m + 1, 1));
+      if (from === f && to === iso(n)) return m;
+    }
+    return 0;
+  })();
 
   return (
     <div className="fixed inset-0 z-50 bg-black/45 grid place-items-center p-3" onClick={onClose}>
@@ -99,7 +114,9 @@ export default function ExpensesOverview({ properties, issuer, onClose }: {
         <div className="bg-white border-b border-line p-3 space-y-2">
           <div className="flex flex-wrap gap-1.5">
             {([["هذا الشهر", 1], ["آخر 3 أشهر", 3], ["آخر 6 أشهر", 6], ["آخر 12 شهرًا", 12]] as const).map(([l, m]) => (
-              <button key={l} type="button" onClick={() => preset(m)} className="text-xs px-3 py-1.5 rounded-full border border-line text-muted hover:text-deep hover:border-deep">{l}</button>
+              <button key={l} type="button" onClick={() => preset(m)}
+                className={`text-xs px-3 py-2 sm:py-1.5 rounded-full border transition ${
+                  activePreset === m ? "bg-deep text-goldSoft border-deep font-semibold" : "border-line text-muted hover:text-deep hover:border-deep"}`}>{l}</button>
             ))}
           </div>
           <div className="grid sm:grid-cols-5 gap-2">

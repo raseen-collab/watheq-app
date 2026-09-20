@@ -25,7 +25,10 @@ export default function DashboardShell({
   const router = useRouter();
   const days = trialDaysLeft(trialEndsAt);
   // كل لوحة لها مستشارها الخاص، فالمسار نفسه يحدّد اللوحة — بلا استثناءات
-  const onProperty = pathname.includes("/property");
+  /* كان يُحدَّد بوجود «/property» في المسار — فصفحة فحص البيانات
+     (/dashboard/health) والمستشار تُعاملان كجمعية: شريط ناقص وعنوان
+     فرعي «جمعية الملاك» وسط لوحة أملاك. الصواب: الجمعية هي الاستثناء. */
+  const onProperty = !pathname.includes("/association");
   const current = onProperty ? "property" : "association";
 
   async function signOut() {

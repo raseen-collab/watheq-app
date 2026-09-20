@@ -12,6 +12,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase-client";
+import { contractState } from "@/lib/contracts";
 import { waLink, openExternal } from "@/lib/utils";
 
 const sar = (n: number) => Math.round(Number(n) || 0).toLocaleString("en-US");
@@ -65,15 +66,30 @@ export default function DebtFollowUp({ properties, orgName, onClose }: {
   useEffect(() => {
     let alive = true;
     supabase.from("tenants")
-      .select("id,name,unit,phone,carried_debt,debt_since,debt_status,debt_note,status,property_id")
-      .gt("carried_debt", 0).limit(5000)
+      /**
+       * كان يقرأ «carried_debt» وحده فيعطي صفرًا بينما شقة شاغرة عليها
+       * 12,000 موسومة «على المستأجر السابق» — ذاك مبلغ آخر (متأخرات لم
+       * تُرحَّل بعد، تُحسب من حالة العقد لا من عمود). نجلب الشاغرة كذلك
+       * ونحسب متأخراتها هنا.
+       */
+      .select("id,name,unit,phone,carried_debt,debt_since,debt_status,debt_note,status,property_id,rent_amount,payment_frequency,contract_start,contract_periods,paid_periods,partial_amount,calendar,move_out_date")
+      .or("carried_debt.gt.0,status.eq.vacated").limit(5000)
       .then(({ data, error }: any) => {
         if (!alive) return;
         if (error) {
           setErr(/column|does not exist/i.test(error.message) ? "شغّل schema-v36 في قاعدة البيانات أولًا." : error.message);
           setRows([]); return;
         }
-        setRows((data || []).map((x: any) => ({ ...x, property_name: nameOf[x.property_id] || "—" })));
+        /* لكل صفّ: الدين المرحَّل + متأخرات المستأجر السابق إن كانت شاغرة */
+        setRows((data || []).map((x: any) => {
+          const carried = Number(x.carried_debt) || 0;
+          let legacy = 0;
+          if (String(x.status) === "vacated") {
+            try { legacy = Math.max(0, contractState(x as any, {}).legacyArrears || 0); } catch { legacy = 0; }
+          }
+          return { ...x, carried_debt: carried + legacy, _legacy: legacy,
+                   property_name: nameOf[x.property_id] || "—" };
+        }).filter((x: any) => Number(x.carried_debt) > 0));
       });
     return () => { alive = false; };
   }, [supabase, nameOf]);
@@ -166,7 +182,7 @@ export default function DebtFollowUp({ properties, orgName, onClose }: {
             : !shown.length ? (
               <div className="text-center py-10">
                 <div className="text-3xl mb-2">✅</div>
-                <p className="text-sm text-muted">لا ديون مرحَّلة {filter !== "all" ? "بهذه الحالة" : ""}.</p>
+                <p className="text-sm text-muted">{filter !== "all" ? "لا ديون مرحَّلة بهذه الحالة." : "لا ديون مرحَّلة."}</p>
               </div>
             ) : (
               <div className="space-y-2">

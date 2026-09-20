@@ -255,8 +255,11 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
   useEffect(() => {
     try {
       const saved = localStorage.getItem("watheq.units.view");
-      const wide = window.matchMedia("(min-width: 1024px)").matches;
-      setView(saved === "table" || saved === "cards" ? (saved as any) : wide ? "table" : "cards");
+      const wide = window.matchMedia("(min-width: 768px)").matches;
+      /* الجدول على شاشة ضيّقة يُخفي أعمدة الحالة والمبلغ والأزرار خارج
+         الشاشة. فالبطاقات هي الافتراضي تحت 768px حتى لو حُفظ الجدول —
+         والمفتاح ظاهر لمن أرادها. */
+      setView(!wide ? "cards" : (saved === "table" || saved === "cards" ? (saved as any) : "table"));
     } catch { /* */ }
   }, []);
   function pickView(v: "cards" | "table") { setView(v); try { localStorage.setItem("watheq.units.view", v); } catch { /* */ } }
@@ -294,7 +297,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
   useEffect(() => { setTPage(0); }, [filter, q, tSort, activeId]);
   useEffect(() => { setCardsShown(60); }, [filter, q, activeId]);
   const [sort, setSort] = useState<"urgent" | "due" | "amount" | "name">("urgent");
-  const [toast, setToast] = useState<null | { k: "ok" | "err"; m: string }>(null);
+  const [toast, setToast] = useState<null | { k: "ok" | "err"; m: string; undo?: () => void }>(null);
   // الحسابات تعتمد على تاريخ اليوم، وتوقيت السيرفر يختلف عن توقيت الجهاز.
   // لذلك نرسم المحتوى المعتمد على التاريخ بعد الإماهة فقط — يمنع خطأ hydration.
   const [hydrated, setHydrated] = useState(false);
@@ -307,9 +310,11 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
     router.refresh();
     setTimeout(() => setRefreshing(false), 1200);
   }
-  function notify(k: "ok" | "err", m: string) {
-    setToast({ k, m });
-    setTimeout(() => setToast(null), 3600);
+  function notify(k: "ok" | "err", m: string, undo?: () => void) {
+    setToast({ k, m, undo });
+    /* الإشعار القابل للتراجع يبقى أطول: زرّ ✔ ينفّذ بنقرة واحدة وهو ملاصق
+       لزر السداد الجزئي — فالخطأ وارد، والتراجع كان مدفونًا في قائمة ⋯. */
+    setTimeout(() => setToast(null), undo ? 7000 : 3600);
   }
 
   const active = useMemo(() => items.find((p) => p.id === activeId) || null, [items, activeId]);
@@ -405,7 +410,9 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
     } : p));
     notify("ok", r.completed > 0
       ? `سُجّل ${sar(amt)} ريال — اكتملت ${r.completed} دفعة`
-      : `سُجّل ${sar(amt)} ريال كسداد جزئي`);
+      : `سُجّل ${sar(amt)} ريال كسداد جزئي`,
+      /* تراجع بنقرة واحدة لسبع ثوانٍ: أقرب من قائمة ⋯ حين يكون الخطأ طازجًا */
+      may("undo_actions") ? () => undoPayment(t) : undefined);
     });
   }
 
@@ -1087,7 +1094,15 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
   const notes = Array.isArray(p.property_notes) ? p.property_notes : [];
   const allRows: Row[] = allRowsForFilter;
 
-  const counts = allRows.reduce((acc, r) => { acc[r.key] = (acc[r.key] || 0) + 1; return acc; },
+  /* العدّادات كانت تُحسب من كل الصفوف فتبقى «الكل 2 · مستحق 2» بينما
+     البحث لا يُرجع شيئًا — فتبدو الشرائح كاذبة. تُحسب الآن مما يطابق
+     البحث، ويبقى الفلتر نفسه خارج الحساب حتى لا تختفي بقية الشرائح. */
+  const qNeedle = q.trim().toLowerCase();
+  const searched = qNeedle.length >= 2
+    ? allRows.filter(({ t }) => [t.name, t.unit, t.phone, t.national_id, t.contract_no]
+        .some((v) => v && String(v).toLowerCase().includes(qNeedle)))
+    : allRows;
+  const counts = searched.reduce((acc, r) => { acc[r.key] = (acc[r.key] || 0) + 1; return acc; },
     {} as Record<RowKey, number>);
   const lateRows = allRows.filter((r) => r.key === "late" || r.key === "partial");
   const lateCount = lateRows.length;
@@ -1095,6 +1110,17 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
   const monthlyIncome = tenants.reduce((sum, t) =>
     sum + (isVacant(t) ? 0 : (Number(t.rent_amount) || 0) * PERIODS_PER_MONTH[(t.payment_frequency || "monthly") as Frequency]), 0);
   const overdue = lateRows.reduce((s, r) => s + r.st.amountDue, 0);
+  /**
+   * متأخرات الوحدات الشاغرة.
+   *
+   * تُصنَّف «شاغرة» فلا تدخل عدّاد المتأخر — ومالٌ حقيقي على مستأجر سابق
+   * كان يختفي من كل مؤشر: شريط المحفظة، وفلتر «متأخر»، وعمود «ريال متأخر».
+   * لا نخلطه بالمتأخر الجاري (يُطالَب به بطريقة أخرى) بل نعرضه بجانبه.
+   */
+  const vacantArrears = allRows
+    .filter((r) => r.key === "vacant")
+    .reduce((s, r) => s + (r.st.totalOwed || 0), 0);
+  const vacantArrearsCount = allRows.filter((r) => r.key === "vacant" && (r.st.totalOwed || 0) > 0).length;
   /**
    * الدخل السنوي للعقار = مجموع إيجارات الوحدات المشغولة مُقيَّسًا على سنة
    * (شهري ×12، ربع سنوي ×4...). و«المحصَّل منه» يُقرأ من سجل الدفعات
@@ -1129,14 +1155,22 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
     { k: "expiring", label: `تجديد ${counts.expiring || 0}` },
     { k: "litigation", label: `تنفيذ ${counts.litigation || 0}` },
     { k: "vacant", label: `شاغرة ${counts.vacant || 0}` },
+    /* «سداد جزئي» و«منتظم» كانتا شارتين في الجدول بلا فلتر — فمن أراد
+       «أرني من سدّد جزئيًّا» لا يجد طريقًا. تظهران حين توجدان فقط. */
+    ...(counts.partial ? [{ k: "partial" as const, label: `سداد جزئي ${counts.partial}` }] : []),
+    ...(counts.ok ? [{ k: "ok" as const, label: `منتظم ${counts.ok}` }] : []),
   ];
 
   return (
     <div>
       {toast && (
-        <div className={`fixed top-5 left-1/2 -translate-x-1/2 z-[70] rounded-xl px-4 py-3 text-sm font-semibold shadow-lg border ${
+        <div className={`fixed top-5 left-1/2 -translate-x-1/2 z-[70] rounded-xl px-4 py-3 text-sm font-semibold shadow-lg border flex items-center ${
           toast.k === "ok" ? "bg-[#E6F4EC] text-[#137a50] border-[#B7DFC7]" : "bg-[#FBE9E7] text-[#a5322c] border-[#F5C6C2]"}`}>
-          {toast.m}
+          <span>{toast.m}</span>
+          {toast.undo && (
+            <button type="button" onClick={() => { const u = toast.undo!; setToast(null); u(); }}
+              className="ms-3 underline underline-offset-4 font-bold">تراجع</button>
+          )}
         </div>
       )}
 
@@ -1155,21 +1189,33 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
         <div className="bg-deep text-[#EAF1EE] rounded-2xl p-4 mb-5 flex flex-wrap items-center gap-x-6 gap-y-3">
           <div className="font-display font-bold text-sm text-goldSoft">محفظتك · {plural(items.length, "عقار واحد", "عقاران", "عقارات", "عقارًا")}</div>
           <PortfolioStat v={String(portfolio.units)} l={portfolio.units === 1 ? "وحدة" : portfolio.units === 2 ? "وحدتان" : portfolio.units <= 10 ? "وحدات" : "وحدة"} />
-          <PortfolioStat v={String(portfolio.late)} l={portfolio.late === 1 ? "وحدة متأخرة" : "متأخرة"} tone={portfolio.late ? "warn" : undefined} />
-          <PortfolioStat v={sar(portfolio.overdue)} l="ريال متأخر" tone={portfolio.overdue ? "warn" : undefined} />
-          <PortfolioStat v={String(portfolio.due + portfolio.soon)} l={`تستحق خلال ${plural(officeSoon, "يوم واحد", "يومين", "أيام", "يومًا")}`} />
-          <PortfolioStat v={String(portfolio.expiring)} l="عقود تنتهي قريبًا" />
+          {/* ستة مؤشرات أربعة منها أصفار، ومؤشران يكرران المعنى نفسه
+              («0 متأخرة» و«0 ريال متأخر»). نُبقي الحيّ بارزًا ونطوي الصفري
+              في سطر ثانوي — فالعين تجد ما يحتاج إجراءً في نظرة. */}
+          {portfolio.overdue > 0 && (
+            <PortfolioStat v={sar(portfolio.overdue)}
+              l={`ريال متأخر · ${plural(portfolio.late, "وحدة واحدة", "وحدتان", "وحدات", "وحدة")}`} tone="warn" />
+          )}
+          {(portfolio.due + portfolio.soon) > 0 && (
+            <PortfolioStat v={String(portfolio.due + portfolio.soon)} l={`تستحق خلال ${plural(officeSoon, "يوم واحد", "يومين", "أيام", "يومًا")}`} />
+          )}
+          {portfolio.expiring > 0 && <PortfolioStat v={String(portfolio.expiring)} l="عقود تنتهي قريبًا" />}
+          {portfolio.overdue === 0 && (portfolio.due + portfolio.soon) === 0 && portfolio.expiring === 0 && (
+            <div className="text-xs text-[#9FB8B3]">لا متأخرات ولا استحقاقات قريبة ✓</div>
+          )}
           <PortfolioStat v={`${occupancyPct}%`} l={`إشغال (${portfolio.vacant === 0 ? "لا شاغر" : plural(portfolio.vacant, "وحدة شاغرة", "وحدتان شاغرتان", "شاغرة", "شاغرة")})`} tone={portfolio.vacant ? "warn" : undefined} />
           <PortfolioStat v={sar(Math.round(portfolio.monthly))} l="دخل شهري تقريبي" />
         </div>
       )}
 
       <div className="flex flex-wrap items-center gap-2 mb-5">
-        <div className="flex-1 min-w-0">
-          <h1 className="font-display font-bold text-deep text-xl flex items-center gap-2">
-            <span>{typeIcon(p.property_type)}</span> {p.name}
+        <div className="flex-1 min-w-0 basis-full sm:basis-auto">
+          {/* كان ينهار إلى كلمة في كل سطر بجوار قائمة اختيار العقار على
+              الجوال — لأن الحاوية تتقاسم السطر معها بلا حدّ أدنى للعرض. */}
+          <h1 className="font-display font-bold text-deep text-lg sm:text-xl flex items-center gap-2 truncate">
+            <span className="shrink-0">{typeIcon(p.property_type)}</span> <span className="truncate">{p.name}</span>
           </h1>
-          <div className="text-sm text-muted">{typeLabel(p.property_type)}{p.city ? ` · ${p.city}` : ""} · {tenants.length} {ul}</div>
+          <div className="text-xs sm:text-sm text-muted truncate">{typeLabel(p.property_type)}{p.city ? ` · ${p.city}` : ""} · {tenants.length} {ul}</div>
         </div>
 {/* مكتب بمئة عقار: قائمة منسدلة بمئة خيار لا يُبحث فيها — وعلى الجوال
             عجلة طويلة. فوق 12 عقارًا نعرض حقل بحث يصفّي القائمة. */}
@@ -1208,6 +1254,8 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
         <Stat v={collectedThisMonth === null ? "…" : sar(Math.round(collectedThisMonth))} l={`المحصَّل فعليًّا هذا الشهر · المتوقع ${sar(Math.round(monthlyIncome))}`} kpi="income" icon="↑" />
         {(lateCount > 0 || overdue > 0) && <Stat v={sar(overdue)} l={`المتأخر (${lateCount === 0 ? "لا وحدات" : plural(lateCount, "وحدة واحدة", "وحدتان", "وحدات", "وحدة")})`} kpi="overdue" icon="!" onClick={() => { setFilter("late"); setSort("amount"); }} active={filter === "late"} />}
+        {/* مال على مستأجرين سابقين — كان يختفي من كل المؤشرات */}
+        {vacantArrears > 0 && <Stat v={sar(vacantArrears)} l={`على مستأجرين سابقين (${plural(vacantArrearsCount, "وحدة واحدة", "وحدتان", "وحدات", "وحدة")})`} kpi="overdue" icon="↩" onClick={() => { setFilter("vacant"); setSort("amount"); }} active={filter === "vacant"} />}
         {((counts.due || 0) + (counts.soon || 0)) > 0 && <Stat v={String((counts.due || 0) + (counts.soon || 0))} l={`تستحق خلال ${plural(windowsOf(active).soonDays, "يوم واحد", "يومين", "أيام", "يومًا")}`} kpi="soon" icon="●" onClick={() => setFilter("soon")} active={filter === "soon"} />}
         {(counts.expiring || 0) > 0 && <Stat v={String(counts.expiring || 0)} l="عقود تنتهي قريبًا" kpi="expiring" icon="↻" onClick={() => setFilter("expiring")} active={filter === "expiring"} />}
       </div>
@@ -1221,14 +1269,20 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
         /* النسبة الحقيقية قد تتجاوز 100% (سداد سنوي مقدَّم، أو إدخال دفعات سنوات
            سابقة). قصّها عند 100 كان يعرض «100%» بينما المحصَّل 141% — رقم كاذب.
            الشريط يُقصّ بصريًّا، والنص يقول الحقيقة. */
-        const pctOfAnnual = annualIncome > 0 ? Math.round((col / annualIncome) * 100) : 0;
+        /* المقام كان «المتبقي من العقود» بينما البسط «ما حُصّل في الفترة» —
+           ومنه نسب بلا معنى (650% · 3794%) حين تقترب العقود من نهايتها.
+           الصواب: قارن المحصَّل بالإيجار التعاقدي للفترة نفسها. */
+        const periodMonths = incPeriod === "month" ? 1 : incPeriod === "12m" ? 12
+          : (new Date().getMonth() + 1);                 // من يناير حتى الشهر الحالي
+        const expectedForPeriod = monthlyIncome * periodMonths;
+        const pctOfAnnual = expectedForPeriod > 0 ? Math.round((col / expectedForPeriod) * 100) : 0;
         const barPct = Math.min(100, pctOfAnnual);
         const label = incPeriod === "year" ? `هذه السنة (${new Date().getFullYear()})` : incPeriod === "month" ? "هذا الشهر" : "آخر 12 شهرًا";
         return (
           <div className="bg-white border border-line rounded-xl px-4 py-2.5 mb-4 flex items-center justify-between gap-3 flex-wrap">
             <div className="text-sm">
               المحصَّل {label}: <b className="tabular-nums text-[#137a50]">{collectedInPeriod === null ? "…" : sar(Math.round(col))}</b> ريال
-              <span className="text-xs text-muted"> من متوقَّع {sar(Math.round(annualIncome))} سنويًّا</span>
+              <span className="text-xs text-muted"> · المتبقي من العقود خلال 12 شهرًا {sar(Math.round(annualIncome))}</span>
             </div>
             <div className="flex items-center gap-2">
               <div className="h-2 w-24 bg-paper2 rounded-full overflow-hidden">
@@ -1250,9 +1304,11 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       <div className="grid grid-cols-1 gap-5 items-start">
         <div className="bg-white border border-line rounded-2xl shadow-sm">
           <div className="flex items-center justify-between border-b border-line px-5 py-4 gap-2 flex-wrap">
-            <div className="hidden lg:inline-flex items-center gap-0.5 border border-line rounded-lg p-0.5 me-2 align-middle text-[11px]">
-              <button type="button" onClick={() => pickView("table")} className={`px-2.5 py-1 rounded-md ${view === "table" ? "bg-deep text-goldSoft" : "text-muted hover:text-deep"}`} title="جدول: صف لكل وحدة">☰ جدول</button>
-              <button type="button" onClick={() => pickView("cards")} className={`px-2.5 py-1 rounded-md ${view === "cards" ? "bg-deep text-goldSoft" : "text-muted hover:text-deep"}`} title="بطاقات">▦ بطاقات</button>
+            {/* كان مخفيًّا تحت 1024px: من حفظ «جدول» مرة يبقى حبيسه بلا مخرج،
+                والجدول على 400px يحتاج تمريرًا أفقيًّا بثلاثة أضعاف العرض. */}
+            <div className="inline-flex items-center gap-0.5 border border-line rounded-lg p-0.5 me-2 align-middle text-[11px]">
+              <button type="button" onClick={() => pickView("table")} className={`px-3 py-2 sm:py-1 rounded-md ${view === "table" ? "bg-deep text-goldSoft" : "text-muted hover:text-deep"}`} title="جدول: صف لكل وحدة">☰ جدول</button>
+              <button type="button" onClick={() => pickView("cards")} className={`px-3 py-2 sm:py-1 rounded-md ${view === "cards" ? "bg-deep text-goldSoft" : "text-muted hover:text-deep"}`} title="بطاقات">▦ بطاقات</button>
             </div>
             {view === "table" && (
               <div className="hidden lg:inline-flex items-center gap-0.5 border border-line rounded-lg p-0.5 me-2 align-middle text-[11px]">
@@ -1315,7 +1371,9 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
               <div className="flex flex-wrap gap-1.5 w-full">
                 {chips.map((c) => (
                   <button key={c.k} onClick={() => setFilter(c.k)}
-                    className={`text-xs font-semibold rounded-lg px-2.5 py-1 border transition ${
+                    /* كانت 26px — أصغر من الحد الموصى به للمس (44px)، فيخطئ
+                       الإبهام على الجوال. 40px مع الحشو الرأسي كافية. */
+                    className={`text-xs font-semibold rounded-lg px-3 py-2.5 sm:py-1 min-h-[40px] sm:min-h-0 border transition ${
                       filter === c.k ? "bg-deep text-[#F6F1E4] border-deep" : "bg-white text-deep border-line hover:border-goldSoft"}`}>
                     {c.label}
                   </button>
@@ -1324,7 +1382,10 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
             </div>
           )}
 
-          <div className="p-4 flex flex-col gap-2">
+          {/* بطاقة واحدة ممتدة على 1150px تترك ~700px فراغًا بين الاسم
+              والأزرار. عمودان على الشاشة الواسعة يملآن العرض ويقصّران
+              المسافة التي تقطعها العين بين المعلومة وفعلها. */}
+          <div className="p-4 grid grid-cols-1 xl:grid-cols-2 gap-2 items-start">
             {!tenants.length ? (
               <div className="text-center text-muted py-8 text-sm">
                 لا توجد وحدات بعد.
@@ -1366,7 +1427,10 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
               const label = (key: RowKey) => ({ incomplete: "بيانات ناقصة", late: "متأخر", partial: "سداد جزئي", due: "مستحق", soon: "قريب", expiring: "ينتهي قريبًا", litigation: "تنفيذ", vacant: "شاغرة", ok: "منتظم" })[key];
               return (
                 <div className="border border-line rounded-xl overflow-hidden">
-                  <div className="overflow-x-auto max-h-[70vh] overflow-y-auto">
+                  {/* كان تمريرًا داخل تمرير الصفحة: مع 60–90 وحدة يصير
+                      التنقل متعبًا خصوصًا على اللمس. الآن صفحات من 25 صفًّا،
+                      ويبقى رأس الجدول لاصقًا داخل كل صفحة. */}
+                  <div className="overflow-x-auto">
                     <table className="w-full text-sm">
                       {/* الترويسة تثبت عند التمرير: مع 300 وحدة لا تعرف أي عمود تقرأ بدونها */}
                       <thead className="bg-paper sticky top-0 z-10 shadow-[0_1px_0_var(--tw-shadow-color)] shadow-line">
@@ -1470,7 +1534,14 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                       <tfoot className="bg-paper border-t border-line text-xs text-muted">
                         <tr>
                           <td className="px-3 py-2" colSpan={2}>عرض {slice.length} من {rows.length}{rows.length !== allRows.length ? ` (من ${allRows.length})` : ""}</td>
-                          <td className="px-3 py-2 whitespace-nowrap">الدخل المتوقع: {sar(Math.round(annualIncome))} سنويًّا · {sar(Math.round(monthlyIncome))} شهريًّا</td>
+                          {/* رقمان مختلفان كانا يُعرضان كأنهما واحد: «المتوقع سنويًّا» هو المتبقي
+     من جداول العقود خلال 12 شهرًا (فالعقد الذي أوشك ينتهي يساهم بما بقي
+     منه)، و«شهريًّا» هو معدَّل الإيجار التعاقدي. جمعهما بفاصلة أوحى بأن
+     الأول = الثاني × 12 — وهو ليس كذلك. نفصلهما بمسمّييهما. */}
+                          <td className="px-3 py-2 whitespace-nowrap">
+                            المتبقي من العقود خلال 12 شهرًا: <b>{sar(Math.round(annualIncome))}</b>
+                            <span className="text-muted"> · الإيجار التعاقدي {sar(Math.round(monthlyIncome))} شهريًّا</span>
+                          </td>
                           <td className="px-3 py-2 whitespace-nowrap" colSpan={2}>{nearest ? `أقرب استحقاق: ${nearest}` : "—"}</td>
                           <td className={`px-3 py-2 text-left font-bold ${totalDue > 0 ? "text-late" : ""}`}>{totalDue > 0 ? <>{sar(totalDue)}<div className="text-[10px] font-normal text-muted">إجمالي المتأخر</div></> : "—"}</td>
                           <td></td>
@@ -1566,11 +1637,18 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                         /* دفعة بضغطة واحدة بلا تأكيد = أخطاء لا تُكتشف إلا في كشف المالك. نسمّي المبلغ والمستأجر والوحدة قبل التسجيل */
                         const amt = Number(t.rent_amount) || 0;
                         if (confirm(`تسجيل استلام دفعة كاملة؟\n\n${sar(amt)} ريال من ${t.name} — ${ul} ${t.unit || "—"} — ${active?.name}\n\nتاريخ السداد: اليوم (${today()})\nلتاريخ مختلف أو مرجع حوالة استعمل زر ½.\n\n(تُسجَّل باسمك في سجل الحركات المالية)`)) recordPayment(t, amt);
-                      }}>&#10004;</QuickBtn>
-                      <QuickBtn title="سداد جزئي" cls="btn-ghost" onClick={() => setPaying(t)}>&#189;</QuickBtn>
-                      <a href={remindLink(t)} target="_blank" rel="noreferrer" className="btn btn-wa text-xs px-2.5" title="إرسال تذكير واتساب" onClick={(e) => { e.preventDefault(); openExternal(remindLink(t)); }}>&#128172;</a>
+                      /* في البطاقات نكتب الفعل نصًّا: «½» غامضة تمامًا على
+                         الجوال حيث لا تلميح عند اللمس. وفي الجدول يبقى الرمز
+                         لضيق العمود. */
+                      }}><span className="whitespace-nowrap">&#10004; كامل</span></QuickBtn>
+                      <QuickBtn title="سداد جزئي" cls="btn-ghost" onClick={() => setPaying(t)}><span className="whitespace-nowrap">&#189; جزئي</span></QuickBtn>
+                      <a href={remindLink(t)} target="_blank" rel="noreferrer" className="btn btn-wa text-xs px-2.5" title="إرسال تذكير واتساب" onClick={(e) => { e.preventDefault(); openExternal(remindLink(t)); }}><span className="whitespace-nowrap">&#128172; تذكير</span></a>
                       {t.phone && <a href={`tel:${String(t.phone).replace(/[^0-9+]/g, "")}`} className="btn btn-ghost text-xs px-2.5 sm:hidden" title="اتصال مباشر">&#128222;</a>}
-                      <QuickBtn title="إصدار فاتورة" cls="btn-ghost" onClick={() => openInvoice(t)}>&#128196;</QuickBtn>
+                      {/* كان 📄 أبيضَ على خلفية بيضاء فيكاد يختفي — الإيموجي لا يرث لون
+                          النص. الأيقونة ترثه فتظهر في الوضعين. */}
+                      <QuickBtn title="إصدار فاتورة" cls="btn-ghost" onClick={() => openInvoice(t)}>
+                        <span className="whitespace-nowrap"><Icon name="doc" /> فاتورة</span>
+                      </QuickBtn>
                       {st.unpaid > 0 && <button className="btn btn-gold text-xs" onClick={() => makeNotice(t)}>نموذج إشعار</button>}
                       {needsRenewal(t) && <button className="btn text-xs" style={{ background: "#0E3A37", color: "#F6F1E4" }} onClick={() => setRenewing(t)}>تجديد</button>}
                     </>
@@ -2140,9 +2218,13 @@ function MenuBtn({ label, items, badge = 0 }: {
       setPos({ top: below > H + 12 ? r.bottom + 4 : Math.max(8, r.top - H - 4), left: Math.max(8, left) });
     }
     const close = () => setOpen(false);
+    /* Escape سلوك متوقَّع في كل تطبيق ويب — وكان لا يفعل شيئًا،
+       والقائمة تُغلق بالنقر خارجها فقط وقد لا يكتشفه المستخدم. */
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") { setOpen(false); ref.current?.focus(); } };
     window.addEventListener("scroll", close, true);
     window.addEventListener("resize", close);
-    return () => { window.removeEventListener("scroll", close, true); window.removeEventListener("resize", close); };
+    window.addEventListener("keydown", onKey);
+    return () => { window.removeEventListener("scroll", close, true); window.removeEventListener("resize", close); window.removeEventListener("keydown", onKey); };
   }, [open, items.length]);
   if (!items.length) return null;
   return (
@@ -2266,9 +2348,11 @@ function AddNote({ onAdd, unitWord }: {
             </button>
           ))}
         </div>
+        {/* كان حقل تاريخ خامًا يعرض dd/mm/yyyy بالإنجليزية وسط واجهة عربية
+            تعرض التواريخ بالهجري. DateField يعطي التقويمين بمسمّياتهما. */}
         <label className="flex items-center gap-1.5 text-[11px] text-muted ms-auto">
           ذكّرني في
-          <input className="fld !py-1 !text-xs !w-36" type="date" value={due} onChange={(e) => setDue(e.target.value)} />
+          <span className="w-44"><DateField id="note-due" value={due} onChange={(v) => setDue(v)} /></span>
         </label>
       </div>
       <p className="text-[10px] text-muted mt-1.5">
@@ -2278,10 +2362,13 @@ function AddNote({ onAdd, unitWord }: {
   );
 }
 
-function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
+function Field({ label, hint, children }: { label: React.ReactNode; hint?: string; children: React.ReactNode }) {
   return (
     <label className="block">
-      <span className="block text-sm font-semibold mb-1">{label} {hint && <span className="text-muted font-normal text-xs">— {hint}</span>}</span>
+      {/* كان العنوان والشرح في سطر واحد وبحجم واحد، فيصير النموذج جدارًا
+          من النص. الشرح الآن سطر أصغر وأفتح تحت العنوان. */}
+      <span className="block text-sm font-semibold mb-0.5">{label}</span>
+      {hint && <span className="block text-[11px] text-muted font-normal mb-1 leading-relaxed">{hint}</span>}
       {children}
     </label>
   );
@@ -2399,7 +2486,21 @@ function PropertyModal({ open, initial, orgName, ownerNames = [], officeSoon = 1
           onClick={() => onSubmit(d)}>حفظ</button>
       </div>
       {!(d.name || "").trim() && <p className="text-xs text-late mt-3 text-center">اسم العقار مطلوب لتفعيل الحفظ.</p>}
-      {onDelete && <div className="text-center mt-3"><button type="button" className="text-late text-sm font-semibold underline" onClick={onDelete}>حذف العقار</button></div>}
+      {/* كان رابطًا أحمر ملاصقًا لزرّي حفظ وإلغاء بلا فاصل — وحذف العقار
+          يأخذ وحداته وعقوده ودفعاته. نفس معالجة «حذف الحساب» في الإعدادات:
+          قسم مستقلّ بإطار وتحذير وتوجيه لتصدير نسخة أولًا. */}
+      {onDelete && (
+        <div className="mt-6 border border-[#F5C6C2] bg-[#FFF5F4] rounded-xl p-3.5">
+          <div className="text-sm font-bold text-[#a5322c] mb-1">⚠️ منطقة خطرة</div>
+          <p className="text-xs text-[#7a3b36] leading-relaxed mb-3">
+            حذف العقار يأخذ معه كل وحداته وعقودها ودفعاتها ومصروفاتها وملاحظاتها — بلا رجعة.
+            إن أردت نسخة، صدّرها أولًا من الإعدادات.
+          </p>
+          <button type="button" className="btn text-xs" style={{ background: "#a5322c", color: "#fff" }} onClick={onDelete}>
+            حذف العقار نهائيًّا
+          </button>
+        </div>
+      )}
     </Shell>
   );
 }
@@ -2440,7 +2541,10 @@ function TenantModal({ open, initial, unitWord, error, saving, onClose, onSubmit
       <p className="text-sm text-muted mb-4">أدخل تاريخ البداية والدورة والقيمة — والنظام يستنتج بقية التواريخ والدفعات تلقائيًّا.</p>
       <div className="space-y-3">
         <div className="grid grid-cols-2 gap-3">
-          <Field label="اسم المستأجر"><input className="fld" value={d.name || ""} onChange={(e) => setD({ ...d, name: e.target.value })} /></Field>
+          <Field label={<>اسم المستأجر <span className="text-late" title="حقل مطلوب">*</span></>}>
+            <input id="tenant-name" className={`fld ${String(d.status) !== "vacated" && !(d.name || "").trim() ? "border-late" : ""}`}
+              value={d.name || ""} onChange={(e) => setD({ ...d, name: e.target.value })} />
+          </Field>
           <Field label={`رقم ${unitWord}`}><input className="fld" value={d.unit || ""} onChange={(e) => setD({ ...d, unit: e.target.value })} placeholder="101" /></Field>
         </div>
         <div className="grid grid-cols-2 gap-3">
@@ -2573,7 +2677,16 @@ function TenantModal({ open, initial, unitWord, error, saving, onClose, onSubmit
           style={!(d.name || "").trim() ? { opacity: .5, cursor: "not-allowed" } : undefined}
           onClick={() => onSubmit(d)}>حفظ</button>
       </div>
-      {String(d.status) !== "vacated" && !(d.name || "").trim() && <p className="text-xs text-late mt-3 text-center">اسم المستأجر مطلوب لتفعيل الحفظ.</p>}
+      {String(d.status) !== "vacated" && !(d.name || "").trim() && (
+        /* الزر في أسفل نموذج من خمسة عشر حقلًا والحقل في أعلاه — فمن يصل
+           للأسفل ويجده رماديًّا لا يعرف السبب. الآن ينقله السطر إليه. */
+        <p className="text-xs text-late mt-3 text-center">
+          <button type="button" className="underline underline-offset-4 font-semibold"
+            onClick={() => { const el = document.getElementById("tenant-name"); el?.scrollIntoView({ behavior: "smooth", block: "center" }); (el as HTMLInputElement)?.focus(); }}>
+            اسم المستأجر مطلوب — اضغط للانتقال إليه
+          </button>
+        </p>
+      )}
     </Shell>
   );
 }
