@@ -100,18 +100,21 @@ export default function ExpensesOverview({ properties, issuer, onClose }: {
   })();
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/45 grid place-items-center p-3" onClick={onClose}>
+    <div className="fixed inset-0 z-50 bg-black/45 grid place-items-center p-2 sm:p-3" onClick={onClose}>
       <div className="bg-paper rounded-2xl border border-line w-full max-w-5xl max-h-[92vh] flex flex-col overflow-hidden" onClick={(e) => e.stopPropagation()}>
-        <div className="bg-deep text-[#EAF1EE] px-5 py-3 flex items-center justify-between">
+        <div className="bg-deep text-[#EAF1EE] px-4 sm:px-5 py-3 flex items-center justify-between gap-3 shrink-0">
           <div>
-            <div className="font-display font-bold text-goldSoft">💸 مصروفات المكتب — كل العقارات</div>
-            <div className="text-[11px] opacity-75">فلترة بالمالك والفترة والتصنيف · جاهزة للطباعة</div>
+            <div className="font-display font-bold text-goldSoft text-sm sm:text-base">💸 مصروفات المكتب</div>
+            {/* السطر الشارح يزاحم زرّ الإغلاق على الجوال */}
+            <div className="text-[11px] opacity-75 hidden sm:block">كل العقارات · فلترة بالمالك والفترة والتصنيف · جاهزة للطباعة</div>
           </div>
-          <button className="text-sm opacity-80 hover:opacity-100" onClick={onClose}>إغلاق ✕</button>
+          <button className="text-sm opacity-80 hover:opacity-100 shrink-0 px-2 py-1" onClick={onClose} aria-label="إغلاق">✕</button>
         </div>
 
         {/* الفلاتر */}
-        <div className="bg-white border-b border-line p-3 space-y-2">
+        {/* على الجوال تشغل الفلاتر نصف الشاشة وتُبقي للجدول أسطرًا قليلة.
+            تُمرَّر مع المحتوى بدل أن تثبت فوقه. */}
+        <div className="bg-white border-b border-line p-3 space-y-2 shrink-0 max-h-[38vh] overflow-y-auto sm:max-h-none sm:overflow-visible">
           <div className="flex flex-wrap gap-1.5">
             {([["هذا الشهر", 1], ["آخر 3 أشهر", 3], ["آخر 6 أشهر", 6], ["آخر 12 شهرًا", 12]] as const).map(([l, m]) => (
               <button key={l} type="button" onClick={() => preset(m)}
@@ -211,9 +214,15 @@ export default function ExpensesOverview({ properties, issuer, onClose }: {
           )}
         </div>
 
-        <div className="border-t border-line bg-white p-3 flex gap-2">
-          <button className="btn btn-gold" onClick={print} disabled={!shown.length}>🖨️ طباعة السجل</button>
-          <span className="text-[11px] text-muted self-center">
+        {/* بلا shrink-0 كان التذييل يُضغط إلى ارتفاع صفر مع المحتوى الطويل
+            فيختفي زرّ الطباعة كليًّا. والنصّ الشارح بجانبه يزاحم الزرّ على
+            الجوال — فينتقل تحته هناك ويبقى بجانبه على الشاشة الأوسع. */}
+        <div className="border-t border-line bg-white p-3 shrink-0 flex flex-col sm:flex-row gap-2 sm:items-center"
+          style={{ paddingBottom: "calc(0.75rem + env(safe-area-inset-bottom, 0px))" }}>
+          <button className="btn btn-gold w-full sm:w-auto justify-center shrink-0" onClick={print} disabled={!shown.length}>
+            🖨️ طباعة السجل
+          </button>
+          <span className="text-[11px] text-muted leading-relaxed">
             «تُخصم من المالك» تدخل في صافيه بتقرير المالك · «على المكتب» لا تدخل.
           </span>
         </div>
