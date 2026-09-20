@@ -4,6 +4,8 @@ import Link from "next/link";
 import SettingsView from "@/components/SettingsView";
 import { getOffice } from "@/lib/office";
 
+export const metadata = { title: "الإعدادات — وثيق" };
+
 export const dynamic = "force-dynamic";
 
 /**
