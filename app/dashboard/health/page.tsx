@@ -3,6 +3,8 @@ import { redirect } from "next/navigation";
 import DataHealth from "@/components/DataHealth";
 import { fetchAllRows } from "@/lib/fetch-all";
 
+export const metadata = { title: "فحص سلامة البيانات — وثيق" };
+
 export const dynamic = "force-dynamic";
 
 /** فحص سلامة البيانات — يجد الخلل قبل أن يكتشفه المكتب في تقرير مالك */
