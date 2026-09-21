@@ -99,6 +99,19 @@ const ROW_META: Record<RowKey, { label: string; dot: string; cls: string }> = {
  * وحين تقع القادمة داخل نافذة «مستحق قريبًا» نجمع الاثنين: المحصّل يزور
  * المستأجر مرة واحدة ويأخذ الكل.
  */
+
+/**
+ * حين لا تبقى دفعات في العقد: نقول متى ينتهي وأن التالية مع التجديد.
+ * «لا دفعات قادمة في العقد» كانت صحيحة ومُربكة معًا — المكتب يرى
+ * دفعة بعد أيام في عقده الورقي، وهي في الحقيقة أول دفعة من التجديد.
+ */
+function renewalNote(st: ReturnType<typeof contractState>): string {
+  if (st.endDate && st.daysToEnd !== null && st.daysToEnd >= 0)
+    return `العقد ينتهي ${st.endDate} (${st.daysToEnd === 0 ? "اليوم" : `بعد ${st.daysToEnd} يوم`}) — الدفعة التالية مع التجديد`;
+  if (st.endDate) return `انتهى العقد ${st.endDate} — جدّده لتظهر الدفعات القادمة`;
+  return "لا دفعات قادمة في العقد";
+}
+
 function UpcomingLine({ st, rent, imminentDays }: {
   st: ReturnType<typeof contractState>; rent: number; imminentDays: number;
 }) {
@@ -462,16 +475,21 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       const m = String(error.message || "");
       return notify("err", /not authorized/.test(m) ? "التراجع عن الدفعات للمدير أو صاحب المكتب." : m);
     }
-    const r = data as { paid_periods: number; reversed: number; paid_on?: string };
+    const r = data as { paid_periods: number; reversed: number; paid_on?: string; opening_balance?: boolean };
     setItems(items.map((p) => p.id === active.id ? {
       ...p,
-      collected: (p.collected || 0) - (r.reversed || amt),
+      /* الرصيد الافتتاحي لم يمسّ الدفتر — و«0 || amt» كان يُنقص المحصَّل رغمه */
+      collected: (p.collected || 0) - (r.opening_balance ? 0 : (r.reversed || amt)),
       tenants: p.tenants.map((x) => (x.id === t.id ? { ...x, paid_periods: r.paid_periods } : x)),
     } : p));
     /* نذكر شهر الدفعة الأصلية: التراجع يُصحّح الشهر الذي دخلت فيه لا الشهر
        الجاري، وبدون ذكره يظن المكتب أن تحصيل هذا الشهر نقص بلا سبب. */
-    notify("ok", `تم التراجع — خُصم ${sar(r.reversed || amt)} ريال`
-      + (r.paid_on ? ` من تحصيل ${r.paid_on}` : "") + " وسُجّل في سجل الحركات المالية");
+    /* رصيد افتتاحي: لا نقد في الدفتر عُكس — صُحّح العدّاد وحده (v42).
+       كان «|| amt» يُظهر «خُصم 13,000» والدالة لم تخصم شيئًا. */
+    notify("ok", r.opening_balance
+      ? "صُحّح عدّاد الدفعات — كانت دفعة سُدّدت قبل وثيق، فلا تُسجَّل في الدفتر"
+      : `تم التراجع — خُصم ${sar(r.reversed || amt)} ريال`
+        + (r.paid_on ? ` من تحصيل ${r.paid_on}` : "") + " وسُجّل في سجل الحركات المالية");
     });
   }
 
@@ -1520,7 +1538,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                                 <div className="text-late text-xs font-semibold">متأخر منذ {st.nextDueDate}</div>
                                 {st.upcomingDate
                                   ? <div className="text-[11px] text-muted"><UpcomingLine st={st} rent={Number(t.rent_amount) || 0} imminentDays={windowsOf(active).imminentDays} /></div>
-                                  : st.upcomingDate === null ? <div className="text-[11px] text-muted">لا دفعات قادمة في العقد</div> : null}
+                                  : st.upcomingDate === null ? <div className="text-[11px] text-muted">{renewalNote(st)}</div> : null}
                               </>)
                               : st.nextDueDate ? (<>
                                 <div>{st.nextDueDate}</div>
