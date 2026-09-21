@@ -38,7 +38,7 @@ export async function GET(_req: Request, { params }: { params: { token: string }
   const db = createAdmin(url, key, { auth: { persistSession: false } });
 
   const { data: link } = await db.from("owner_links")
-    .select("id, user_id, property_id, owner_name, revoked, expires_at")
+    .select("id, user_id, property_id, property_ids, owner_name, revoked, expires_at")
     .eq("token", token).maybeSingle();
   if (!link || link.revoked) return deny("هذا الرابط لم يعد فعّالًا");
   if (link.expires_at && String(link.expires_at) < new Date().toISOString().slice(0, 10)) {
@@ -69,7 +69,10 @@ export async function GET(_req: Request, { params }: { params: { token: string }
   const ymNow = `${now.getFullYear()}-${p2(now.getMonth() + 1)}`;
 
   // ---------- الرابط المجمّع: كل عقارات المالك (schema-v13) ----------
-  if (!link.property_id && link.owner_name) {
+  /* نطاقان مجمَّعان يشتركان في العرض: كل عقارات المالك، أو قائمة مختارة */
+  const idList: string[] | null = Array.isArray((link as any).property_ids) && (link as any).property_ids.length
+    ? (link as any).property_ids : null;
+  if (!link.property_id && (link.owner_name || idList)) {
     const q = new URL(_req.url).searchParams;
     const ymOk = (v: string | null) => (v && /^\d{4}-(0[1-9]|1[0-2])$/.test(v) ? v : null);
     const fromYm = ymOk(q.get("from")) || ymNow;
@@ -82,8 +85,12 @@ export async function GET(_req: Request, { params }: { params: { token: string }
     const lab = (ym: string) => `${AR_MONTHS[Number(ym.slice(5, 7)) - 1]} ${ym.slice(0, 4)}`;
     const label = (fromYm === toYm ? lab(fromYm) : `${lab(fromYm)} — ${lab(toYm)}`) + (toYm === ymNow ? " (حتى اليوم)" : "");
 
-    const { data: props } = await db.from("properties").select("*, tenants(*)").limit(2000, { referencedTable: "tenants" })
-      .eq("user_id", link.user_id).eq("owner_name", link.owner_name);
+    /* الحصر بـ user_id في كل فرع: المسار يعمل بمفتاح الخدمة المتجاوز
+       للصلاحيات، فالقيد هنا هو الحاجز الوحيد بين المكاتب عند القراءة. */
+    let pq = db.from("properties").select("*, tenants(*)").limit(2000, { referencedTable: "tenants" })
+      .eq("user_id", link.user_id);
+    pq = idList ? pq.in("id", idList) : pq.eq("owner_name", link.owner_name as string);
+    const { data: props } = await pq;
     if (!props?.length) return deny("لا عقارات مسجّلة لهذا المالك");
     const ids = props.map((p: any) => p.id);
 
@@ -116,7 +123,11 @@ export async function GET(_req: Request, { params }: { params: { token: string }
       };
     });
     const marks = issuerMarks(profile || {});
-    const html = ownerConsolidatedStatementHTML(link.owner_name, sections, { label, from, to },
+    /* القائمة المختارة قد لا يحمل رابطها اسم مالك — نأخذه من عقاراتها */
+    const ownerTitle = (link.owner_name as string | null)
+      || [...new Set(props.map((p: any) => (p.owner_name || "").trim()).filter(Boolean))].join(" · ")
+      || "عقارات مختارة";
+    const html = ownerConsolidatedStatementHTML(ownerTitle, sections, { label, from, to },
       { ...(profile || {}), trial: marks.trial, expired: marks.expired });
     const withPicker = html.replace("<body>", `<body>${periodPicker(fromYm, toYm)}`);
   return new Response(withPicker, { headers: {
@@ -124,8 +135,11 @@ export async function GET(_req: Request, { params }: { params: { token: string }
     } });
   }
 
+  /* كان يقرأ العقار بمعرّفه وحده — فرابطٌ أُنشئ لعقار مكتب آخر يكشفه.
+     الحصر بـ user_id يغلقها عند القراءة حتى لو تسرّب رابط كهذا. */
   const { data: property } = await db.from("properties")
-    .select("*, tenants(*)").limit(2000, { referencedTable: "tenants" }).eq("id", link.property_id).maybeSingle();
+    .select("*, tenants(*)").limit(2000, { referencedTable: "tenants" })
+    .eq("id", link.property_id).eq("user_id", link.user_id).maybeSingle();
   if (!property) return deny("العقار لم يعد موجودًا");
 
   /* الفترة يختارها المالك كما في الرابط المجمّع: ?from=2026-01&to=2026-06
