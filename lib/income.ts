@@ -8,7 +8,7 @@
 // «قيمة أقساط السنة» تعريف آخر لا يُحسب بدقة: التجديد يستبدل جدول المدة
 // السابقة، فأقساطها التي وقعت في السنة لا تُستعاد.
 // ============================================================
-import { contractState, buildSchedule, isVacant } from "@/lib/contracts";
+import { contractState, buildSchedule, isVacant, defaultTermPeriods } from "@/lib/contracts";
 import { toHijri, fromHijri } from "@/lib/hijri";
 
 const r2 = (n: number) => Math.round(n * 100) / 100;
@@ -104,4 +104,34 @@ export function yearBreakdown(input: {
   const totals = { collected: r2(list.reduce((s, r) => s + r.collected, 0)), overdue: r2(list.reduce((s, r) => s + r.overdue, 0)),
                    rest: r2(list.reduce((s, r) => s + r.rest, 0)) };
   return { rows: list, totals };
+}
+
+// ── دخل العمارة السنوي بعقودها الحالية ─────────────────────────
+/**
+ * الجزء الثاني من البطاقة: كم تُدخل العمارة في السنة بعقودها — لا ما قُبض.
+ * الإيجار السنوي للوحدة = قيمة الدفعة × عدد دفعاتها في السنة. رقم دقيق من
+ * العقد الحالي، بلا تاريخ ولا تقدير. ومعه ما يلزم لقراءته:
+ *   • الشاغرة بآخر إيجار مسجَّل لها (دخل ضائع بالشغور)
+ *   • العقود المنتهية بلا تجديد (دخلها غير مضمون حتى تُجدَّد)
+ */
+export type RentRoll = {
+  annual: number; occupied: number;                 // المؤجّرة: مجموع الإيجار السنوي وعددها
+  vacant: number; vacantAnnual: number;             // الشاغرة وآخر إيجار سنوي لها
+  expired: number; expiredAnnual: number;           // منها عقود انتهت ولم تُجدَّد (ضمن المؤجّرة)
+  perUnit: Record<string, number>;                  // الإيجار السنوي لكل وحدة (بمعرّفها)
+};
+export function annualRentRoll(tenants: any[]): RentRoll {
+  const out: RentRoll = { annual: 0, occupied: 0, vacant: 0, vacantAnnual: 0, expired: 0, expiredAnnual: 0, perUnit: {} };
+  for (const t of tenants || []) {
+    const rent = Number(t.rent_amount) || 0;
+    const perYear = defaultTermPeriods((t.payment_frequency || "monthly") as any) || 0;
+    const a = r2(rent * perYear);
+    if (t.id) out.perUnit[t.id] = a;
+    if (isVacant(t)) { out.vacant++; out.vacantAnnual += a; continue; }
+    out.occupied++; out.annual += a;
+    const st = contractState(t, {});
+    if (st.daysToEnd !== null && st.daysToEnd < 0) { out.expired++; out.expiredAnnual += a; }
+  }
+  out.annual = r2(out.annual); out.vacantAnnual = r2(out.vacantAnnual); out.expiredAnnual = r2(out.expiredAnnual);
+  return out;
 }
