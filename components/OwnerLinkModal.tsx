@@ -14,6 +14,7 @@ import { arDate } from "@/lib/documents";
 type LinkRow = {
   id: string; token: string; label: string | null;
   revoked: boolean; expires_at: string | null; created_at: string;
+  property_id?: string | null; owner_name?: string | null; property_ids?: string[] | null;
 };
 
 function randomToken(): string {
@@ -22,12 +23,26 @@ function randomToken(): string {
   return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-export default function OwnerLinkModal({ propertyId, propertyName, ownerPhoneHint, ownerName, onClose }: {
-  propertyId: string; propertyName: string; ownerPhoneHint?: string | null; ownerName?: string | null; onClose: () => void;
+export default function OwnerLinkModal({ propertyId, propertyName, ownerPhoneHint, ownerName, properties, onClose }: {
+  propertyId: string; propertyName: string; ownerPhoneHint?: string | null; ownerName?: string | null;
+  /** عقارات المكتب — لنطاقَي «كل عقارات المالك» و«عقارات مختارة» */
+  properties?: { id: string; name: string; owner_name?: string | null }[];
+  onClose: () => void;
 }) {
   const supabase = createClient();
   const [rows, setRows] = useState<LinkRow[] | null>(null);
   const [label, setLabel] = useState("");
+  /**
+   * ثلاثة نطاقات:
+   *  one  — هذا العقار وحده
+   *  all  — كل عقارات هذا المالك (بالاسم): تتّسع تلقائيًّا بعقار جديد له
+   *  pick — عقارات يختارها المكتب: لمالك عنده ست عمائر ويريد رابطًا
+   *         لثلاث منها — كأن تكون الأخرى بشراكة مع غيره
+   */
+  const owner = (ownerName || "").trim();
+  const ownerProps = (properties || []).filter((p) => (p.owner_name || "").trim() === owner && owner);
+  const [scope, setScope] = useState<"one" | "all" | "pick">("one");
+  const [picked, setPicked] = useState<string[]>([propertyId]);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<null | { k: "ok" | "err"; m: string }>(null);
 
@@ -43,8 +58,11 @@ export default function OwnerLinkModal({ propertyId, propertyName, ownerPhoneHin
 
   async function load() {
     // روابط هذا العقار + الروابط المجمّعة لمالكه (property_id فارغ، owner_name مطابق) حتى تُبطَل من هنا أيضًا
-    let q = supabase.from("owner_links").select("id, token, label, revoked, expires_at, created_at");
-    q = ownerName ? q.or(`property_id.eq.${propertyId},owner_name.eq.${JSON.stringify(ownerName)}`) : q.eq("property_id", propertyId);
+    let q = supabase.from("owner_links").select("id, token, label, revoked, expires_at, created_at, property_id, owner_name, property_ids");
+    /* روابط هذا العقار + المجمّعة لمالكه + المختارة التي تضمّه — فتُبطَل من هنا كلها */
+    const parts = [`property_id.eq.${propertyId}`, `property_ids.cs.{${propertyId}}`];
+    if (ownerName) parts.push(`owner_name.eq.${JSON.stringify(ownerName)}`);
+    q = q.or(parts.join(","));
     const { data, error } = await q.order("created_at", { ascending: false }).limit(50);
     if (error) { flash("err", friendly(error)); setRows([]); }
     else setRows((data || []) as LinkRow[]);
@@ -58,8 +76,13 @@ export default function OwnerLinkModal({ propertyId, propertyName, ownerPhoneHin
       const uid = await officeId(supabase);
       if (!uid) throw new Error("انتهت الجلسة — سجّل الدخول مجددًا");
       const token = randomToken();
+      if (scope === "pick" && picked.length === 0) throw new Error("اختر عقارًا واحدًا على الأقل");
+      const row: any = { user_id: uid, token, label: label.trim() || null };
+      if (scope === "one") row.property_id = propertyId;
+      else if (scope === "all") row.owner_name = owner;
+      else row.property_ids = picked;
       const { data, error } = await supabase.from("owner_links")
-        .insert({ user_id: uid, property_id: propertyId, token, label: label.trim() || null })
+        .insert(row)
         .select("id, token, label, revoked, expires_at, created_at").single();
       if (error) throw error;
       setRows([data as LinkRow, ...(rows || [])]);
@@ -103,6 +126,41 @@ export default function OwnerLinkModal({ propertyId, propertyName, ownerPhoneHin
           </div>
         )}
 
+        {/* النطاق — يظهر حين للمالك أكثر من عقار؛ وإلا فالرابط لهذا العقار */}
+        {ownerProps.length > 1 && (
+          <div className="mt-4">
+            <span className="block text-sm font-semibold mb-2">الرابط يعرض</span>
+            <div className="grid gap-1.5">
+              {([
+                ["one", `هذا العقار وحده — ${propertyName}`],
+                ["all", `كل عقارات ${owner} (${ownerProps.length}) — ويشمل ما يُضاف له لاحقًا`],
+                ["pick", "عقارات أختارها"],
+              ] as const).map(([k, l]) => (
+                <label key={k} className={`flex items-start gap-2 rounded-lg border px-3 py-2.5 text-sm cursor-pointer ${
+                  scope === k ? "border-deep bg-paper2" : "border-line"}`}>
+                  <input type="radio" name="scope" className="mt-0.5" checked={scope === k} onChange={() => setScope(k)} />
+                  <span>{l}</span>
+                </label>
+              ))}
+            </div>
+
+            {scope === "pick" && (
+              <div className="mt-2 rounded-lg border border-line p-2 max-h-48 overflow-y-auto">
+                {ownerProps.map((p) => (
+                  <label key={p.id} className="flex items-center gap-2 px-2 py-2 text-sm">
+                    <input type="checkbox" checked={picked.includes(p.id)}
+                      onChange={(e) => setPicked(e.target.checked ? [...picked, p.id] : picked.filter((x) => x !== p.id))} />
+                    {p.name}
+                  </label>
+                ))}
+                <p className="text-[11px] text-muted px-2 pt-1">
+                  {picked.length} من {ownerProps.length} — والعقار الجديد لا يُضاف لهذا الرابط تلقائيًّا.
+                </p>
+              </div>
+            )}
+          </div>
+        )}
+
         <div className="flex items-end gap-2 mt-4 flex-wrap">
           <label className="block flex-1 min-w-[180px]">
             <span className="block text-sm font-semibold mb-1">وصف الرابط <span className="text-muted text-xs font-normal">— اختياري، لك أنت</span></span>
@@ -126,6 +184,11 @@ export default function OwnerLinkModal({ propertyId, propertyName, ownerPhoneHin
               <div key={x.id} className={`rounded-xl border border-line p-3 ${x.revoked ? "bg-[#F8FAFC] opacity-75" : "bg-paper"}`}>
                 <div className="flex items-center gap-2 flex-wrap">
                   <span className="text-sm font-semibold">{x.label || "رابط المالك"}</span>
+                  {/* نطاق كل رابط ظاهر — فلا يُبطِل المكتب رابط «كل العقارات» ظانًّا أنه لعقار واحد */}
+                  <span className="ms-2 text-[10px] font-semibold rounded-full px-2 py-0.5 bg-paper2 border border-line text-muted">
+                    {x.property_ids?.length ? `${x.property_ids.length} عقارات مختارة`
+                      : x.owner_name && !x.property_id ? "كل عقارات المالك" : "هذا العقار"}
+                  </span>
                   <span className={`text-[.68rem] font-bold rounded-lg px-2 py-0.5 ${
                     x.revoked ? "bg-[#FBE9E7] text-[#a5322c]" : "bg-[#E6F4EC] text-[#137a50]"}`}>
                     {x.revoked ? "مُبطَل" : "فعّال"}

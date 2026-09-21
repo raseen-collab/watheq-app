@@ -1803,7 +1803,9 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
         <ExpensesModal propertyId={active.id} propertyName={active.name} unitWord={ul} onClose={() => setExpensesOpen(false)} />
       )}
       {ownerLinkOpen && active && (
-        <OwnerLinkModal propertyId={active.id} propertyName={active.name} ownerName={active.owner_name} onClose={() => setOwnerLinkOpen(false)} />
+        <OwnerLinkModal propertyId={active.id} propertyName={active.name} ownerName={active.owner_name}
+          properties={items.map((p) => ({ id: p.id, name: p.name, owner_name: (p as any).owner_name }))}
+          onClose={() => setOwnerLinkOpen(false)} />
       )}
 
       {schedule && <ScheduleModal tenant={schedule} unitWord={ul} onClose={() => setSchedule(null)} />}
