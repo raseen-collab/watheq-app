@@ -469,6 +469,8 @@ export async function buildReminder(db: DB, profile: any, contractId: string): P
           `• الدفعات المتأخرة: ${st.unpaid}`,
           st.hasPartial ? `• المسدَّد جزئيًّا: ${sar(st.partial)} ريال` : "",
           `• المبلغ المتبقّي: ${sar(st.amountDue)} ريال`,
+          /* يعرف المستأجر متى الدفعة التالية أيضًا — فيسدّد المتبقي قبلها */
+          st.upcomingDate ? `• الدفعة القادمة تستحق بتاريخ ${arDate(st.upcomingDate)}` : "",
         ].filter(Boolean);
       }
     } else {

@@ -262,7 +262,15 @@ export type ContractState = {
   partial: number;        // المبلغ المدفوع جزئيًّا على الدفعة الحالية
   hasPartial: boolean;    // هل يوجد سداد جزئي فعلي؟
   partialPct: number;     // نسبة اكتمال الدفعة الحالية (٪)
-  nextDueDate: string | null;  // تاريخ الدفعة القادمة
+  nextDueDate: string | null;  // أقدم دفعة غير مسدَّدة — لا يتغيّر (يعتمد عليه البوت والتقارير)
+  /**
+   * الدفعة القادمة فعلًا: أول استحقاق في الجدول لم يحلّ بعد.
+   * يختلف عن nextDueDate حين يوجد متأخر — فذاك في الماضي وهذا في المستقبل.
+   * العرض كان يضع nextDueDate تحت عنوان «الاستحقاق القادم»، فمستأجر عليه
+   * متبقٍ من دفعة سابقة يظهر «قادمه» تاريخًا مضى، والقادم الحقيقي مخفي.
+   */
+  upcomingDate: string | null;
+  daysToUpcoming: number | null;
   daysToNextDue: number | null;
   endDate: string | null;
   daysToEnd: number | null;
@@ -352,7 +360,7 @@ export function contractState(t: {
     return {
       due: 0, paid, unpaid: 0, amountDue: 0, grossDue: 0, partial, hasPartial: partial > 0, fullyPaid: false, soonTier: null, expiringSoon: false, vacant: isVacant(t), legacyArrears: 0, carriedDebt: Math.max(0, Number(t.carried_debt) || 0), totalOwed: Math.max(0, Number(t.carried_debt) || 0),
       partialPct: rent ? Math.round((partial / rent) * 100) : 0,
-      nextDueDate: null, daysToNextDue: null,
+      nextDueDate: null, daysToNextDue: null, upcomingDate: null, daysToUpcoming: null,
       endDate: t.contract_end || null,
       daysToEnd: t.contract_end ? daysBetween(new Date(t.contract_end), today) : null,
       status: "ok", incomplete: !vacantNoContract, progress: 0,
@@ -395,6 +403,20 @@ export function contractState(t: {
   const nextDue = addPeriods(start, freq, paid, anchor, cal);
   let nextDueDate: string | null = isoDate(nextDue);
   let daysToNextDue: number | null = daysBetween(nextDue, today);
+
+  /* القادم فعلًا:
+     • أقدم غير مسدَّد في المستقبل ← هو القادم نفسه (منتظم أو مسدَّد مقدّمًا)
+     • في الماضي (متأخر) ← أول موعد لم يحلّ بعد في الجدول
+     الصيغة الأولى أخذت دائمًا «أول موعد لم يحلّ» فأظهرت لمن سدّد ثلاثة
+     أشهر مقدّمًا موعدًا مسدَّدًا أصلًا. */
+  let upcomingDate: string | null = null, daysToUpcoming: number | null = null;
+  if (daysToNextDue !== null && daysToNextDue >= 0) {
+    upcomingDate = nextDueDate; daysToUpcoming = daysToNextDue;
+  } else if (totalPeriods === null || due < totalPeriods) {
+    const up = addPeriods(start, freq, due, anchor, cal);
+    upcomingDate = isoDate(up);
+    daysToUpcoming = daysBetween(up, today);
+  }
 
   // نهاية العقد: يدوية أو مستنتجة
   // نهاية العقد تُعدّ من بداية العقد بيومها هي — لا من يوم أول استحقاق
@@ -486,6 +508,7 @@ export function contractState(t: {
     due, paid, unpaid, amountDue, grossDue, partial, hasPartial, partialPct, fullyPaid, soonTier, expiringSoon, vacant, legacyArrears, incomplete: false,
     carriedDebt, totalOwed: r2(amountDue + carriedDebt),
     nextDueDate: nextDueOut, daysToNextDue: daysToNextOut, endDate, daysToEnd: daysToEndOut, status, statusLabel, progress,
+    upcomingDate: vacant ? null : upcomingDate, daysToUpcoming: vacant ? null : daysToUpcoming,
     inGrace, graceDaysLeft,
   };
 }
