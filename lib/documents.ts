@@ -1711,6 +1711,26 @@ export function ownerReportHTML(
   const vacantOwing = stRows.filter((r) => r.cs.vacant && r.cs.legacyArrears > 0).length;
   const fin = ownerNet(collected, exp, extra.fee_pct, vatCollected, feeVatRate);
   const showFinance = exp.length > 0 || fin.feePct !== null;
+  /**
+   * الرصيد الافتتاحي.
+   *
+   * من دخل وثيق ومعه دفعات سابقة يُدخلها عدّادًا («دفعات سُدّدت حتى اليوم»)
+   * لا دفعات — فتضبط حالة الوحدة ولا تظهر في المحصَّل. والمالك يرى وحدة
+   * سدّدت أربعة أشهر ومحصَّلًا يعادل شهرًا، فيظن أن الباقي ضاع.
+   * دراسة عشرة مكاتب أظهرت مكتبًا واحدًا بـ1,217,500 ريال كهذه.
+   * نقدّر ما سُدّد قبل التسجيل ونذكره صراحةً — لا نُدخله في الأرقام.
+   */
+  const recordedBy: Record<string, number> = {};
+  payments.forEach((x: any) => { if (x.unit) recordedBy[String(x.unit)] = (recordedBy[String(x.unit)] || 0) + (Number(x.amount) || 0); });
+  let openingUnits = 0, openingAmount = 0;
+  for (const t of (p.tenants || []) as any[]) {
+    const rent = Number(t.rent_amount) || 0;
+    if (rent <= 0 || isVacant(t)) continue;
+    const counted = (Number(t.paid_periods) || 0) * rent + (Number(t.partial_amount) || 0);
+    const recorded = recordedBy[String(t.unit)] || 0;
+    const gap = Math.round((counted - recorded) * 100) / 100;
+    if (gap > rent * 0.5) { openingUnits++; openingAmount += gap; }
+  }
   const expiring = rows.filter((r) => !r.vacant && r.st.daysToEnd !== null && r.st.daysToEnd >= 0 && r.st.daysToEnd <= 60).length;
 
   const body = `
@@ -1839,6 +1859,11 @@ ${mode === "full" && exp.length ? `
   </tbody>
 </table></div>` : ""}
 
+${openingUnits > 0 ? `<div class="note" style="border-inline-start-color:#B8791F;background:#FDF6E3">
+  <b>عن المحصَّل:</b> يشمل الدفعات المسجَّلة في وثيق بتاريخ استلامها فقط.
+  ${openingUnits === 1 ? "وحدة واحدة" : `${openingUnits} وحدات`} فيها دفعات سُدّدت قبل بدء التسجيل
+  (نحو ${sar(Math.round(openingAmount))} ريال) — حالتها محسوبة صحيحًا في الجدول، لكنها لا تظهر ضمن المحصَّل أعلاه.
+</div>` : ""}
 <div class="note">تقرير استرشادي صادر آليًّا من سجل الدفعات والمصروفات وبيانات العقود المسجّلة في وثيق بتاريخ ${today()}. الأرقام تعكس ما وثّقه المكتب في النظام.</div>
 <div class="sign"><div>إدارة الأملاك: ${who}<br><br>التوقيع: ________________</div><div>المالك: ____________________<br><br>تاريخ الإصدار: ${today()}</div></div>
 ${footer()}`;
