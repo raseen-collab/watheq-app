@@ -116,22 +116,55 @@ function unitDesc(t: any, p: any): string {
  * الصفّين كانا يلغيان بعضهما في المجموع أصلًا.
  */
 function ownerVisiblePayments<T extends { amount: number; paid_on: string; tenant_name?: string | null; note?: string | null }>(rows: T[]): T[] {
-  const src = [...(rows || [])];
-  const reversals = src.filter((x) => Number(x.amount) < 0);
-  const positives = src.filter((x) => Number(x.amount) > 0);
+  return visiblePayments(rows);
+}
+
+/**
+ * ما يراه قارئ أي مستند خارج — مالكًا كان أو مستأجرًا.
+ *
+ * القاعدة: الدفعة المعكوسة لم تحدث من منظور القارئ، فتسقط هي وعكسها معًا.
+ * والمجموع لا يتغيّر لأن الصفّين كانا يلغيان بعضهما أصلًا.
+ *
+ * الاقتران بالربط أولًا (reverses — schema-v44)، ثم بالمستأجر والمبلغ
+ * والتاريخ (العكس يتبع تاريخ أصله)، ثم بالمستأجر والمبلغ وحدهما للبيانات
+ * الأقدم.
+ *
+ * وما لم يُقرن — عكسٌ لدفعة خارج الفترة — يبقى صفًّا بعبارة واضحة. كان
+ * يُسقَط بصمت فيصير مجموع صفوف الجدول غير الإجمالي المكتوب تحته، ومن
+ * يجمع بيده يجد رقمًا آخر.
+ *
+ * ولا معرّف خام ولا ملاحظة تشغيلية تخرج في أي مستند.
+ */
+export function visiblePayments<T extends { amount: number; paid_on: string; tenant_name?: string | null; note?: string | null }>(rows: T[]): T[] {
+  const src = [...(rows || [])] as any[];
+  const pos = src.map((x, k) => ({ x, k })).filter((o) => Number(o.x.amount) > 0);
+  const neg = src.filter((x) => Number(x.amount) < 0);
   const dropped = new Set<number>();
-  for (const rev of reversals) {
-    const amt = Math.abs(Number(rev.amount));
-    const i = positives.findIndex((x, k) => !dropped.has(k)
-      && Math.abs(Number(x.amount) - amt) < 0.01
-      && String(x.tenant_name || "") === String(rev.tenant_name || ""));
-    if (i >= 0) dropped.add(i);
+  const who = (x: any) => String(x.tenant_id || x.tenant_name || "");
+  const take = (pred: (x: any) => boolean) => {
+    const o = pos.find((o) => !dropped.has(o.k) && pred(o.x));
+    if (o) { dropped.add(o.k); return true; }
+    return false;
+  };
+  const unmatched: any[] = [];
+  for (const r of neg) {
+    const amt = Math.abs(Number(r.amount));
+    const ok =
+      (r.reverses && take((x) => x.id === r.reverses)) ||
+      take((x) => who(x) === who(r) && Math.abs(Number(x.amount) - amt) < 0.01 && x.paid_on === r.paid_on) ||
+      take((x) => who(x) === who(r) && Math.abs(Number(x.amount) - amt) < 0.01);
+    if (!ok) unmatched.push(r);
   }
-  /* ملاحظات المكتب الداخلية لا تخرج للمالك */
-  const INTERNAL = /تراجع|تليجرام|بوت|عكس دفعة|رصيد افتتاحي/i;
-  return positives
-    .filter((_, k) => !dropped.has(k))
-    .map((x) => (x.note && INTERNAL.test(String(x.note)) ? { ...x, note: null } : x));
+  const INTERNAL = /تراجع|تليجرام|بوت|عكس دفعة|رصيد افتتاحي|تصحيح عدّاد/i;
+  const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
+  const clean = (x: any) => {
+    let note = x.note ? String(x.note).replace(UUID, "").trim() : x.note;
+    if (note && INTERNAL.test(note)) note = null;
+    return { ...x, note };
+  };
+  const kept = pos.filter((o) => !dropped.has(o.k)).map((o) => clean(o.x));
+  const adjustments = unmatched.map((r) => ({ ...clean(r), note: "تصحيح لدفعة مسجَّلة سابقًا", _adjust: true }));
+  return [...kept, ...adjustments].sort((a, b) => String(a.paid_on).localeCompare(String(b.paid_on))) as T[];
 }
 
 function annualExpected(tenants: any[]): number {
@@ -139,7 +172,7 @@ function annualExpected(tenants: any[]): number {
 }
 
 const payMethod = (x: { method?: string | null; amount?: number | null }) =>
-  Number(x.amount) < 0 ? "↩︎ تراجع عن دفعة" : methodAr(x.method);
+  Number(x.amount) < 0 ? "تصحيح" : methodAr(x.method);
 
 type Issuer = { billing_name?: string | null; vat_number?: string | null; cr_number?: string | null; billing_phone?: string | null;
   /** true لأي حساب بلا باقة مدفوعة — يُضاف سطر «أُنشئ عبر وثيق» في التذييل فقط.
@@ -328,6 +361,9 @@ export function statementHTML(t: Tenant, p: Property, issuer: Issuer = {}, payme
   p = scrub(p);
   issuer = scrub(issuer);
   payments = scrub(payments);
+  /* الكشف يُرسل للمستأجر: الدفعة المعكوسة وعكسها يسقطان معًا، ولا معرّف
+     ولا ملاحظة تشغيلية تخرج. والإجمالي يبقى من الدفتر كاملًا — فهو واحد. */
+  const shownPays = visiblePayments(payments as any[]);
   const st = contractState(t, graceOf(p));
   const rows = buildSchedule(t);
   const ul = unitLabel(p.property_type);
@@ -442,12 +478,12 @@ ${mode === "full" ? `
   </tbody>
 </table>` : ""}
 
-${payments.length ? `
+${shownPays.length ? `
 <h1 style="font-size:1rem">المدفوعات المستلمة</h1>
 <table>
   <thead><tr><th>#</th><th>تاريخ الاستلام</th><th>المبلغ (ريال)</th><th>طريقة السداد</th><th>ملاحظة</th></tr></thead>
   <tbody>
-    ${payments.map((r, i) => `<tr>
+    ${shownPays.map((r: any, i: number) => `<tr>
       <td>${i + 1}</td>
       <td>${r.paid_on ? arDate(r.paid_on) : "—"}</td>
       <td>${sar(r.amount)}</td>
@@ -457,7 +493,7 @@ ${payments.length ? `
     <tr style="background:#F3EEE2;font-weight:700">
       <td colspan="2">إجمالي المستلم</td>
       <td>${sar(payments.reduce((a, r) => a + (Number(r.amount) || 0), 0))}</td>
-      <td colspan="2">${payments.length} عملية</td>
+      <td colspan="2">${shownPays.length} عملية</td>
     </tr>
   </tbody>
 </table>
@@ -747,6 +783,9 @@ export function propertyStatementHTML(
      لا من الحالة اللحظية، وإلا اختلف الرقم عن تقرير المالك لنفس المدة. */
   const inRange = (d?: string | null) => !!d && !!period && String(d) >= period.from && String(d) <= period.to;
   const periodPayments = period ? payments.filter((x) => inRange(x.paid_on)) : [];
+  /* الجدول والعدّ من المرئي: العكوس تسقط مع أصولها. والمجموع من الدفتر
+     كاملًا (periodCollected) فلا يتغيّر. */
+  const periodShown = visiblePayments(periodPayments as any[]);
   const periodCollected = periodPayments.reduce((a, x) => a + (Number(x.amount) || 0), 0);
   const periodExpenses = period ? expenses.filter((x) => inRange((x as any).spent_on)).reduce((a, x) => a + (Number(x.amount) || 0), 0) : 0;
   const byUnitP: Record<string, any> = {};
@@ -774,7 +813,7 @@ ${period ? `
 <h1 style="font-size:1rem">حركة الفترة — ${period.label}</h1>
 <div class="tot">
   <div><div class="v g">${sar(periodCollected)}</div><div class="l">المُحصَّل (ريال)</div></div>
-  <div><div class="v">${periodPayments.length}</div><div class="l">عدد الدفعات</div></div>
+  <div><div class="v">${periodShown.length}</div><div class="l">عدد الدفعات</div></div>
   <div><div class="v r">${sar(periodExpenses)}</div><div class="l">المصروفات (ريال)</div></div>
   <div><div class="v">${sar(Math.max(0, periodCollected - periodExpenses))}</div><div class="l">الصافي (ريال)</div></div>
 </div>
@@ -826,13 +865,14 @@ ${totalDue > 0 ? `<div class="due"><span class="l">إجمالي المستحق �
   </tbody>
 </table>
 
-${period && mode === "full" && periodPayments.length ? `
+${period && mode === "full" && periodShown.length ? `
 <h1 style="font-size:1rem">تفصيل دفعات الفترة</h1>
 <div class="scrollx"><table>
   <thead><tr><th>التاريخ</th><th>${ul}</th><th>المستأجر</th><th>المبلغ</th><th>الطريقة</th><th>المرجع</th></tr></thead>
   <tbody>
-    ${periodPayments.slice().sort((a, b) => String(a.paid_on).localeCompare(String(b.paid_on)))
-      .map((x: any) => `<tr><td>${arDate(x.paid_on)}</td><td>${x.unit || "—"}</td><td>${x.tenant_name || "—"}</td><td>${sar(Number(x.amount) || 0)}</td><td>${payMethod(x.method)}</td><td dir="ltr">${(x as any).reference || "—"}</td></tr>`).join("")}
+    ${periodShown
+      /* كان payMethod(x.method) يمرّر نصّ الطريقة لدالة تنتظر الصفّ — فظهرت «—» في كل صفّ */
+      .map((x: any) => `<tr><td>${arDate(x.paid_on)}</td><td>${x.unit || "—"}</td><td>${x.tenant_name || "—"}</td><td>${sar(Number(x.amount) || 0)}</td><td>${x._adjust ? "تصحيح" : payMethod(x)}</td><td dir="ltr">${(x as any).reference || "—"}</td></tr>`).join("")}
     <tr><td colspan="3"><b>إجمالي المُحصَّل</b></td><td colspan="2"><b>${sar(periodCollected)}</b></td></tr>
   </tbody>
 </table></div>` : ""}
