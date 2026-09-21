@@ -6,7 +6,7 @@ import Icon from "@/components/Icon";
 import { createClient } from "@/lib/supabase-client";
 import { officeId, getOffice, ROLE_LABEL, OWNER_PERMS } from "@/lib/office";
 import { arDate, termRentPaidOf, pastVatOf } from "@/lib/documents";
-import { yearBreakdown, yearWindow, type YearCal } from "@/lib/income";
+import { yearBreakdown, yearWindow, annualRentRoll, type YearCal } from "@/lib/income";
 import { hijriShort, hijriText, parseHijriInput } from "@/lib/hijri";
 import { sar, waLink, today, WATHEQ_WA, openExternal } from "@/lib/utils";
 import { contractState, expectedNext12, buildSchedule, FREQUENCIES, freqLabel, freqShort, derivedEndDate, renewContract, needsRenewal, applyPayment, splitVat, isCommercial, isVacant, settleDeposit, unitVatApplies,
@@ -1473,6 +1473,8 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
         const uncollected = T.overdue + T.rest, total = T.collected + uncollected;
         const pct = total > 0 ? Math.round((T.collected / total) * 100) : 0;
         const n = (v: number) => (loading ? "…" : sar(Math.round(v)));
+        const rr = annualRentRoll(tenants as any[]);
+        const vacantIds = new Set((tenants as any[]).filter((t) => isVacant(t)).map((t) => t.id));
         return (
           <div className="bg-white border border-line rounded-xl px-4 py-3 mb-4">
             <div className="flex items-center justify-between gap-3 flex-wrap">
@@ -1503,6 +1505,20 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
               <button type="button" className="text-[11px] text-goldInk underline underline-offset-4" onClick={() => setYearOpen((v) => !v)}>
                 {yearOpen ? "إخفاء التفصيل ▴" : "التفصيل لكل وحدة وشرح الأرقام ▾"}</button>
             </div>
+            {/* الجزء الثاني: دخل العمارة بعقودها — لا ما قُبض */}
+            <div className="mt-3 border-t border-line pt-3">
+              <div className="font-semibold text-deep text-sm">دخل العمارة السنوي <span className="font-normal text-[11px] text-muted">— بعقودها الحالية</span></div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-sm mt-1.5">
+                <div><div className="text-[11px] text-muted">الإيجار السنوي للمؤجّرة</div>
+                  <b className="tabular-nums text-ink">{sar(Math.round(rr.annual))}</b> <span className="text-[11px] text-muted">ريال · {rr.occupied} {rr.occupied === 1 ? "وحدة" : rr.occupied === 2 ? "وحدتان" : "وحدات"}</span></div>
+                <div><div className="text-[11px] text-muted">الشاغرة (بآخر إيجار لها)</div>
+                  <b className={`tabular-nums ${rr.vacant ? "text-[#9A4B00]" : "text-muted"}`}>{rr.vacant ? sar(Math.round(rr.vacantAnnual)) : "—"}</b>
+                  <span className="text-[11px] text-muted">{rr.vacant ? ` ريال · ${rr.vacant} ${rr.vacant === 1 ? "وحدة" : rr.vacant === 2 ? "وحدتان" : "وحدات"}` : " لا شاغر"}</span></div>
+                <div><div className="text-[11px] text-muted">عقود انتهت ولم تُجدَّد</div>
+                  <b className={`tabular-nums ${rr.expired ? "text-late" : "text-muted"}`}>{rr.expired ? sar(Math.round(rr.expiredAnnual)) : "—"}</b>
+                  <span className="text-[11px] text-muted">{rr.expired ? ` ريال · ${rr.expired} ${rr.expired === 1 ? "عقد" : rr.expired === 2 ? "عقدان" : "عقود"} — ضمن المؤجّرة` : " لا شيء"}</span></div>
+              </div>
+            </div>
             {yearOpen && (
               <div className="mt-3 border-t border-line pt-3">
                 <div className="text-[11.5px] text-ink leading-relaxed space-y-1 bg-paper rounded-lg p-2.5 mb-3">
@@ -1510,12 +1526,14 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                   <div><b>متأخر الآن:</b> أقساط حلّت ولم تُسدَّد{g ? ` (بعد مهلة سماح ${g} ${g === 1 ? "يوم" : g === 2 ? "يومين" : g <= 10 ? "أيام" : "يومًا"})` : ""}، والدين المرحَّل على الساكن، وديون المستأجرين السابقين القائمة. يشمل ما تأخّر من قبل السنة.</div>
                   <div><b>يحلّ حتى نهاية السنة:</b> أقساط العقود الحالية من اليوم حتى {win.to} لم تُدفع مقدّمًا{g ? "، ومعها ما حلّ وما زال في مهلة السماح" : ""}. عقد ينتهي قبل نهاية السنة لا تُحسب له أقساط بعد نهايته حتى يُجدَّد.</div>
                   <div><b>غير المحصَّل</b> = المتأخر + ما يحلّ حتى نهاية السنة. <b>المتوقع للسنة</b> = المحصَّل + غير المحصَّل.</div>
+                  <div><b>دخل العمارة السنوي:</b> مجموع الإيجار السنوي للوحدات المؤجّرة بعقودها الحالية — قيمة الدفعة × عدد دفعاتها في السنة (شهري ×12، ربع سنوي ×4، كل 4 أشهر ×3، نصف سنوي ×2، سنوي ×1). هو ما تُدخله العمارة لو استمرت عقودها سنة كاملة، لا ما قُبض.</div>
+                  <div><b>الشاغرة:</b> بآخر إيجار سُجّل لها — دخل ضائع ما بقيت شاغرة. <b>العقود المنتهية:</b> محسوبة ضمن المؤجّرة، لكن دخلها غير مضمون حتى تُجدَّد.</div>
                 </div>
                 <div className="overflow-x-auto">
                   <table className="w-full text-[12px]">
                     <thead><tr className="text-muted text-right">
                       <th className="py-1 font-normal">الوحدة</th><th className="py-1 font-normal">المستأجر</th>
-                      <th className="py-1 font-normal">المحصَّل في السنة</th><th className="py-1 font-normal">متأخر الآن</th><th className="py-1 font-normal">يحلّ حتى نهاية السنة</th>
+                      <th className="py-1 font-normal">المحصَّل في السنة</th><th className="py-1 font-normal">متأخر الآن</th><th className="py-1 font-normal">يحلّ حتى نهاية السنة</th><th className="py-1 font-normal">الإيجار السنوي</th>
                     </tr></thead>
                     <tbody>
                       {bd.rows.map((r) => (
@@ -1525,11 +1543,15 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                           <td className="py-1 tabular-nums">{r.collected ? sar(r.collected) : "—"}</td>
                           <td className={`py-1 tabular-nums ${r.overdue ? "text-late" : ""}`}>{r.overdue ? sar(r.overdue) : "—"}</td>
                           <td className="py-1 tabular-nums">{r.rest ? <>{sar(r.rest)}{r.restCount ? <span className="text-[10px] text-muted"> · {r.restCount} {r.restCount === 1 ? "قسط" : r.restCount === 2 ? "قسطان" : "أقساط"}</span> : null}</> : "—"}</td>
+                          {/* الشاغرة لا تُجمع في دخل العمارة — فمجموع العمود = إجماليه */}
+                          <td className="py-1 tabular-nums text-muted">{r.past ? "—"
+                            : vacantIds.has(r.key.slice(2)) ? <span className="text-[10px] text-[#9A4B00]">شاغرة</span>
+                            : rr.perUnit[r.key.slice(2)] ? sar(rr.perUnit[r.key.slice(2)]) : "—"}</td>
                         </tr>
                       ))}
                       <tr className="border-t-2 border-line font-semibold">
                         <td className="py-1" colSpan={2}>الإجمالي</td>
-                        <td className="py-1 tabular-nums">{n(T.collected)}</td><td className="py-1 tabular-nums">{n(T.overdue)}</td><td className="py-1 tabular-nums">{n(T.rest)}</td>
+                        <td className="py-1 tabular-nums">{n(T.collected)}</td><td className="py-1 tabular-nums">{n(T.overdue)}</td><td className="py-1 tabular-nums">{n(T.rest)}</td><td className="py-1 tabular-nums">{sar(Math.round(rr.annual))}</td>
                       </tr>
                     </tbody>
                   </table>
