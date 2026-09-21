@@ -18,7 +18,7 @@ type Entry = {
   id: string; created_at: string | null; paid_on: string; amount: number; method: string | null;
   note: string | null; tenant_id: string; property_id: string; created_by: string | null; periods_covered: number | null;
   /** نوع الحركة: دفعة/تراجع أو مصروف — والمصروف قد يخصّ وحدة بعينها */
-  kind?: "payment" | "expense"; unit?: string | null;
+  kind?: "payment" | "expense" | "adjustment"; unit?: string | null;
 };
 
 const METHOD_AR: Record<string, string> = { transfer: "تحويل", cash: "نقدًا", pos: "شبكة", cheque: "شيك", other: "أخرى" };
@@ -55,13 +55,18 @@ export default function ActivityLog({ properties, onClose }: { properties: any[]
       setMe(user?.id || null);
       /* الدفعات والمصروفات معًا: الاثنان يؤثران في صافي المالك، ولا يفيد
          أن يرى المكتب أحدهما بلا الآخر عند مراجعة اختلاف في الأرقام. */
-      const [pay, exp] = await Promise.all([
+      const [pay, exp, adj] = await Promise.all([
         supabase.from("payments")
           .select("id, created_at, paid_on, amount, method, note, tenant_id, property_id, created_by, periods_covered")
           .order("created_at", { ascending: false, nullsFirst: false }).limit(300),
         supabase.from("expenses")
           .select("id, created_at, spent_on, amount, category, note, property_id, unit, created_by")
           .order("created_at", { ascending: false, nullsFirst: false }).limit(150),
+        /* تصحيحات لا نقد فيها (v43): التراجع عن رصيد افتتاحي. كانت صامتة —
+           لا يُعرف من صحّح ولا متى. الخطأ مُبتلَع لأن الجدول قد لا يوجد بعد. */
+        supabase.from("ledger_adjustments")
+          .select("id, created_at, tenant_id, property_id, kind, delta, amount, note, created_by")
+          .order("created_at", { ascending: false }).limit(100),
       ]);
       if (pay.error) { setErr(pay.error.message); setLoading(false); return; }
       const merged: Entry[] = [
@@ -72,6 +77,12 @@ export default function ActivityLog({ properties, onClose }: { properties: any[]
           method: null, note: [catLabelAr(x.category), x.note].filter(Boolean).join(" — "),
           tenant_id: "", property_id: x.property_id, created_by: x.created_by, periods_covered: null,
           unit: x.unit || null, kind: "expense" as const,
+        })),
+        /* المبلغ صفر: التصحيح لا يمسّ النقد — ويُعرض بملاحظته لا بمبلغ */
+        ...(adj.error ? [] : ((adj.data || []) as any[])).map((x) => ({
+          id: x.id, created_at: x.created_at, paid_on: String(x.created_at || "").slice(0, 10), amount: 0,
+          method: null, note: x.note, tenant_id: x.tenant_id || "", property_id: x.property_id,
+          created_by: x.created_by, periods_covered: x.delta, kind: "adjustment" as const,
         })),
       ].sort((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || "")));
       setRows(merged);
@@ -130,12 +141,17 @@ export default function ActivityLog({ properties, onClose }: { properties: any[]
                   return (
                     <tr key={r.id} className={`border-t border-line ${neg ? "bg-[#FBE9E7]" : ""}`}>
                       <td className="p-2 whitespace-nowrap text-muted" dir="ltr">{fmtTime(r.created_at)}</td>
-                      <td className="p-2 whitespace-nowrap">{r.kind === "expense" ? <span className="font-semibold text-[#9A4B00]">💸 مصروف</span>
+                      <td className="p-2 whitespace-nowrap">{r.kind === "adjustment" ? <span className="font-semibold text-[#5B21B6]">⚙︎ تصحيح عدّاد</span>
+                        : r.kind === "expense" ? <span className="font-semibold text-[#9A4B00]">💸 مصروف</span>
                         : neg ? <span className="font-semibold text-late">↩︎ تراجع عن دفعة</span>
                         : r.periods_covered ? `✔ دفعة (${r.periods_covered})` : "½ سداد جزئي"}</td>
                       <td className="p-2">{r.kind === "expense" ? <span className="text-muted">{r.unit ? `الوحدة ${r.unit}` : "على العقار"}</span> : <>{t?.name || "—"}{t?.unit && <span className="text-muted text-xs"> · {t.unit}</span>}</>}</td>
                       <td className="p-2 text-muted">{pName[r.property_id] || "—"}</td>
-                      <td className={`p-2 font-semibold whitespace-nowrap ${neg ? "text-late" : ""}`}>{sar(r.amount)} <span className="text-[11px] text-muted">{METHOD_AR[r.method || ""] || ""}</span></td>
+                      <td className={`p-2 font-semibold whitespace-nowrap ${neg ? "text-late" : ""}`}>
+                        {r.kind === "adjustment"
+                          ? <span className="text-muted font-normal text-xs">بلا أثر نقدي</span>
+                          : <>{sar(r.amount)} <span className="text-[11px] text-muted">{METHOD_AR[r.method || ""] || ""}</span></>}
+                      </td>
                       <td className="p-2 whitespace-nowrap">{who(r.created_by)}</td>
                       <td className="p-2 text-muted">{r.note || ""}</td>
                     </tr>
