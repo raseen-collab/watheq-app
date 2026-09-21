@@ -49,7 +49,7 @@ export default function SettingsView({ profile }: { profile: any }) {
 
   async function save() {
     setSaving(true); setMsg(null);
-    const { error } = await supabase.from("profiles").update({
+    const patch: Record<string, any> = {
       account_type: p.account_type || null,
       org_name: p.org_name || null,
       billing_name: p.billing_name || null,
@@ -62,10 +62,30 @@ export default function SettingsView({ profile }: { profile: any }) {
       due_soon_days: Math.max(1, Math.min(60, Number(p.due_soon_days) || 10)),
       due_imminent_days: Math.max(1, Math.min(60, Number(p.due_imminent_days) || 5)),
       expiring_days: Math.max(1, Math.min(180, Number(p.expiring_days) || 60)),
-    }).eq("id", p.id);
+    };
+
+    /**
+     * عمود ناقص لا يُفشل الحفظ كله.
+     *
+     * كان «default_calendar» يُرسل ولا عمود له في القاعدة (ترحيله لم
+     * يُشغَّل)، فيفشل الحفظ بأكمله — ويضيع تغيير نوع الحساب وبيانات
+     * الفوترة معه. الآن: إن اشتكت القاعدة من عمود بعينه، نُسقطه ونعيد
+     * المحاولة بالباقي، ثم نخبر المستخدم أي إعداد لم يُحفظ.
+     */
+    const skipped: string[] = [];
+    let error: any = null;
+    for (let attempt = 0; attempt < 4; attempt++) {
+      ({ error } = await supabase.from("profiles").update(patch).eq("id", p.id));
+      const col = error && /Could not find the '([a-z_]+)' column/i.exec(String(error.message))?.[1];
+      if (!col || !(col in patch)) break;
+      delete patch[col]; skipped.push(col);
+    }
     setSaving(false);
     if (error) { setMsg({ t: "err", m: error.message }); return; }
-    setMsg({ t: "ok", m: "تم الحفظ." });
+    const AR: Record<string, string> = { default_calendar: "التقويم الافتراضي" };
+    setMsg(skipped.length
+      ? { t: "ok", m: `تم الحفظ — عدا ${skipped.map((c) => AR[c] || c).join("، ")}: يحتاج تحديثًا في قاعدة البيانات، أخبر الدعم.` }
+      : { t: "ok", m: "تم الحفظ." });
     router.refresh();
   }
 

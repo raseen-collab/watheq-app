@@ -18,18 +18,24 @@ import { waLink, openExternal } from "@/lib/utils";
 const sar = (n: number) => Math.round(Number(n) || 0).toLocaleString("en-US");
 const today = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Riyadh", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
 
+/**
+ * ثلاثة مصادر للدين في قائمة واحدة:
+ *  unit — دين على صفّ وحدة: مرحَّل على الساكن (_carried) أو متأخرات شاغرة لم تُؤجَّر بعد (_legacy)
+ *  past — مستأجر سابق في الأرشيف (schema-v45): باسمه وجواله الحقيقيين
+ */
 type Row = {
   id: string; name: string; unit: string | null; phone: string | null;
   carried_debt: number; debt_since: string | null; debt_status: string | null;
   debt_note: string | null; status: string | null; property_id: string;
   property_name?: string;
+  source?: "unit" | "past"; _legacy?: number; _carried?: number; legacyFlag?: boolean;
 };
 
 const STATUS: Record<string, { label: string; cls: string; hint: string }> = {
   open:        { label: "مفتوح",            cls: "bg-[#FBE9E7] text-[#a5322c] border-[#F5C6C2]", hint: "لم تبدأ متابعته بعد" },
   promised:    { label: "وعد بالسداد",      cls: "bg-[#FDECD2] text-[#9A4B00] border-[#F5CFA0]", hint: "وعد بموعد — تابعه في وقته" },
   legal:       { label: "أُحيل للتنفيذ",    cls: "bg-[#EEF4FB] text-[#2B5C8A] border-[#CFE0F0]", hint: "عند المحكمة أو المحامي" },
-  settled:     { label: "سُوّي",             cls: "bg-[#E6F4EC] text-[#137a50] border-[#B7DFC7]", hint: "سُدّد — صفّر المبلغ ليختفي" },
+  settled:     { label: "سُوّي",             cls: "bg-[#E6F4EC] text-[#137a50] border-[#B7DFC7]", hint: "سُدّد كاملًا — يُضبط تلقائيًّا عند اكتمال السداد" },
   written_off: { label: "شُطب",              cls: "bg-[#EFEFEC] text-[#5C6B67] border-[#DDDCD4]", hint: "قرار بعدم التحصيل" },
 };
 
@@ -95,33 +101,98 @@ export default function DebtFollowUp({ properties, orgName, onClose }: {
           }
           return { ...x, carried_debt: carried + legacy, _legacy: legacy,
                    property_name: nameOf[x.property_id] || "—" };
-        }).filter((x: any) => Number(x.carried_debt) > 0));
+        }).filter((x: any) => Number(x.carried_debt) > 0).map((x: any) => ({
+          ...x, source: "unit" as const,
+          _carried: Math.max(0, Number(x.carried_debt) - (Number(x._legacy) || 0)),
+        })));
+        /* الأرشيف (v45) — قبل الترحيل لا جدول، فالخطأ يُتجاهَل */
+        supabase.from("past_tenancies")
+          .select("id, property_id, name, unit, phone, debt_amount, debt_paid, debt_status, debt_note, archived_at, legacy")
+          .limit(2000)
+          .then(({ data: pd, error: pe }: any) => {
+            if (!alive || pe || !Array.isArray(pd)) return;
+            const pastRows: Row[] = pd
+              .map((x: any) => ({
+                id: x.id, name: x.name, unit: x.unit, phone: x.phone, property_id: x.property_id,
+                property_name: nameOf[x.property_id] || "—",
+                carried_debt: Math.max(0, Math.round(((Number(x.debt_amount) || 0) - (Number(x.debt_paid) || 0)) * 100) / 100),
+                debt_since: String(x.archived_at || "").slice(0, 10) || null,
+                debt_status: x.debt_status, debt_note: x.debt_note, status: "archived",
+                source: "past" as const, legacyFlag: !!x.legacy,
+              }))
+              .filter((r: Row) => r.carried_debt > 0 || ["written_off"].includes(String(r.debt_status)));
+            setRows((cur) => [...(cur || []).filter((r) => r.source !== "past"), ...pastRows]);
+          });
       });
     return () => { alive = false; };
   }, [supabase, nameOf]);
 
-  async function save(id: string) {
-    setBusy(true);
-    const { data, error } = await supabase.from("tenants")
-      .update({ debt_status: eStatus, debt_note: eNote.trim() || null })
-      .eq("id", id).select("id,debt_status,debt_note");
-    setBusy(false);
-    if (error) return setErr(error.message);
-    if (!data?.length) return setErr("هذا التعديل يحتاج صلاحية أعلى.");
-    setRows((cur) => (cur || []).map((r) => (r.id === id ? { ...r, debt_status: data[0].debt_status, debt_note: data[0].debt_note } : r)));
+  async function save(r: Row) {
+    setBusy(true); setErr(null);
+    if (r.source === "past") {
+      /* الدالة تمنع «سُوّي» ومبلغٌ باقٍ — فلا يختفي مال بصمت */
+      const { error } = await supabase.rpc("watheq_set_past_debt", { p_past: r.id, p_status: eStatus, p_note: eNote.trim() || null });
+      setBusy(false);
+      if (error) return setErr(error.message);
+    } else {
+      if (eStatus === "settled" && r.carried_debt > 0.005) {
+        setBusy(false);
+        return setErr(`بقي ${sar(r.carried_debt)} ريال — سجّل سداده بزرّ «سجّل سدادًا»، أو اشطبه إن تنازل عنه المالك.`);
+      }
+      const { data, error } = await supabase.from("tenants")
+        .update({ debt_status: eStatus, debt_note: eNote.trim() || null })
+        .eq("id", r.id).select("id");
+      setBusy(false);
+      if (error) return setErr(error.message);
+      if (!data?.length) return setErr("هذا التعديل يحتاج صلاحية أعلى.");
+    }
+    setRows((cur) => (cur || []).map((x) => (x.id === r.id && x.source === r.source ? { ...x, debt_status: eStatus, debt_note: eNote.trim() || x.debt_note } : x)));
     setEditing(null);
   }
 
-  async function clearDebt(r: Row) {
-    if (!confirm(
-      `تصفير الدين المرحَّل؟\n\n${r.name} — ${r.property_name}\n${sar(r.carried_debt)} ريال\n\n`
-      + `استعمله إذا سُدّد الدين فعلًا أو قررت شطبه.\nيختفي من هذه الشاشة ومن بطاقة الوحدة.`
-    )) return;
-    setBusy(true);
-    const { error } = await supabase.from("tenants").update({ carried_debt: 0 }).eq("id", r.id);
+  /**
+   * سداد الدين نقدٌ في الدفتر — فيظهر في تقرير المالك.
+   * كان «صفّر الدين» يمحو الرقم بلا نقد، فالمال المقبوض لا يصل لأي تقرير.
+   */
+  async function recordPayment(r: Row) {
+    const raw = prompt(`سداد من ${r.name}\nالمتبقي ${sar(r.carried_debt)} ريال\n\nالمبلغ المستلم:`, String(r.carried_debt));
+    if (raw === null) return;
+    const amt = Math.round((Number(String(raw).replace(/[^\d.]/g, "")) || 0) * 100) / 100;
+    if (amt <= 0) return setErr("أدخل مبلغًا أكبر من صفر.");
+    if (amt > r.carried_debt + 0.005) return setErr(`المبلغ أكبر من المتبقي (${sar(r.carried_debt)}).`);
+    const on = prompt("تاريخ الاستلام (YYYY-MM-DD):", today());
+    if (on === null) return;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(on.trim())) return setErr("التاريخ بصيغة 2026-09-21.");
+    setBusy(true); setErr(null);
+    let error: any = null;
+    if (r.source === "past") {
+      ({ error } = await supabase.rpc("watheq_record_past_payment", { p_past: r.id, p_amount: amt, p_paid_on: on.trim() }));
+    } else {
+      /* صفّ وحدة: المتأخرات (أقساط) أولًا ثم الدين المرحَّل */
+      const toRent = Math.min(amt, Number(r._legacy) || 0), toCarried = Math.round((amt - toRent) * 100) / 100;
+      if (toRent > 0) ({ error } = await supabase.rpc("watheq_record_payment", { p_tenant: r.id, p_amount: toRent, p_paid_on: on.trim(), p_method: "transfer" }));
+      if (!error && toCarried > 0) ({ error } = await supabase.rpc("watheq_record_carried_payment", { p_tenant: r.id, p_amount: toCarried, p_paid_on: on.trim() }));
+    }
+    setBusy(false);
+    if (error) return setErr(/does not exist|function/i.test(error.message)
+      ? "تسجيل السداد يحتاج تحديث قاعدة البيانات — شغّل schema-v45 أولًا." : error.message);
+    const left = Math.round((r.carried_debt - amt) * 100) / 100;
+    setRows((cur) => (cur || []).map((x) => (x.id === r.id && x.source === r.source
+      ? { ...x, carried_debt: left, _legacy: Math.max(0, (Number(x._legacy) || 0) - amt),
+          debt_status: left <= 0.005 ? "settled" : x.debt_status } : x)).filter((x) => x.carried_debt > 0.005));
+  }
+
+  async function writeOff(r: Row) {
+    const why = prompt(`شطب ${sar(r.carried_debt)} ريال على ${r.name}\n\nلا يُسجَّل نقد — تنازلٌ عن الدين. اذكر السبب (يُحفظ في السجل):`);
+    if (why === null) return;
+    if (!why.trim()) return setErr("اذكر سبب الشطب.");
+    setBusy(true); setErr(null);
+    const { error } = r.source === "past"
+      ? await supabase.rpc("watheq_set_past_debt", { p_past: r.id, p_status: "written_off", p_note: why.trim() })
+      : await supabase.rpc("watheq_write_off_carried", { p_tenant: r.id, p_note: why.trim() });
     setBusy(false);
     if (error) return setErr(error.message);
-    setRows((cur) => (cur || []).filter((x) => x.id !== r.id));
+    setRows((cur) => (cur || []).filter((x) => !(x.id === r.id && x.source === r.source)));
   }
 
   const shown = (rows || [])
@@ -196,13 +267,14 @@ export default function DebtFollowUp({ properties, orgName, onClose }: {
                   const age = ageOf(r.debt_since);
                   const st = STATUS[String(r.debt_status || "open")] || STATUS.open;
                   return (
-                    <div key={r.id} className="bg-white border border-line rounded-xl p-3">
+                    <div key={`${r.source}-${r.id}`} className="bg-white border border-line rounded-xl p-3">
                       <div className="flex items-start justify-between gap-3 flex-wrap">
                         <div className="min-w-0">
                           <div className="font-semibold text-deep">
                             {r.name}
                             <span className={`ms-2 text-[11px] px-2 py-0.5 rounded-full border ${st.cls}`}>{st.label}</span>
                             {String(r.status) === "vacated" && <span className="ms-1 text-[11px] text-muted">· أخلى الوحدة</span>}
+                            {r.source === "past" && <span className="ms-1 text-[11px] text-muted">· مستأجر سابق{r.legacyFlag ? " (بلا جوال محفوظ)" : ""}</span>}
                           </div>
                           <div className="text-[11px] text-muted mt-0.5">
                             {r.property_name}{r.unit ? ` · وحدة ${r.unit}` : ""}
@@ -228,7 +300,7 @@ export default function DebtFollowUp({ properties, orgName, onClose }: {
                           <input className="fld text-sm" value={eNote} onChange={(e) => setENote(e.target.value)}
                             placeholder="آخر ما جرى: وعد بالسداد نهاية الشهر · رقم القضية · سبب الشطب…" />
                           <div className="flex gap-2">
-                            <button className="btn btn-primary text-xs" disabled={busy} onClick={() => save(r.id)}>حفظ</button>
+                            <button className="btn btn-primary text-xs" disabled={busy} onClick={() => save(r)}>حفظ</button>
                             <button className="btn btn-ghost text-xs" onClick={() => setEditing(null)}>إلغاء</button>
                           </div>
                         </div>
@@ -238,13 +310,23 @@ export default function DebtFollowUp({ properties, orgName, onClose }: {
                             onClick={() => { setEditing(r.id); setEStatus(String(r.debt_status || "open")); setENote(r.debt_note || ""); }}>
                             ✎ حدّث المتابعة
                           </button>
+{r.phone ? (
                           <a className="btn btn-wa text-xs" href={waLink(r.phone, msg(r))} target="_blank" rel="noreferrer"
                             onClick={(e) => { e.preventDefault(); openExternal(waLink(r.phone, msg(r))); }}>
                             💬 طالبه
                           </a>
-                          <button className="btn btn-ghost text-xs text-late" disabled={busy} onClick={() => clearDebt(r)}>
-                            🗑 صفّر الدين
+                          ) : (
+                            /* دين قديم رُحّل قبل v45: الجوال لم يُحفظ يومها — لا نفتح واتساب لرقم فارغ */
+                            <span className="text-[11px] text-muted self-center">لا جوال محفوظ</span>
+                          )}
+                          <button className="btn btn-primary text-xs" disabled={busy} onClick={() => recordPayment(r)}>
+                            ✔ سجّل سدادًا
                           </button>
+                          {!(r.source === "unit" && (Number(r._legacy) || 0) > 0 && !(Number(r._carried) || 0)) && (
+                            <button className="btn btn-ghost text-xs text-late" disabled={busy} onClick={() => writeOff(r)}>
+                              شطب
+                            </button>
+                          )}
                         </div>
                       )}
                     </div>

@@ -73,6 +73,9 @@ export default function ExportData() {
         all("associations").catch(() => []), all("owners").catch(() => []),
       ]);
       const invoices = await all("invoices").catch(() => []);
+      /* أرشيف المستأجرين السابقين (v45) — قبل الترحيل لا جدول */
+      const past = await all("past_tenancies", "*", "archived_at").catch(() => []);
+      const pastById: Record<string, any> = {}; past.forEach((x: any) => { pastById[x.id] = x; });
       const pName: Record<string, string> = {}; props.forEach((p) => { pName[p.id] = p.name; });
       const tById: Record<string, any> = {}; tenants.forEach((t) => { tById[t.id] = t; });
 
@@ -137,12 +140,23 @@ export default function ExportData() {
 
       add("الدفعات", payments.map((x) => ({
         "التاريخ": x.paid_on, "العقار": pName[x.property_id] || pName[tById[x.tenant_id]?.property_id] || "",
-        "الوحدة": tById[x.tenant_id]?.unit || "", "المستأجر": tById[x.tenant_id]?.name || "",
+        /* الساكن باسمه الحيّ؛ ودفعات من سبقه بالاسم المحفوظ فيها (v45) */
+        "الوحدة": (x.tenant_id && tById[x.tenant_id]?.unit) || x.unit_label || "",
+        "المستأجر": (x.tenant_id && tById[x.tenant_id]?.name) || x.payer_name || "",
+        "تسدّد": ({ rent: "أقساط", carried: "دين مرحَّل", past_debt: "دين مستأجر سابق" } as any)[x.applies_to] || "أقساط",
         "المبلغ": x.amount, "الطريقة": METHOD_AR[x.method] || x.method || "", "الدفعات المغطاة": x.periods_covered || "",
         /* مرجع الحوالة يُطابق به المكتب كشف بنكه — وكان يسقط من التصدير */
         "مرجع الحوالة": x.reference || "", "ملاحظة": x.note || "",
-      })), [12, 22, 10, 22, 12, 12, 10, 14, 24]);
+      })), [12, 22, 10, 22, 14, 12, 12, 10, 14, 24]);
 
+      add("المستأجرون السابقون", past.map((x: any) => ({
+        "العقار": pName[x.property_id] || "", "الوحدة": x.unit || "", "المستأجر": x.name, "الجوال": x.phone || "",
+        "الهوية": x.national_id || "", "تاريخ الأرشفة": String(x.archived_at || "").slice(0, 10),
+        "الدين": Number(x.debt_amount) || 0, "المسدَّد منه": Number(x.debt_paid) || 0,
+        "المتبقي": Math.max(0, (Number(x.debt_amount) || 0) - (Number(x.debt_paid) || 0)),
+        "الحالة": ({ open: "مفتوح", promised: "وعد بالسداد", legal: "أُحيل للتنفيذ", settled: "سُوّي", written_off: "شُطب" } as any)[x.debt_status] || x.debt_status,
+        "ملاحظة": x.debt_note || "",
+      })));
       add("الفواتير", invoices.map((x) => ({
         "رقم الفاتورة": x.invoice_no, "التاريخ": (x.created_at || "").slice(0, 10), "العقار": pName[x.property_id] || "",
         "المستأجر": tById[x.tenant_id]?.name || "", "الوحدة": tById[x.tenant_id]?.unit || "",

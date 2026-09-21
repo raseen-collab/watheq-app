@@ -191,8 +191,19 @@ export async function summaryReport(db: DB, profile: any): Promise<string> {
        * عنه من يتابع بالبوت وحده شيئًا. سطر واحد في الملخّص يكفي، ولا
        * نُقحمه في المتأخرات لأنه صنف آخر يُطالَب به بطريقة أخرى.
        */
-      const carried = rows.reduce((s, r) => s + (r.st.carriedDebt || 0), 0);
-      const carriedN = rows.filter((r) => (r.st.carriedDebt || 0) > 0).length;
+      /* ودين المستأجرين السابقين في الأرشيف (v45) — قبل الترحيل لا جدول */
+      let pastOwed = 0, pastN = 0;
+      try {
+        const { data: pd } = await db.from("past_tenancies")
+          .select("debt_amount, debt_paid, debt_status").eq("user_id", profile.id)
+          .not("debt_status", "in", "(settled,written_off)").limit(2000);
+        for (const x of (pd || []) as any[]) {
+          const left = (Number(x.debt_amount) || 0) - (Number(x.debt_paid) || 0);
+          if (left > 0.005) { pastOwed += left; pastN++; }
+        }
+      } catch { /* لا جدول بعد */ }
+      const carried = rows.reduce((s, r) => s + (r.st.carriedDebt || 0), 0) + pastOwed;
+      const carriedN = rows.filter((r) => (r.st.carriedDebt || 0) > 0).length + pastN;
       return [
         `📊 <b>ملخّص وثيق — العقارات</b>`, ``,
         `• العقارات: <b>${properties.length}</b> · الوحدات: <b>${rows.length}</b>`,

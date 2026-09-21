@@ -103,7 +103,7 @@ export default function OwnerStatementModal({ properties, issuer, onClose }: {
       return { rows: out, error: null };
     }
     const [pay, ex] = await Promise.all([
-      fetchAll("payments", "id,paid_on,amount,method,periods_covered,note,tenant_id,property_id", "paid_on"),
+      fetchAll("payments", "*", "paid_on"),
       fetchAll("expenses", "*", "spent_on"),
     ]);
     setLoading(false);
@@ -115,7 +115,7 @@ export default function OwnerStatementModal({ properties, issuer, onClose }: {
       const payments: OwnerReportPayment[] = pay.rows.filter((x: any) => x.property_id === p.id).map((x: any) => ({
         id: x.id, paid_on: x.paid_on, amount: x.amount, method: x.method,
         periods_covered: x.periods_covered, note: x.note,
-        tenant_name: byId[x.tenant_id]?.name || null, unit: byId[x.tenant_id]?.unit || null,
+        tenant_name: (x.tenant_id && byId[x.tenant_id]?.name) || x.payer_name || null, unit: (x.tenant_id && byId[x.tenant_id]?.unit) || x.unit_label || null,
       }));
       const expenses = (ex.error ? [] : ex.rows).filter((x: any) => x.property_id === p.id) as ExpenseRow[];
       return { property: p, payments, expenses, fee_pct: p.mgmt_fee_pct };

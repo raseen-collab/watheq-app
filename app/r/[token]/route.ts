@@ -105,7 +105,7 @@ export async function GET(_req: Request, { params }: { params: { token: string }
       return out;
     };
     const [pays, exps, { data: profile }] = await Promise.all([
-      fetchAll("payments", "id,paid_on,amount,method,periods_covered,note,tenant_id,property_id", "paid_on"),
+      fetchAll("payments", "*", "paid_on"),
       fetchAll("expenses", "*", "spent_on"),
       db.from("profiles").select("org_name, billing_name, vat_number, cr_number, billing_phone, plan, trial_ends_at, subscribed_until")
         .eq("id", link.user_id).maybeSingle(),
@@ -116,7 +116,7 @@ export async function GET(_req: Request, { params }: { params: { token: string }
       return {
         property: p,
         payments: pays.filter((x) => x.property_id === p.id).map((x) => ({
-          ...x, tenant_name: byId[x.tenant_id]?.name || null, unit: byId[x.tenant_id]?.unit || null,
+          ...x, tenant_name: (x.tenant_id && byId[x.tenant_id]?.name) || x.payer_name || null, unit: (x.tenant_id && byId[x.tenant_id]?.unit) || x.unit_label || null,
         })),
         expenses: exps.filter((x) => x.property_id === p.id),
         fee_pct: p.mgmt_fee_pct,
@@ -166,7 +166,7 @@ export async function GET(_req: Request, { params }: { params: { token: string }
    * من يد المكتب تمامًا. الجلب على دفعات حتى ينتهي الجدول فعلًا.
    */
   const [pays, exps, { data: profile }] = await Promise.all([
-    fetchAllRows(db as any, "payments", "id,paid_on,amount,method,periods_covered,note,tenant_id",
+    fetchAllRows(db as any, "payments", "*",
       (q) => q.eq("property_id", link.property_id).gte("paid_on", from).lte("paid_on", to).order("paid_on", { ascending: true })),
     fetchAllRows(db as any, "expenses", "*",
       (q) => q.eq("property_id", link.property_id).gte("spent_on", from).lte("spent_on", to).order("spent_on", { ascending: true })),
@@ -177,7 +177,7 @@ export async function GET(_req: Request, { params }: { params: { token: string }
   const byId: Record<string, any> = {};
   for (const t of (property as any).tenants || []) byId[t.id] = t;
   const payments = (pays || []).map((x: any) => ({
-    ...x, tenant_name: byId[x.tenant_id]?.name || null, unit: byId[x.tenant_id]?.unit || null,
+    ...x, tenant_name: (x.tenant_id && byId[x.tenant_id]?.name) || x.payer_name || null, unit: (x.tenant_id && byId[x.tenant_id]?.unit) || x.unit_label || null,
   }));
 
   const { trial, expired } = issuerMarks(profile || {});

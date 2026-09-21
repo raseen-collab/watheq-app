@@ -345,6 +345,23 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
   useEffect(() => { setCardsShown(60); }, [filter, q, activeId]);
   const [sort, setSort] = useState<"urgent" | "due" | "amount" | "name">("urgent");
   const [toast, setToast] = useState<null | { k: "ok" | "err"; m: string; undo?: () => void }>(null);
+  /* ديون المستأجرين السابقين المفتوحة (schema-v45). قبل الترحيل لا يوجد
+     الجدول — فالخطأ يُتجاهَل ويبقى المؤشر كما كان. */
+  const [past, setPast] = useState<{ id: string; property_id: string; name: string; unit: string | null;
+    debt_amount: number; debt_paid: number; debt_status: string }[]>([]);
+  async function loadPast() {
+    try {
+      const { data, error } = await supabase.from("past_tenancies")
+        .select("id, property_id, name, unit, debt_amount, debt_paid, debt_status")
+        .not("debt_status", "in", "(settled,written_off)").limit(2000);
+      /* الفلتر يُعاد هنا: قاعدة التجربة لا تطبّق .not() */
+      if (!error && Array.isArray(data)) setPast((data as any[]).filter((x) => !["settled", "written_off"].includes(String(x.debt_status))));
+    } catch { /* قاعدة قبل v45 أو وضع التجربة */ }
+  }
+  useEffect(() => { loadPast(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [supabase]);
+  const pastOwed = (pid?: string) => past
+    .filter((x) => !pid || x.property_id === pid)
+    .reduce((a, x) => a + Math.max(0, (Number(x.debt_amount) || 0) - (Number(x.debt_paid) || 0)), 0);
   // الحسابات تعتمد على تاريخ اليوم، وتوقيت السيرفر يختلف عن توقيت الجهاز.
   // لذلك نرسم المحتوى المعتمد على التاريخ بعد الإماهة فقط — يمنع خطأ hydration.
   const [hydrated, setHydrated] = useState(false);
@@ -426,7 +443,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
      */
     const day = paidOn || today();
     const { data: dup } = await supabase.from("payments")
-      .select("id, amount, paid_on, method")
+      .select("*")
       .eq("tenant_id", t.id).eq("paid_on", day).limit(20);
     const same = (dup || []).filter((x: any) => Math.abs(Number(x.amount) - amount) < 0.01);
     if (same.length && !confirm(
@@ -523,21 +540,42 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
     router.refresh();
   }
 
-  /** إعادة التأجير: تُفتح نافذة الوحدة ببيانات جديدة */
+  /**
+   * إعادة التأجير (schema-v45).
+   *
+   * كانت تكتب المستأجر الجديد فوق صفّ السابق: اسمه وجواله يُمحيان، ودينه
+   * يُرحَّل على صفّ الجديد فيُطالَب به من لا يدين به. الآن يُؤرشَف السابق
+   * بصاحبه ودينه ودفعاته، ويُكتب الجديد نظيفًا — في عملية واحدة عند الحفظ.
+   *
+   * والنموذج يُفتح بحقول المستأجر فارغة: كان يُفتح ببيانات السابق، فمن
+   * غيّر الاسم ونسي الجوال أرسل تذكيرات الجديد إلى جوال السابق.
+   */
   function reLet(t: Tenant) {
-    /* الوحدة المُخلاة يُعاد استعمال صفّها للمستأجر الجديد — فكان دين السابق
-       يختفي بلا أثر. ننبّه ونرحّله ليبقى مطالَبًا به. */
     const st = contractState(t, { graceDays: Number(active?.grace_days) || 0, ...windowsOf(active) });
-    const debt = (st.legacyArrears || 0) + (Number(t.carried_debt) || 0);
+    const debt = Math.round(((st.legacyArrears || 0) + (Number(t.carried_debt) || 0)) * 100) / 100;
+    let keepDebt = 0;
     if (debt > 0) {
-      const carry = confirm(`على المستأجر السابق ${t.name} دين ${sar(debt)} ريال.\n\nموافق = يُرحَّل كدين على الوحدة ويبقى ظاهرًا للمتابعة\nإلغاء = سُوّي بالكامل ولا يُرحَّل`);
-      setModal({ kind: "tenant", id: t.id, preset: { carried_debt: carry ? Math.round(debt * 100) / 100 : 0, carried_debt_note: carry ? `دين ${t.name} قبل الإخلاء` : null } } as any);
-      notify("ok", carry ? `أدخل بيانات المستأجر الجديد — ودين ${sar(debt)} ريال مرحَّل على الوحدة.` : "أدخل بيانات المستأجر الجديد.");
-      return;
+      const carry = confirm(
+        `على المستأجر السابق ${t.name} مبلغ ${sar(debt)} ريال.\n\n`
+        + `موافق = يُحفظ دينًا باسمه وجواله في «الديون المرحَّلة» ويُتابَع عليه — ولا يظهر على المستأجر الجديد.\n`
+        + `إلغاء = سُوّي بالكامل ولا دين عليه.`);
+      keepDebt = carry ? debt : 0;
     }
-    setModal({ kind: "tenant", id: t.id });
-    notify("ok", "أدخل بيانات المستأجر الجديد — ستعود الوحدة مؤجّرة عند الحفظ.");
+    const x = t as any;
+    setModal({ kind: "tenant", id: t.id, preset: {
+      _relet: true, _reletDebt: keepDebt, _prevName: t.name,
+      /* ما يخصّ المستأجر: فارغ */
+      name: "", phone: "", national_id: "", contract_no: "", contract_start: today(), contract_end: null,
+      first_due: null, paid_periods: 0, partial_amount: 0, carried_debt: 0, carried_debt_note: null,
+      status: "active", move_out_date: null,
+      /* قراءة التسليم للجديد = قراءة الخروج للسابق */
+      meter_elec_in: x.meter_elec_out || x.meter_elec_in || "", meter_water_in: x.meter_water_out || x.meter_water_in || "",
+    } } as any);
+    notify("ok", keepDebt > 0
+      ? `أدخل بيانات المستأجر الجديد — ودين ${t.name} (${sar(keepDebt)} ريال) يُحفظ باسمه عند الحفظ.`
+      : "أدخل بيانات المستأجر الجديد — ستعود الوحدة مؤجّرة عند الحفظ.");
   }
+
 
   /** مخالصة الإخلاء (مستند) */
   function openSettlement(t: Tenant) {
@@ -726,11 +764,41 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       }
 
       const reletting = prev && isVacant(prev);
-      const full: any = reletting
-        ? { ...payload, status: "active", paid_periods: 0, partial_amount: 0,
-            notice_date: null, move_out_date: null, deposit_deductions: 0,
-            meter_elec_out: null, meter_water_out: null, turnover_checklist: [] }
-        : { ...payload, paid_periods: paidNew };
+      /* إعادة التأجير عبر دالة واحدة لا تتجزأ (schema-v45): أرشفة السابق
+         بدينه ودفعاته، ثم كتابة الجديد نظيفًا. لا يُترك نصف عملية. */
+      if (reletting && (d as any)._relet) {
+        const opening = Math.max(0, Math.min(Math.floor(Number(d.paid_periods) || 0), periods || 9999));
+        const { data: rr, error: re } = await supabase.rpc("watheq_relet_unit", {
+          p_tenant: id, p_debt: Number((d as any)._reletDebt) || 0, p_new: payload,
+        });
+        if (re) {
+          console.error("Watheq relet error:", re);
+          return fail(/does not exist|function/i.test(re.message)
+            ? "إعادة التأجير تحتاج تحديث قاعدة البيانات — شغّل schema-v45 أولًا."
+            : re.message);
+        }
+        /* الجديد دفع عند التوقيع؟ رصيده الافتتاحي بعد الأرشفة (يُسجَّل أثره) */
+        if (opening > 0) await supabase.from("tenants").update({ paid_periods: opening }).eq("id", id);
+        const fresh = { ...prev, ...payload, status: "active", paid_periods: opening, partial_amount: 0,
+          carried_debt: 0, carried_debt_note: null, move_out_date: null } as Tenant;
+        setItems(items.map((p) => p.id === active.id
+          ? { ...p, tenants: p.tenants.map((t) => (t.id === id ? fresh : t)) } : p));
+        const moved = Number((rr as any)?.payments_moved) || 0, dbt = Number((rr as any)?.debt) || 0;
+        notify("ok", `سُجّل ${payload.name} في الوحدة ${payload.unit || ""}`
+          + (dbt > 0 ? ` — ودين ${(d as any)._prevName || "السابق"} (${sar(dbt)}) محفوظ باسمه في «الديون المرحَّلة»` : "")
+          + (moved ? ` · ودفعاته (${moved}) انتقلت معه` : ""));
+        setSaving(false); setSaveErr(null); setModal(null);
+        loadPast();
+        router.refresh();
+        return;
+      }
+      /* إعادة التأجير طريقها زرّ «إعادة تأجير» وحده. كان أي حفظ لوحدة شاغرة
+         يُعدّ إعادة تأجير: «تعديل البيانات» لتصحيح رقم عدّاد مثلًا يُعيد
+         المستأجر الذي غادر «مؤجّرًا» بعدّاد صفر — فيبدو مطالَبًا بالعقد كله. */
+      if (reletting && payload.status === "active") {
+        return fail("لتأجير الوحدة لمستأجر جديد استعمل «إعادة تأجير» من قائمة الوحدة — تحفظ المستأجر السابق ودينه ودفعاته. والتعديل هنا يُبقي الوحدة شاغرة.");
+      }
+      const full: any = { ...payload, paid_periods: paidNew };
       const { data: _u2, error } = await supabase.from("tenants").update(full).eq("id", id).select("id");
       if (error) { console.error("Watheq save error:", error); return fail(error.message); }
       if (!_u2 || _u2.length === 0) return fail("هذا الإجراء يحتاج صلاحية أعلى — اطلبه من صاحب المكتب.");
@@ -849,7 +917,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
        كان الكشف يجمع دفعات المدة السابقة — أو دفعات مستأجر سابق — مع قيمة
        عقد المدة الحالية، فيقول «المسدَّد 60,000 من 30,000». */
     let q = supabase.from("payments")
-      .select("id,paid_on,amount,method,periods_covered,note")
+      .select("*")
       .eq("tenant_id", t.id);
     const since = (t as any).term_started_at;
     if (since && /^\d{4}-\d{2}-\d{2}T/.test(String(since))) q = q.gte("created_at", since);
@@ -870,7 +938,8 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
   const fail = (m: string) => { setSaveErr(m); notify("err", m); setSaving(false); };
   const hasDemo = items.some((p) => (p as any).is_demo);
   /* إجمالي الديون المرحَّلة — رقم يتراكم بصمت ولا يظهر في أي شاشة */
-  const carriedTotal = items.reduce((a, p) => a + (p.tenants || []).reduce((b, t) => b + Math.max(0, Number((t as any).carried_debt) || 0), 0), 0);
+  const carriedTotal = items.reduce((a, p) => a + (p.tenants || []).reduce((b, t) => b + Math.max(0, Number((t as any).carried_debt) || 0), 0), 0)
+    + pastOwed();
 
   async function seedDemo() {
     setSeeding(true);
@@ -914,7 +983,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
     if (!period) { openDoc(propertyStatementHTML(active as any, issuer || {}, mode)); return; }
     /* الأرقام من السجل الفعلي للفترة — لا من الحالة اللحظية، فيطابق تقرير المالك */
     const [pay, exp] = await Promise.all([
-      supabase.from("payments").select("id, paid_on, reference, created_at, amount, method, note, tenant_id, unit:tenant_id")
+      supabase.from("payments").select("*")
         .eq("property_id", active.id).gte("paid_on", period.from).lte("paid_on", period.to).limit(5000),
       supabase.from("expenses").select("id, spent_on, amount, category, note, unit")
         .eq("property_id", active.id).gte("spent_on", period.from).lte("spent_on", period.to).limit(5000),
@@ -923,7 +992,8 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
     const nameOf: Record<string, { name: string; unit: string | null }> = {};
     (active.tenants || []).forEach((t) => { nameOf[t.id] = { name: t.name, unit: t.unit }; });
     const rowsP = (pay.data || []).map((x: any) => ({
-      ...x, tenant_name: nameOf[x.tenant_id]?.name || "—", unit: nameOf[x.tenant_id]?.unit || null,
+      /* الساكن الحالي باسمه الحيّ (يسري عليه أي تصحيح)؛ ودفعات من سبقه بالاسم المحفوظ فيها */
+      ...x, tenant_name: (x.tenant_id && nameOf[x.tenant_id]?.name) || x.payer_name || "—", unit: (x.tenant_id && nameOf[x.tenant_id]?.unit) || x.unit_label || null,
     }));
     openDoc(propertyStatementHTML(active as any, issuer || {}, mode, period, rowsP as any, (exp.data || []) as any));
   }
@@ -1189,10 +1259,12 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
    * كان يختفي من كل مؤشر: شريط المحفظة، وفلتر «متأخر»، وعمود «ريال متأخر».
    * لا نخلطه بالمتأخر الجاري (يُطالَب به بطريقة أخرى) بل نعرضه بجانبه.
    */
+  const pastHere = past.filter((x) => x.property_id === activeId
+    && (Number(x.debt_amount) || 0) - (Number(x.debt_paid) || 0) > 0.005);
   const vacantArrears = allRows
     .filter((r) => r.key === "vacant")
-    .reduce((s, r) => s + (r.st.totalOwed || 0), 0);
-  const vacantArrearsCount = allRows.filter((r) => r.key === "vacant" && (r.st.totalOwed || 0) > 0).length;
+    .reduce((s, r) => s + (r.st.totalOwed || 0), 0) + pastOwed(activeId || undefined);
+  const vacantArrearsCount = allRows.filter((r) => r.key === "vacant" && (r.st.totalOwed || 0) > 0).length + pastHere.length;
   /**
    * الدخل السنوي للعقار = مجموع إيجارات الوحدات المشغولة مُقيَّسًا على سنة
    * (شهري ×12، ربع سنوي ×4...). و«المحصَّل منه» يُقرأ من سجل الدفعات
@@ -1327,7 +1399,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
         <Stat v={collectedThisMonth === null ? "…" : sar(Math.round(collectedThisMonth))} l={`المحصَّل فعليًّا هذا الشهر · المتوقع ${sar(Math.round(monthlyIncome))}`} kpi="income" icon="↑" />
         {(lateCount > 0 || overdue > 0) && <Stat v={sar(overdue)} l={`المتأخر (${lateCount === 0 ? "لا وحدات" : plural(lateCount, "وحدة واحدة", "وحدتان", "وحدات", "وحدة")})`} kpi="overdue" icon="!" onClick={() => { setFilter("late"); setSort("amount"); }} active={filter === "late"} />}
         {/* مال على مستأجرين سابقين — كان يختفي من كل المؤشرات */}
-        {vacantArrears > 0 && <Stat v={sar(vacantArrears)} l={`على مستأجرين سابقين (${plural(vacantArrearsCount, "وحدة واحدة", "وحدتان", "وحدات", "وحدة")})`} kpi="overdue" icon="↩" onClick={() => { setFilter("vacant"); setSort("amount"); }} active={filter === "vacant"} />}
+        {vacantArrears > 0 && <Stat v={sar(vacantArrears)} l={`على مستأجرين سابقين (${plural(vacantArrearsCount, "وحدة واحدة", "وحدتان", "وحدات", "وحدة")})`} kpi="overdue" icon="↩" onClick={() => { if (pastHere.length) setDebtOpen(true); else { setFilter("vacant"); setSort("amount"); } }} active={filter === "vacant"} />}
         {((counts.due || 0) + (counts.soon || 0)) > 0 && <Stat v={String((counts.due || 0) + (counts.soon || 0))} l={`تستحق خلال ${plural(windowsOf(active).soonDays, "يوم واحد", "يومين", "أيام", "يومًا")}`} kpi="soon" icon="●" onClick={() => setFilter("soon")} active={filter === "soon"} />}
         {(counts.expiring || 0) > 0 && <Stat v={String(counts.expiring || 0)} l="عقود تنتهي قريبًا" kpi="expiring" icon="↻" onClick={() => setFilter("expiring")} active={filter === "expiring"} />}
       </div>
@@ -2844,7 +2916,7 @@ function OwnerReportModal({ property, unitWord, issuer, onClose }: {
 
     // دفعات العقار الموثّقة خلال الشهر — نفس السجل الذي يغذّي كشف حساب المستأجر
     const { data, error } = await supabase.from("payments")
-      .select("id,paid_on,amount,method,periods_covered,note,tenant_id,reference,created_at")
+      .select("*")
       .eq("property_id", property.id)
       .gte("paid_on", from).lte("paid_on", to)
       .order("paid_on", { ascending: true }).limit(5000);
@@ -2856,8 +2928,8 @@ function OwnerReportModal({ property, unitWord, issuer, onClose }: {
     const payments: OwnerReportPayment[] = (data || []).map((x: any) => ({
       id: x.id, paid_on: x.paid_on, amount: x.amount, method: x.method, reference: x.reference, created_at: x.created_at,
       periods_covered: x.periods_covered, note: x.note,
-      tenant_name: byId[x.tenant_id]?.name || null,
-      unit: byId[x.tenant_id]?.unit || null,
+      tenant_name: (x.tenant_id && byId[x.tenant_id]?.name) || x.payer_name || null,
+      unit: (x.tenant_id && byId[x.tenant_id]?.unit) || x.unit_label || null,
     }));
 
     // مصروفات الفترة نفسها — إن لم يُشغَّل schema-v8 بعد نُصدر التقرير بلا خصومات

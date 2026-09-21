@@ -88,7 +88,7 @@ export default function CollectionStatementModal({ properties, issuer, onClose }
 
       /* بلا قصّ: كشف «منذ البداية» لمكتب كبير يتجاوز أي حدّ ثابت */
       const pays = await fetchAllRows(supabase as any, "payments",
-        "id,paid_on,amount,method,note,reference,periods_covered,tenant_id,property_id,reverses",
+        "*",
         (q) => q.in("property_id", ids).gte("paid_on", from).lte("paid_on", to).order("paid_on", { ascending: true }));
       const exps = await fetchAllRows(supabase as any, "expenses", "id,spent_on,amount,category,note,billable,paid_by,property_id",
         (q) => q.in("property_id", ids).gte("spent_on", from).lte("spent_on", to).order("spent_on", { ascending: true }));
@@ -136,7 +136,7 @@ export default function CollectionStatementModal({ properties, issuer, onClose }
       const ord = (n: number) => (n <= 10 ? `القسط ${ORD[n]}` : `القسط ${n}`);
       const rows: CollectionRow[] = clean
         .map((x: any) => {
-          const t = tById[x.tenant_id] || {};
+          const t = (x.tenant_id && tById[x.tenant_id]) || {};
           const rent = Number(t.rent_amount) || 0;
           const amt = Number(x.amount) || 0;
           const before = paidSoFar[x.tenant_id] || 0;
@@ -144,7 +144,9 @@ export default function CollectionStatementModal({ properties, issuer, onClose }
           paidSoFar[x.tenant_id] = after;
 
           let base: string;
-          if (rent <= 0) base = "دفعة";
+          /* دفعة مستأجر سابق (أرشيف v45): لا إيجار حاضر لحساب رقم القسط */
+          if (!x.tenant_id) base = x.note === "سداد دين مستأجر سابق" ? "سداد دين مستأجر سابق" : "دفعة";
+          else if (rent <= 0) base = "دفعة";
           else {
             const idx = Math.floor(before / rent) + 1;          // القسط الذي تقع فيه هذه الدفعة
             const doneBefore = before % rent;                    // ما سُدّد منه سلفًا
@@ -159,13 +161,13 @@ export default function CollectionStatementModal({ properties, issuer, onClose }
               base = `جزء من ${ord(idx)} — باقٍ ${sar(rem)}`;
             }
           }
-          const statement = /^جزء من/.test(base)
+          const statement = (/^جزء من/.test(base) || !x.tenant_id)
             ? base
             : (x.note && !/بوت|تراجع|عكس/.test(String(x.note)) ? `${base} · ${x.note}` : base);
           return {
             property: pName[x.property_id] || "—",
-            unit: t.unit ?? null,
-            tenant: t.name ?? null,
+            unit: t.unit ?? x.unit_label ?? null,
+            tenant: t.name ?? x.payer_name ?? null,
             paid_on: x.paid_on,
             amount: amt,
             statement,

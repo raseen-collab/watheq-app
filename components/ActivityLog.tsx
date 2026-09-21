@@ -19,6 +19,8 @@ type Entry = {
   note: string | null; tenant_id: string; property_id: string; created_by: string | null; periods_covered: number | null;
   /** نوع الحركة: دفعة/تراجع أو مصروف — والمصروف قد يخصّ وحدة بعينها */
   kind?: "payment" | "expense" | "adjustment"; unit?: string | null;
+  /** اسم الدافع المحفوظ ووحدته — لدفعات مستأجر انتقل للأرشيف */
+  payer_name?: string | null; unit_label?: string | null;
 };
 
 const METHOD_AR: Record<string, string> = { transfer: "تحويل", cash: "نقدًا", pos: "شبكة", cheque: "شيك", other: "أخرى" };
@@ -57,7 +59,7 @@ export default function ActivityLog({ properties, onClose }: { properties: any[]
          أن يرى المكتب أحدهما بلا الآخر عند مراجعة اختلاف في الأرقام. */
       const [pay, exp, adj] = await Promise.all([
         supabase.from("payments")
-          .select("id, created_at, paid_on, amount, method, note, tenant_id, property_id, created_by, periods_covered")
+          .select("*")
           .order("created_at", { ascending: false, nullsFirst: false }).limit(300),
         supabase.from("expenses")
           .select("id, created_at, spent_on, amount, category, note, property_id, unit, created_by")
@@ -105,7 +107,7 @@ export default function ActivityLog({ properties, onClose }: { properties: any[]
   const shown = rows.filter((r) => {
     if (!needle) return true;
     const t = tById[r.tenant_id];
-    return [t?.name, t?.unit, pName[r.property_id], who(r.created_by), r.note].some((x) => String(x || "").includes(needle));
+    return [t?.name || r.payer_name, t?.unit || r.unit_label, pName[r.property_id], who(r.created_by), r.note].some((x) => String(x || "").includes(needle));
   });
 
   return (
@@ -145,7 +147,7 @@ export default function ActivityLog({ properties, onClose }: { properties: any[]
                         : r.kind === "expense" ? <span className="font-semibold text-[#9A4B00]">💸 مصروف</span>
                         : neg ? <span className="font-semibold text-late">↩︎ تراجع عن دفعة</span>
                         : r.periods_covered ? `✔ دفعة (${r.periods_covered})` : "½ سداد جزئي"}</td>
-                      <td className="p-2">{r.kind === "expense" ? <span className="text-muted">{r.unit ? `الوحدة ${r.unit}` : "على العقار"}</span> : <>{t?.name || "—"}{t?.unit && <span className="text-muted text-xs"> · {t.unit}</span>}</>}</td>
+                      <td className="p-2">{r.kind === "expense" ? <span className="text-muted">{r.unit ? `الوحدة ${r.unit}` : "على العقار"}</span> : <>{t?.name || r.payer_name || "—"}{(t?.unit || r.unit_label) && <span className="text-muted text-xs"> · {t?.unit || r.unit_label}</span>}{!r.tenant_id && r.payer_name && <span className="text-[10px] text-muted"> (سابق)</span>}</>}</td>
                       <td className="p-2 text-muted">{pName[r.property_id] || "—"}</td>
                       <td className={`p-2 font-semibold whitespace-nowrap ${neg ? "text-late" : ""}`}>
                         {r.kind === "adjustment"
