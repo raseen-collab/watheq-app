@@ -475,12 +475,14 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       const m = String(error.message || "");
       return notify("err", /not authorized/.test(m) ? "التراجع عن الدفعات للمدير أو صاحب المكتب." : m);
     }
-    const r = data as { paid_periods: number; reversed: number; paid_on?: string; opening_balance?: boolean };
+    const r = data as { paid_periods: number; partial_amount?: number; reversed: number; paid_on?: string; opening_balance?: boolean };
     setItems(items.map((p) => p.id === active.id ? {
       ...p,
       /* الرصيد الافتتاحي لم يمسّ الدفتر — و«0 || amt» كان يُنقص المحصَّل رغمه */
       collected: (p.collected || 0) - (r.opening_balance ? 0 : (r.reversed || amt)),
-      tenants: p.tenants.map((x) => (x.id === t.id ? { ...x, paid_periods: r.paid_periods } : x)),
+      /* v44 يُرجع الجزئي بعد العكس — كانت الشاشة تُبقي القديم حتى التحديث */
+      tenants: p.tenants.map((x) => (x.id === t.id ? { ...x, paid_periods: r.paid_periods,
+        ...(r.partial_amount !== undefined ? { partial_amount: r.partial_amount } : {}) } : x)),
     } : p));
     /* نذكر شهر الدفعة الأصلية: التراجع يُصحّح الشهر الذي دخلت فيه لا الشهر
        الجاري، وبدون ذكره يظن المكتب أن تحصيل هذا الشهر نقص بلا سبب. */
@@ -843,9 +845,15 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
   async function openStatement(t: Tenant, mode: "brief" | "full" = "full") {
     if (!active) return;
     // نجلب سجل المدفوعات الموثّق ليظهر في الكشف بتواريخه وطرقه
-    const { data, error } = await supabase.from("payments")
+    /* دفعات المدة الحالية وحدها (schema-v44): بعد التجديد أو إعادة التأجير
+       كان الكشف يجمع دفعات المدة السابقة — أو دفعات مستأجر سابق — مع قيمة
+       عقد المدة الحالية، فيقول «المسدَّد 60,000 من 30,000». */
+    let q = supabase.from("payments")
       .select("id,paid_on,amount,method,periods_covered,note")
-      .eq("tenant_id", t.id).order("paid_on", { ascending: true }).limit(500);
+      .eq("tenant_id", t.id);
+    const since = (t as any).term_started_at;
+    if (since && /^\d{4}-\d{2}-\d{2}T/.test(String(since))) q = q.gte("created_at", since);
+    const { data, error } = await q.order("paid_on", { ascending: true }).limit(500);
     if (error) console.error("Watheq statement payments error:", error);
     openDoc(statementHTML(t as any, active as any, issuer || {}, (data || []) as any, mode));
   }
@@ -2245,10 +2253,14 @@ function HistoryModal({ data, unitWord, onClose, canEdit = true, onChanged }: {
                           <button className="btn btn-primary text-[10px] px-2 py-0.5" disabled={busy} onClick={() => saveEdit(r.id)}>حفظ</button>
                           <button className="btn btn-ghost text-[10px] px-2 py-0.5" onClick={() => setEditing(null)}>إلغاء</button>
                         </span>
+                      ) : Number(r.amount) < 0 ? (
+                        /* صفّ العكس يتبع تاريخ أصله تلقائيًّا (schema-v44) — تعديله وحده
+                           يفصله عن شهر الدفعة التي عكسها، والقاعدة ترفضه */
+                        <span className="text-[10px] text-muted">يتبع الأصل</span>
                       ) : (
                         <button className="btn btn-ghost text-[10px] px-2 py-0.5"
                           onClick={() => { setEditing(r.id); setEDate(String(r.paid_on || "").slice(0, 10)); setERef(r.reference || ""); }}
-                          title="تصحيح تاريخ وصول الحوالة أو مرجعها — المبلغ لا يُعدَّل">✎ تاريخ/مرجع</button>
+                          title="تصحيح تاريخ وصول الحوالة أو مرجعها — المبلغ لا يُعدَّل، وعكسها إن وُجد يتبعها">✎ تاريخ/مرجع</button>
                       )}
                       {canEdit && editing !== r.id && Number(r.amount) > 0 && (
                         <button className="btn btn-ghost text-[10px] px-2 py-0.5 ms-1 text-late" disabled={busy}
