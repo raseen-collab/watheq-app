@@ -157,7 +157,7 @@ export function buildDemo(today = new Date()): DemoProperty[] {
     props.push({
       name: "معارض طريق الملك فهد", city: "المدينة المنورة", address: "طريق الملك فهد — مقابل الحديقة",
       property_type: "showroom", usage: "commercial", owner_name: "ورثة محمد الأحمدي",
-      grace_days: 0, mgmt_fee_pct: 5, vat_enabled: true, vat_rate: 15, vat_inclusive: false,
+      grace_days: 0, mgmt_fee_pct: 5, vat_enabled: true, vat_rate: 15, vat_inclusive: true,  // «غير شاملة» لم يعد يُعرض للإعداد الجديد
       soon_days: 10, imminent_days: 5, expiring_days: 60, tenants: t,
       expenses: [{ spent_on: shift(-14), amount: 5800, category: "maintenance", unit: null, note: "صيانة التكييف المركزي", vendor: "برودة الشمال", billable: true, paid_by: "collections", status: "paid" }],
       notes: [{ text: "المعرض 5 شاغر — نشر إعلان في حراج ومنصة X", kind: "other", due_date: shift(5), note_date: shift(-1) }],

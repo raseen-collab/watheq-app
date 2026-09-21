@@ -11,7 +11,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase-client";
 import { officeId } from "@/lib/office";
-import { openDoc, ownerConsolidatedStatementHTML, type OwnerReportPayment, type OwnerStatementSection } from "@/lib/documents";
+import { pastVatOf, openDoc, ownerConsolidatedStatementHTML, type OwnerReportPayment, type OwnerStatementSection } from "@/lib/documents";
 import type { ExpenseRow } from "@/lib/expenses";
 
 const AR_MONTHS = ["يناير","فبراير","مارس","أبريل","مايو","يونيو","يوليو","أغسطس","سبتمبر","أكتوبر","نوفمبر","ديسمبر"];
@@ -109,16 +109,19 @@ export default function OwnerStatementModal({ properties, issuer, onClose }: {
     setLoading(false);
     if (pay.error) { setErr(pay.error); return; }
 
+    /* إعدادات الضريبة للمستأجرين السابقين — لضريبة دفعاتهم */
+    const pastQ = await supabase.from("past_tenancies").select("id, snapshot").in("property_id", props.map((p) => p.id)).limit(5000);
+    const pastVat = pastQ.error ? undefined : pastVatOf(pastQ.data as any);
     const sections: OwnerStatementSection[] = props.map((p) => {
       const byId: Record<string, any> = {};
       (p.tenants || []).forEach((t: any) => { byId[t.id] = t; });
       const payments: OwnerReportPayment[] = pay.rows.filter((x: any) => x.property_id === p.id).map((x: any) => ({
         id: x.id, paid_on: x.paid_on, amount: x.amount, method: x.method,
-        periods_covered: x.periods_covered, note: x.note,
+        periods_covered: x.periods_covered, note: x.note, tenant_id: x.tenant_id, past_tenancy_id: x.past_tenancy_id,
         tenant_name: (x.tenant_id && byId[x.tenant_id]?.name) || x.payer_name || null, unit: (x.tenant_id && byId[x.tenant_id]?.unit) || x.unit_label || null,
       }));
       const expenses = (ex.error ? [] : ex.rows).filter((x: any) => x.property_id === p.id) as ExpenseRow[];
-      return { property: p, payments, expenses, fee_pct: p.mgmt_fee_pct };
+      return { property: p, payments, expenses, fee_pct: p.mgmt_fee_pct, pastVat };
     });
 
     openDoc(ownerConsolidatedStatementHTML(owner, sections, { label, from: fromD, to: toD }, issuer || {}, detail));

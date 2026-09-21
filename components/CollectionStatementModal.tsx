@@ -15,7 +15,8 @@
 import {useEffect, useMemo, useState} from "react";
 import { createClient } from "@/lib/supabase-client";
 import { fetchAllRows } from "@/lib/fetch-all";
-import { collectionStatementHTML, type CollectionRow } from "@/lib/documents";
+import { collectionStatementHTML, pastVatOf } from "@/lib/documents";
+import { buildCollection } from "@/lib/collection";
 
 const today = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Riyadh", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
 const shift = (n: number) => { const d = new Date(Date.parse(today())); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10); };
@@ -32,7 +33,8 @@ const RANGES = [
 
 export default function CollectionStatementModal({ properties, issuer, onClose }: {
   /** اسم المالك يأتي مع العقار — فالتصفية بالمالك بلا استعلام إضافي */
-  properties: { id: string; name: string; owner_name?: string | null }[];
+  /** العقار كاملًا: mgmt_fee_pct وإعدادات الضريبة تدخل حساب صافي المالك */
+  properties: ({ id: string; name: string; owner_name?: string | null } & Record<string, any>)[];
   issuer: any;
   onClose: () => void;
 }) {
@@ -90,109 +92,23 @@ export default function CollectionStatementModal({ properties, issuer, onClose }
       const pays = await fetchAllRows(supabase as any, "payments",
         "*",
         (q) => q.in("property_id", ids).gte("paid_on", from).lte("paid_on", to).order("paid_on", { ascending: true }));
-      const exps = await fetchAllRows(supabase as any, "expenses", "id,spent_on,amount,category,note,billable,paid_by,property_id",
+      /* كل الحقول: «على من» يحدّد الصافي، وإعدادات الضريبة والعدّاد وحدّ المدة
+         يحدّدان الترقيم والضريبة */
+      const exps = await fetchAllRows(supabase as any, "expenses", "*",
         (q) => q.in("property_id", ids).gte("spent_on", from).lte("spent_on", to).order("spent_on", { ascending: true }));
-      const tenants = await fetchAllRows(supabase as any, "tenants",
-        "id,name,unit,contract_no,rent_amount,calendar,property_id", (q) => q.in("property_id", ids));
+      const tenants = await fetchAllRows(supabase as any, "tenants", "*", (q) => q.in("property_id", ids));
+      /* كل دفعات الساكنين الحاليين (كل الأوقات): الترقيم من بداية مدة العقد
+         لا من بداية الفترة */
+      const allTenantPayments = await fetchAllRows(supabase as any, "payments", "*",
+        (q) => q.in("property_id", ids).not("tenant_id", "is", null).order("paid_on", { ascending: true }));
+      const pastQ = await supabase.from("past_tenancies").select("id, snapshot").in("property_id", ids).limit(5000);
 
+      const { rows, expRows, fin } = buildCollection({
+        periodPayments: pays || [], allTenantPayments: allTenantPayments || [], expenses: exps || [],
+        tenants: tenants || [], properties: inScope as any[], pastVat: pastQ.error ? undefined : pastVatOf(pastQ.data as any),
+        issuer: issuer || {}, from,
+      });
       const pName: Record<string, string> = Object.fromEntries(properties.map((p) => [p.id, p.name]));
-      const tById: Record<string, any> = Object.fromEntries((tenants || []).map((t: any) => [t.id, t]));
-
-      /**
-       * ترقيم الأقساط بالمبلغ المتراكم لا بعدد الصفوف.
-       *
-       * العدّ بالصفوف كان يُخطئ في حالتين: من دفع نصف القسط ثم أكمله يظهر
-       * له «جزء من القسط الثاني» وهو لم يبدأه بعد؛ ومن تجاوز عشر دفعات
-       * يظل عند «القسط العاشر». وكلاهما رقم يقرؤه المالك ويحاسب عليه.
-       *
-       * الصواب: رقم القسط = ما اكتمل من المبلغ قبل هذه الدفعة + 1.
-       */
-      /**
-       * إسقاط الدفعة المعكوسة مع عكسها.
-       *
-       * تصفية «amount > 0» وحدها تُبقي الدفعة الأصلية وتحذف عكسها — فيضخّم
-       * الكشف بمقدارها. والكشف يُسلَّم للمالك، فالرقم المضخَّم فيه أخطر
-       * من أي عطل آخر.
-       */
-      const positives = (pays || []).filter((x: any) => Number(x.amount) > 0);
-      const reversals = (pays || []).filter((x: any) => Number(x.amount) < 0);
-      const dropped = new Set<string>();
-      /* كل عكس يستهلك دفعةً واحدة؛ وما لم يجد دفعته يُسجَّل هنا لحظتَها —
-         وإعادة الفحص لاحقًا كانت تعدّ العكس الثاني «مقابَلًا» بدفعة
-         استهلكها الأول، فيسقط الاثنان ويعرض الكشف مالًا لم يبقَ. */
-      const unmatched: any[] = [];
-      for (const rev of reversals) {
-        const amt = Math.abs(Number(rev.amount));
-        /* الربط أولًا (schema-v44)، ثم المستأجر والمبلغ للبيانات الأقدم */
-        const hit = (rev.reverses && positives.find((x: any) => !dropped.has(x.id) && x.id === rev.reverses))
-          || positives.find((x: any) => !dropped.has(x.id)
-          && String(x.tenant_id) === String(rev.tenant_id)
-          && Math.abs(Number(x.amount) - amt) < 0.01);
-        if (hit) dropped.add(hit.id); else unmatched.push(rev);
-      }
-      const clean = positives.filter((x: any) => !dropped.has(x.id));
-
-      const paidSoFar: Record<string, number> = {};
-      const ord = (n: number) => (n <= 10 ? `القسط ${ORD[n]}` : `القسط ${n}`);
-      const rows: CollectionRow[] = clean
-        .map((x: any) => {
-          const t = (x.tenant_id && tById[x.tenant_id]) || {};
-          const rent = Number(t.rent_amount) || 0;
-          const amt = Number(x.amount) || 0;
-          const before = paidSoFar[x.tenant_id] || 0;
-          const after = before + amt;
-          paidSoFar[x.tenant_id] = after;
-
-          let base: string;
-          /* دفعة مستأجر سابق (أرشيف v45): لا إيجار حاضر لحساب رقم القسط */
-          if (!x.tenant_id) base = x.note === "سداد دين مستأجر سابق" ? "سداد دين مستأجر سابق" : "دفعة";
-          else if (rent <= 0) base = "دفعة";
-          else {
-            const idx = Math.floor(before / rent) + 1;          // القسط الذي تقع فيه هذه الدفعة
-            const doneBefore = before % rent;                    // ما سُدّد منه سلفًا
-            const rem = rent - (after % rent === 0 ? rent : after % rent);
-            if (after % rent === 0 || Math.floor(after / rent) > Math.floor(before / rent)) {
-              /* دفعة تغطّي أكثر من قسط: المكتب يكتبها «سداد 3 شهور» — نسمّيها بمداها */
-              const last = Math.ceil((after - 0.01) / rent);
-              base = last > idx
-                ? `الأقساط ${idx}–${last}`
-                : doneBefore > 0.01 ? `إكمال ${ord(idx)}` : ord(idx);
-            } else {
-              base = `جزء من ${ord(idx)} — باقٍ ${sar(rem)}`;
-            }
-          }
-          const statement = (/^جزء من/.test(base) || !x.tenant_id)
-            ? base
-            : (x.note && !/بوت|تراجع|عكس/.test(String(x.note)) ? `${base} · ${x.note}` : base);
-          return {
-            property: pName[x.property_id] || "—",
-            unit: t.unit ?? x.unit_label ?? null,
-            tenant: t.name ?? x.payer_name ?? null,
-            paid_on: x.paid_on,
-            amount: amt,
-            statement,
-            contract_no: t.contract_no || (x.reference ? `حوالة ${x.reference}` : null),
-            calendar: t.calendar,
-          };
-        });
-
-      /* صفوف العكس غير المقابَل تُضاف بمبالغها السالبة */
-      for (const rev of unmatched) {
-        const t = tById[rev.tenant_id] || {};
-        rows.push({
-          property: pName[rev.property_id] || "—",
-          unit: t.unit ?? null, tenant: t.name ?? null,
-          paid_on: rev.paid_on, amount: Number(rev.amount) || 0,
-          statement: "تصحيح لدفعة مسجَّلة سابقًا",
-          contract_no: t.contract_no || null, calendar: t.calendar,
-        });
-      }
-      rows.sort((a, b) => String(a.paid_on).localeCompare(String(b.paid_on)));
-
-      /* المصروفات التي يتحمّلها المالك — مصروف المكتب لا يدخل كشفه */
-      const expRows = (exps || [])
-        .filter((e: any) => e.billable !== false && e.paid_by !== "office")
-        .map((e: any) => ({ note: e.note, category: e.category, amount: Number(e.amount) || 0 }));
 
       /* كشف «منذ البداية» لمكتب بسبع سنوات يقارب عشرين ألف صفّ — خمسة
          ميجابايت لا تُطبع ولا تُقرأ. نسأل قبل أن نُغرق المتصفح. */
@@ -205,7 +121,7 @@ export default function CollectionStatementModal({ properties, issuer, onClose }
       const title = scopeKind === "property" ? `كشف حساب — ${pName[scope] || ""}`
         : scopeKind === "owner" ? `كشف حساب — عمائر ${scope}`
         : "كشف حساب لعمائر المكتب";
-      const html = collectionStatementHTML(rows, expRows, { label, from, to }, issuer || {}, { title });
+      const html = collectionStatementHTML(rows, expRows, { label, from, to }, issuer || {}, { title, fin });
       const w = window.open("", "_blank");
       if (!w) { setErr("المتصفح منع فتح النافذة — اسمح بالنوافذ المنبثقة وأعد المحاولة."); return; }
       w.document.write(html); w.document.close();

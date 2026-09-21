@@ -1,6 +1,6 @@
 import { createClient as createAdmin } from "@supabase/supabase-js";
 import { fetchAllRows } from "@/lib/fetch-all";
-import { ownerReportHTML, termRentPaidOf, ownerConsolidatedStatementHTML, type OwnerStatementSection } from "@/lib/documents";
+import { ownerReportHTML, termRentPaidOf, pastVatOf, type PastVat, ownerConsolidatedStatementHTML, type OwnerStatementSection } from "@/lib/documents";
 import { issuerMarks } from "@/lib/subscription";
 
 export const dynamic = "force-dynamic";
@@ -110,6 +110,12 @@ export async function GET(_req: Request, { params }: { params: { token: string }
       db.from("profiles").select("org_name, billing_name, vat_number, cr_number, billing_phone, plan, trial_ends_at, subscribed_until")
         .eq("id", link.user_id).maybeSingle(),
     ]);
+    /* إعدادات الضريبة للمستأجرين السابقين — لضريبة دفعاتهم */
+    let pastVat: PastVat | undefined;
+    try {
+      const { data: pastRows } = await db.from("past_tenancies").select("id, snapshot").in("property_id", props.map((p: any) => p.id)).limit(5000);
+      pastVat = pastVatOf(pastRows as any);
+    } catch { pastVat = undefined; }
     const sections: OwnerStatementSection[] = props.map((p: any) => {
       const byId: Record<string, any> = {};
       (p.tenants || []).forEach((t: any) => { byId[t.id] = t; });
@@ -120,6 +126,7 @@ export async function GET(_req: Request, { params }: { params: { token: string }
         })),
         expenses: exps.filter((x) => x.property_id === p.id),
         fee_pct: p.mgmt_fee_pct,
+        pastVat,
       };
     });
     const marks = issuerMarks(profile || {});
@@ -189,13 +196,19 @@ export async function GET(_req: Request, { params }: { params: { token: string }
     termRentPaid = termRentPaidOf((property as any).tenants || [], (allPays || []) as any);
   } catch { termRentPaid = undefined; }
 
+  let pastVat: PastVat | undefined;
+  try {
+    const { data: pastRows } = await db.from("past_tenancies").select("id, snapshot").eq("property_id", link.property_id).limit(2000);
+    pastVat = pastVatOf(pastRows as any);
+  } catch { pastVat = undefined; }
+
   const { trial, expired } = issuerMarks(profile || {});
   const html = ownerReportHTML(
     property as any,
     { label, from, to },
     payments,
     { ...(profile || {}), trial, expired },
-    { expenses: (exps || []) as any, fee_pct: (property as any).mgmt_fee_pct, termRentPaid },
+    { expenses: (exps || []) as any, fee_pct: (property as any).mgmt_fee_pct, termRentPaid, pastVat },
     "full",   // المالك يفتح رابطه ليرى كل شيء — لا ملخصًا
   );
 

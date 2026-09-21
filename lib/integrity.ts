@@ -257,3 +257,30 @@ export function groupFindings(findings: Finding[]): Group[] {
   const rank: Record<Severity, number> = { critical: 0, warn: 1, info: 2 };
   return [...map.values()].sort((a, b) => rank[a.severity] - rank[b.severity] || b.items.length - a.items.length);
 }
+
+/**
+ * ديون مستأجرين سابقين أُرشفت أقل من المستحق.
+ *
+ * إعادات التأجير قبل إصلاحات 22 سبتمبر: «إلغاء = سُوّي» كان يؤرشف الدين بصفر
+ * بلا أثر، ومهلة السماح كانت تُسقط قسطًا حلّ قبل الخروج. الأرشيف يحفظ نسخة
+ * صفّ المستأجر لحظة خروجه — فيُعاد حساب دينه منها بالحساب المصحَّح.
+ * لا يُبلَّغ إلا عن نقص (المسجَّل أقل من المستحق)؛ الزيادة تأتي من عكس دفعة
+ * بعد خروجه، وهي صحيحة.
+ */
+export type PastDebtGap = { id: string; name: string; unit: string | null; propertyId: string;
+  recorded: number; expected: number; paid: number; status: string };
+export function pastDebtGaps(past: any[]): PastDebtGap[] {
+  const out: PastDebtGap[] = [];
+  for (const a of past || []) {
+    const snap = a?.snapshot;
+    if (!snap || a.legacy || !snap.contract_start || !snap.move_out_date) continue;
+    const t = { ...snap, status: "vacated", rent_amount: Number(snap.rent_amount) || 0,
+      partial_amount: Number(snap.partial_amount) || 0, carried_debt: Number(snap.carried_debt) || 0 };
+    const st = contractState(t as any, { graceDays: 0 });
+    const expected = Math.round(((st.legacyArrears || 0) + Math.max(0, t.carried_debt)) * 100) / 100;
+    const recorded = Number(a.debt_amount) || 0;
+    if (expected > recorded + 0.99) out.push({ id: a.id, name: a.name, unit: a.unit ?? null, propertyId: a.property_id,
+      recorded, expected, paid: Number(a.debt_paid) || 0, status: String(a.debt_status || "") });
+  }
+  return out;
+}

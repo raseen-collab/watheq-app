@@ -5,7 +5,7 @@ import Link from "next/link";
 import Icon from "@/components/Icon";
 import { createClient } from "@/lib/supabase-client";
 import { officeId, getOffice, ROLE_LABEL, OWNER_PERMS } from "@/lib/office";
-import { arDate, termRentPaidOf } from "@/lib/documents";
+import { arDate, termRentPaidOf, pastVatOf } from "@/lib/documents";
 import { hijriShort, hijriText, parseHijriInput } from "@/lib/hijri";
 import { sar, waLink, today, WATHEQ_WA, openExternal } from "@/lib/utils";
 import { contractState, expectedNext12, buildSchedule, FREQUENCIES, freqLabel, freqShort, derivedEndDate, renewContract, needsRenewal, applyPayment, splitVat, isCommercial, isVacant, settleDeposit, unitVatApplies,
@@ -1018,7 +1018,8 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
     const [pay, exp] = await Promise.all([
       supabase.from("payments").select("*")
         .eq("property_id", active.id).gte("paid_on", period.from).lte("paid_on", period.to).limit(5000),
-      supabase.from("expenses").select("id, spent_on, amount, category, note, unit")
+      /* كل الحقول: «على من» (billable) و«من دفع» (paid_by) يحدّدان صافي المالك */
+      supabase.from("expenses").select("*")
         .eq("property_id", active.id).gte("spent_on", period.from).lte("spent_on", period.to).limit(5000),
     ]);
     if (pay.error) return notify("err", pay.error.message);
@@ -1028,7 +1029,10 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       /* الساكن الحالي باسمه الحيّ (يسري عليه أي تصحيح)؛ ودفعات من سبقه بالاسم المحفوظ فيها */
       ...x, tenant_name: (x.tenant_id && nameOf[x.tenant_id]?.name) || x.payer_name || "—", unit: (x.tenant_id && nameOf[x.tenant_id]?.unit) || x.unit_label || null,
     }));
-    openDoc(propertyStatementHTML(active as any, issuer || {}, mode, period, rowsP as any, (exp.data || []) as any));
+    /* إعدادات الضريبة للمستأجرين السابقين — لضريبة دفعاتهم (بإعدادات من دفع) */
+    const pastQ = await supabase.from("past_tenancies").select("id, snapshot").eq("property_id", active.id).limit(2000);
+    openDoc(propertyStatementHTML(active as any, issuer || {}, mode, period, rowsP as any, (exp.data || []) as any,
+      pastQ.error ? undefined : pastVatOf(pastQ.data as any)));
   }
 
   /** تصدير وحدات العقار CSV — يفتح مباشرة في Excel بترميز عربي سليم */
@@ -1974,7 +1978,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       {ownerStmtOpen && <OwnerStatementModal properties={items} issuer={issuer} onClose={() => setOwnerStmtOpen(false)} />}
       {logOpen && <ActivityLog properties={items} onClose={() => setLogOpen(false)} />}
       {/* الصفحة العامة ترسم دليلها بنفسها — لا نكرّره هنا */}
-      {collOpen && <CollectionStatementModal properties={items.map((p) => ({ id: p.id, name: p.name, owner_name: (p as any).owner_name }))} issuer={issuer} onClose={() => setCollOpen(false)} />}
+      {collOpen && <CollectionStatementModal properties={items as any /* كاملة: نسبة الأتعاب وإعدادات الضريبة تحدّد صافي المالك */} issuer={issuer} onClose={() => setCollOpen(false)} />}
       {debtOpen && <DebtFollowUp properties={items.map((p) => ({ id: p.id, name: p.name }))} orgName={orgName} onClose={() => setDebtOpen(false)} />}
       {hasDemo && !demo && <DemoGuide onEvent={onGuideEvent} />}
       {stmtOpen && active && <PropertyStatementModal propertyName={active.name} onClose={() => setStmtOpen(false)} onIssue={openPropertyStatement} />}
@@ -2674,13 +2678,22 @@ function PropertyModal({ open, initial, orgName, ownerNames = [], officeSoon = 1
               <Field label="النسبة %">
                 <input className="fld" type="number" value={d.vat_rate ?? 15} onChange={(e) => setD({ ...d, vat_rate: e.target.value })} />
               </Field>
-              <Field label="قيمة الإيجار المُدخلة">
-                <select className="fld" value={d.vat_inclusive === false ? "ex" : "in"}
-                  onChange={(e) => setD({ ...d, vat_inclusive: e.target.value === "in" })}>
-                  <option value="in">شاملة الضريبة</option>
-                  <option value="ex">غير شاملة (تُضاف فوقها)</option>
-                </select>
-              </Field>
+              {/* «غير شاملة» لا يُعرض للإعداد الجديد: يجعل المسجَّل غير المقبوض
+                  (العدّاد بالأساس والمستأجر يدفع الضريبة فوقه) وهو أكثر وضع ظهرت فيه
+                  أخطاء. العقار المضبوط عليه أصلًا يبقى كما هو ويعمل صحيحًا. */}
+              {initial?.vat_inclusive === false ? (
+                <Field label="قيمة الإيجار المُدخلة">
+                  <select className="fld" value={d.vat_inclusive === false ? "ex" : "in"}
+                    onChange={(e) => setD({ ...d, vat_inclusive: e.target.value === "in" })}>
+                    <option value="in">شاملة الضريبة</option>
+                    <option value="ex">غير شاملة (تُضاف فوقها)</option>
+                  </select>
+                </Field>
+              ) : (
+                <Field label="قيمة الإيجار المُدخلة">
+                  <div className="fld bg-paper text-muted text-sm">شاملة الضريبة — أدخل الإيجار كما يدفعه المستأجر</div>
+                </Field>
+              )}
             </div>
           )}
         </div>
@@ -2960,7 +2973,7 @@ function OwnerReportModal({ property, unitWord, issuer, onClose }: {
     (property.tenants || []).forEach((t) => { byId[t.id] = t; });
     const payments: OwnerReportPayment[] = (data || []).map((x: any) => ({
       id: x.id, paid_on: x.paid_on, amount: x.amount, method: x.method, reference: x.reference, created_at: x.created_at,
-      periods_covered: x.periods_covered, note: x.note,
+      periods_covered: x.periods_covered, note: x.note, tenant_id: x.tenant_id, past_tenancy_id: x.past_tenancy_id,
       tenant_name: (x.tenant_id && byId[x.tenant_id]?.name) || x.payer_name || null,
       unit: (x.tenant_id && byId[x.tenant_id]?.unit) || x.unit_label || null,
     }));
@@ -2972,8 +2985,17 @@ function OwnerReportModal({ property, unitWord, issuer, onClose }: {
       .order("spent_on", { ascending: true }).limit(500);
     if (!ex.error) expenses = (ex.data || []) as ExpenseRow[];
 
+    /* أقساط كل ساكن في مدته (كل الأوقات) — لملاحظة الرصيد الافتتاحي؛ وإعدادات
+       ضريبة المستأجرين السابقين — لضريبة دفعاتهم. بخطأ جلبٍ يُصدَر التقرير
+       بلا الملاحظة وبالإعدادات الحالية (لا برقم خاطئ في الملاحظة). */
+    const [allPays, pastQ] = await Promise.all([
+      supabase.from("payments").select("*").eq("property_id", property.id).not("tenant_id", "is", null).limit(10000),
+      supabase.from("past_tenancies").select("id, snapshot").eq("property_id", property.id).limit(2000),
+    ]);
+    const termRentPaid = allPays.error ? undefined : termRentPaidOf(property.tenants as any, (allPays.data || []) as any);
+    const pastVat = pastQ.error ? undefined : pastVatOf(pastQ.data as any);
     openDoc(ownerReportHTML(property as any, { label, from, to }, payments, issuer || {},
-      { expenses, fee_pct: (property as any).mgmt_fee_pct }, mode));
+      { expenses, fee_pct: (property as any).mgmt_fee_pct, termRentPaid, pastVat }, mode));
     onClose();
   }
 

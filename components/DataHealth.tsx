@@ -9,13 +9,16 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase-client";
-import { auditOffice, groupFindings, SEV_META, type Finding, type Group, type Severity } from "@/lib/integrity";
+import { auditOffice, groupFindings, SEV_META, pastDebtGaps, type PastDebtGap, type Finding, type Group, type Severity } from "@/lib/integrity";
 
 export default function DataHealth({ initial }: { initial: any[] }) {
   const supabase = useMemo(() => createClient(), []);
   const [props, setProps] = useState<any[]>(initial || []);
   const [pays, setPays] = useState<any[]>([]);
   const [exps, setExps] = useState<any[]>([]);
+  /* ديون مستأجرين سابقين أُرشفت ناقصة (قبل إصلاحات 22 سبتمبر) */
+  const [gaps, setGaps] = useState<PastDebtGap[]>([]);
+  const [gapMsg, setGapMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [ranAt, setRanAt] = useState<string | null>(null);
   const [sev, setSev] = useState<Severity | "all">("all");
@@ -30,6 +33,9 @@ export default function DataHealth({ initial }: { initial: any[] }) {
     if (!pr.error) setProps(pr.data || []);
     if (!pa.error) setPays(pa.data || []);
     if (!ex.error) setExps(ex.data || []);
+    /* الأرشيف (v45): قبل الترحيل لا جدول — فلا فحص ولا خطأ */
+    const pt = await supabase.from("past_tenancies").select("*").limit(5000);
+    setGaps(pt.error ? [] : pastDebtGaps(pt.data || []));
     setRanAt(new Date().toLocaleString("ar-SA-u-ca-gregory-nu-latn", { timeZone: "Asia/Riyadh", dateStyle: "medium", timeStyle: "short" }));
     setBusy(false);
   }
@@ -62,6 +68,33 @@ export default function DataHealth({ initial }: { initial: any[] }) {
           <Link href="/dashboard/property" className="btn btn-ghost text-sm">← اللوحة</Link>
         </div>
       </div>
+
+      {gaps.length > 0 && (
+        <div className="bg-white border border-[#F5C6C2] rounded-xl p-3.5 mb-4">
+          <div className="font-semibold text-deep">ديون مستأجرين سابقين سُجّلت أقل من المستحق ({gaps.length})</div>
+          <p className="text-xs text-muted mt-1 leading-relaxed">
+            إعادات تأجير تمّت قبل تحديث 22 سبتمبر: خيار «سُوّي» كان يُسقط الدين بلا أثر، ومهلة السماح كانت تُسقط قسطًا حلّ قبل الخروج.
+            المستحق محسوب من بيانات عقد المستأجر المحفوظة لحظة خروجه. بعد التصحيح سوِّه من «الديون المرحَّلة»:
+            <b> «سجّل سدادًا»</b> إن استلمتَه، أو <b>«شطب»</b> إن تنازلتَ عنه.
+          </p>
+          {gapMsg && <div className="text-xs mt-2 text-[#137a50]">{gapMsg}</div>}
+          <div className="mt-2 space-y-1.5">
+            {gaps.map((g) => (
+              <div key={g.id} className="flex items-center justify-between gap-2 flex-wrap text-sm border-t border-line pt-1.5">
+                <span>{g.name}{g.unit ? <span className="text-muted"> · وحدة {g.unit}</span> : null}
+                  <span className="text-muted text-xs"> — مسجَّل {g.recorded.toLocaleString("en-US")} · المستحق <b className="text-late">{g.expected.toLocaleString("en-US")}</b> ريال</span></span>
+                <button className="btn btn-primary text-xs" disabled={busy} onClick={async () => {
+                  if (!confirm(`تصحيح دين ${g.name} من ${g.recorded.toLocaleString("en-US")} إلى ${g.expected.toLocaleString("en-US")} ريال؟\n\nيُحفظ التصحيح في سجل الحركات.`)) return;
+                  const { error } = await supabase.rpc("watheq_correct_past_debt", { p_past: g.id, p_amount: g.expected, p_note: "فحص سلامة البيانات: إعادة حساب من عقد المستأجر" });
+                  if (error) { setGapMsg(/does not exist|function/i.test(error.message) ? "التصحيح يحتاج تحديث قاعدة البيانات — شغّل schema-v46 أولًا." : error.message); return; }
+                  setGaps((cur) => cur.filter((x) => x.id !== g.id));
+                  setGapMsg(`صُحّح دين ${g.name} — سوِّه الآن من «الديون المرحَّلة».`);
+                }}>صحّح إلى {g.expected.toLocaleString("en-US")}</button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* الحصيلة */}
       {!busy && findings.length === 0 ? (

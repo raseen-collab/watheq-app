@@ -331,6 +331,46 @@ const vatOf = (p: Property, t?: { unit_type?: string | null; vat_mode?: string |
   enabled: t ? unitVatApplies(t, p) : !!p.vat_enabled,
   rate: Number(p.vat_rate) || 15, inclusive: p.vat_inclusive !== false,
 });
+/**
+ * الضريبة في الدفعات المسجَّلة — داخلها أم فوقها.
+ *
+ * في وضع «شاملة» الدفعة المسجَّلة فيها الضريبة (11,500 = 10,000 + 1,500).
+ * وفي «غير شاملة» يُسجَّل الإيجار قبل الضريبة (زرّ الدفعة الكاملة يسجّل
+ * rent_amount، والعدّاد يعدّ به)، والمستأجر دفع الضريبة فوقه. كانت
+ * المواضع الثلاثة تعامل الحالتين كأن الضريبة داخل المبلغ، فتطرحها منه:
+ * إيراد المالك يظهر 85% من حقيقته، و«إجمالي المقبوض» أقل مما قبضه المكتب.
+ */
+export type PastVat = Record<string, { unit_type?: string | null; vat_mode?: string | null }>;
+/** إعدادات الضريبة للمستأجرين السابقين — من نسخة صفّهم المحفوظة في الأرشيف */
+export function pastVatOf(rows: { id: string; snapshot?: any }[] | null | undefined): PastVat {
+  const out: PastVat = {};
+  for (const r of rows || []) out[r.id] = { unit_type: r.snapshot?.unit_type ?? null, vat_mode: r.snapshot?.vat_mode ?? null };
+  return out;
+}
+function vatOfPayments(p: Property & { tenants?: any[] },
+  payments: { amount: number | string; unit?: string | null; tenant_id?: string | null; past_tenancy_id?: string | null }[],
+  pastVat?: PastVat): { inside: number; onTop: number } {
+  /* ضريبة كل دفعة بإعدادات من دفعها — لا من يسكن الوحدة الآن. كان مستأجر
+     سابق معفًى تُحسب على دفعاته ضريبة لأن من خلفه خاضع (والعكس). */
+  const byUnit: Record<string, any> = {}, byId: Record<string, any> = {};
+  (p.tenants || []).forEach((t: any) => { if (t.unit) byUnit[String(t.unit)] = t; if (t.id) byId[t.id] = t; });
+  let inside = 0, onTop = 0;
+  for (const x of payments || []) {
+    const t = (x.past_tenancy_id && pastVat?.[x.past_tenancy_id])
+      || (x.tenant_id && byId[x.tenant_id])
+      || (x.unit ? byUnit[String(x.unit)] : null);
+    if (!t) continue;
+    const v = vatOf(p, t);
+    if (!v.enabled) continue;
+    const sp = splitVat(Number(x.amount) || 0, v);
+    if (v.inclusive) inside += sp.vat; else onTop += sp.vat;
+  }
+  return { inside: Math.round(inside * 100) / 100, onTop: Math.round(onTop * 100) / 100 };
+}
+
+/** للاستعمال خارج هذا الملف (كشف التحصيل) — الضريبة بإعدادات من دفع */
+export const vatOfPaymentsFor = (p: Property & { tenants?: any[] }, payments: any[], pastVat?: PastVat) => vatOfPayments(p, payments, pastVat);
+
 /** فترة السماح الخاصة بالعقار */
 const graceOf = (p: Property) => ({ graceDays: Number(p.grace_days) || 0 });
 
@@ -414,7 +454,9 @@ ${header(mode === "full" ? "كشف حساب شامل" : "كشف حساب مخت�
     <h3>ملخّص مالي</h3>
     <div class="r"><span>إجمالي قيمة العقد</span><span>${sar(totalContract)} ريال</span></div>
     <div class="r"><span>المسدَّد</span><span>${sar(totalPaid)} ريال</span></div>
-    <div class="r"><span>المتأخر</span><span>${sar(st.amountDue)} ريال</span></div>
+    ${/* «غير شاملة»: المتأخر المسجَّل قبل الضريبة، والمستأجر مطالَب بها فوقه.
+         كان الكشف يقول «المتأخر 10,000 — منه ضريبة 1,500» والمطالَب به 11,500. */ ""}
+    <div class="r"><span>المتأخر${v.enabled ? " (شامل الضريبة)" : ""}</span><span>${sar(v.enabled ? dueSplit.total : st.amountDue)} ريال</span></div>
     ${v.enabled && st.amountDue > 0 ? `<div class="r"><span>منه ضريبة</span><span>${sar(dueSplit.vat)} ريال</span></div>` : ""}
     ${st.hasPartial ? `<div class="r"><span>مدفوع جزئيًّا</span><span>${sar(st.partial)} ريال</span></div>` : ""}
     ${/* كانت «الدفعة القادمة» تعرض أقدم دفعة غير مسدَّدة — تاريخًا ماضيًا حين
@@ -481,18 +523,18 @@ ${mode === "full" ? `
 ${shownPays.length ? `
 <h1 style="font-size:1rem">المدفوعات المستلمة</h1>
 <table>
-  <thead><tr><th>#</th><th>تاريخ الاستلام</th><th>المبلغ (ريال)</th><th>طريقة السداد</th><th>ملاحظة</th></tr></thead>
+  <thead><tr><th>#</th><th>تاريخ الاستلام</th><th>المبلغ (ريال)${v.enabled && !v.inclusive ? " شامل الضريبة" : ""}</th><th>طريقة السداد</th><th>ملاحظة</th></tr></thead>
   <tbody>
     ${shownPays.map((r: any, i: number) => `<tr>
       <td>${i + 1}</td>
       <td>${r.paid_on ? arDate(r.paid_on) : "—"}</td>
-      <td>${sar(r.amount)}</td>
+      <td>${sar(v.enabled && !v.inclusive ? splitVat(Number(r.amount) || 0, v).total : r.amount)}</td>
       <td>${payMethod(r)}</td>
       <td>${r.note ? String(r.note).replace(/</g, "&lt;") : "—"}</td>
     </tr>`).join("")}
     <tr style="background:#F3EEE2;font-weight:700">
       <td colspan="2">إجمالي المستلم</td>
-      <td>${sar(payments.reduce((a, r) => a + (Number(r.amount) || 0), 0))}</td>
+      <td>${sar(payments.reduce((a, r) => a + (v.enabled && !v.inclusive ? splitVat(Number(r.amount) || 0, v).total : (Number(r.amount) || 0)), 0))}</td>
       <td colspan="2">${shownPays.length} عملية</td>
     </tr>
   </tbody>
@@ -748,6 +790,8 @@ export function propertyStatementHTML(
   period?: { from: string; to: string; label: string } | null,
   payments: PaymentRow[] = [],
   expenses: ExpenseRow[] = [],
+  /** إعدادات الضريبة للمستأجرين السابقين — لضريبة دفعاتهم */
+  pastVat?: PastVat,
 ) {
   // تعقيم المدخلات (انظر scrub أعلاه)
   p = scrub(p);
@@ -790,10 +834,19 @@ export function propertyStatementHTML(
   const periodExpenses = period ? expenses.filter((x) => inRange((x as any).spent_on)).reduce((a, x) => a + (Number(x.amount) || 0), 0) : 0;
   const byUnitP: Record<string, any> = {};
   (p.tenants || []).forEach((t: any) => { if (t.unit) byUnitP[String(t.unit)] = t; });
-  const periodVat = periodPayments.reduce((a, x: any) => {
-    const t = x.unit ? byUnitP[String(x.unit)] : null;
-    return a + (t ? splitVat(Number(x.amount) || 0, vatOf(p, t)).vat : 0);
-  }, 0);
+  const pvt = vatOfPayments(p, periodPayments as any[], pastVat);
+  /**
+   * «الصافي» بمعادلة تقرير المالك نفسها.
+   *
+   * كان المحصَّل − كل المصروفات: يطرح مصروفات المكتب نفسه، ولا يطرح الأتعاب
+   * ولا ضريبة الهيئة، ويُخفي السالب بـ max(0). فلعقار واحد في فترة واحدة
+   * رقمان باسم «الصافي» في مستندين. الآن رقم واحد: المحصَّل − الضريبة −
+   * مصروفات المالك − الأتعاب (وضريبتها) — كتقرير المالك حرفيًّا.
+   */
+  const periodExpRows = period ? expenses.filter((x) => inRange((x as any).spent_on)) : [];
+  const pFin = ownerNet(periodCollected + pvt.onTop, periodExpRows, (p as any).mgmt_fee_pct,
+    pvt.inside + pvt.onTop, issuer.vat_number ? (Number(p.vat_rate) || 15) : 0);
+  const periodVat = pvt.inside + pvt.onTop;
   const expiringCount = rows.filter((r) => r.st.expiringSoon && !isVacant(r.t)).length;
 
   const body = `
@@ -814,10 +867,10 @@ ${period ? `
 <div class="tot">
   <div><div class="v g">${sar(periodCollected)}</div><div class="l">المُحصَّل (ريال)</div></div>
   <div><div class="v">${periodShown.length}</div><div class="l">عدد الدفعات</div></div>
-  <div><div class="v r">${sar(periodExpenses)}</div><div class="l">المصروفات (ريال)</div></div>
-  <div><div class="v">${sar(Math.max(0, periodCollected - periodExpenses))}</div><div class="l">الصافي (ريال)</div></div>
+  <div><div class="v r">${sar(pFin.expenses)}</div><div class="l">مصروفات على المالك (ريال)</div></div>
+  <div><div class="v">${sar(pFin.net)}</div><div class="l">صافي المالك (ريال)${pFin.feePct !== null || (pFin.vatCollected || 0) > 0 ? " — بعد " + [(pFin.vatCollected || 0) > 0 ? "الضريبة" : "", pFin.feePct !== null ? "الأتعاب" : ""].filter(Boolean).join(" و") : ""}</div></div>
 </div>
-<div class="sub" style="margin-bottom:10px">من ${arDateH(period.from)} إلى ${arDateH(period.to)}${periodVat > 0 ? ` · منه ضريبة قيمة مضافة ${sar(periodVat)} ريال` : ""}</div>` : ""}
+<div class="sub" style="margin-bottom:10px">من ${arDateH(period.from)} إلى ${arDateH(period.to)}${pvt.inside > 0 ? ` · منه ضريبة قيمة مضافة ${sar(pvt.inside)} ريال` : ""}${pvt.onTop > 0 ? ` · وضريبة قيمة مضافة دُفعت فوقه ${sar(pvt.onTop)} ريال` : ""}</div>` : ""}
 
 ${mode === "full" ? `
 <h1 style="font-size:1rem">بيانات العقار</h1>
@@ -1722,7 +1775,9 @@ export function ownerReportHTML(
   extra: { expenses?: ExpenseRow[]; fee_pct?: number | null;
     /** أقساط الإيجار المسجَّلة لكل ساكن في مدته الحالية — كل الأوقات لا الفترة.
      *  منها تُحسب ملاحظة «دفعات سُدّدت قبل بدء التسجيل». بدونها لا ملاحظة. */
-    termRentPaid?: Record<string, number> } = {},
+    termRentPaid?: Record<string, number>;
+    /** إعدادات الضريبة للمستأجرين السابقين (pastVatOf) — لضريبة دفعاتهم */
+    pastVat?: PastVat } = {},
   /** شامل: مواصفات كل وحدة وعقدها وتفصيل كل دفعة ومصروف · مختصر: الأرقام والجدول */
   mode: "full" | "brief" = "full",
 ) {
@@ -1749,12 +1804,8 @@ export function ownerReportHTML(
   const exp = extra.expenses || [];
   /* الضريبة داخل المقبوض تُستبعد: أمانة للهيئة لا إيراد للمالك.
      ونحسبها لكل دفعة بحسب وحدتها (العمارة المختلطة). */
-  const byUnit: Record<string, any> = {};
-  (p.tenants || []).forEach((t: any) => { if (t.unit) byUnit[String(t.unit)] = t; });
-  const vatCollected = payments.reduce((a, x: any) => {
-    const t = x.unit ? byUnit[String(x.unit)] : null;
-    return a + (t ? splitVat(Number(x.amount) || 0, vatOf(p, t)).vat : 0);
-  }, 0);
+  const vt = vatOfPayments(p, payments as any[], extra.pastVat);
+  const vatCollected = vt.inside + vt.onTop;
   // أتعاب إدارة الأملاك خدمة خاضعة للضريبة إن كان المكتب مسجَّلًا ضريبيًّا
   const feeVatRate = issuer.vat_number ? (Number(p.vat_rate) || 15) : 0;
   /* المالك يجمع عمود «المتأخر» فيخرج رقمًا يخالف بطاقة «المتأخرات القائمة»:
@@ -1764,13 +1815,16 @@ export function ownerReportHTML(
   const legacyOwed = stRows.reduce((a, r) => a + (r.cs.vacant ? r.cs.legacyArrears : 0), 0);
   const activeLate = stRows.filter((r) => !r.cs.vacant && r.cs.amountDue > 0).length;
   const vacantOwing = stRows.filter((r) => r.cs.vacant && r.cs.legacyArrears > 0).length;
-  const fin = ownerNet(collected, exp, extra.fee_pct, vatCollected, feeVatRate);
+  /* «غير شاملة»: المقبوض فعلًا = المسجَّل + الضريبة التي دُفعت فوقه */
+  const fin = ownerNet(collected + vt.onTop, exp, extra.fee_pct, vatCollected, feeVatRate);
   /* «صافي المالك» صافي دخل العقار: يخصم كل مصروفاته — ومنها ما دفعه المالك
      بنفسه. فمن حوّل له «الصافي» خصم ذلك مرتين. (دراسة 685 احتمالًا: 53
      تقريرًا.) السطر الإضافي يقول المحوَّل صراحةً، ويظهر حين يلزم فقط. */
   const ownerPaid = Math.round(exp.filter((e: any) => isBillable(e) && e.paid_by === "owner")
     .reduce((a: number, e: any) => a + (Number(e.amount) || 0), 0) * 100) / 100;
-  const showFinance = exp.length > 0 || fin.feePct !== null;
+  /* ومع الضريبة: بدونه يرى المالك «المحصَّل» شاملًا ضريبة الهيئة بلا سطر
+     يطرحها — في عقار تجاري بلا أتعاب وشهر بلا مصروفات. */
+  const showFinance = exp.length > 0 || fin.feePct !== null || (fin.vatCollected || 0) > 0;
   /**
    * الرصيد الافتتاحي.
    *
@@ -1909,7 +1963,7 @@ ${exp.length ? `<div class="scrollx"><table>
 <h2>الحساب الختامي للمالك</h2>
 <table>
   <tbody>
-    ${(fin.vatCollected || 0) > 0 ? `<tr><td>إجمالي المقبوض خلال الفترة</td><td style="text-align:left">${sar(fin.grossCollected || 0)}</td></tr>
+    ${(fin.vatCollected || 0) > 0 ? `<tr><td>إجمالي المقبوض خلال الفترة${vt.onTop > 0 ? ` <span style="font-size:.72rem;color:#5C6B67">(يشمل ${sar(vt.onTop)} ضريبة دُفعت فوق الإيجار)</span>` : ""}</td><td style="text-align:left">${sar(fin.grossCollected || 0)}</td></tr>
     <tr><td>(−) ضريبة القيمة المضافة المحصَّلة <span style="font-size:.72rem;color:#5C6B67">(تُورَّد للهيئة — ليست إيرادًا للمالك)</span></td><td style="text-align:left">${sar(fin.vatCollected || 0)}</td></tr>` : ""}
     <tr><td>${(fin.vatCollected || 0) > 0 ? "صافي إيراد المالك من الإيجار" : "المحصَّل خلال الفترة"}</td><td style="text-align:left"><b>${sar(fin.collected)}</b></td></tr>
     <tr><td>(−) مصروفات الفترة</td><td style="text-align:left">${sar(fin.expenses)}</td></tr>
@@ -1958,6 +2012,7 @@ export type OwnerStatementSection = {
   payments: OwnerReportPayment[];
   expenses: ExpenseRow[];
   fee_pct?: number | null;
+  pastVat?: PastVat;
 };
 
 export function ownerConsolidatedStatementHTML(
@@ -1982,14 +2037,10 @@ export function ownerConsolidatedStatementHTML(
     const due = ten.reduce((a, r) => a + (r.vacant ? 0 : r.st.amountDue), 0);
     const collected = s.payments.reduce((a, x) => a + (Number(x.amount) || 0), 0);
     /* الضريبة المحصَّلة تُستبعد قبل الأتعاب والصافي (أمانة للهيئة) */
-    const byUnit: Record<string, any> = {};
-    (s.property.tenants || []).forEach((t: any) => { if (t.unit) byUnit[String(t.unit)] = t; });
-    const vatCollected = s.payments.reduce((a: number, x: any) => {
-      const t = x.unit ? byUnit[String(x.unit)] : null;
-      return a + (t ? splitVat(Number(x.amount) || 0, vatOf(s.property, t)).vat : 0);
-    }, 0);
+    const vt = vatOfPayments(s.property, s.payments as any[], s.pastVat);
+    const vatCollected = vt.inside + vt.onTop;
     const feeVatRate = issuer.vat_number ? (Number(s.property.vat_rate) || 15) : 0;
-    const fin = ownerNet(collected, s.expenses, s.fee_pct, vatCollected, feeVatRate);
+    const fin = ownerNet(collected + vt.onTop, s.expenses, s.fee_pct, vatCollected, feeVatRate);
     return { s, units, vacant, due, collected, fin };
   });
 
@@ -2365,7 +2416,9 @@ export function collectionStatementHTML(
   expenses: { note?: string | null; category?: string | null; amount: number }[],
   period: { label: string; from: string; to: string },
   issuer: any,
-  opts?: { title?: string; feePct?: number | null },
+  opts?: { title?: string; feePct?: number | null;
+    /** الصافي بمعادلة تقرير المالك (lib/collection) — بدونه يبقى «المسجَّل − المصروفات» */
+    fin?: { gross: number; vat: number; collected: number; expenses: number; fee: number; feeVat: number; net: number; ownerPaid: number; feePcts: number[] } },
 ) {
   const round2 = (n: number) => Math.round(n * 100) / 100;
   const esc = (v: any) => String(v ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -2373,7 +2426,8 @@ export function collectionStatementHTML(
   const collected = round2(sorted.reduce((a, x) => a + (Number(x.amount) || 0), 0));
   const exp = (expenses || []).filter((e) => Number(e.amount) > 0);
   const expTotal = round2(exp.reduce((a, x) => a + (Number(x.amount) || 0), 0));
-  const net = round2(collected - expTotal);
+  const F = opts?.fin;
+  const net = F ? F.net : round2(collected - expTotal);
 
   /* التاريخ بالتقويمين: المكتب يكتب الهجري، والمحاسب يحتاج الميلادي */
   const both = (iso: string, cal?: string | null) => {
@@ -2425,15 +2479,26 @@ ${sorted.length ? `<div class="scrollx"><table>
   </tbody>
 </table></div>
 
-<div class="box" style="margin-top:16px;background:#0E3A37;color:#EAF1EE;border:0">
+${F ? `<div class="box" style="margin-top:16px">
+  ${F.vat > 0 ? `<div class="r"><span>إجمالي المقبوض</span><span>${sar(F.gross)}</span></div>
+  <div class="r"><span>(−) ضريبة القيمة المضافة المحصَّلة <span style="font-size:.72rem;color:#5C6B67">(تُورَّد للهيئة)</span></span><span>${sar(F.vat)}</span></div>` : ""}
+  <div class="r"><span>${F.vat > 0 ? "صافي إيراد المالك من الإيجار" : "المحصَّل خلال الفترة"}</span><span>${sar(F.collected)}</span></div>
+  <div class="r"><span>(−) المصروفات على المالك</span><span>${sar(F.expenses)}</span></div>
+  ${F.fee > 0 ? `<div class="r"><span>(−) أتعاب الإدارة${F.feePcts.length === 1 ? ` (${F.feePcts[0]}%)` : ""}</span><span>${sar(F.fee)}</span></div>` : ""}
+  ${F.feeVat > 0 ? `<div class="r"><span>(−) ضريبة على أتعاب الإدارة</span><span>${sar(F.feeVat)}</span></div>` : ""}
+</div>` : ""}
+<div class="box" style="margin-top:${F ? 8 : 16}px;background:#0E3A37;color:#EAF1EE;border:0">
   <div class="r" style="border:0">
-    <span style="font-size:1rem">صافي الدخل</span>
+    <span style="font-size:1rem">${F ? "صافي المالك" : "صافي الدخل"}</span>
     <span style="font-size:1.35rem;font-weight:800;color:#E7C877">${sar(net)} ريال</span>
   </div>
+  ${F && F.ownerPaid > 0.005 ? `<div class="r" style="border:0"><span>المستحق تحويله للمالك <span style="font-size:.72rem;opacity:.8">(+ ${sar(F.ownerPaid)} مصروفات دفعها بنفسه)</span></span>
+    <span style="font-weight:800;color:#E7C877">${sar(Math.round((net + F.ownerPaid) * 100) / 100)} ريال</span></div>` : ""}
 </div>
 
 <div class="note">
-  صافي الدخل = رصيد السداد المتاح (${sar(collected)}) − إجمالي المصروفات (${sar(expTotal)}).
+  ${F ? "صافي المالك بالمعادلة نفسها في تقرير المالك: المقبوض − ضريبة الهيئة − المصروفات على المالك − أتعاب الإدارة."
+      : `صافي الدخل = رصيد السداد المتاح (${sar(collected)}) − إجمالي المصروفات (${sar(expTotal)}).`}
   والمبالغ من الدفعات المسجَّلة في وثيق بتاريخ استلامها.
 </div>
 `;
