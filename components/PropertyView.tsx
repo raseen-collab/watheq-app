@@ -6,6 +6,7 @@ import Icon from "@/components/Icon";
 import { createClient } from "@/lib/supabase-client";
 import { officeId, getOffice, ROLE_LABEL, OWNER_PERMS } from "@/lib/office";
 import { arDate, termRentPaidOf, pastVatOf } from "@/lib/documents";
+import { yearBreakdown, yearWindow, type YearCal } from "@/lib/income";
 import { hijriShort, hijriText, parseHijriInput } from "@/lib/hijri";
 import { sar, waLink, today, WATHEQ_WA, openExternal } from "@/lib/utils";
 import { contractState, expectedNext12, buildSchedule, FREQUENCIES, freqLabel, freqShort, derivedEndDate, renewContract, needsRenewal, applyPayment, splitVat, isCommercial, isVacant, settleDeposit, unitVatApplies,
@@ -244,6 +245,10 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
   }, [items]);
   const [incPeriod, setIncPeriod] = useState<"year" | "12m" | "month">("year");
   const [collectedInPeriod, setCollectedInPeriod] = useState<number | null>(null);
+  /* بطاقة «دخل العقار للسنة»: التقويم، ودفعات السنة حتى اليوم (للتفصيل لكل وحدة) */
+  const [yearCal, setYearCal] = useState<YearCal>("gregorian");
+  const [yearOpen, setYearOpen] = useState(false);
+  const [yearPays, setYearPays] = useState<any[] | null>(null);
   /* الدخل الشهري في البطاقة = ما قُبض فعلًا هذا الشهر (طلب مكتب تميز)، والمتوقع بجانبه */
   const [collectedThisMonth, setCollectedThisMonth] = useState<number | null>(null);
   /**
@@ -279,6 +284,15 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       .then(({ data }: any) => { if (alive) setCollectedInPeriod((data || []).reduce((a: number, x: any) => a + (Number(x.amount) || 0), 0)); });
     return () => { alive = false; };
   }, [activeId, incPeriod, paidKey, supabase]);
+  useEffect(() => {
+    if (!activeId) return;
+    const win = yearWindow(yearCal, today());
+    let alive = true;
+    setYearPays(null);
+    supabase.from("payments").select("*").eq("property_id", activeId).gte("paid_on", win.from).lte("paid_on", today()).limit(10000)
+      .then(({ data, error }: any) => { if (alive) setYearPays(error ? [] : (data || [])); });
+    return () => { alive = false; };
+  }, [activeId, yearCal, paidKey, supabase]);
   /**
    * عرض الوحدات: بطاقات (الجوال دائمًا) أو جدول (الكمبيوتر). الجدول يعرض
    * 25 وحدة في شاشة بدل 5، والعين تمسح عمود الحالة في ثانية — وهو ما
@@ -1441,37 +1455,87 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
         {(counts.expiring || 0) > 0 && <Stat v={String(counts.expiring || 0)} l="عقود تنتهي قريبًا" kpi="expiring" icon="↻" onClick={() => setFilter("expiring")} active={filter === "expiring"} />}
       </div>
 
-      {/* الدخل السنوي والمحصَّل منه — سؤال المالك الأول: «كم يدخل هذا العقار في السنة، وكم قبضنا منه؟» */}
+      {/**
+        * دخل العقار للسنة: المحصَّل وغير المحصَّل (طلب مكتب).
+        *
+        * كان سطرًا تقريبيًّا: نسبة تقارن المقبوض بـ«الإيجار الشهري المكافئ × عدد
+        * الأشهر»، و«المتبقي خلال 12 شهرًا» يتجاوز السنة، ولا غير محصَّل. الآن كل
+        * رقم دقيق (lib/income.ts — مختبَر على 3,425 وحدة بدفتر مستقل):
+        *   المحصَّل = ما قُبض فعلًا من 1 يناير (الدفتر)
+        *   غير المحصَّل = المتأخر الآن + ما يحلّ حتى 31 ديسمبر ولم يُدفع مقدّمًا
+        */}
       {tenants.length > 0 && (() => {
-        const expectedSoFar = incPeriod === "year"
-          ? annualIncome * ((Date.now() - new Date(new Date().getFullYear(), 0, 1).getTime()) / (365 * 86400000))
-          : incPeriod === "month" ? annualIncome / 12 : annualIncome;
-        const col = collectedInPeriod ?? 0;
-        /* النسبة الحقيقية قد تتجاوز 100% (سداد سنوي مقدَّم، أو إدخال دفعات سنوات
-           سابقة). قصّها عند 100 كان يعرض «100%» بينما المحصَّل 141% — رقم كاذب.
-           الشريط يُقصّ بصريًّا، والنص يقول الحقيقة. */
-        /* المقام كان «المتبقي من العقود» بينما البسط «ما حُصّل في الفترة» —
-           ومنه نسب بلا معنى (650% · 3794%) حين تقترب العقود من نهايتها.
-           الصواب: قارن المحصَّل بالإيجار التعاقدي للفترة نفسها. */
-        const periodMonths = incPeriod === "month" ? 1 : incPeriod === "12m" ? 12
-          : (new Date().getMonth() + 1);                 // من يناير حتى الشهر الحالي
-        const expectedForPeriod = monthlyIncome * periodMonths;
-        const pctOfAnnual = expectedForPeriod > 0 ? Math.round((col / expectedForPeriod) * 100) : 0;
-        const barPct = Math.min(100, pctOfAnnual);
-        const label = incPeriod === "year" ? `هذه السنة (${new Date().getFullYear()})` : incPeriod === "month" ? "هذا الشهر" : "آخر 12 شهرًا";
+        const win = yearWindow(yearCal, today());
+        const g = Number(active?.grace_days) || 0;
+        const bd = yearBreakdown({ tenants: tenants as any[], payments: yearPays || [],
+          past: past.filter((x) => x.property_id === activeId) as any[], graceDays: g, yearEnd: win.to, ...windowsOf(active) });
+        const T = bd.totals, loading = yearPays === null;
+        const uncollected = T.overdue + T.rest, total = T.collected + uncollected;
+        const pct = total > 0 ? Math.round((T.collected / total) * 100) : 0;
+        const n = (v: number) => (loading ? "…" : sar(Math.round(v)));
         return (
-          <div className="bg-white border border-line rounded-xl px-4 py-2.5 mb-4 flex items-center justify-between gap-3 flex-wrap">
-            <div className="text-sm">
-              المحصَّل {label}: <b className="tabular-nums text-[#137a50]">{collectedInPeriod === null ? "…" : sar(Math.round(col))}</b> ريال
-              <span className="text-xs text-muted"> · المتبقي من العقود خلال 12 شهرًا {sar(Math.round(annualIncome))}</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="h-2 w-24 bg-paper2 rounded-full overflow-hidden">
-                <div className="h-full bg-[#1E9E6A] rounded-full" style={{ width: `${barPct}%` }} />
+          <div className="bg-white border border-line rounded-xl px-4 py-3 mb-4">
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <div className="font-semibold text-deep text-sm">دخل العقار — سنة {win.label}</div>
+              <div className="flex items-center gap-2">
+                <div className="inline-flex rounded-md border border-line overflow-hidden text-[11px]">
+                  {(["gregorian", "hijri"] as const).map((c) => (
+                    <button key={c} type="button" onClick={() => setYearCal(c)}
+                      className={`px-2.5 py-1 ${yearCal === c ? "bg-deep text-goldSoft" : "text-muted hover:text-deep"}`}>{c === "gregorian" ? "ميلادية" : "هجرية"}</button>
+                  ))}
+                </div>
               </div>
-              <span className={`text-xs tabular-nums ${pctOfAnnual > 100 ? "text-[#137a50] font-semibold" : "text-muted"}`}>{pctOfAnnual}%</span>
-              <Link href="/dashboard/property/overview" className="text-[11px] text-goldInk underline underline-offset-4 whitespace-nowrap">التفصيل</Link>
             </div>
+            <div className="text-xs text-muted mt-1">المتوقع للسنة إن حُصّل كل المستحق: <b className="text-ink tabular-nums">{n(total)}</b> ريال</div>
+            <div className="h-2 bg-paper2 rounded-full overflow-hidden my-2.5">
+              <div className="h-full bg-[#1E9E6A] rounded-full" style={{ width: `${Math.min(100, pct)}%` }} />
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-sm">
+              <div><div className="text-[11px] text-muted">المحصَّل في السنة حتى اليوم</div>
+                <b className="tabular-nums text-[#137a50]">{n(T.collected)}</b> <span className="text-[11px] text-muted">ريال · {pct}%</span></div>
+              <div><div className="text-[11px] text-muted">متأخر الآن</div>
+                <b className={`tabular-nums ${T.overdue > 0 ? "text-late" : "text-muted"}`}>{n(T.overdue)}</b> <span className="text-[11px] text-muted">ريال</span></div>
+              <div><div className="text-[11px] text-muted">يحلّ حتى نهاية السنة</div>
+                <b className="tabular-nums text-ink">{n(T.rest)}</b> <span className="text-[11px] text-muted">ريال</span></div>
+            </div>
+            <div className="flex items-center justify-between gap-2 mt-2 flex-wrap">
+              <span className="text-[11px] text-muted">غير المحصَّل: <b className="text-ink">{n(uncollected)}</b> ريال</span>
+              <button type="button" className="text-[11px] text-goldInk underline underline-offset-4" onClick={() => setYearOpen((v) => !v)}>
+                {yearOpen ? "إخفاء التفصيل ▴" : "التفصيل لكل وحدة وشرح الأرقام ▾"}</button>
+            </div>
+            {yearOpen && (
+              <div className="mt-3 border-t border-line pt-3">
+                <div className="text-[11.5px] text-ink leading-relaxed space-y-1 bg-paper rounded-lg p-2.5 mb-3">
+                  <div><b>المحصَّل في السنة:</b> كل ما قُبض فعلًا من {win.from} حتى اليوم كما في سجل الدفعات — أقساط، وسداد ديون مرحَّلة، وسداد مستأجرين سابقين. الدفعة المعكوسة تُخصم.</div>
+                  <div><b>متأخر الآن:</b> أقساط حلّت ولم تُسدَّد{g ? ` (بعد مهلة سماح ${g} ${g === 1 ? "يوم" : g === 2 ? "يومين" : g <= 10 ? "أيام" : "يومًا"})` : ""}، والدين المرحَّل على الساكن، وديون المستأجرين السابقين القائمة. يشمل ما تأخّر من قبل السنة.</div>
+                  <div><b>يحلّ حتى نهاية السنة:</b> أقساط العقود الحالية من اليوم حتى {win.to} لم تُدفع مقدّمًا{g ? "، ومعها ما حلّ وما زال في مهلة السماح" : ""}. عقد ينتهي قبل نهاية السنة لا تُحسب له أقساط بعد نهايته حتى يُجدَّد.</div>
+                  <div><b>غير المحصَّل</b> = المتأخر + ما يحلّ حتى نهاية السنة. <b>المتوقع للسنة</b> = المحصَّل + غير المحصَّل.</div>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-[12px]">
+                    <thead><tr className="text-muted text-right">
+                      <th className="py-1 font-normal">الوحدة</th><th className="py-1 font-normal">المستأجر</th>
+                      <th className="py-1 font-normal">المحصَّل في السنة</th><th className="py-1 font-normal">متأخر الآن</th><th className="py-1 font-normal">يحلّ حتى نهاية السنة</th>
+                    </tr></thead>
+                    <tbody>
+                      {bd.rows.map((r) => (
+                        <tr key={r.key} className="border-t border-line">
+                          <td className="py-1">{r.unit || "—"}</td>
+                          <td className="py-1">{r.name || "—"}{r.past && <span className="text-[10px] text-muted"> (سابق)</span>}</td>
+                          <td className="py-1 tabular-nums">{r.collected ? sar(r.collected) : "—"}</td>
+                          <td className={`py-1 tabular-nums ${r.overdue ? "text-late" : ""}`}>{r.overdue ? sar(r.overdue) : "—"}</td>
+                          <td className="py-1 tabular-nums">{r.rest ? <>{sar(r.rest)}{r.restCount ? <span className="text-[10px] text-muted"> · {r.restCount} {r.restCount === 1 ? "قسط" : r.restCount === 2 ? "قسطان" : "أقساط"}</span> : null}</> : "—"}</td>
+                        </tr>
+                      ))}
+                      <tr className="border-t-2 border-line font-semibold">
+                        <td className="py-1" colSpan={2}>الإجمالي</td>
+                        <td className="py-1 tabular-nums">{n(T.collected)}</td><td className="py-1 tabular-nums">{n(T.overdue)}</td><td className="py-1 tabular-nums">{n(T.rest)}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
           </div>
         );
       })()}
