@@ -320,7 +320,11 @@ export function contractState(t: {
   const anchor = anchorOf(t);
   // الوحدة المُخلاة تتوقّف عن تراكم المتأخرات من تاريخ الإخلاء — لا تبقى "متأخرة" للأبد
   const vacated = isVacant(t) && !!t.move_out_date;
-  const grace = Math.max(0, Math.min(30, Number(opts.graceDays) || 0));
+  /* مهلة السماح تؤخّر وصف الساكن «متأخرًا» — لا تُسقط القسط عمّن غادر.
+     كانت تُطبَّق على المُخلي أيضًا: من خرج بعد 3 أيام من حلول قسطه وسماح
+     العقار 5 يُؤرشَف بلا ذلك القسط، فيضيع من الدفاتر. (دراسة 685 احتمالًا
+     موسّعة: 49 مستأجرًا مُخليًا، كل فرق = أقساط حلّت في المهلة قبل الخروج.) */
+  const grace = vacated ? 0 : Math.max(0, Math.min(30, Number(opts.graceDays) || 0));
   // نافذة «يستحق قريبًا» — يختارها كل مكتب (افتراضيًّا 7 أيام)
   const soon = Math.max(1, Math.min(60, Number(opts.soonDays) || 10));
   // «مستحق»: نافذة أقرب داخل «قريب» — إن ضُبطت أكبر من «قريب» تُقصّ إليها
@@ -456,9 +460,16 @@ export function contractState(t: {
    */
   const termEnded = daysToEnd !== null && daysToEnd < 0;
   let soonTier: ContractState["soonTier"] = null;
-  if (termEnded && unpaid === 0) {
+  /* وكذلك عقد ساري سُدّدت كل أقساطه: «القسط التالي لآخر مسدَّد» هو تاريخ
+     النهاية لا قسطٌ فيه — فكان يُعرض «الدفعة القادمة 1,500 في 4 يوليو» لعقد
+     لا يطالب بشيء، وتتحوّل حالته «مستحق قريبًا» إذا اقترب التاريخ. (دراسة
+     685 احتمالًا: 116 وحدة.) التجديد يُنبَّه له من «ينتهي قريبًا». */
+  const allPaid = paid >= totalPeriods;
+  if ((termEnded && unpaid === 0) || allPaid) {
     nextDueDate = null;
     daysToNextDue = null;
+    upcomingDate = null;
+    daysToUpcoming = null;
   }
   if (status === "ok" && daysToNextDue !== null && daysToNextDue <= soon) {
     status = "soon";

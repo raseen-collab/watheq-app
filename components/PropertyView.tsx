@@ -5,7 +5,7 @@ import Link from "next/link";
 import Icon from "@/components/Icon";
 import { createClient } from "@/lib/supabase-client";
 import { officeId, getOffice, ROLE_LABEL, OWNER_PERMS } from "@/lib/office";
-import { arDate } from "@/lib/documents";
+import { arDate, termRentPaidOf } from "@/lib/documents";
 import { hijriShort, hijriText, parseHijriInput } from "@/lib/hijri";
 import { sar, waLink, today, WATHEQ_WA, openExternal } from "@/lib/utils";
 import { contractState, expectedNext12, buildSchedule, FREQUENCIES, freqLabel, freqShort, derivedEndDate, renewContract, needsRenewal, applyPayment, splitVat, isCommercial, isVacant, settleDeposit, unitVatApplies,
@@ -553,17 +553,32 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
   function reLet(t: Tenant) {
     const st = contractState(t, { graceDays: Number(active?.grace_days) || 0, ...windowsOf(active) });
     const debt = Math.round(((st.legacyArrears || 0) + (Number(t.carried_debt) || 0)) * 100) / 100;
-    let keepDebt = 0;
+    /**
+     * مصير دين السابق: ثلاثة لا اثنان.
+     *
+     * كان «إلغاء = سُوّي بالكامل» يمحو الدين بلا أثر: إن استلم المكتب المبلغ
+     * نقدًا عند الإخلاء لم يدخل أي دفتر ولا تقرير مالك، وإن تنازل عنه ضاع أنه
+     * كان دينًا أصلًا. (دراسة 685 احتمالًا: 144 قصة، وكل فروق المحصَّل منها.)
+     * الآن الدين يُحفظ دائمًا باسم صاحبه، ثم: يبقى مفتوحًا، أو يُسجَّل سداده
+     * نقدًا في الدفتر، أو يُشطب بسببه — ولكلٍّ أثر.
+     */
+    let fate: "none" | "open" | "paid" | "forgiven" = "none";
     if (debt > 0) {
-      const carry = confirm(
+      const keep = confirm(
         `على المستأجر السابق ${t.name} مبلغ ${sar(debt)} ريال.\n\n`
-        + `موافق = يُحفظ دينًا باسمه وجواله في «الديون المرحَّلة» ويُتابَع عليه — ولا يظهر على المستأجر الجديد.\n`
-        + `إلغاء = سُوّي بالكامل ولا دين عليه.`);
-      keepDebt = carry ? debt : 0;
+        + `موافق = يبقى دينًا عليه باسمه وجواله في «الديون المرحَّلة» — ولا يظهر على المستأجر الجديد.\n`
+        + `إلغاء = سُوّي (ستُسأل: استلمتَه أم تنازلتَ عنه).`);
+      if (keep) fate = "open";
+      else fate = confirm(
+        `كيف سُوّي دين ${t.name} (${sar(debt)} ريال)؟\n\n`
+        + `موافق = استلمتُه — يُسجَّل في الدفتر ويظهر في تقرير المالك.\n`
+        + `إلغاء = تنازلتُ عنه — يُشطب ويُحفظ أثره.`) ? "paid" : "forgiven";
     }
+    const keepDebt = debt > 0 ? debt : 0;
     const x = t as any;
     setModal({ kind: "tenant", id: t.id, preset: {
-      _relet: true, _reletDebt: keepDebt, _prevName: t.name,
+      _relet: true, _reletDebt: keepDebt, _reletFate: fate, _prevName: t.name,
+      _prevMoveOut: (t as any).move_out_date || null,
       /* ما يخصّ المستأجر: فارغ */
       name: "", phone: "", national_id: "", contract_no: "", contract_start: today(), contract_end: null,
       first_due: null, paid_periods: 0, partial_amount: 0, carried_debt: 0, carried_debt_note: null,
@@ -571,8 +586,10 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       /* قراءة التسليم للجديد = قراءة الخروج للسابق */
       meter_elec_in: x.meter_elec_out || x.meter_elec_in || "", meter_water_in: x.meter_water_out || x.meter_water_in || "",
     } } as any);
-    notify("ok", keepDebt > 0
+    notify("ok", fate === "open"
       ? `أدخل بيانات المستأجر الجديد — ودين ${t.name} (${sar(keepDebt)} ريال) يُحفظ باسمه عند الحفظ.`
+      : fate === "paid" ? `أدخل بيانات المستأجر الجديد — وسداد ${t.name} (${sar(keepDebt)} ريال) يُسجَّل في الدفتر عند الحفظ.`
+      : fate === "forgiven" ? `أدخل بيانات المستأجر الجديد — ودين ${t.name} يُشطب بأثر عند الحفظ.`
       : "أدخل بيانات المستأجر الجديد — ستعود الوحدة مؤجّرة عند الحفظ.");
   }
 
@@ -783,9 +800,25 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
           carried_debt: 0, carried_debt_note: null, move_out_date: null } as Tenant;
         setItems(items.map((p) => p.id === active.id
           ? { ...p, tenants: p.tenants.map((t) => (t.id === id ? fresh : t)) } : p));
+        /* مصير الدين: سداد نقدي في الدفتر، أو شطب بأثر. إن فشل هذا الجزء يبقى
+           الدين مفتوحًا باسم صاحبه — لا يضيع شيء، ويُسوّى من «الديون المرحَّلة». */
+        const arch = (rr as any)?.past_tenancy_id, fateD = (d as any)._reletFate;
+        let fateErr: string | null = null;
+        if (arch && Number((rr as any)?.debt) > 0 && fateD === "paid") {
+          const mo = String((d as any)._prevMoveOut || "").slice(0, 10);
+          const on = mo && mo <= today() ? mo : today();
+          const { error: pe } = await supabase.rpc("watheq_record_past_payment", { p_past: arch, p_amount: Number((rr as any).debt), p_paid_on: on });
+          if (pe) fateErr = pe.message;
+        } else if (arch && Number((rr as any)?.debt) > 0 && fateD === "forgiven") {
+          const { error: we } = await supabase.rpc("watheq_set_past_debt", { p_past: arch, p_status: "written_off", p_note: "تنازل عند إعادة التأجير" });
+          if (we) fateErr = we.message;
+        }
         const moved = Number((rr as any)?.payments_moved) || 0, dbt = Number((rr as any)?.debt) || 0;
-        notify("ok", `سُجّل ${payload.name} في الوحدة ${payload.unit || ""}`
-          + (dbt > 0 ? ` — ودين ${(d as any)._prevName || "السابق"} (${sar(dbt)}) محفوظ باسمه في «الديون المرحَّلة»` : "")
+        notify(fateErr ? "err" : "ok", `سُجّل ${payload.name} في الوحدة ${payload.unit || ""}`
+          + (fateErr ? ` — لكن تعذّرت تسوية دين ${(d as any)._prevName || "السابق"} (${fateErr}). هو محفوظ مفتوحًا في «الديون المرحَّلة» — سوِّه من هناك.`
+            : dbt > 0 && fateD === "paid" ? ` — وسداد ${(d as any)._prevName || "السابق"} (${sar(dbt)}) سُجّل في الدفتر`
+            : dbt > 0 && fateD === "forgiven" ? ` — ودين ${(d as any)._prevName || "السابق"} (${sar(dbt)}) شُطب وحُفظ أثره`
+            : dbt > 0 ? ` — ودين ${(d as any)._prevName || "السابق"} (${sar(dbt)}) محفوظ باسمه في «الديون المرحَّلة»` : "")
           + (moved ? ` · ودفعاته (${moved}) انتقلت معه` : ""));
         setSaving(false); setSaveErr(null); setModal(null);
         loadPast();

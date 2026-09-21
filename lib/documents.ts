@@ -1719,7 +1719,10 @@ export function ownerReportHTML(
   payments: OwnerReportPayment[] = [],
   issuer: Issuer = {},
   // المصروفات وأتعاب الإدارة اختيارية — بدونها يبقى التقرير كما كان (توافق خلفي)
-  extra: { expenses?: ExpenseRow[]; fee_pct?: number | null } = {},
+  extra: { expenses?: ExpenseRow[]; fee_pct?: number | null;
+    /** أقساط الإيجار المسجَّلة لكل ساكن في مدته الحالية — كل الأوقات لا الفترة.
+     *  منها تُحسب ملاحظة «دفعات سُدّدت قبل بدء التسجيل». بدونها لا ملاحظة. */
+    termRentPaid?: Record<string, number> } = {},
   /** شامل: مواصفات كل وحدة وعقدها وتفصيل كل دفعة ومصروف · مختصر: الأرقام والجدول */
   mode: "full" | "brief" = "full",
 ) {
@@ -1762,6 +1765,11 @@ export function ownerReportHTML(
   const activeLate = stRows.filter((r) => !r.cs.vacant && r.cs.amountDue > 0).length;
   const vacantOwing = stRows.filter((r) => r.cs.vacant && r.cs.legacyArrears > 0).length;
   const fin = ownerNet(collected, exp, extra.fee_pct, vatCollected, feeVatRate);
+  /* «صافي المالك» صافي دخل العقار: يخصم كل مصروفاته — ومنها ما دفعه المالك
+     بنفسه. فمن حوّل له «الصافي» خصم ذلك مرتين. (دراسة 685 احتمالًا: 53
+     تقريرًا.) السطر الإضافي يقول المحوَّل صراحةً، ويظهر حين يلزم فقط. */
+  const ownerPaid = Math.round(exp.filter((e: any) => isBillable(e) && e.paid_by === "owner")
+    .reduce((a: number, e: any) => a + (Number(e.amount) || 0), 0) * 100) / 100;
   const showFinance = exp.length > 0 || fin.feePct !== null;
   /**
    * الرصيد الافتتاحي.
@@ -1772,16 +1780,26 @@ export function ownerReportHTML(
    * دراسة عشرة مكاتب أظهرت مكتبًا واحدًا بـ1,217,500 ريال كهذه.
    * نقدّر ما سُدّد قبل التسجيل ونذكره صراحةً — لا نُدخله في الأرقام.
    */
-  const recordedBy: Record<string, number> = {};
-  payments.forEach((x: any) => { if (x.unit) recordedBy[String(x.unit)] = (recordedBy[String(x.unit)] || 0) + (Number(x.amount) || 0); });
+  /**
+   * ملاحظة «دفعات سُدّدت قبل بدء التسجيل».
+   *
+   * كانت تقارن ما سدّده الساكن في مدته بكل دفعات الوحدة **في فترة التقرير**:
+   * فتقرير شهر واحد يقول للمالك إن مئات الآلاف «سُدّدت قبل التسجيل» (كل ما
+   * دُفع في الأشهر الأخرى)، وتقرير كامل المدة يُنقصها بدفعات المستأجرين
+   * السابقين وسداد الديون. دراسة 685 احتمالًا: خاطئة في 260 تقريرًا من 260.
+   *
+   * الصحيح: رصيد الساكن في مدته − أقساط الإيجار المسجَّلة له في المدة نفسها
+   * (كل الأوقات). وبلا هذه البيانات لا ملاحظة — الصمت خير من رقم خاطئ.
+   */
   let openingUnits = 0, openingAmount = 0;
-  for (const t of (p.tenants || []) as any[]) {
-    const rent = Number(t.rent_amount) || 0;
-    if (rent <= 0 || isVacant(t)) continue;
-    const counted = (Number(t.paid_periods) || 0) * rent + (Number(t.partial_amount) || 0);
-    const recorded = recordedBy[String(t.unit)] || 0;
-    const gap = Math.round((counted - recorded) * 100) / 100;
-    if (gap > rent * 0.5) { openingUnits++; openingAmount += gap; }
+  if (extra.termRentPaid) {
+    for (const t of (p.tenants || []) as any[]) {
+      const rent = Number(t.rent_amount) || 0;
+      if (rent <= 0 || isVacant(t)) continue;
+      const counted = (Number(t.paid_periods) || 0) * rent + (Number(t.partial_amount) || 0);
+      const gap = Math.round((counted - (extra.termRentPaid[t.id] || 0)) * 100) / 100;
+      if (gap > 0.5) { openingUnits++; openingAmount += gap; }
+    }
   }
   const expiring = rows.filter((r) => !r.vacant && r.st.daysToEnd !== null && r.st.daysToEnd >= 0 && r.st.daysToEnd <= 60).length;
 
@@ -1897,6 +1915,8 @@ ${exp.length ? `<div class="scrollx"><table>
     <tr><td>(−) مصروفات الفترة</td><td style="text-align:left">${sar(fin.expenses)}</td></tr>
     ${fin.feePct !== null ? `<tr><td>(−) أتعاب الإدارة (${fin.feePct}% من صافي الإيجار)</td><td style="text-align:left">${sar(fin.feeBase ?? fin.fee)}</td></tr>${(fin.feeVat || 0) > 0 ? `<tr><td>(−) ضريبة على أتعاب الإدارة (${feeVatRate}%)</td><td style="text-align:left">${sar(fin.feeVat || 0)}</td></tr>` : ""}` : ""}
     <tr><td><b>صافي المالك عن ${period.label}</b></td><td style="text-align:left"><b style="font-size:1.1rem">${sar(fin.net)} ريال</b></td></tr>
+    ${ownerPaid > 0.005 ? `<tr><td>(+) مصروفات دفعها المالك بنفسه <span style="font-size:.72rem;color:#5C6B67">(خُصمت أعلاه لأنها من مصروفات العقار، ولم تمرّ بالمكتب)</span></td><td style="text-align:left">${sar(ownerPaid)}</td></tr>
+    <tr style="background:#F3EEE2"><td><b>المستحق تحويله للمالك</b></td><td style="text-align:left"><b style="font-size:1.1rem">${sar(Math.round((fin.net + ownerPaid) * 100) / 100)} ريال</b></td></tr>` : ""}
   </tbody>
 </table>
 ` : ""}
@@ -1976,6 +1996,10 @@ export function ownerConsolidatedStatementHTML(
   /* المالك يقارن «المحصَّل» بشيء: بلا مرجع للفترة يبدو التحصيل كارثيًّا
      (122,900 مقابل دخل سنوي 3.4 مليون). المتوقع للفترة يعطيه المرجع. */
   const periodDays = Math.max(1, Math.round((Date.parse(period.to) - Date.parse(period.from)) / 86400000) + 1);
+  /* ما دفعه المالك بنفسه من مصروفات العقارات — يُضاف للصافي عند التحويل */
+  const ownerPaidAll = Math.round(rows.reduce((a, r) => a + (r.s.expenses || [])
+    .filter((e: any) => isBillable(e) && e.paid_by === "owner")
+    .reduce((b: number, e: any) => b + (Number(e.amount) || 0), 0), 0) * 100) / 100;
   const T = rows.reduce((a, r) => ({
     units: a.units + r.units, vacant: a.vacant + r.vacant, due: a.due + r.due,
     collected: a.collected + r.fin.collected, expenses: a.expenses + r.fin.expenses,
@@ -1995,6 +2019,10 @@ ${header("كشف حساب مالك — مجمّع", ownerName)}
   ${anyFee ? `<div><div class="v">${sar(T.fee)}</div><div class="l">أتعاب الإدارة (ريال)</div></div>` : ""}
   <div><div class="v g" style="font-size:1.35rem">${sar(T.net)}</div><div class="l"><b>صافي المالك (ريال)</b></div></div>
 </div>
+${ownerPaidAll > 0.005 ? `<div class="note" style="border-inline-start-color:#B8791F;background:#FDF6E3">
+  <b>المستحق تحويله للمالك: ${sar(Math.round((T.net + ownerPaidAll) * 100) / 100)} ريال</b> — الصافي أعلاه
+  (${sar(T.net)}) يخصم كل مصروفات العقارات، ومنها ${sar(ownerPaidAll)} ريال دفعها المالك بنفسه ولم تمرّ بالمكتب.
+</div>` : ""}
 
 <div class="box" style="margin:12px 0 6px">
   <!-- حقائق لا تقديرات: المستند يُسلَّم للمالك كبيان حساب -->
@@ -2410,4 +2438,29 @@ ${sorted.length ? `<div class="scrollx"><table>
 </div>
 `;
   return SHELL(`كشف حساب لعمائر المكتب — ${esc(period.label)}`, inner + footer(), markOf(issuer));
+}
+
+/**
+ * أقساط الإيجار المسجَّلة لكل ساكن في مدته الحالية — لملاحظة الرصيد الافتتاحي
+ * في تقرير المالك. تُمرَّر دفعات العقار كلها (لا دفعات الفترة) مع وحداته.
+ * المقارنة نصّية: PostgREST يُرجع الطوابع بصيغة واحدة، فتبقى دقة الميكروثانية.
+ */
+export function termRentPaidOf(
+  tenants: { id: string; term_started_at?: string | null }[],
+  payments: { tenant_id?: string | null; amount: number | string; applies_to?: string | null; created_at?: string | null }[],
+): Record<string, number> {
+  const since: Record<string, string | null> = {};
+  for (const t of tenants || []) {
+    const v = t.term_started_at ? String(t.term_started_at) : null;
+    since[t.id] = v && !/infinity/.test(v) ? v : null;
+  }
+  const out: Record<string, number> = {};
+  for (const x of payments || []) {
+    if (!x.tenant_id || !(x.tenant_id in since)) continue;
+    if ((x.applies_to || "rent") !== "rent") continue;          // سداد الديون ليس قسطًا
+    const b = since[x.tenant_id];
+    if (b && String(x.created_at || "") < b) continue;          // دفعات مدة سابقة
+    out[x.tenant_id] = Math.round(((out[x.tenant_id] || 0) + (Number(x.amount) || 0)) * 100) / 100;
+  }
+  return out;
 }

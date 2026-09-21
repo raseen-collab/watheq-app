@@ -1,6 +1,6 @@
 import { createClient as createAdmin } from "@supabase/supabase-js";
 import { fetchAllRows } from "@/lib/fetch-all";
-import { ownerReportHTML, ownerConsolidatedStatementHTML, type OwnerStatementSection } from "@/lib/documents";
+import { ownerReportHTML, termRentPaidOf, ownerConsolidatedStatementHTML, type OwnerStatementSection } from "@/lib/documents";
 import { issuerMarks } from "@/lib/subscription";
 
 export const dynamic = "force-dynamic";
@@ -180,13 +180,22 @@ export async function GET(_req: Request, { params }: { params: { token: string }
     ...x, tenant_name: (x.tenant_id && byId[x.tenant_id]?.name) || x.payer_name || null, unit: (x.tenant_id && byId[x.tenant_id]?.unit) || x.unit_label || null,
   }));
 
+  /* أقساط كل ساكن في مدته (كل الأوقات) — لملاحظة الرصيد الافتتاحي. إن تعذّر
+     الجلب يُصدَر التقرير بلا الملاحظة، لا برقم خاطئ. */
+  let termRentPaid: Record<string, number> | undefined;
+  try {
+    const allPays = await fetchAllRows(db as any, "payments", "*",
+      (q) => q.eq("property_id", link.property_id).not("tenant_id", "is", null));
+    termRentPaid = termRentPaidOf((property as any).tenants || [], (allPays || []) as any);
+  } catch { termRentPaid = undefined; }
+
   const { trial, expired } = issuerMarks(profile || {});
   const html = ownerReportHTML(
     property as any,
     { label, from, to },
     payments,
     { ...(profile || {}), trial, expired },
-    { expenses: (exps || []) as any, fee_pct: (property as any).mgmt_fee_pct },
+    { expenses: (exps || []) as any, fee_pct: (property as any).mgmt_fee_pct, termRentPaid },
     "full",   // المالك يفتح رابطه ليرى كل شيء — لا ملخصًا
   );
 
