@@ -153,7 +153,7 @@ export default function ActivityLog({ properties, onClose }: { properties: any[]
                           : <>{sar(r.amount)} <span className="text-[11px] text-muted">{METHOD_AR[r.method || ""] || ""}</span></>}
                       </td>
                       <td className="p-2 whitespace-nowrap">{who(r.created_by)}</td>
-                      <td className="p-2 text-muted">{r.note || ""}</td>
+                      <td className="p-2 text-muted">{r.note ? String(r.note).replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, "").replace(/\s*—\s*$/, "") : ""}</td>
                     </tr>
                   );
                 })}

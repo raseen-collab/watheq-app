@@ -2245,7 +2245,8 @@ function HistoryModal({ data, unitWord, onClose, canEdit = true, onChanged }: {
                       : (r.reference || "—")}
                   </td>
                   <td className="p-2 text-muted">{r.periods_covered || "—"}</td>
-                  <td className="p-2 text-muted text-xs">{r.note || "—"}</td>
+                  {/* العكس يبقى ظاهرًا هنا (سجلّ تدقيق للمكتب) — بلا المعرّف الخام */}
+                  <td className="p-2 text-muted text-xs">{r.note ? String(r.note).replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, "").replace(/\s*—\s*$/, "") : "—"}</td>
                   {canEdit && (
                     <td className="p-2 whitespace-nowrap">
                       {editing === r.id ? (

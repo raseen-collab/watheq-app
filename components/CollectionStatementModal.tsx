@@ -88,7 +88,7 @@ export default function CollectionStatementModal({ properties, issuer, onClose }
 
       /* بلا قصّ: كشف «منذ البداية» لمكتب كبير يتجاوز أي حدّ ثابت */
       const pays = await fetchAllRows(supabase as any, "payments",
-        "id,paid_on,amount,method,note,reference,periods_covered,tenant_id,property_id",
+        "id,paid_on,amount,method,note,reference,periods_covered,tenant_id,property_id,reverses",
         (q) => q.in("property_id", ids).gte("paid_on", from).lte("paid_on", to).order("paid_on", { ascending: true }));
       const exps = await fetchAllRows(supabase as any, "expenses", "id,spent_on,amount,category,note,billable,paid_by,property_id",
         (q) => q.in("property_id", ids).gte("spent_on", from).lte("spent_on", to).order("spent_on", { ascending: true }));
@@ -123,7 +123,9 @@ export default function CollectionStatementModal({ properties, issuer, onClose }
       const unmatched: any[] = [];
       for (const rev of reversals) {
         const amt = Math.abs(Number(rev.amount));
-        const hit = positives.find((x: any) => !dropped.has(x.id)
+        /* الربط أولًا (schema-v44)، ثم المستأجر والمبلغ للبيانات الأقدم */
+        const hit = (rev.reverses && positives.find((x: any) => !dropped.has(x.id) && x.id === rev.reverses))
+          || positives.find((x: any) => !dropped.has(x.id)
           && String(x.tenant_id) === String(rev.tenant_id)
           && Math.abs(Number(x.amount) - amt) < 0.01);
         if (hit) dropped.add(hit.id); else unmatched.push(rev);
@@ -179,7 +181,7 @@ export default function CollectionStatementModal({ properties, issuer, onClose }
           property: pName[rev.property_id] || "—",
           unit: t.unit ?? null, tenant: t.name ?? null,
           paid_on: rev.paid_on, amount: Number(rev.amount) || 0,
-          statement: "عكس دفعة استُلمت قبل الفترة",
+          statement: "تصحيح لدفعة مسجَّلة سابقًا",
           contract_no: t.contract_no || null, calendar: t.calendar,
         });
       }
