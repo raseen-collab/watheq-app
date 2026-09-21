@@ -381,7 +381,18 @@ ${header(mode === "full" ? "كشف حساب شامل" : "كشف حساب مخت�
     <div class="r"><span>المتأخر</span><span>${sar(st.amountDue)} ريال</span></div>
     ${v.enabled && st.amountDue > 0 ? `<div class="r"><span>منه ضريبة</span><span>${sar(dueSplit.vat)} ريال</span></div>` : ""}
     ${st.hasPartial ? `<div class="r"><span>مدفوع جزئيًّا</span><span>${sar(st.partial)} ريال</span></div>` : ""}
-    <div class="r"><span>الدفعة القادمة</span><span>${arDate(st.nextDueDate)}</span></div>
+    ${/* كانت «الدفعة القادمة» تعرض أقدم دفعة غير مسدَّدة — تاريخًا ماضيًا حين
+         يكون على المستأجر متبقٍّ من دفعة سابقة. والكشف يُرسل للمستأجر نفسه.
+         الآن: المتأخر بتاريخه، والقادمة بتاريخها الحقيقي. */
+      st.amountDue > 0 && st.nextDueDate && (st.daysToNextDue ?? 0) < 0
+        ? `<div class="r"><span>متأخر منذ</span><span>${arDate(st.nextDueDate)}</span></div>` : ""}
+    ${/* غياب الحقل (undefined) غير انعدام الدفعات (null): الأول يعني نسخة أقدم
+         من contracts.ts لم تحسبه — فنعود للتاريخ القديم بدل أن نقول للمستأجر
+         كذبًا «لا دفعات قادمة». */ ""}
+    <div class="r"><span>الدفعة القادمة</span><span>${
+      st.upcomingDate ? arDate(st.upcomingDate)
+      : st.upcomingDate === null ? "لا دفعات قادمة في العقد"
+      : arDate(st.nextDueDate)}</span></div>
   </div>
 </div>
 
