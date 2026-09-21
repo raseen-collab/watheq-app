@@ -940,7 +940,10 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       if (one.total) L.push(`• قيمة الدفعة: ${sar(one.total)} ريال`);
       if (st.hasPartial) L.push(`• المسدَّد جزئيًّا: ${sar(st.partial)} ريال`);
       L.push(`• المبلغ المتبقّي: ${sar(st.amountDue)} ريال`);
-      if (st.nextDueDate) L.push(`• تاريخ أقرب دفعة مستحقة: ${arDate(st.nextDueDate)}${t.calendar === "hijri" ? ` (${hijriText(st.nextDueDate)})` : ""}`);
+      /* «أقرب دفعة مستحقة» كانت تُطلق على تاريخ مضى — والمستأجر يقرؤها
+         موعدًا قادمًا. نسمّي الماضي «مستحقّة منذ» والقادم «القادمة». */
+      if (st.nextDueDate) L.push(`• مستحقّة منذ: ${arDate(st.nextDueDate)}${t.calendar === "hijri" ? ` (${hijriText(st.nextDueDate)})` : ""}`);
+      if (st.upcomingDate) L.push(`• والدفعة القادمة تستحق بتاريخ: ${arDate(st.upcomingDate)}${t.calendar === "hijri" ? ` (${hijriText(st.upcomingDate)})` : ""}`);
     }
 
     L.push("");
@@ -1474,6 +1477,15 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                                 <div className="text-[#137a50]">ينتهي {st.endDate}</div>
                                 <div className="text-[11px] text-muted">{hijriShort(st.endDate)} · القادم مع التجديد</div>
                               </>)
+                              /* المتأخر: أقدم غير مسدَّد في الماضي — نُسمّيه «متأخر منذ»
+                                 ونُظهر القادم الحقيقي تحته. كان التاريخ الماضي يُعرض
+                                 وحده تحت عنوان «الاستحقاق القادم» فيُربك المكتب. */
+                              : st.nextDueDate && (st.daysToNextDue ?? 0) < 0 ? (<>
+                                <div className="text-late text-xs font-semibold">متأخر منذ {st.nextDueDate}</div>
+                                {st.upcomingDate
+                                  ? <div className="text-[11px] text-muted">القادمة {st.upcomingDate} · {st.daysToUpcoming === 0 ? "اليوم" : `بعد ${st.daysToUpcoming} يوم`}</div>
+                                  : <div className="text-[11px] text-muted">لا دفعات قادمة في العقد</div>}
+                              </>)
                               : st.nextDueDate ? (<>
                                 <div>{st.nextDueDate}</div>
                                 <div className="text-[11px] text-muted">{hijriShort(st.nextDueDate)}</div>
@@ -1611,8 +1623,22 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                           <span className="text-[#475569] font-semibold">شاغرة{v !== null ? ` منذ ${v} يوم` : ""}</span>
                         ); })()
                         : st.inGrace ? <span className="text-[#8a5a11] font-semibold">فترة سماح — {st.graceDaysLeft} يوم</span>
-                        : key === "partial" ? <span className="text-[#9A5B00] font-semibold">دُفع {sar(st.partial)} — والباقي أعلاه</span>
-                        : key === "late" ? <span className="text-late font-semibold">{st.unpaid} {st.unpaid === 1 ? "دفعة" : "دفعات"} متأخرة</span>
+                        /* حالة حسن خليل: متبقٍ من دفعة سابقة، والقادمة بعد أيام —
+                           كانت البطاقة تذكر المتبقي ولا تذكر متى الدفعة التالية. */
+                        : key === "partial" ? <span className="text-[#9A5B00] font-semibold">
+                            دُفع {sar(st.partial)} — والباقي أعلاه
+                            {st.upcomingDate && (st.daysToNextDue ?? 0) < 0 && (
+                              <span className="block font-normal text-muted mt-0.5">
+                                القادمة {st.upcomingDate} · {st.daysToUpcoming === 0 ? "اليوم" : `بعد ${st.daysToUpcoming} يوم`}
+                              </span>)}
+                          </span>
+                        : key === "late" ? <span className="text-late font-semibold">
+                            {st.unpaid} {st.unpaid === 1 ? "دفعة" : "دفعات"} متأخرة
+                            {st.upcomingDate && (
+                              <span className="block font-normal text-muted mt-0.5">
+                                القادمة {st.upcomingDate} · {st.daysToUpcoming === 0 ? "اليوم" : `بعد ${st.daysToUpcoming} يوم`}
+                              </span>)}
+                          </span>
                         : key === "due" ? <span className="text-[#9A4B00] font-semibold">
                             {st.statusLabel}
                             {/* «مستحق خلال 4 أيام» بلا مبلغ يجعل المكتب يسأل: كم؟ */}
