@@ -1423,7 +1423,9 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
               const page = Math.min(tPage, pages - 1);
               const slice = sorted.slice(page * PAGE, page * PAGE + PAGE);
               const totalDue = rows.reduce((a, r) => a + (r.st.amountDue || 0), 0);
-              const nearest = rows.map((r) => r.st.nextDueDate).filter(Boolean).sort()[0];
+              /* «أقرب استحقاق» كان أقدم تاريخ غير مسدَّد — فيُعرض تاريخ مضى
+                 عليه سنتان أحيانًا. الآن: أقرب دفعة قادمة فعلًا. */
+              const nearest = rows.map((r) => r.st.upcomingDate).filter(Boolean).sort()[0];
               const Th = ({ k, label, cls = "" }: { k: typeof tSort; label: string; cls?: string }) => (
                 <th className={`px-3 py-2.5 text-right font-semibold text-xs text-muted select-none cursor-pointer whitespace-nowrap ${cls}`}
                   onClick={() => setTSort(k)} title="اضغط للفرز">
@@ -1484,7 +1486,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                                 <div className="text-late text-xs font-semibold">متأخر منذ {st.nextDueDate}</div>
                                 {st.upcomingDate
                                   ? <div className="text-[11px] text-muted">القادمة {st.upcomingDate} · {st.daysToUpcoming === 0 ? "اليوم" : `بعد ${st.daysToUpcoming} يوم`}</div>
-                                  : <div className="text-[11px] text-muted">لا دفعات قادمة في العقد</div>}
+                                  : st.upcomingDate === null ? <div className="text-[11px] text-muted">لا دفعات قادمة في العقد</div> : null}
                               </>)
                               : st.nextDueDate ? (<>
                                 <div>{st.nextDueDate}</div>
@@ -1649,7 +1651,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                         : key === "litigation" ? <span className="text-[#475569]">{t.enforcement_no ? `طلب ${t.enforcement_no}` : "متابعة نظامية"}</span>
                         : st.fullyPaid ? <span className="text-[#137a50] font-semibold">✓ سدّد كامل العقد ({st.paid} من {t.contract_periods || st.paid}){st.endDate ? <span className="font-normal text-muted"> · ينتهي {st.endDate}{st.daysToEnd !== null && st.daysToEnd >= 0 ? ` (بعد ${st.daysToEnd} يوم)` : ""} — القسط القادم مع التجديد</span> : null}</span>
                         : st.nextDueDate ? <span className="text-muted">
-                            القادمة {st.nextDueDate}{` · ${hijriShort(st.nextDueDate)}`}
+                            القادمة {st.upcomingDate || st.nextDueDate}{` · ${hijriShort(st.upcomingDate || st.nextDueDate || "")}`}
                             {Number(t.rent_amount) > 0 && <span> · {sar(Number(t.rent_amount))} ريال</span>}
                           </span> : null}
                     </div>
@@ -2696,7 +2698,11 @@ function TenantModal({ open, initial, unitWord, error, saving, onClose, onSubmit
           <div className="bg-paper border border-line rounded-xl p-3 text-sm">
             <div className="font-semibold text-deep mb-1.5">استنتاج تلقائي</div>
             <div className="text-muted space-y-1 text-xs leading-relaxed">
-              <div>الدفعة القادمة: <b className="text-ink">{preview.nextDueDate}</b></div>
+              {(preview.daysToNextDue ?? 0) < 0 && preview.amountDue > 0 && (
+                <div>متأخر منذ: <b className="text-late">{preview.nextDueDate}</b> · {sar(preview.amountDue)} ريال</div>
+              )}
+              <div>الدفعة القادمة: <b className="text-ink">{preview.upcomingDate
+                ?? (preview.upcomingDate === null ? "لا دفعات قادمة" : preview.nextDueDate)}</b></div>
               <div>نهاية العقد: <b className="text-ink">{preview.endDate}</b></div>
               <div>إجمالي قيمة العقد: <b className="text-ink">{sar(totalValue)} ريال</b></div>
             </div>
