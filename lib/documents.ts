@@ -391,7 +391,8 @@ ${header(mode === "full" ? "كشف حساب شامل" : "كشف حساب مخت�
          كذبًا «لا دفعات قادمة». */ ""}
     <div class="r"><span>الدفعة القادمة</span><span>${
       st.upcomingDate ? arDate(st.upcomingDate)
-      : st.upcomingDate === null ? "لا دفعات قادمة في العقد"
+      : st.upcomingDate === null
+        ? (st.endDate && (st.daysToEnd ?? -1) >= 0 ? `مع تجديد العقد (ينتهي ${arDate(st.endDate)})` : "لا دفعات قادمة في العقد")
       : arDate(st.nextDueDate)}</span></div>
   </div>
 </div>
