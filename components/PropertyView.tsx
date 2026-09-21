@@ -89,6 +89,40 @@ const ROW_META: Record<RowKey, { label: string; dot: string; cls: string }> = {
   ok:         { label: "منتظم",        dot: "bg-paid",      cls: "bg-[#E6F4EC] text-[#137a50]" },
 };
 
+
+/**
+ * سطر «الدفعة القادمة» تحت المتأخر.
+ *
+ * طلب مكتب: أن يرى مبلغ القادمة لا تاريخها وحده. والمتأخر يبقى الرقم
+ * البارز لأنه المستحق الآن — تقديم القادمة عليه يُنزل المبلغ المتأخر
+ * الصغير إلى سطر ثانوي فيُنسى تحصيله.
+ * وحين تقع القادمة داخل نافذة «مستحق قريبًا» نجمع الاثنين: المحصّل يزور
+ * المستأجر مرة واحدة ويأخذ الكل.
+ */
+function UpcomingLine({ st, rent, imminentDays }: {
+  st: ReturnType<typeof contractState>; rent: number; imminentDays: number;
+}) {
+  if (!st.upcomingDate) return null;
+  const d = st.daysToUpcoming ?? 0;
+  const soon = d <= imminentDays;
+  return (
+    <span className="block font-normal text-muted mt-0.5">
+      القادمة {rent > 0 ? <b className="text-ink">{sar(rent)} ريال</b> : null} · {st.upcomingDate}
+      {" · "}{d === 0 ? "اليوم" : `بعد ${d} ${d === 1 ? "يوم" : d === 2 ? "يومين" : d <= 10 ? "أيام" : "يومًا"}`}
+      {soon && rent > 0 && st.amountDue > 0 && (
+        /* المجموع وحده يُخفي أن جزءًا منه متأخر أصلًا — والمكتب يحتاج أن
+           يقول للمستأجر «منها 500 متأخرة من الشهر الماضي». */
+        <span className="block text-[#8a5a11] font-semibold">
+          اجمعها معًا: {sar(st.amountDue + rent)} ريال
+          <span className="block font-normal">
+            <span className="text-late font-semibold">{sar(st.amountDue)} متأخرة</span> + {sar(rent)} القادمة
+          </span>
+        </span>
+      )}
+    </span>
+  );
+}
+
 function rowKey(t: Tenant, st: ReturnType<typeof contractState>): RowKey {
   if (isVacant(t)) return "vacant";
   /* وحدة مؤجّرة بلا تاريخ بداية كانت تظهر «منتظم» خضراء — فيمرّ عليها المكتب
@@ -1485,7 +1519,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                               : st.nextDueDate && (st.daysToNextDue ?? 0) < 0 ? (<>
                                 <div className="text-late text-xs font-semibold">متأخر منذ {st.nextDueDate}</div>
                                 {st.upcomingDate
-                                  ? <div className="text-[11px] text-muted">القادمة {st.upcomingDate} · {st.daysToUpcoming === 0 ? "اليوم" : `بعد ${st.daysToUpcoming} يوم`}</div>
+                                  ? <div className="text-[11px] text-muted"><UpcomingLine st={st} rent={Number(t.rent_amount) || 0} imminentDays={windowsOf(active).imminentDays} /></div>
                                   : st.upcomingDate === null ? <div className="text-[11px] text-muted">لا دفعات قادمة في العقد</div> : null}
                               </>)
                               : st.nextDueDate ? (<>
@@ -1628,18 +1662,13 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                         /* حالة حسن خليل: متبقٍ من دفعة سابقة، والقادمة بعد أيام —
                            كانت البطاقة تذكر المتبقي ولا تذكر متى الدفعة التالية. */
                         : key === "partial" ? <span className="text-[#9A5B00] font-semibold">
-                            دُفع {sar(st.partial)} — والباقي أعلاه
-                            {st.upcomingDate && (st.daysToNextDue ?? 0) < 0 && (
-                              <span className="block font-normal text-muted mt-0.5">
-                                القادمة {st.upcomingDate} · {st.daysToUpcoming === 0 ? "اليوم" : `بعد ${st.daysToUpcoming} يوم`}
-                              </span>)}
+                            متأخر {sar(st.amountDue)} ريال{st.nextDueDate ? <span className="font-normal"> منذ {st.nextDueDate}</span> : null}
+                            <span className="block font-normal text-muted">دُفع منها {sar(st.partial)}</span>
+                            <UpcomingLine st={st} rent={Number(t.rent_amount) || 0} imminentDays={windowsOf(active).imminentDays} />
                           </span>
                         : key === "late" ? <span className="text-late font-semibold">
-                            {st.unpaid} {st.unpaid === 1 ? "دفعة" : "دفعات"} متأخرة
-                            {st.upcomingDate && (
-                              <span className="block font-normal text-muted mt-0.5">
-                                القادمة {st.upcomingDate} · {st.daysToUpcoming === 0 ? "اليوم" : `بعد ${st.daysToUpcoming} يوم`}
-                              </span>)}
+                            {st.unpaid} {st.unpaid === 1 ? "دفعة" : "دفعات"} متأخرة{st.nextDueDate ? <span className="font-normal"> منذ {st.nextDueDate}</span> : null}
+                            <UpcomingLine st={st} rent={Number(t.rent_amount) || 0} imminentDays={windowsOf(active).imminentDays} />
                           </span>
                         : key === "due" ? <span className="text-[#9A4B00] font-semibold">
                             {st.statusLabel}
