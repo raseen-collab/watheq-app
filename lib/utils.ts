@@ -67,6 +67,20 @@ export const today = () => {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 };
 
+/**
+ * تاريخ لحظةٍ ما بتوقيت الرياض (YYYY-MM-DD). خوادم Vercel تعمل بتوقيت غرينتش،
+ * و toISOString().slice(0,10) يعطي تاريخ غرينتش دائمًا — فبين منتصف الليل و3
+ * فجرًا بالرياض يظهر «أمس». كل تاريخ يومي يُعرض أو يُقارَن يمرّ من هنا.
+ */
+export const riyadhDate = (v: Date | string | number) => {
+  const d = new Date(v);
+  if (isNaN(d.getTime())) return "";
+  if (RIYADH_FMT) return RIYADH_FMT.format(d);
+  return d.toISOString().slice(0, 10);
+};
+/** بداية الشهر الحالي بتوقيت الرياض، كطابع زمني صالح للمقارنة في القاعدة */
+export const riyadhMonthStartISO = () => `${today().slice(0, 7)}-01T00:00:00+03:00`;
+
 /** بداية اليوم بتوقيت الرياض ككائن Date محلي — أساس كل مقارنات الاستحقاق */
 export function riyadhToday(): Date {
   const [y, m, d] = today().split("-").map(Number);
