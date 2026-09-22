@@ -1,3 +1,4 @@
+import { today, riyadhDate } from "@/lib/utils";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase-server";
 import { createClient as admin } from "@supabase/supabase-js";
@@ -65,9 +66,11 @@ export default async function HelpMonitorPage() {
   const top = [...hitCount.entries()].sort((a, b) => b[1] - a[1]).slice(0, 12)
     .map(([id, n]) => ({ n, q: KB.find((k) => k.id === id)?.q || id }));
 
+  /* أيام الرياض لا غرينتش: اليوم يبدأ عند منتصف ليل الرياض، والسؤال يُنسب ليومه هناك */
+  const t0 = Date.parse(today() + "T12:00:00+03:00");
   const days = Array.from({ length: 14 }, (_, i) => {
-    const d = new Date(Date.now() - (13 - i) * 86400000).toISOString().slice(0, 10);
-    return { d, n: all.filter((r) => String(r.created_at).slice(0, 10) === d).length };
+    const d = riyadhDate(t0 - (13 - i) * 86400000);
+    return { d, n: all.filter((r) => riyadhDate(r.created_at) === d).length };
   });
   const maxDay = Math.max(1, ...days.map((x) => x.n));
 

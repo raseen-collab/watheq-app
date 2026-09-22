@@ -1,5 +1,6 @@
 "use server";
 
+import { riyadhDate } from "@/lib/utils";
 import { createClient } from "@/lib/supabase-server";
 import { createClient as createServiceClient } from "@supabase/supabase-js";
 import { revalidatePath } from "next/cache";
@@ -101,5 +102,5 @@ export async function recordSubPayment(input: {
 
   revalidatePath("/admin/subs");
   revalidatePath("/admin");
-  return { ok: true, extendedTo: extended.toISOString().slice(0, 10), invoiceNo };
+  return { ok: true, extendedTo: riyadhDate(extended), invoiceNo };
 }

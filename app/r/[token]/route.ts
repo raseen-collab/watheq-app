@@ -1,3 +1,4 @@
+import { today } from "@/lib/utils";
 import { createClient as createAdmin } from "@supabase/supabase-js";
 import { fetchAllRows } from "@/lib/fetch-all";
 import { ownerReportHTML, termRentPaidOf, pastVatOf, type PastVat, ownerConsolidatedStatementHTML, type OwnerStatementSection } from "@/lib/documents";
@@ -41,7 +42,8 @@ export async function GET(_req: Request, { params }: { params: { token: string }
     .select("id, user_id, property_id, property_ids, owner_name, revoked, expires_at")
     .eq("token", token).maybeSingle();
   if (!link || link.revoked) return deny("هذا الرابط لم يعد فعّالًا");
-  if (link.expires_at && String(link.expires_at) < new Date().toISOString().slice(0, 10)) {
+  /* تاريخ الرياض: كان الرابط المنتهي يعمل 3 ساعات بعد منتصف ليل الرياض */
+  if (link.expires_at && String(link.expires_at).slice(0, 10) < today()) {
     return deny("انتهت صلاحية هذا الرابط");
   }
 

@@ -1,3 +1,4 @@
+import { today } from "@/lib/utils";
 import { NextResponse } from "next/server";
 import { createClient as createServiceClient } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase-server";
@@ -44,7 +45,7 @@ export async function POST() {
   const monthStart = new Date(); monthStart.setDate(1);
 
   const snapshot = {
-    اليوم: new Date().toISOString().slice(0, 10),
+    اليوم: today(),                       // تاريخ الرياض — الخادم بتوقيت غرينتش
     الحسابات: accounts.length,
     أكملوا_الترحيب: accounts.filter((p: any) => p.account_type).length,
     أضافوا_عقارًا: accounts.filter((p: any) => withProps.has(p.id)).length,
