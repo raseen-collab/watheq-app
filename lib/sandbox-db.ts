@@ -88,6 +88,39 @@ function table(store: SandboxStore, name: keyof SandboxStore) {
  * الجداول السبعة، ودالتَي تسجيل الدفعة والتراجع، وترقيم الفواتير.
  */
 export function sandboxClient(store: SandboxStore) {
+  /* عكس دفعة بعينها — مشترك بين «عكس» و«تراجع عن آخر دفعة» */
+  const reversePay = (payId: string): { data: any; error: any } => {
+      const pay = store.payments.find((x) => x.id === payId);
+      if (!pay) return { data: null, error: { message: "الدفعة غير موجودة" } };
+      if (!(Number(pay.amount) > 0)) return { data: null, error: { message: "هذا الصفّ عكسٌ أصلًا ولا يُعكس" } };
+      if (store.payments.some((x) => x.reverses === pay.id)) return { data: null, error: { message: "سبق عكس هذه الدفعة" } };
+      const amt = Number(pay.amount);
+      let out: any = { reversed: amt, paid_on: pay.paid_on };
+      if (pay.past_tenancy_id) {
+        const a = (store.past_tenancies || []).find((x) => x.id === pay.past_tenancy_id);
+        if (a) { if (pay.applies_to === "past_debt") a.debt_paid = r2(a.debt_paid - amt); else a.debt_amount = r2(a.debt_amount + amt);
+                 if (a.debt_status === "settled") a.debt_status = "open"; }
+      } else {
+        const t = store.tenants.find((x) => x.id === pay.tenant_id);
+        if (!t) return { data: null, error: { message: "الوحدة غير موجودة" } };
+        if (pay.applies_to === "carried") t.carried_debt = r2((Number(t.carried_debt) || 0) + amt);
+        else {
+          const rent = Number(t.rent_amount) || 0;
+          const credit = Math.max(0, r2((Number(t.paid_periods) || 0) * rent + (Number(t.partial_amount) || 0) - amt));
+          t.paid_periods = rent > 0 ? Math.floor(credit / rent + 1e-9) : 0;
+          t.partial_amount = rent > 0 ? r2(credit - t.paid_periods * rent) : 0;
+          out = { ...out, paid_periods: t.paid_periods, partial_amount: t.partial_amount };
+        }
+      }
+      const id = `sb_pay_${Math.random().toString(36).slice(2, 10)}`;
+      store.payments = [{ id, tenant_id: pay.tenant_id ?? null, past_tenancy_id: pay.past_tenancy_id ?? null, property_id: pay.property_id,
+        paid_on: pay.paid_on, amount: -amt, method: "other", note: `عكس دفعة ${pay.paid_on}`, periods_covered: 0,
+        reverses: pay.id, applies_to: pay.applies_to || "rent", payer_name: pay.payer_name, unit_label: pay.unit_label,
+        created_at: new Date().toISOString() }, ...store.payments];
+      const prop = store.properties.find((p) => p.id === pay.property_id);
+      if (prop) prop.collected = (Number(prop.collected) || 0) - amt;
+      return { data: { ...out, payment_id: id }, error: null };
+  };
   return {
     from: (name: string) => table(store, name as keyof SandboxStore),
     auth: { getUser: async () => ({ data: { user: { id: "demo-user" } } }) },
@@ -111,14 +144,33 @@ export function sandboxClient(store: SandboxStore) {
         if (prop) prop.collected = (Number(prop.collected) || 0) + Number(args.p_amount || 0);
         return { data: { paid_periods: t.paid_periods, partial_amount: t.partial_amount, completed }, error: null };
       }
+      /* «تراجع عن آخر دفعة» بمنطق القاعدة (schema-v44/v45). كانت التجربة تُنقص
+         العدّاد قسطًا كاملًا وتُبقي الجزئي ولا تكتب في الدفتر — عطل v43 نفسه. */
       if (fn === "watheq_undo_payment") {
         const t = store.tenants.find((x) => x.id === args.p_tenant);
-        if (!t || (Number(t.paid_periods) || 0) <= 0) return { data: null, error: { message: "لا دفعات للتراجع عنها" } };
-        t.paid_periods = Number(t.paid_periods) - 1;
-        return { data: { paid_periods: t.paid_periods, reversed: Number(t.rent_amount) || 0 }, error: null };
+        if (!t) return { data: null, error: { message: "العقد غير موجود" } };
+        const rent = Number(t.rent_amount) || 0;
+        const credit = (Number(t.paid_periods) || 0) * rent + (Number(t.partial_amount) || 0);
+        const b = t.term_started_at && !/infinity/.test(String(t.term_started_at)) ? String(t.term_started_at) : "";
+        const live = store.payments
+          .filter((x) => x.tenant_id === t.id && Number(x.amount) > 0 && (x.applies_to || "rent") === "rent"
+            && !store.payments.some((r) => r.reverses === x.id) && (!b || String(x.created_at || "") >= b))
+          /* دفعات التجربة الأولية بلا وقت إنشاء: تاريخ السداد يرتّبها، والمسجَّلة أثناء التجربة
+             (بوقت إنشاء) أحدث منها دائمًا */
+          .sort((a, c) => String(c.created_at || c.paid_on || "").localeCompare(String(a.created_at || a.paid_on || "")))[0];
+        if (!live && credit <= 0) return { data: null, error: { message: "لا دفعات مسجّلة للتراجع عنها" } };
+        if (live) return reversePay(live.id);
+        const c2 = Math.max(0, r2(credit - rent));                       // رصيد افتتاحي: دفعة من العدّاد بلا نقد
+        t.paid_periods = rent > 0 ? Math.floor(c2 / rent + 1e-9) : 0;
+        t.partial_amount = rent > 0 ? r2(c2 - t.paid_periods * rent) : 0;
+        return { data: { paid_periods: t.paid_periods, partial_amount: t.partial_amount, reversed: 0, opening_balance: true }, error: null };
       }
       /* إعادة التأجير وديون السابقين (schema-v45) — نسخ مبسّطة تُبقي التجربة
          متسقة: كانت الدالة المجهولة تُرجع «نجاحًا» صامتًا فيعود القديم عند التحديث */
+      /* عكس دفعة بعينها — بحساب الرصيد نفسه في القاعدة (schema-v44/v45): الرصيد
+         ناقص المبلغ ثم يوزَّع. كانت التجربة تُرجع «نجاحًا» صامتًا فيظهر سطر
+         سالب والعدّاد لم يتغيّر. */
+      if (fn === "watheq_reverse_payment") return reversePay(args.p_payment);
       if (fn === "watheq_relet_unit") {
         const t = store.tenants.find((x) => x.id === args.p_tenant);
         if (!t) return { data: null, error: { message: "الوحدة غير موجودة" } };

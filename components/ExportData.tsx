@@ -77,6 +77,9 @@ export default function ExportData() {
       /* أرشيف المستأجرين السابقين (v45) — قبل الترحيل لا جدول */
       const past = await all("past_tenancies", "*", "archived_at").catch(() => []);
       const pastById: Record<string, any> = {}; past.forEach((x: any) => { pastById[x.id] = x; });
+      const invoiceHolder = (inv: any) => past
+        .filter((a: any) => a.unit_row_id && a.unit_row_id === inv.tenant_id && String(a.archived_at || "") > String(inv.created_at || ""))
+        .sort((a: any, b: any) => String(a.archived_at).localeCompare(String(b.archived_at)))[0] || null;
       const pName: Record<string, string> = {}; props.forEach((p) => { pName[p.id] = p.name; });
       const tById: Record<string, any> = {}; tenants.forEach((t) => { tById[t.id] = t; });
 
@@ -160,7 +163,10 @@ export default function ExportData() {
       })));
       add("الفواتير", invoices.map((x) => ({
         "رقم الفاتورة": x.invoice_no, "التاريخ": (x.created_at || "").slice(0, 10), "العقار": pName[x.property_id] || "",
-        "المستأجر": tById[x.tenant_id]?.name || "", "الوحدة": tById[x.tenant_id]?.unit || "",
+        /* فاتورة صدرت قبل أرشفة مستأجرٍ من هذه الوحدة هي فاتورته هو — لا فاتورة
+           الساكن الحالي (إعادة التأجير تُبقي صفّ الوحدة نفسه) */
+        "المستأجر": invoiceHolder(x)?.name || tById[x.tenant_id]?.name || "",
+        "الوحدة": invoiceHolder(x)?.unit || tById[x.tenant_id]?.unit || "",
         "الفترة": x.period_label || "", "المبلغ": x.amount, "الاستحقاق": x.due_date || "",
         "الحالة": x.status || "", "ملاحظات": x.notes || "",
       })), [16, 12, 22, 22, 10, 16, 12, 12, 12, 30]);

@@ -12,6 +12,7 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase-client";
 import { contractState, isVacant, expectedNext12, type Frequency } from "@/lib/contracts";
+import { annualRentRoll } from "@/lib/income";
 import { sar, waLink } from "@/lib/utils";
 import { hijriShort } from "@/lib/hijri";
 import ExpensesOverview from "@/components/ExpensesOverview";
@@ -94,6 +95,7 @@ export default function PortfolioView({ properties, windows }: {
     return T;
   }, [rows]);
   const collectedTotal = monthCollected ? Object.values(monthCollected).reduce((a, b) => a + b, 0) : null;
+  const annualRoll = useMemo(() => annualRentRoll(rows.map((r: any) => r.t)).annual, [rows]);
   /* الدخل المتوقع للمحفظة كلها — من جدول الدفعات الفعلي لكل وحدة، فالعقد
      القصير ينتهي عند نهايته ولا يُضرب في اثني عشر. */
   const expected12 = useMemo(
@@ -159,6 +161,10 @@ export default function PortfolioView({ properties, windows }: {
             <div className="text-2xl font-bold text-deep tabular-nums">
               {sar(Math.round(expected12))} <span className="text-sm font-normal text-muted">ريال</span>
             </div>
+            {/* مجموع «دخل العمارة السنوي» في صفحات العقارات — بالدالة نفسها، فيتطابقان حتمًا */}
+            <div className="text-xs text-muted mt-1">
+              الدخل السنوي بعقودها الحالية: <b className="text-ink tabular-nums">{sar(Math.round(annualRoll))}</b> ريال
+            </div>
           </div>
           <div className="text-xs text-muted">
             محصَّل هذا الشهر <b className="text-[#137a50] tabular-nums">{collectedTotal === null ? "…" : sar(Math.round(collectedTotal))}</b>
@@ -173,8 +179,8 @@ export default function PortfolioView({ properties, windows }: {
         {/* ستة أشهر افتراضيًّا: عشرة أشهر صفرية تأخذ مساحة الشهرين الحيَّين */}
         <MonthlyCollection propertyIds={properties.map((p: any) => p.id)} months={6} />
         <p className="text-[11px] text-muted mt-2 leading-relaxed">
-          المتوقع يُحسب من جدول دفعات كل وحدة مشغولة — لا من الإيجار مضروبًا في اثني عشر،
-          فالعقد القصير ينتهي عند نهايته.
+          <b>المتبقي خلال 12 شهرًا:</b> أقساط كل وحدة مشغولة من جدولها الفعلي حتى نهاية عقدها — فالعقد القصير ينتهي عند نهايته.
+          {" "}<b>الدخل السنوي بعقودها الحالية:</b> دفعة كل وحدة × عدد دفعاتها في السنة — مجموع «دخل العمارة السنوي» في صفحات العقارات.
         </p>
       </div>
 
