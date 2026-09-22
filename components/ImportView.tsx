@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase-client";
 import { derivedEndDate, FREQUENCIES, type Frequency } from "@/lib/contracts";
 import { typeIcon, unitLabel } from "@/lib/domain";
-import { sar, openExternal } from "@/lib/utils";
+import { sar, openExternal, today } from "@/lib/utils";
 import { parseHijriInput, hijriShort } from "@/lib/hijri";
 import { waLink, WATHEQ_WA } from "@/lib/utils";
 
@@ -18,6 +18,8 @@ type Row = {
   prop_name?: string;
   prop_id?: string;
   _error?: string;
+  /** تنبيه لا يمنع الرفع: بداية مستقبلية بلا دفعات — غالبًا موعد الدفعة القادمة لا بداية العقد */
+  _warn?: string;
 };
 
 // العمود التاسع «الدفعات المسدّدة» اختياري: بدونه يُعدّ العقد لم يُسدَّد منه شيء —
@@ -259,6 +261,12 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
         carried_debt: carriedTxt ? Math.max(0, Number(toEnDigits(String(carriedTxt).replace(/[^\d.]/g, ""))) || 0) : undefined,
         prop_name: propName || undefined, prop_id: target?.id,
         _error: err || undefined,
+        /* بيانات المكاتب: 11% من العقود أُدخلت ببداية مستقبلية وعدّاد صفر — «موعد
+           الدفعة القادمة» في خانة «بداية العقد». لا يُمنع (العقد الجديد مشروع)
+           لكن يُنبَّه قبل الرفع، حين يكون التصحيح في الملف نفسه أسهل. */
+        _warn: !err && cs && cs > today() && !(pd > 0)
+          ? "البداية بعد اليوم ولا دفعات — إن كان العقد ساريًا من قبل فاكتب بدايته الفعلية من العقد وعدد الدفعات المسدَّدة، لا موعد الدفعة القادمة"
+          : undefined,
       };
     });
     /**
@@ -342,6 +350,7 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
 
   const validCount = rows.filter((r) => !r._error).length;
   const errorCount = rows.length - validCount;
+  const warnCount = rows.filter((r) => !r._error && r._warn).length;
 
   return (
     <div className="max-w-4xl mx-auto">
@@ -422,6 +431,7 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
                   <div className="text-sm text-muted">
                     <span className="text-paid font-semibold">{validCount} صالحة</span>
                     {errorCount > 0 && <> · <span className="text-late font-semibold">{errorCount} بها مشكلة</span></>}
+                    {warnCount > 0 && <> · <span className="text-[#8a5a11] font-semibold">{warnCount} بدايتها بعد اليوم — تحقّق منها</span></>}
                   </div>
                 </div>
                 <button onClick={importRows} disabled={busy || !validCount} className="btn btn-gold text-sm disabled:opacity-40">
@@ -442,7 +452,7 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
                   </thead>
                   <tbody>
                     {rows.map((r, i) => (
-                      <tr key={i} className={`border-t border-line ${r._error ? "bg-[#FBE9E7]" : ""}`}>
+                      <tr key={i} className={`border-t border-line ${r._error ? "bg-[#FBE9E7]" : r._warn ? "bg-[#FFF6E5]" : ""}`}>
                         <td className="p-2 font-medium">{r.name || "—"}{r.prop_name && <div className="text-[11px] text-muted">🏢 {r.prop_name}</div>}</td>
                         <td className="p-2">{r.unit || "—"}</td>
                         <td className="p-2">{sar(r.rent_amount)}</td>
@@ -450,7 +460,9 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
                         <td className="p-2">{r.contract_start || "—"}{r.contract_start && <div className="text-[11px] text-muted">{hijriShort(r.contract_start)}</div>}</td>
                         <td className="p-2">{r._error
                           ? <span className="text-late font-semibold">{r._error}</span>
-                          : <span className="text-paid font-semibold">جاهزة</span>}</td>
+                          : r._warn
+                            ? <span className="text-[#8a5a11] text-[12px] leading-relaxed"><b>⚠ تحقّق:</b> {r._warn}</span>
+                            : <span className="text-paid font-semibold">جاهزة</span>}</td>
                       </tr>
                     ))}
                   </tbody>

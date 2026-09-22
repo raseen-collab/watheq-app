@@ -284,3 +284,23 @@ export function pastDebtGaps(past: any[]): PastDebtGap[] {
   }
   return out;
 }
+
+/**
+ * عقود بدايتها بعد اليوم ولا دفعات مسدَّدة.
+ *
+ * في بيانات المكاتب الحقيقية: 25 من 216 عقدًا (11%)، 24 منها لمكتب واحد
+ * يُدخل بياناته — «موعد الدفعة القادمة» في خانة «بداية العقد». لا تصحيح آلي:
+ * البداية الحقيقية لا يعرفها إلا المكتب. والعقد الجديد فعلًا يختفي من القائمة
+ * يوم بدايته من تلقاء نفسه.
+ */
+export type FutureStart = { tenantId: string; propertyId: string; propertyName: string; unit: string | null; name: string | null; start: string };
+export function futureStartUnits(properties: any[], todayISO: string): FutureStart[] {
+  const out: FutureStart[] = [];
+  for (const p of properties || []) for (const t of p.tenants || []) {
+    const start = String(t.contract_start || "").slice(0, 10);
+    if (!start || start <= todayISO || isVacant(t)) continue;
+    if ((Number(t.paid_periods) || 0) > 0 || (Number(t.partial_amount) || 0) > 0) continue;
+    out.push({ tenantId: t.id, propertyId: p.id, propertyName: p.name, unit: t.unit ?? null, name: t.name ?? null, start });
+  }
+  return out.sort((a, b) => a.propertyName.localeCompare(b.propertyName, "ar") || String(a.unit).localeCompare(String(b.unit), "ar", { numeric: true }));
+}

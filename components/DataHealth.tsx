@@ -9,7 +9,8 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase-client";
-import { auditOffice, groupFindings, SEV_META, pastDebtGaps, type PastDebtGap, type Finding, type Group, type Severity } from "@/lib/integrity";
+import { today } from "@/lib/utils";
+import { auditOffice, groupFindings, SEV_META, pastDebtGaps, futureStartUnits, type PastDebtGap, type Finding, type Group, type Severity } from "@/lib/integrity";
 
 export default function DataHealth({ initial }: { initial: any[] }) {
   const supabase = useMemo(() => createClient(), []);
@@ -68,6 +69,30 @@ export default function DataHealth({ initial }: { initial: any[] }) {
           <Link href="/dashboard/property" className="btn btn-ghost text-sm">← اللوحة</Link>
         </div>
       </div>
+
+      {(() => {
+        const fs = futureStartUnits(props, today());
+        if (!fs.length) return null;
+        return (
+          <div className="bg-white border border-[#F2D49B] rounded-xl p-3.5 mb-4">
+            <div className="font-semibold text-deep">عقود بدايتها بعد اليوم ولا دفعات مسدَّدة ({fs.length})</div>
+            <p className="text-xs text-muted mt-1 leading-relaxed">
+              غالبًا أُدخل <b>موعد الدفعة القادمة</b> في «بداية العقد» لعقد ساري من قبل. الأقساط القادمة تبقى صحيحة، لكن
+              <b> نهاية العقد تُحسب خطأً</b> (يطالب بأقساط بعد انتهائه الحقيقي)، والكشف يقول «المسدَّد 0» لمستأجر منتظم.
+              للتصحيح: افتح الوحدة ← «تعديل البيانات» ← اكتب بداية العقد الفعلية من العقد ← اختر من «مسدَّد حتى» آخر دفعة سُدّدت.
+              <b> وإن كان العقد جديدًا فعلًا فلا شيء عليك</b> — يختفي من هنا يوم بدايته.
+            </p>
+            <div className="mt-2 grid gap-1 text-sm">
+              {fs.map((x) => (
+                <div key={x.tenantId} className="flex items-center justify-between gap-2 border-t border-line pt-1.5 flex-wrap">
+                  <span>{x.propertyName} <span className="text-muted">· وحدة {x.unit || "—"}</span>{x.name ? <span className="text-muted"> · {x.name}</span> : null}</span>
+                  <span className="text-xs text-muted tabular-nums">البداية المسجَّلة {x.start}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })()}
 
       {gaps.length > 0 && (
         <div className="bg-white border border-[#F5C6C2] rounded-xl p-3.5 mb-4">

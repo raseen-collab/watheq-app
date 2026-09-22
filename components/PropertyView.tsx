@@ -2716,8 +2716,23 @@ function TenantModal({ open, initial, unitWord, error, saving, onClose, onSubmit
   saving?: boolean;
 }) {
   const [d, setD] = useState<any>(initial || { payment_frequency: "monthly", contract_start: today() });
+  /* «عقد جديد يبدأ لاحقًا» — يؤكّده المكتب مرة فيختفي التنبيه */
+  const [startIsNew, setStartIsNew] = useState(false);
   if (!open) return null;
   const preview = d.contract_start && d.rent_amount ? contractState({ ...d, paid_periods: d.paid_periods || 0 }) : null;
+  /**
+   * بداية في المستقبل بلا دفعات: في بيانات المكاتب الحقيقية 25 عقدًا من 216
+   * (11%) — مكتب يبدأ مع وثيق في منتصف سنة العقد فيُدخل «موعد الدفعة
+   * القادمة» في «بداية العقد» بعدّاد صفر. الأقساط القادمة تصحّ، لكن نهاية
+   * العقد تُحسب سنة من الدفعة القادمة (فيطالب بأقساط بعد انتهائه الحقيقي)،
+   * والكشف يقول «المسدَّد 0» لمستأجر منتظم منذ أشهر.
+   */
+  const startISO = String(d.contract_start || "").slice(0, 10);
+  const futureStartQ = !!startISO && startISO > today() && !(Number(d.paid_periods) > 0)
+    && String(d.status) !== "vacated" && !startIsNew;
+  /* جدول الأقساط بالبيانات الحالية — لقائمة «مسدَّد حتى» والمعاينة */
+  const sched: { n: number; date: string; status: string }[] = d.contract_start && Number(d.rent_amount) > 0
+    ? buildSchedule({ ...d, paid_periods: Number(d.paid_periods) || 0 } as any) : [];
   const totalValue = (Number(d.rent_amount) || 0) * (Number(d.contract_periods) || 12);
   return (
     <Shell onClose={onClose}>
@@ -2828,9 +2843,37 @@ function TenantModal({ open, initial, unitWord, error, saving, onClose, onSubmit
         <Field label="دفعات سُدّدت حتى اليوم"
           hint={initial
             ? "صحّحه إن كان الرقم غلطًا. الدفعات المسجَّلة بزر ✔ تُضاف فوقه تلقائيًّا"
-            : "للعقد القائم — عقد شهري من يناير مدفوع حتى أغسطس = 8. عقد جديد = 0"}>
-          <input className="fld" type="number" min={0} value={d.paid_periods ?? ""}
-            onChange={(e) => setD({ ...d, paid_periods: e.target.value })} placeholder="0" />
+            : "اختر آخر دفعة سدّدها المستأجر من هذا العقد — التواريخ محسوبة من بداية العقد ودورته"}>
+          {/* قائمة بتواريخ الأقساط الفعلية بدل عدّها: المكتب يعرف «مسدّد لين يوليو»
+              ولا يعرف «سدّد 2» — والعدّ كان مصدر أخطاء الإدخال */}
+          {sched.length > 0 ? (
+            <select className="fld" value={String(Number(d.paid_periods) || 0)}
+              onChange={(e) => setD({ ...d, paid_periods: Number(e.target.value) })}>
+              <option value="0">لم يسدّد أي دفعة من هذا العقد</option>
+              {sched.map((x) => (
+                <option key={x.n} value={x.n}>
+                  {`مسدَّد حتى الدفعة ${x.n} — ${x.date}${d.calendar === "hijri" ? ` (${hijriShort(x.date)})` : ""}${x.date > today() ? " · مقدَّمًا" : ""}`}
+                </option>
+              ))}
+              {Number(d.paid_periods) > sched.length && (
+                <option value={String(Number(d.paid_periods))}>{`${d.paid_periods} دفعات — أكثر من مدة العقد`}</option>
+              )}
+            </select>
+          ) : (
+            <input className="fld" type="number" min={0} value={d.paid_periods ?? ""}
+              onChange={(e) => setD({ ...d, paid_periods: e.target.value })} placeholder="0" />
+          )}
+          {futureStartQ && (
+            <div className="bg-[#FFF6E5] border border-[#F2D49B] rounded-xl p-3 text-[12.5px] leading-relaxed mt-2">
+              <b className="text-deep">بداية العقد بعد اليوم ({startISO}).</b> هل هو عقد جديد يبدأ في هذا التاريخ، أم عقد ساري من قبل؟
+              <div className="mt-1.5">
+                <b>عقد ساري:</b> اكتب في «بداية العقد» تاريخ بدايته الفعلي من العقد نفسه — <b>لا موعد الدفعة القادمة</b> —
+                ثم اختر هنا آخر دفعة سدّدها. الدفعة القادمة ونهاية العقد تُحسبان تلقائيًّا.
+              </div>
+              <button type="button" className="btn btn-ghost text-xs mt-2" onClick={() => setStartIsNew(true)}>
+                نعم، عقد جديد يبدأ في هذا التاريخ</button>
+            </div>
+          )}
           {Number(d.paid_periods) > 0 && Number(d.contract_periods) > 0 && (
             <span className="block text-[11px] text-muted mt-1">
               {Number(d.paid_periods) > Number(d.contract_periods)
@@ -2868,6 +2911,33 @@ function TenantModal({ open, initial, unitWord, error, saving, onClose, onSubmit
               <div>نهاية العقد: <b className="text-ink">{preview.endDate}</b></div>
               <div>إجمالي قيمة العقد: <b className="text-ink">{sar(totalValue)} ريال</b></div>
             </div>
+            {sched.length > 0 && (() => {
+              /* جدول الأقساط كما سيحسبه وثيق — صاحب المكتب يحكم عليه بالنظر قبل الحفظ */
+              const paidN = Math.min(Number(d.paid_periods) || 0, sched.length);
+              const lateN = sched.filter((x) => x.status === "late").length;
+              const ICON: Record<string, [string, string]> = {
+                paid: ["✓", "bg-[#E6F4EC] border-[#BFE3CD] text-[#137a50]"], partial: ["◐", "bg-[#FFF6E5] border-[#F2D49B] text-[#8a5a11]"],
+                late: ["⚠", "bg-[#FBE9E7] border-[#F5C6C2] text-[#a5322c]"], upcoming: ["○", "bg-white border-line text-muted"] };
+              return (
+                <div className="mt-2.5 border-t border-line pt-2">
+                  <div className="text-xs text-ink leading-relaxed">
+                    <b>بهذه البيانات:</b>{" "}
+                    {paidN > 0 ? `مسدَّد حتى دفعة ${sched[paidN - 1].date}` : "لم يُسدَّد شيء من هذا العقد"}
+                    {lateN > 0 ? ` · حلّ ولم يُسدَّد ${lateN} ${lateN === 1 ? "دفعة" : lateN === 2 ? "دفعتان" : "دفعات"}` : " · لا متأخرات"}
+                    {preview.upcomingDate ? ` · القادمة ${preview.upcomingDate}` : ""}
+                    {` · ينتهي العقد ${preview.endDate}`}
+                  </div>
+                  <div className="flex flex-wrap gap-1 mt-1.5">
+                    {sched.slice(0, 24).map((x) => (
+                      <span key={x.n} className={`text-[10.5px] px-1.5 py-0.5 rounded border tabular-nums ${ICON[x.status]?.[1] || ""}`}
+                        title={`الدفعة ${x.n} — ${x.date}`}>{ICON[x.status]?.[0]} {x.date.slice(2)}</span>
+                    ))}
+                    {sched.length > 24 && <span className="text-[10.5px] text-muted">… {sched.length - 24} أخرى</span>}
+                  </div>
+                  <div className="text-[10.5px] text-muted mt-1">✓ مسدَّد · ◐ جزئي · ⚠ حلّ ولم يُسدَّد · ○ قادم</div>
+                </div>
+              );
+            })()}
           </div>
         )}
       </div>
@@ -2887,7 +2957,12 @@ function TenantModal({ open, initial, unitWord, error, saving, onClose, onSubmit
              يتبع الشرط نفسه الذي يتبعه التعطيل. */
           style={String(d.status) !== "vacated" && !(d.name || "").trim()
             ? { opacity: .5, cursor: "not-allowed" } : undefined}
-          onClick={() => onSubmit(d)}>حفظ</button>
+          onClick={() => {
+            if (futureStartQ && !confirm(`بداية العقد ${startISO} بعد اليوم، ولا دفعات مسدَّدة.\n\n`
+              + `موافق = عقد جديد يبدأ في هذا التاريخ — احفظ.\n`
+              + `إلغاء = عقد ساري من قبل — سأكتب بدايته الفعلية وآخر دفعة سُدّدت.`)) return;
+            onSubmit(d);
+          }}>حفظ</button>
       </div>
       {String(d.status) !== "vacated" && !(d.name || "").trim() && (
         /* الزر في أسفل نموذج من خمسة عشر حقلًا والحقل في أعلاه — فمن يصل
