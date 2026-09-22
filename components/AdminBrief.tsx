@@ -1,4 +1,5 @@
 "use client";
+import { today } from "@/lib/utils";
 // ============================================================
 // وثيق — مستشار المنصة: إحاطة اليوم
 //
@@ -33,7 +34,7 @@ export default function AdminBrief() {
       const raw = localStorage.getItem(KEY);
       if (!raw) return;
       const saved = JSON.parse(raw);
-      if (saved?.day === new Date().toISOString().slice(0, 10)) { setBrief(saved.brief); setAt(saved.at); }
+      if (saved?.day === today()) { setBrief(saved.brief); setAt(saved.at); }
     } catch { /* */ }
   }, []);
 
@@ -44,7 +45,7 @@ export default function AdminBrief() {
       const data = await res.json();
       if (!res.ok) { setErr(data?.error || "تعذّر التجهيز"); setBusy(false); return; }
       setBrief(data.brief); setAt(data.at);
-      try { localStorage.setItem(KEY, JSON.stringify({ day: new Date().toISOString().slice(0, 10), brief: data.brief, at: data.at })); } catch { /* */ }
+      try { localStorage.setItem(KEY, JSON.stringify({ day: today(), brief: data.brief, at: data.at })); } catch { /* */ }
     } catch (e: any) { setErr(e?.message || "تعذّر الاتصال"); }
     setBusy(false);
   }

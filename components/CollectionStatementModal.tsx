@@ -19,7 +19,7 @@ import { collectionStatementHTML, pastVatOf } from "@/lib/documents";
 import { buildCollection } from "@/lib/collection";
 
 const today = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Riyadh", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
-const shift = (n: number) => { const d = new Date(Date.parse(today())); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10); };
+const shift = (n: number) => { const d = new Date(Date.parse(today() + "T00:00:00Z")); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
 const sar = (n: number) => Math.round(Number(n) || 0).toLocaleString("en-US");
 const ORD = ["", "الأول", "الثاني", "الثالث", "الرابع", "الخامس", "السادس", "السابع", "الثامن", "التاسع", "العاشر"];
 

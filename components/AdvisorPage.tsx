@@ -1,3 +1,4 @@
+import { today as todayRiyadh } from "@/lib/utils";
 import { createClient } from "@/lib/supabase-server";
 import { redirect } from "next/navigation";
 import Link from "next/link";
@@ -18,7 +19,7 @@ export default async function AdvisorPage({ scope }: { scope: AdvisorScope }) {
   const { data: profile } = await supabase
     .from("profiles").select("advisor_ack_at, plan, trial_ends_at, subscribed_until").eq("id", user.id).maybeSingle();
 
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayRiyadh();
   const { count } = await supabase
     .from("advisor_log")
     .select("id", { count: "exact", head: true })

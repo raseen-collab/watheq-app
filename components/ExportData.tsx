@@ -1,4 +1,5 @@
 "use client";
+import { today } from "@/lib/utils";
 // ============================================================
 // وثيق — تصدير كل بيانات الحساب إلى Excel
 //
@@ -207,14 +208,14 @@ export default function ExportData() {
 
       XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([
         ["نسخة كاملة من بيانات حسابك في وثيق"],
-        [`تاريخ التصدير: ${new Date().toLocaleDateString("ar-SA")}`],
+        [`تاريخ التصدير: ${new Date().toLocaleDateString("ar-SA", { timeZone: "Asia/Riyadh" })}`],
         [""],
         ["ورقة «قالب الرفع» بنفس أعمدة قالب الرفع في وثيق — لو رجعت يومًا، ارفعها كما هي من صفحة «رفع Excel» وتعود كل وحداتك بعقودها ودفعاتها المسدّدة."],
         ["بقية الأوراق للعمل خارج وثيق: كل جدول بأسماء أعمدة عربية واضحة، بلا أكواد داخلية."],
         ["البيانات ملكك. وثيق لا يحتفظ بحق عليها ولا يقيّد نقلها."],
       ]), "اقرأني");
 
-      const stamp = new Date().toISOString().slice(0, 10);
+      const stamp = today();
       XLSX.writeFile(wb, `watheq-export-${stamp}.xlsx`);
       setMsg(`✓ صُدّر: ${props.length} عقار · ${tenants.length} وحدة · ${payments.length} دفعة · ${expenses.length} مصروف.`);
     } catch (e: any) {

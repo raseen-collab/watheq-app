@@ -1,4 +1,5 @@
 "use client";
+import { today } from "@/lib/utils";
 // ============================================================
 // وثيق — كشف المالك المجمّع: اختر المالك والفترة (من شهر إلى شهر)
 //
@@ -16,7 +17,7 @@ import type { ExpenseRow } from "@/lib/expenses";
 
 const AR_MONTHS = ["يناير","فبراير","مارس","أبريل","مايو","يونيو","يوليو","أغسطس","سبتمبر","أكتوبر","نوفمبر","ديسمبر"];
 const ymLabel = (ym: string) => `${AR_MONTHS[Number(ym.slice(5, 7)) - 1] || ym} ${ym.slice(0, 4)}`;
-const thisMonth = () => new Date().toISOString().slice(0, 7);
+const thisMonth = () => today().slice(0, 7);      // شهر الرياض — ليلة 1 أكتوبر كان يفتح على سبتمبر
 
 export default function OwnerStatementModal({ properties, issuer, onClose }: {
   properties: any[]; issuer?: any; onClose: () => void;

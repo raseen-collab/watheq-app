@@ -1,5 +1,6 @@
 "use client";
 
+import { riyadhDate } from "@/lib/utils";
 import { useMemo, useState } from "react";
 import { openDoc, subscriptionInvoiceHTML } from "@/lib/documents";
 import { recordSubPayment } from "@/app/admin/subs/actions";
@@ -165,7 +166,7 @@ export default function SubsAdmin({ rows, pays }: { rows: SubRow[]; pays: PayRow
         plan_label: planLabel(p.plan || r.plan, r.account_type),
         months: p.months,
         amount: Number(p.amount) || 0,
-        from_date: from.toISOString().slice(0, 10),
+        from_date: riyadhDate(from),
         to_date: day(p.extended_to),
         method: p.method,
         paid_at: day(p.paid_at),
