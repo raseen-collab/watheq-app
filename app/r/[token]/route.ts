@@ -25,10 +25,20 @@ const deny = (msg: string, status = 404) =>
 <div style="text-align:center;max-width:420px;padding:24px"><div style="font-size:2rem">🔒</div>
 <h1 style="font-size:1.1rem">${msg}</h1>
 <p style="font-size:.85rem;color:#5C6B67">اطلب من مكتب إدارة الأملاك رابطًا محدّثًا.</p></div></body></html>`,
-    { status, headers: { "content-type": "text/html; charset=utf-8", "x-robots-tag": "noindex" } },
+    { status, headers: { "referrer-policy": "no-referrer", "content-type": "text/html; charset=utf-8", "x-robots-tag": "noindex" } },
   );
 
-export async function GET(_req: Request, { params }: { params: { token: string } }) {
+/* تحميل البيانات يرمي خطأً صريحًا (lib/fetch-all.ts) بدل كشف ناقص؛ المالك
+   يرى صفحة واضحة لا خطأً خامًا ولا صافيًا ناقصًا */
+export async function GET(req: Request, ctx: { params: { token: string } }) {
+  try { return await render(req, ctx); }
+  catch (e: any) {
+    console.error("owner link failed", e?.message);
+    return deny("تعذّر تحميل الكشف الآن — أعد فتح الرابط بعد قليل", 503);
+  }
+}
+
+async function render(_req: Request, { params }: { params: { token: string } }) {
   const token = String(params?.token || "");
   // شكل الرمز ثابت من مولّدنا — أي شيء آخر يُرفض قبل لمس القاعدة
   if (!/^[0-9a-f]{48}$/.test(token)) return deny("هذا الرابط غير صالح");
@@ -140,7 +150,7 @@ export async function GET(_req: Request, { params }: { params: { token: string }
       { ...(profile || {}), trial: marks.trial, expired: marks.expired });
     const withPicker = html.replace("<body>", `<body>${periodPicker(fromYm, toYm)}`);
   return new Response(withPicker, { headers: {
-      "content-type": "text/html; charset=utf-8", "x-robots-tag": "noindex, nofollow", "cache-control": "no-store",
+      "referrer-policy": "no-referrer", "content-type": "text/html; charset=utf-8", "x-robots-tag": "noindex, nofollow", "cache-control": "no-store",
     } });
   }
 
@@ -217,7 +227,7 @@ export async function GET(_req: Request, { params }: { params: { token: string }
   const withPicker = html.replace("<body>", `<body>${periodPicker(fromYm, toYm)}`);
   return new Response(withPicker, {
     headers: {
-      "content-type": "text/html; charset=utf-8",
+      "referrer-policy": "no-referrer", "content-type": "text/html; charset=utf-8",
       // صفحة سرّية بالرمز: لا فهرسة ولا تخزين وسيط
       "x-robots-tag": "noindex, nofollow",
       "cache-control": "no-store",

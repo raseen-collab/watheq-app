@@ -8,6 +8,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { fetchAllRows } from "@/lib/fetch-all";
 import { createClient } from "@/lib/supabase-client";
 import { today } from "@/lib/utils";
 import { auditOffice, groupFindings, SEV_META, pastDebtGaps, futureStartUnits, type PastDebtGap, type Finding, type Group, type Severity } from "@/lib/integrity";
@@ -28,8 +29,11 @@ export default function DataHealth({ initial }: { initial: any[] }) {
     setBusy(true);
     const [pr, pa, ex] = await Promise.all([
       supabase.from("properties").select("*, tenants(*)").eq("is_demo", false).limit(2000, { referencedTable: "tenants" }),
-      supabase.from("payments").select("id,tenant_id,property_id,amount,paid_on").limit(5000),
-      supabase.from("expenses").select("id,property_id,amount,spent_on").limit(5000),
+      /* كل الدفعات والمصروفات على دفعات — فحصٌ على جزء منها يطمئن كذبًا */
+      fetchAllRows(supabase as any, "payments", "id,tenant_id,property_id,amount,paid_on")
+        .then((data) => ({ data, error: null as any })).catch((e) => ({ data: null as any, error: e })),
+      fetchAllRows(supabase as any, "expenses", "id,property_id,amount,spent_on")
+        .then((data) => ({ data, error: null as any })).catch((e) => ({ data: null as any, error: e })),
     ]);
     if (!pr.error) setProps(pr.data || []);
     if (!pa.error) setPays(pa.data || []);

@@ -2,6 +2,13 @@ import { today } from "@/lib/utils";
 import { NextResponse } from "next/server";
 import { createClient as createServiceClient } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase-server";
+import { fetchAllRows } from "@/lib/fetch-all";
+
+/* على دفعات: Supabase يقصّ كل استجابة عند 1000 صف بصمت — والمنصة تجاوزتها
+   (كل حساب جرّب البيانات التجريبية أضاف ~80 وحدة ودفعاتها)، فكانت أرقام
+   اللوحة ناقصة. الشكل {data, error} نفسه ليبقى التفكيك كما هو. */
+const page = (db: any, t: string, cols: string) =>
+  fetchAllRows(db, t, cols).then((data) => ({ data, error: null as any }), (e) => ({ data: [] as any[], error: e }));
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -28,9 +35,9 @@ export async function POST() {
   const db = createServiceClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!, { auth: { persistSession: false } });
   const [{ data: profiles }, { data: props }, { data: tenants }, { data: pays }, { data: subs }, { data: team }] = await Promise.all([
     db.from("profiles").select("id,account_type,created_at,trial_ends_at,subscribed_until,plan,signup_source,telegram_chat_id"),
-    db.from("properties").select("id,user_id,created_at"),
-    db.from("tenants").select("id,property_id,created_at"),
-    db.from("payments").select("id,user_id,created_at,paid_on"),
+    page(db, "properties", "id,user_id,created_at"),
+    page(db, "tenants", "id,property_id,created_at"),
+    page(db, "payments", "id,user_id,created_at,paid_on"),
     db.from("subscription_payments").select("amount,paid_at"),
     db.from("team_members").select("member_id"),
   ]);

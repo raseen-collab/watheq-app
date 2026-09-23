@@ -11,6 +11,7 @@
 // ============================================================
 
 import { useEffect, useMemo, useState } from "react";
+import { fetchAllRows } from "@/lib/fetch-all";
 import { createClient } from "@/lib/supabase-client";
 
 const AR_MONTHS = ["يناير", "فبراير", "مارس", "أبريل", "مايو", "يونيو", "يوليو", "أغسطس", "سبتمبر", "أكتوبر", "نوفمبر", "ديسمبر"];
@@ -48,13 +49,11 @@ export default function MonthlyCollection({ propertyId, propertyIds, propertyNam
     const now = new Date();
     const first = new Date(now.getFullYear(), now.getMonth() - (span - 1), 1);
     const from = `${first.getFullYear()}-${p2(first.getMonth() + 1)}-01`;
-    supabase.from("payments").select("paid_on, amount")
-      .in("property_id", ids).gte("paid_on", from).limit(20000)
-      .then(({ data, error }: any) => {
-        if (!alive) return;
-        if (error) { setErr(error.message); setRows([]); return; }
-        setRows((data || []) as Row[]);
-      });
+    /* على دفعات: دفعات المكتب كله لسنة تتجاوز 1000 بسهولة (216 وحدة × 12)،
+       وSupabase يقصّ عندها بصمت — فكان الرسم يُبنى من جزء منها */
+    fetchAllRows<Row>(supabase as any, "payments", "id, paid_on, amount", (q) => q.in("property_id", ids).gte("paid_on", from))
+      .then((data) => { if (alive) setRows(data); })
+      .catch((e) => { if (alive) { setErr(e.message); setRows([]); } });
     return () => { alive = false; };
   }, [propertyId, (propertyIds || []).join(","), span, supabase]);
 

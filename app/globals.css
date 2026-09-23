@@ -106,6 +106,51 @@ html[data-theme="dark"] [class*="bg-[#0A2C2A]"] { background-color: #0B1F1C !imp
 html[data-theme="dark"] [class*="text-[#a5322c]"] { color: var(--d-late) !important; }
 html[data-theme="dark"] [class*="text-[#137a50]"] { color: var(--d-paid) !important; }
 html[data-theme="dark"] [class*="text-[#8a5a11]"] { color: #E9C87E !important; }
+
+/* ── الوضع الليلي للألوان الصريحة التي لم تكن مغطّاة (مراجعة 22 سبتمبر): كانت
+   تبقى فاتحة وسط شاشة داكنة، والنصّ الداكن الصريح داكنًا على داكن. كل لون
+   يُقلب إلى درجة عائلته الداكنة المستعملة أصلًا أعلاه. ── */
+html[data-theme="dark"] [class*="bg-[#D6ECDF]"] { background-color: #0E3226 !important; }
+html[data-theme="dark"] [class*="bg-[#E6F1FB]"] { background-color: #14233A !important; }
+html[data-theme="dark"] [class*="bg-[#E7F3EC]"] { background-color: #0E3226 !important; }
+html[data-theme="dark"] [class*="bg-[#EAF6EE]"] { background-color: #0E3226 !important; }
+html[data-theme="dark"] [class*="bg-[#EEE9FB]"] { background-color: #221B33 !important; }
+html[data-theme="dark"] [class*="bg-[#EEF2F7]"] { background-color: #14233A !important; }
+html[data-theme="dark"] [class*="bg-[#EEF4FB]"] { background-color: #14233A !important; }
+html[data-theme="dark"] [class*="bg-[#EFEFEC]"] { background-color: #16211F !important; }
+html[data-theme="dark"] [class*="bg-[#F2FAF5]"] { background-color: #0E3226 !important; }
+html[data-theme="dark"] [class*="bg-[#F7DAD7]"] { background-color: #361B1C !important; }
+html[data-theme="dark"] [class*="bg-[#F8FAFC]"] { background-color: #14233A !important; }
+html[data-theme="dark"] [class*="bg-[#FAFAF8]"] { background-color: #312615 !important; }
+html[data-theme="dark"] [class*="bg-[#FDECD2]"] { background-color: #312615 !important; }
+html[data-theme="dark"] [class*="bg-[#FDF6E3]"] { background-color: #312615 !important; }
+html[data-theme="dark"] [class*="bg-[#FEE2E2]"] { background-color: #361B1C !important; }
+html[data-theme="dark"] [class*="bg-[#FEF7F6]"] { background-color: #361B1C !important; }
+html[data-theme="dark"] [class*="bg-[#FFF5F4]"] { background-color: #361B1C !important; }
+html[data-theme="dark"] [class*="bg-[#FFF6E5]"] { background-color: #312615 !important; }
+html[data-theme="dark"] [class*="border-[#B5D4F4]"] { border-color: #2A4466 !important; }
+html[data-theme="dark"] [class*="border-[#BFE0CB]"] { border-color: #1F5A43 !important; }
+html[data-theme="dark"] [class*="border-[#BFE3CD]"] { border-color: #1F5A43 !important; }
+html[data-theme="dark"] [class*="border-[#CBD5E1]"] { border-color: #2A4466 !important; }
+html[data-theme="dark"] [class*="border-[#CFE0F0]"] { border-color: #2A4466 !important; }
+html[data-theme="dark"] [class*="border-[#D9CEF6]"] { border-color: #43386A !important; }
+html[data-theme="dark"] [class*="border-[#DDDCD4]"] { border-color: var(--d-line, #2A3A37) !important; }
+html[data-theme="dark"] [class*="border-[#EAD9A8]"] { border-color: #5C4520 !important; }
+html[data-theme="dark"] [class*="border-[#F0C9C4]"] { border-color: #6B2F2C !important; }
+html[data-theme="dark"] [class*="border-[#F2D49B]"] { border-color: #5C4520 !important; }
+html[data-theme="dark"] [class*="border-[#F5CFA0]"] { border-color: #5C4520 !important; }
+html[data-theme="dark"] [class*="border-[#FCA5A5]"] { border-color: #6B2F2C !important; }
+html[data-theme="dark"] [class*="text-[#0C447C]"] { color: #9CC3F0 !important; }
+html[data-theme="dark"] [class*="text-[#1B6B3A]"] { color: var(--d-paid) !important; }
+html[data-theme="dark"] [class*="text-[#2B5C8A]"] { color: #9CC3F0 !important; }
+html[data-theme="dark"] [class*="text-[#33413D]"] { color: var(--d-text) !important; }
+html[data-theme="dark"] [class*="text-[#334155]"] { color: #9CC3F0 !important; }
+html[data-theme="dark"] [class*="text-[#4B3AA6]"] { color: #9CC3F0 !important; }
+html[data-theme="dark"] [class*="text-[#6B4A10]"] { color: #E9C87E !important; }
+html[data-theme="dark"] [class*="text-[#7A3B36]"] { color: var(--d-late) !important; }
+html[data-theme="dark"] [class*="text-[#8F2B26]"] { color: var(--d-late) !important; }
+html[data-theme="dark"] [class*="text-[#991B1B]"] { color: var(--d-late) !important; }
+html[data-theme="dark"] [class*="text-[#9A4B00]"] { color: #E9C87E !important; }
 html[data-theme="dark"] [class*="text-[#9A5B00]"] { color: #F0B45E !important; }
 html[data-theme="dark"] [class*="text-[#6b4a12]"] { color: #E9C87E !important; }
 html[data-theme="dark"] [class*="text-[#475569]"] { color: #A9BAC4 !important; }

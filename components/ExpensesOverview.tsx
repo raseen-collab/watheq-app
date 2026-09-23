@@ -8,6 +8,7 @@
 // ============================================================
 
 import { useEffect, useMemo, useState } from "react";
+import { fetchAllRows } from "@/lib/fetch-all";
 import { createClient } from "@/lib/supabase-client";
 import { expensesRegisterHTML, openDoc } from "@/lib/documents";
 import { EXPENSE_CATS, catLabel, isBillable, PAID_BY, type ExpenseRow } from "@/lib/expenses";
@@ -47,8 +48,8 @@ export default function ExpensesOverview({ properties, issuer, onClose }: {
   useEffect(() => {
     let alive = true;
     setRows(null); setErr(null);
-    supabase.from("expenses").select("*").gte("spent_on", from).lte("spent_on", to)
-      .order("spent_on", { ascending: false }).limit(5000)
+    fetchAllRows(supabase as any, "expenses", "*", (q) => q.gte("spent_on", from).lte("spent_on", to).order("spent_on", { ascending: false }))
+      .then((data) => ({ data, error: null as any }), (e) => ({ data: null as any, error: { message: String(e?.message || e) } }))
       .then(({ data, error }) => {
         if (!alive) return;
         if (error) { setErr(/does not exist|column/.test(error.message) ? "شغّل schema-v30 في قاعدة البيانات أولًا." : error.message); setRows([]); return; }

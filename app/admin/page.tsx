@@ -7,6 +7,13 @@ import { subState } from "@/lib/subscription";
 import AdminBrief from "@/components/AdminBrief";
 import AdminMessage from "@/components/AdminMessage";
 import type { MsgKind } from "@/lib/admin-messages";
+import { fetchAllRows } from "@/lib/fetch-all";
+
+/* على دفعات: Supabase يقصّ كل استجابة عند 1000 صف بصمت — والمنصة تجاوزتها
+   (كل حساب جرّب البيانات التجريبية أضاف ~80 وحدة ودفعاتها)، فكانت أرقام
+   اللوحة ناقصة. الشكل {data, error} نفسه ليبقى التفكيك كما هو. */
+const page = (db: any, t: string, cols: string) =>
+  fetchAllRows(db, t, cols).then((data) => ({ data, error: null as any }), (e) => ({ data: [] as any[], error: e }));
 
 export const metadata = { title: "الإدارة — وثيق" };
 
@@ -77,11 +84,11 @@ export default async function AdminPage({ searchParams }: { searchParams?: { vie
   const db = serviceDb();
   const [profilesRes, propsRes, tenantsRes, assocRes, ownersRes, paysRes, subsRes, teamRes, authRes] = await Promise.all([
     db.from("profiles").select("id,full_name,org_name,account_type,created_at,trial_ends_at,subscribed_until,plan,telegram_chat_id,billing_phone,last_digest_at,signup_source").order("created_at", { ascending: false }).limit(1000),
-    db.from("properties").select("id,user_id,created_at"),
-    db.from("tenants").select("id,status,property_id,created_at"),
+    page(db, "properties", "id,user_id,created_at"),
+    page(db, "tenants", "id,status,property_id,created_at"),
     db.from("associations").select("id,user_id,created_at"),
-    db.from("owners").select("id,association_id,created_at"),
-    db.from("payments").select("id,user_id,amount,paid_on,created_at"),
+    page(db, "owners", "id,association_id,created_at"),
+    page(db, "payments", "id,user_id,amount,paid_on,created_at"),
     db.from("subscription_payments").select("id,user_id,amount,months,plan,paid_at,extended_to").order("paid_at", { ascending: false }),
     db.from("team_members").select("owner_id,member_id,role,created_at"),
     db.auth.admin.listUsers({ perPage: 1000 }),

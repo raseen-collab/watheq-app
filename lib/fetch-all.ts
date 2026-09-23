@@ -18,10 +18,15 @@ export async function fetchAllRows<T = any>(
 ): Promise<T[]> {
   const out: T[] = [];
   for (let from = 0; ; from += page) {
-    const { data, error } = await shape(db.from(table).select(select)).range(from, from + page - 1);
-    if (error) { console.error(`fetchAllRows(${table})`, error.message); break; }
+    /* ترتيب ثانوي بالمعرّف: Postgres لا يضمن الترتيب نفسه بين استعلامين، فبلا
+       ترتيب ثابت قد يتكرر صفّ أو يسقط عند حدود الصفحات */
+    const { data, error } = await shape(db.from(table).select(select)).order("id", { ascending: true }).range(from, from + page - 1);
+    /* فشل صفحة في المنتصف يُرمى خطأً — كان يُرجع ما جُمع قبله فيُعرض نصف
+       البيانات كأنه كلها (أرقام مالية ناقصة بلا تحذير) */
+    if (error) throw new Error(`تعذّر تحميل ${table}: ${error.message}`);
     out.push(...((data || []) as T[]));
-    if (!data || data.length < page || out.length >= hardCap) break;
+    if (!data || data.length < page) break;
+    if (out.length >= hardCap) throw new Error(`${table}: أكثر من ${hardCap} صفّ — تجاوز حدّ التحميل`);
   }
   return out;
 }

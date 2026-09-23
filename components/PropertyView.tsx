@@ -7,6 +7,7 @@ import { createClient } from "@/lib/supabase-client";
 import { officeId, getOffice, ROLE_LABEL, OWNER_PERMS } from "@/lib/office";
 import { arDate, termRentPaidOf, pastVatOf } from "@/lib/documents";
 import { annualRentRoll } from "@/lib/income";
+import { fetchAllRows } from "@/lib/fetch-all";
 import { hijriShort, hijriText, parseHijriInput } from "@/lib/hijri";
 import { sar, waLink, today, WATHEQ_WA, openExternal } from "@/lib/utils";
 import { contractState, expectedNext12, buildSchedule, FREQUENCIES, freqLabel, freqShort, derivedEndDate, renewContract, needsRenewal, applyPayment, splitVat, isCommercial, isVacant, settleDeposit, unitVatApplies,
@@ -1042,12 +1043,15 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
     setStmtOpen(false);
     if (!period) { openDoc(propertyStatementHTML(active as any, issuer || {}, mode)); return; }
     /* الأرقام من السجل الفعلي للفترة — لا من الحالة اللحظية، فيطابق تقرير المالك */
+    /* على دفعات — Supabase يقصّ عند 1000 صف بصمت */
     const [pay, exp] = await Promise.all([
-      supabase.from("payments").select("*")
-        .eq("property_id", active.id).gte("paid_on", period.from).lte("paid_on", period.to).limit(5000),
+      fetchAllRows(supabase as any, "payments", "*",
+        (q) => q.eq("property_id", active.id).gte("paid_on", period.from).lte("paid_on", period.to))
+        .then((data) => ({ data, error: null as any })).catch((e) => ({ data: null as any, error: { message: e.message } })),
       /* كل الحقول: «على من» (billable) و«من دفع» (paid_by) يحدّدان صافي المالك */
-      supabase.from("expenses").select("*")
-        .eq("property_id", active.id).gte("spent_on", period.from).lte("spent_on", period.to).limit(5000),
+      fetchAllRows(supabase as any, "expenses", "*",
+        (q) => q.eq("property_id", active.id).gte("spent_on", period.from).lte("spent_on", period.to))
+        .then((data) => ({ data, error: null as any })).catch((e) => ({ data: null as any, error: { message: e.message } })),
     ]);
     if (pay.error) return notify("err", pay.error.message);
     const nameOf: Record<string, { name: string; unit: string | null }> = {};
@@ -3074,38 +3078,37 @@ function OwnerReportModal({ property, unitWord, issuer, onClose }: {
     setLoading(true); setErr(null);
 
     // دفعات العقار الموثّقة خلال الشهر — نفس السجل الذي يغذّي كشف حساب المستأجر
-    const { data, error } = await supabase.from("payments")
-      .select("*")
-      .eq("property_id", property.id)
-      .gte("paid_on", from).lte("paid_on", to)
-      .order("paid_on", { ascending: true }).limit(5000);
+    /* على دفعات: Supabase يقصّ عند 1000 صف بصمت (limit(5000) لا يتجاوزه) — فعقار
+       بسنتين من الدفعات كان تقريره «كامل الفترة» ناقصًا. ورابط المالك العام كان
+       مصحَّحًا من قبل، فيرى المالك رقمًا والمكتب رقمًا آخر للتقرير نفسه. */
+    let data: any[] = [], expenses: ExpenseRow[] = [], allPaysRows: any[] = [];
+    try {
+      [data, expenses, allPaysRows] = await Promise.all([
+        fetchAllRows(supabase as any, "payments", "*",
+          (q) => q.eq("property_id", property.id).gte("paid_on", from).lte("paid_on", to).order("paid_on", { ascending: true })),
+        /* المصروفات تفشل بصوت: كان فشلها يُصدر التقرير بلا خصومات — صافٍ أعلى من الحقيقة للمالك */
+        fetchAllRows<ExpenseRow>(supabase as any, "expenses", "*",
+          (q) => q.eq("property_id", property.id).gte("spent_on", from).lte("spent_on", to).order("spent_on", { ascending: true })),
+        fetchAllRows(supabase as any, "payments", "*", (q) => q.eq("property_id", property.id).not("tenant_id", "is", null)),
+      ]);
+    } catch (e: any) { setLoading(false); setErr(e?.message || "تعذّر تحميل بيانات التقرير"); return; }
     setLoading(false);
-    if (error) { setErr(error.message); return; }
 
     const byId: Record<string, Tenant> = {};
     (property.tenants || []).forEach((t) => { byId[t.id] = t; });
-    const payments: OwnerReportPayment[] = (data || []).map((x: any) => ({
+    const payments: OwnerReportPayment[] = data.map((x: any) => ({
       id: x.id, paid_on: x.paid_on, amount: x.amount, method: x.method, reference: x.reference, created_at: x.created_at,
       periods_covered: x.periods_covered, note: x.note, tenant_id: x.tenant_id, past_tenancy_id: x.past_tenancy_id,
       tenant_name: (x.tenant_id && byId[x.tenant_id]?.name) || x.payer_name || null,
       unit: (x.tenant_id && byId[x.tenant_id]?.unit) || x.unit_label || null,
     }));
 
-    // مصروفات الفترة نفسها — إن لم يُشغَّل schema-v8 بعد نُصدر التقرير بلا خصومات
-    let expenses: ExpenseRow[] = [];
-    const ex = await supabase.from("expenses").select("*")
-      .eq("property_id", property.id).gte("spent_on", from).lte("spent_on", to)
-      .order("spent_on", { ascending: true }).limit(500);
-    if (!ex.error) expenses = (ex.data || []) as ExpenseRow[];
 
     /* أقساط كل ساكن في مدته (كل الأوقات) — لملاحظة الرصيد الافتتاحي؛ وإعدادات
        ضريبة المستأجرين السابقين — لضريبة دفعاتهم. بخطأ جلبٍ يُصدَر التقرير
        بلا الملاحظة وبالإعدادات الحالية (لا برقم خاطئ في الملاحظة). */
-    const [allPays, pastQ] = await Promise.all([
-      supabase.from("payments").select("*").eq("property_id", property.id).not("tenant_id", "is", null).limit(10000),
-      supabase.from("past_tenancies").select("id, snapshot").eq("property_id", property.id).limit(2000),
-    ]);
-    const termRentPaid = allPays.error ? undefined : termRentPaidOf(property.tenants as any, (allPays.data || []) as any);
+    const pastQ = await supabase.from("past_tenancies").select("id, snapshot").eq("property_id", property.id).limit(1000);
+    const termRentPaid = termRentPaidOf(property.tenants as any, allPaysRows as any);
     const pastVat = pastQ.error ? undefined : pastVatOf(pastQ.data as any);
     openDoc(ownerReportHTML(property as any, { label, from, to }, payments, issuer || {},
       { expenses, fee_pct: (property as any).mgmt_fee_pct, termRentPaid, pastVat }, mode));

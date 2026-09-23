@@ -10,6 +10,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { fetchAllRows } from "@/lib/fetch-all";
 import { createClient } from "@/lib/supabase-client";
 import { contractState, isVacant, expectedNext12, type Frequency } from "@/lib/contracts";
 import { annualRentRoll } from "@/lib/income";
@@ -59,12 +60,14 @@ export default function PortfolioView({ properties, windows }: {
     const from = `${now.getFullYear()}-${p2(now.getMonth() + 1)}-01`;
     const ids = properties.map((p) => p.id);
     if (!ids.length) { setMonthCollected({}); return; }
-    supabase.from("payments").select("property_id, amount").in("property_id", ids).gte("paid_on", from).limit(5000)
-      .then(({ data }) => {
+    /* على دفعات، والفشل يُبقي «…» — كان يعرض «0 محصَّل» رقمًا خاطئًا */
+    fetchAllRows(supabase as any, "payments", "id, property_id, amount", (q) => q.in("property_id", ids).gte("paid_on", from))
+      .then((data) => {
         const m: Record<string, number> = {};
-        (data || []).forEach((x: any) => { m[x.property_id] = (m[x.property_id] || 0) + (Number(x.amount) || 0); });
+        data.forEach((x: any) => { m[x.property_id] = (m[x.property_id] || 0) + (Number(x.amount) || 0); });
         setMonthCollected(m);
-      });
+      })
+      .catch((e) => console.error("month collected", e?.message));
   }, [properties, supabase]);
 
   const rows = useMemo(() => {
