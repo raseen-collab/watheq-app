@@ -72,7 +72,11 @@ export async function POST(req: Request) {
     // (4) الجداول المرتبطة بالمستخدم مباشرة
     for (const t of ["payments", "expenses", "invoices", "owner_links", "listings",
                      "seeker_requests", "compliance_items", "association_budgets",
-                     "advisor_log", "team_invites", "team_members"]) {
+                     "advisor_log", "team_invites", "team_members",
+                     /* جداول أُضيفت بعد كتابة الحذف: محادثات الفريق، وسجلّ التصحيحات
+                        (فيه أسماء مستأجرين)، وأرشيف المستأجرين السابقين (صريحًا، لا
+                        اعتمادًا على الحذف المتسلسل وحده). فواتير الاشتراك تبقى: حفظها واجب. */
+                     "office_messages", "ledger_adjustments", "past_tenancies"]) {
       try { await db.from(t).delete().eq("user_id", uid); } catch { /* جدول غير منشأ */ }
     }
     // عضويات هذا المستخدم كموظف عند غيره

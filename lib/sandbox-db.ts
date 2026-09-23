@@ -239,7 +239,9 @@ export function sandboxClient(store: SandboxStore) {
         const w = Number(t.carried_debt) || 0; t.carried_debt = 0;
         return { data: { written_off: w }, error: null };
       }
-      if (fn === "next_invoice_no") return { data: Math.floor(1000 + Math.random() * 9000), error: null };
+      /* بصيغة القاعدة نفسها — رقمٌ خام كان يُسقط الواجهة إلى رقم افتراضي */
+      if (fn === "next_invoice_no")                    // التالي بعد ما صدر في التجربة
+        return { data: `INV-${new Date().getFullYear()}-${String((store.invoices || []).length + 1).padStart(4, "0")}`, error: null };
       if (fn === "watheq_my_office") return { data: [{ office: "demo-user", role: "owner", perms: {} }], error: null };
       return { data: null, error: null };
     },

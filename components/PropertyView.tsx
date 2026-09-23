@@ -1056,9 +1056,16 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
     const dueDate = st.nextDueDate || today();
 
     // ترقيم متسلسل من قاعدة البيانات
-    let invoiceNo = `INV-${new Date().getFullYear()}-0001`;
-    const { data } = await supabase.rpc("next_invoice_no", { p_user: await officeId(supabase) });
-    if (typeof data === "string") invoiceNo = data;
+    /* رقم الفاتورة الضريبية من القاعدة وحدها. كان الفشل يُسقط إلى «INV-السنة-0001»
+       بصمت — فاتورة ضريبية برقم مكرَّر. الآن الفشل يوقف الإصدار ويقول لماذا. */
+    const { data, error: invErr } = await supabase.rpc("next_invoice_no", { p_user: await officeId(supabase) });
+    if (invErr || typeof data !== "string") {
+      notify("err", /not authorized/i.test(invErr?.message || "")
+        ? "لا تملك صلاحية إصدار الفواتير في هذا المكتب"
+        : `تعذّر الحصول على رقم فاتورة — لم تُصدر${invErr?.message ? ` (${invErr.message})` : ""}`);
+      return;
+    }
+    const invoiceNo = data;
 
     await supabase.from("invoices").insert({
       user_id: await officeId(supabase),

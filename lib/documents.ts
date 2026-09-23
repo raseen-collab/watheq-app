@@ -793,6 +793,9 @@ export function propertyStatementHTML(
   /** إعدادات الضريبة للمستأجرين السابقين — لضريبة دفعاتهم */
   pastVat?: PastVat,
 ) {
+  if (period) period = scrub(period);   /* عنوان الفترة يُعرض في المستند */
+  /* تعقيم ما يدخل المستند من نصّ مستخدم — كانت هذه الدالة تُدخله خامًا */
+  payments = scrub(payments); expenses = scrub(expenses);
   // تعقيم المدخلات (انظر scrub أعلاه)
   p = scrub(p);
   issuer = scrub(issuer);
@@ -2319,6 +2322,9 @@ export function expensesRegisterHTML(
   issuer: Issuer = {},
   filters: { owner?: string | null; category?: string | null } = {},
 ) {
+  if (period) period = scrub(period);   /* عنوان الفترة يُعرض في المستند */
+  /* تعقيم ما يدخل المستند من نصّ مستخدم — كانت هذه الدالة تُدخله خامًا */
+  filters = scrub(filters);
   rows = scrub(rows); issuer = scrub(issuer);
   const list = [...(rows || [])].sort((a, b) => String(a.spent_on).localeCompare(String(b.spent_on)));
 
@@ -2420,6 +2426,9 @@ export function collectionStatementHTML(
     /** الصافي بمعادلة تقرير المالك (lib/collection) — بدونه يبقى «المسجَّل − المصروفات» */
     fin?: { gross: number; vat: number; collected: number; expenses: number; fee: number; feeVat: number; net: number; ownerPaid: number; feePcts: number[] } },
 ) {
+  if (period) period = scrub(period);   /* عنوان الفترة يُعرض في المستند */
+  /* تعقيم ما يدخل المستند من نصّ مستخدم — كانت هذه الدالة تُدخله خامًا */
+  rows = scrub(rows); expenses = scrub(expenses); issuer = scrub(issuer);
   const round2 = (n: number) => Math.round(n * 100) / 100;
   const esc = (v: any) => String(v ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   const sorted = [...(rows || [])].sort((a, b) => String(a.paid_on).localeCompare(String(b.paid_on)));
