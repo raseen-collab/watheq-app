@@ -325,14 +325,34 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
         // يوم المرساة كما يفعل الإدخال اليدوي: يُشتق من البداية عند غيابه،
         // لكن حفظه صراحةً يبقي المواعيد ثابتة لو عُدّل تاريخ البداية لاحقًا
         billing_anchor_day: r.contract_start ? new Date(r.contract_start).getDate() : null,
+        /* كل ما يُقرأ من الملف يُحفظ. كانت الحمولة 11 حقلًا فقط، فيضيع ما يعرضه
+           الرفع في المراجعة: العقد الهجري يُحفظ ميلاديًّا (تنحرف أقساطه 11 يومًا
+           كل سنة)، والدين المرحَّل يختفي، و«أول استحقاق» يسقط فتُحسب الأقساط من
+           البداية، ونوع الوحدة ووضع الضريبة يضيعان. */
+        calendar: r.calendar === "hijri" ? "hijri" : "gregorian",
+        carried_debt: r.carried_debt && r.carried_debt > 0 ? r.carried_debt : 0,
+        ...(r.carried_debt && r.carried_debt > 0 ? { carried_debt_note: "رصيد سابق من ملف الرفع" } : {}),
+        first_due: r.first_due || null,
+        unit_type: r.unit_type || null, vat_mode: r.vat_mode || null,
+        contract_no: r.contract_no || null, elec_account: r.elec_account || null, water_account: r.water_account || null,
+        rooms: r.rooms ?? null, baths: r.baths ?? null, acs: r.acs ?? null,
       }));
       /* على دفعات من 100 صف: مكتب يرفع 450 وحدة دفعة واحدة قد تنتهي مهلة
          الطلب أو يُرفض حجمه، فيفشل الرفع كله بعد دقيقة انتظار. وبالدفعات
          يُحفظ ما نجح ويُقال له أين توقف بالضبط. */
       const BATCH = 100;
       for (let i = 0; i < payload.length; i += BATCH) {
-        const part = payload.slice(i, i + BATCH);
-        const { error } = await supabase.from("tenants").insert(part);
+        let part: any[] = payload.slice(i, i + BATCH);
+        /* عمود اختياري ناقص في قاعدة مكتبٍ ما: يُحذف من المحاولة ويُعاد الحفظ بدونه —
+           لا يسقط الرفع كله لأجله (المبدأ نفسه في حفظ الإعدادات، schema-v41) */
+        const OPTIONAL = ["first_due", "unit_type", "vat_mode", "contract_no", "elec_account", "water_account", "rooms", "baths", "acs", "carried_debt_note"];
+        let { error } = await supabase.from("tenants").insert(part);
+        for (let tries = 0; error && tries < OPTIONAL.length; tries++) {
+          const col = OPTIONAL.find((c) => new RegExp(`\\b${c}\\b`).test(error!.message));
+          if (!col) break;
+          part = part.map(({ [col]: _drop, ...rest }) => rest);
+          ({ error } = await supabase.from("tenants").insert(part));
+        }
         if (error) {
           setBusy(false);
           return alert(`تعذّر الحفظ: ${error.message}\n\nأُضيف ${inserted + i} صفًّا قبل التوقف.\nراجع اللوحة، واحذف الملف من الصفوف المضافة قبل إعادة الرفع (المكرر يُتخطّى تلقائيًّا).`);
