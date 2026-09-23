@@ -82,9 +82,12 @@ export async function POST(req: Request) {
     // عضويات هذا المستخدم كموظف عند غيره
     try { await db.from("team_members").delete().eq("member_id", uid); } catch { /* */ }
 
-    await db.from("properties").delete().eq("user_id", uid);
-    await db.from("associations").delete().eq("user_id", uid);
-    await db.from("profiles").delete().eq("id", uid);
+    /* الجداول الأساسية: فشلها يوقف الحذف قبل حذف حساب الدخول — كانت تُتجاهل
+       فيُقال «حُذف» وبيانات العقارات باقية، ولا يبقى حساب يُعاد منه الحذف */
+    for (const [t, col, val] of [["properties", "user_id", uid], ["associations", "user_id", uid], ["profiles", "id", uid]] as const) {
+      const { error: de } = await db.from(t).delete().eq(col, val);
+      if (de && !/does not exist|relation/i.test(de.message)) throw new Error(`تعذّر حذف ${t}: ${de.message}`);
+    }
 
     // (5) حساب الدخول أخيرًا — بعده لا يمكن الرجوع
     const { error: authErr } = await db.auth.admin.deleteUser(uid);

@@ -76,6 +76,10 @@ export default function ExportData() {
       const invoices = await all("invoices").catch(() => []);
       /* أرشيف المستأجرين السابقين (v45) — قبل الترحيل لا جدول */
       const past = await all("past_tenancies", "*", "archived_at").catch(() => []);
+      /* سجلّ التصحيحات (v43): كل شطب وتنازل وتصحيح عدّاد — بدونه يختفي دينٌ شُطب
+         من النسخة الاحتياطية بلا أثر يشرح أين ذهب */
+      const adjustments = await all("ledger_adjustments", "*", "created_at").catch(() => []);
+      const assocNotes = await all("association_notes").catch(() => []);
       const pastById: Record<string, any> = {}; past.forEach((x: any) => { pastById[x.id] = x; });
       const invoiceHolder = (inv: any) => past
         .filter((a: any) => a.unit_row_id && a.unit_row_id === inv.tenant_id && String(a.archived_at || "") > String(inv.created_at || ""))
@@ -161,6 +165,16 @@ export default function ExportData() {
         "الحالة": ({ open: "مفتوح", promised: "وعد بالسداد", legal: "أُحيل للتنفيذ", settled: "سُوّي", written_off: "شُطب" } as any)[x.debt_status] || x.debt_status,
         "ملاحظة": x.debt_note || "",
       })));
+      add("سجل التصحيحات", adjustments.map((x: any) => {
+        const tn = x.tenant_id ? tById[x.tenant_id] : null;
+        return {
+          "التاريخ": String(x.created_at || "").slice(0, 10),
+          "العقار": pName[x.property_id] || "", "الوحدة": tn?.unit || "",
+          "النوع": ({ repair: "تصحيح/شطب", counter: "تعديل العدّاد", opening: "رصيد افتتاحي", renewal: "تجديد", relet: "إعادة تأجير" } as any)[x.kind] || x.kind || "",
+          "المبلغ": Number(x.amount) || 0, "تغيّر العدّاد": Number(x.delta) || 0, "البيان": x.note || "",
+        };
+      }), [12, 22, 10, 16, 12, 12, 60]);
+
       add("الفواتير", invoices.map((x) => ({
         "رقم الفاتورة": x.invoice_no, "التاريخ": (x.created_at || "").slice(0, 10), "العقار": pName[x.property_id] || "",
         /* فاتورة صدرت قبل أرشفة مستأجرٍ من هذه الوحدة هي فاتورته هو — لا فاتورة
@@ -209,7 +223,19 @@ export default function ExportData() {
       if (assocs.length) {
         const aName: Record<string, string> = {}; assocs.forEach((a) => { aName[a.id] = a.name; });
         add("جمعيات الملاك", assocs.map((a) => ({ "الجمعية": a.name, "المدينة": a.city || "", "الاشتراك الشهري": a.monthly_fee || "", "عدد الملاك": owners.filter((o) => o.association_id === a.id).length })));
-        add("ملاك الجمعيات", owners.map((o) => ({ "الجمعية": aName[o.association_id] || "", "المالك": o.name, "الوحدة": o.unit || "", "الجوال": o.phone || "", "الحالة": o.status || "", "المسدَّد": o.paid_periods || 0 })));
+        /* أعمدة الملاك الحقيقية: الأشهر المتأخرة والجزئي — كانت الورقة تقرأ paid_periods
+           و status (لا وجود لهما في الجدول) فتُصدّر «المسدَّد 0» لكل مالك، ويسقط
+           دين الجمعيات من النسخة الاحتياطية. المتأخر بالريال بمعادلة كشف المالك. */
+        const aFee: Record<string, number> = Object.fromEntries(assocs.map((a: any) => [a.id, Number(a.fee) || 0]));
+        add("ملاك الجمعيات", owners.map((o: any) => {
+          const fee = aFee[o.association_id] || 0, late = Number(o.months_late) || 0, part = Number(o.partial_amount) || 0;
+          return { "الجمعية": aName[o.association_id] || "", "المالك": o.name, "الوحدة": o.unit || "", "الجوال": o.phone || "",
+            "الأشهر المتأخرة": late, "مدفوع من الشهر التالي": part,
+            "المتأخر (ريال)": Math.max(0, Math.round((late * fee - part) * 100) / 100),
+            "آخر سداد": String(o.last_paid || "").slice(0, 10) };
+        }), [22, 22, 10, 14, 12, 14, 14, 12]);
+        add("سجل الجمعيات", assocNotes.map((n: any) => ({ "الجمعية": aName[n.association_id] || "",
+          "التاريخ": String(n.note_date || n.created_at || "").slice(0, 10), "الملاحظة": n.text || "" })), [22, 12, 70]);
       }
 
       XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([

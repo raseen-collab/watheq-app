@@ -782,7 +782,11 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
             : re.message);
         }
         /* الجديد دفع عند التوقيع؟ رصيده الافتتاحي بعد الأرشفة (يُسجَّل أثره) */
-        if (opening > 0) await supabase.from("tenants").update({ paid_periods: opening }).eq("id", id);
+        /* كان فشله يُعرض نجاحًا فيظهر الجديد متأخرًا بعد أول تحديث */
+        if (opening > 0) {
+          const { error: oe } = await supabase.from("tenants").update({ paid_periods: opening }).eq("id", id);
+          if (oe) notify("err", `أُعيد تأجير الوحدة، لكن تعذّر حفظ ما دفعه ${payload.name} عند التوقيع (${opening} ${opening === 1 ? "دفعة" : "دفعات"}) — عدّله من «تعديل البيانات».`);
+        }
         const fresh = { ...prev, ...payload, status: "active", paid_periods: opening, partial_amount: 0,
           carried_debt: 0, carried_debt_note: null, move_out_date: null } as Tenant;
         setItems(items.map((p) => p.id === active.id
@@ -837,33 +841,43 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
   async function patchTenant(id: string, patch: any, collectedDelta = 0) {
     if (!active) return;
     const { data: _upd, error } = await supabase.from("tenants").update(patch).eq("id", id).select("id");
-    if (error) { console.error("Watheq save error:", error); return notify("err", error.message); }
+    if (error) { console.error("Watheq save error:", error); notify("err", error.message); return false; }
     /* تعديل رفضته السياسات يرجع بلا خطأ وبصفر صفوف — لا نُحدّث الشاشة كأنه نجح */
-    if (!_upd || _upd.length === 0) return notify("err", "هذا الإجراء يحتاج صلاحية أعلى — اطلبه من صاحب المكتب.");
+    if (!_upd || _upd.length === 0) { notify("err", "هذا الإجراء يحتاج صلاحية أعلى — اطلبه من صاحب المكتب."); return false; }
     if (collectedDelta) await supabase.from("properties").update({ collected: (active.collected || 0) + collectedDelta }).eq("id", active.id);
     setItems(items.map((p) => p.id === active.id ? {
       ...p,
       collected: collectedDelta ? (p.collected || 0) + collectedDelta : p.collected,
       tenants: p.tenants.map((t) => (t.id === id ? { ...t, ...patch } : t)),
     } : p));
+      return true;
   }
 
   async function deleteTenant(id: string) {
     if (!active) return;
     /**
-     * الحذف لا يمحو الدفعات — تبقى في السجل بلا وحدة (on delete set null).
-     * فالمال لا يضيع، لكنه يختفي من كشوف الوحدة ومن تقرير المالك. لذلك
-     * نُظهر عدد الدفعات المسجّلة قبل السؤال: من يحذف صفًّا مكرّرًا يجب أن
-     * يحذف الفارغ منهما لا المحمّل بالسجل.
+     * الحذف لا يمحو الدفعات — تبقى في السجل بلا وحدة (on delete set null)،
+     * وتبقى في تقارير المالك وكشف التحصيل (تجمع كل دفعات العقار). لكنها كانت
+     * تفقد اسم دافعها ووحدته (تأخذهما من الصفّ المحذوف) فتظهر «—». الآن يُختم
+     * عليها الاسم والوحدة قبل الحذف — كما يفعل الأرشيف عند إعادة التأجير.
      */
     const t = active.tenants.find((x) => x.id === id);
     const { count } = await supabase.from("payments")
       .select("id", { count: "exact", head: true }).eq("tenant_id", id);
     const n = Number(count) || 0;
     const msg = n > 0
-      ? `حذف «${t?.name || "الوحدة"}» — ${ul} ${t?.unit || "—"}؟\n\n⚠️ عليها ${n} دفعة مسجّلة.\nالدفعات لن تُحذف، لكنها ستبقى في السجل بلا وحدة، وتختفي من كشف الوحدة ومن تقرير المالك.\n\nإن كنت تحذف صفًّا مكرّرًا فاحذف الصفّ الذي لا دفعات عليه.\n\nمتابعة الحذف؟`
+      ? `حذف «${t?.name || "الوحدة"}» — ${ul} ${t?.unit || "—"}؟\n\n⚠️ عليها ${n} دفعة مسجّلة.\nالدفعات لن تُحذف: تبقى في تقارير المالك وكشف التحصيل باسم «${t?.name || "—"}» و${ul} ${t?.unit || "—"}، لكنها تختفي من كشف الوحدة.\n\nإن كان المستأجر خرج وسيحلّ غيره، فاستعمل «إعادة التأجير» لا الحذف — تحفظ دينه وسجلّه.\nوإن كنت تحذف صفًّا مكرّرًا فاحذف الصفّ الذي لا دفعات عليه.\n\nمتابعة الحذف؟`
       : `حذف «${t?.name || "الوحدة"}» — ${ul} ${t?.unit || "—"}؟\n\nلا دفعات مسجّلة عليها.`;
     if (!confirm(msg)) return;
+    if (n > 0 && t) {
+      /* اسم الدافع ووحدته على دفعاته قبل الحذف — وإلا تظهر «—» في التقارير */
+      const { error: se } = await supabase.from("payments")
+        .update({ payer_name: t.name || null, unit_label: t.unit || null })
+        .eq("tenant_id", id).is("payer_name", null);
+      if (se && !/payer_name|unit_label|column/i.test(se.message)) {
+        return notify("err", `لم يُحذف شيء: تعذّر حفظ اسم المستأجر على دفعاته (${se.message}).`);
+      }
+    }
     const { data: _del, error } = await supabase.from("tenants").delete().eq("id", id).select("id");
     /* حذف رفضته السياسات يرجع بلا خطأ وبصفر صفوف — لا نوهم الموظف أنه نجح */
     if (!error && (!_del || _del.length === 0)) { notify("err", "هذا الإجراء يحتاج صلاحية أعلى — اطلبه من صاحب المكتب."); return; }
@@ -900,21 +914,47 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
     setItems(items.map((p) => (p.id === active.id ? { ...p, property_notes: p.property_notes.filter((n) => n.id !== id) } : p)));
   }
 
-  async function doRenew(t: Tenant, opts: { periods: number; newAmount: number | null; newFrequency: Frequency; arrears?: "carry" | "settled" }) {
+  async function doRenew(t: Tenant, opts: { periods: number; newAmount: number | null; newFrequency: Frequency; arrears?: "carry" }) {
     if (!active) return;
-    /* متأخرات المدة المنتهية لا تختفي بالتجديد: تُرحَّل دينًا ظاهرًا ما لم
-       يؤكّد المكتب صراحةً أنها سُدّدت. كان التجديد يمحوها بلا أثر. */
+    /**
+     * متأخرات المدة المنتهية: ثلاثة مصائر لا اثنان.
+     *
+     * كان «إلغاء = سُدّدت بالكامل ولا تُرحَّل» يمحوها بلا أثر: إن استُلمت نقدًا
+     * لم تدخل الدفتر ولا تقرير المالك، وإن تُنوزل عنها ضاع أنها كانت دينًا —
+     * العطل نفسه الذي أُصلح في إعادة التأجير. الآن تُرحَّل دائمًا أولًا (فلا
+     * تضيع مهما حدث بعدها)، ثم: تبقى، أو «استلمتُها» (سداد نقدي في الدفتر)، أو
+     * «تنازلتُ عنها» (شطب جزئي بسببه — schema-v48).
+     */
     const before = contractState(t, { graceDays: Number(active.grace_days) || 0, ...windowsOf(active) });
-    let arrears = opts.arrears;
-    if (before.amountDue > 0 && !arrears) {
-      arrears = confirm(`على ${t.name} متأخرات ${sar(before.amountDue)} ريال من المدة المنتهية.\n\nموافق = تُرحَّل كدين على العقد الجديد (تبقى ظاهرة حتى تُسدَّد)\nإلغاء = سُدّدت بالكامل ولا تُرحَّل`)
-        ? "carry" : "settled";
+    let fate: "carry" | "paid" | "forgiven" = "carry";
+    if (before.amountDue > 0 && opts.arrears !== "carry") {
+      const keep = confirm(`على ${t.name} متأخرات ${sar(before.amountDue)} ريال من المدة المنتهية.\n\n`
+        + `موافق = تبقى دينًا مرحَّلًا على العقد الجديد حتى تُسدَّد.\n`
+        + `إلغاء = سُوّيت (ستُسأل: استلمتَها أم تنازلتَ عنها).`);
+      if (!keep) fate = confirm(`كيف سُوّيت متأخرات ${t.name} (${sar(before.amountDue)} ريال)؟\n\n`
+        + `موافق = استلمتُها — تُسجَّل في الدفتر وتظهر في تقرير المالك.\n`
+        + `إلغاء = تنازلتُ عنها — تُشطب ويُحفظ أثرها.`) ? "paid" : "forgiven";
     }
-    const fields = renewContract(t, { periods: opts.periods, newAmount: opts.newAmount, newFrequency: opts.newFrequency, arrears });
+    const fields = renewContract(t, { periods: opts.periods, newAmount: opts.newAmount, newFrequency: opts.newFrequency, arrears: "carry" });
     const { data: _u3, error } = await supabase.from("tenants").update(fields).eq("id", t.id).select("id");
     if (error) { console.error("Watheq save error:", error); return notify("err", error.message); }
     if (!_u3 || _u3.length === 0) return notify("err", "هذا الإجراء يحتاج صلاحية أعلى — اطلبه من صاحب المكتب.");
-    if ((fields as any).carried_debt > 0) notify("ok", `جُدّد العقد — ورُحّل دين ${sar((fields as any).carried_debt)} ريال يظهر على الوحدة حتى يُسدَّد.`);
+    /* ما رحّله التجديد فعلًا — هو ما يُسدَّد أو يُشطب، لا رقمٌ محسوب منفصلًا */
+    const carriedNow = Number((fields as any).carried_debt) || 0;
+    const moved = Math.round((carriedNow - (Number(t.carried_debt) || 0)) * 100) / 100;
+    let carriedAfter = carriedNow;
+    if (moved > 0 && fate !== "carry") {
+      const { error: fe } = fate === "paid"
+        ? await supabase.rpc("watheq_record_carried_payment", { p_tenant: t.id, p_amount: moved, p_paid_on: today() })
+        : await supabase.rpc("watheq_write_off_carried", { p_tenant: t.id, p_amount: moved, p_note: "تنازل عن متأخرات المدة المنتهية عند التجديد" });
+      if (fe) notify("err", `جُدّد العقد، لكن تعذّرت تسوية المتأخرات (${/p_amount|does not exist|function/i.test(fe.message)
+        ? "تحتاج تحديث قاعدة البيانات — شغّل schema-v48" : fe.message}). هي محفوظة دينًا مرحَّلًا — سوِّها من «الديون المرحَّلة».`);
+      else {
+        carriedAfter = Math.round((carriedNow - moved) * 100) / 100;
+        notify("ok", fate === "paid" ? `جُدّد العقد — وسُجّل استلام المتأخرات (${sar(moved)} ريال) في الدفتر.`
+          : `جُدّد العقد — وشُطبت المتأخرات (${sar(moved)} ريال) وحُفظ أثرها.`);
+      }
+    } else if (carriedNow > 0) notify("ok", `جُدّد العقد — ورُحّل دين ${sar(carriedNow)} ريال يظهر على الوحدة حتى يُسدَّد.`);
     // توثيق التجديد في سجل العقار
     /* الملاحظة توثيق لا شرط: إن رفضتها الصلاحيات نُكمل ونُعلم بلا إفشال العملية */
     const noteRes = await supabase.from("property_notes").insert({
@@ -923,7 +963,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
     });
     setItems(items.map((pp) => pp.id === active.id ? {
       ...pp,
-      tenants: pp.tenants.map((x) => (x.id === t.id ? { ...x, ...fields } as Tenant : x)),
+      tenants: pp.tenants.map((x) => (x.id === t.id ? { ...x, ...fields, carried_debt: carriedAfter } as Tenant : x)),
     } : pp));
     setRenewing(null);
     if (noteRes.error) notify("err", "جُدّد العقد، لكن تعذّرت كتابة الملاحظة في سجل العقار.");
@@ -1067,11 +1107,13 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
     }
     const invoiceNo = data;
 
-    await supabase.from("invoices").insert({
+    /* سجلّ الفاتورة قبل طباعتها: فاتورة ضريبية صدرت بلا سجلّ لا تظهر في التصدير */
+    const { error: insErr } = await supabase.from("invoices").insert({
       user_id: await officeId(supabase),
       tenant_id: t.id, property_id: active.id,
       invoice_no: invoiceNo, due_date: dueDate, period_label: period, amount,
     });
+    if (insErr) return notify("err", `تعذّر حفظ الفاتورة ${invoiceNo} — لم تُصدر (${insErr.message})`);
 
     openDoc(invoiceHTML(t as any, active as any, { invoice_no: invoiceNo, amount, due_date: dueDate, period_label: period }, issuer || {}));
   }
@@ -1996,7 +2038,8 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       {renewing && <RenewModal key={renewing.id} tenant={renewing} unitWord={ul} onClose={() => setRenewing(null)} onRenew={(o) => doRenew(renewing, o)} />}
       {enforcing && <EnforcementModal tenant={enforcing} unitWord={ul}
         onClose={() => setEnforcing(null)}
-        onSubmit={(no, order) => { patchTenant(enforcing.id, { litigation: true, enforcement_no: no || null, enforcement_order: order || null }); setEnforcing(null); }} />}
+        onSubmit={async (no, order) => {   /* تُغلق بعد نجاح الحفظ — كانت تُغلق فورًا فيضيع ما كُتب إن فشل */
+          if (await patchTenant(enforcing.id, { litigation: true, enforcement_no: no || null, enforcement_order: order || null })) setEnforcing(null); }} />}
       {paying && <PaymentModal tenant={paying} unitWord={ul} onClose={() => setPaying(null)}
         onSubmit={(amt, method, note, paidOn, reference) => { recordPayment(paying, amt, method, note, paidOn, reference); setPaying(null); }} />}
       {turnover && <TurnoverModal key={turnover.id} tenant={turnover} unitWord={ul} onClose={() => setTurnover(null)}

@@ -232,13 +232,18 @@ export function sandboxClient(store: SandboxStore) {
         if (prop) prop.collected = (Number(prop.collected) || 0) + amt;
         return { data: { remaining: t.carried_debt }, error: null };
       }
-      if (fn === "watheq_write_off_carried") {
+      if (fn === "watheq_write_off_carried") {          // جزئي بـ p_amount (schema-v48)، وإلا الكل
         const t = store.tenants.find((x) => x.id === args.p_tenant);
+        const cur = Number(t?.carried_debt) || 0;
         if (!t) return { data: null, error: { message: "الوحدة غير موجودة" } };
         if (!String(args.p_note || "").trim()) return { data: null, error: { message: "اذكر سبب الشطب" } };
-        const w = Number(t.carried_debt) || 0; t.carried_debt = 0;
-        return { data: { written_off: w }, error: null };
+        if (cur <= 0) return { data: null, error: { message: "لا دين مرحَّل على هذه الوحدة" } };
+        const amt = r2(args.p_amount == null ? cur : Number(args.p_amount));
+        if (!(amt > 0) || amt > cur + 0.005) return { data: null, error: { message: "المبلغ أكبر من الدين المرحَّل" } };
+        t.carried_debt = r2(cur - amt);
+        return { data: { written_off: amt, carried_debt: t.carried_debt }, error: null };
       }
+
       /* بصيغة القاعدة نفسها — رقمٌ خام كان يُسقط الواجهة إلى رقم افتراضي */
       if (fn === "next_invoice_no")                    // التالي بعد ما صدر في التجربة
         return { data: `INV-${new Date().getFullYear()}-${String((store.invoices || []).length + 1).padStart(4, "0")}`, error: null };

@@ -342,9 +342,13 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
       inserted += fresh.length;
     }
     setBusy(false);
-    if (!inserted) return alert(`كل الصفوف (${skipped}) موجودة أصلًا — لم يُضف شيء.`);
-    if (skipped) alert(`أُضيفت ${inserted} وحدة، وتُخطّيت ${skipped} موجودة أصلًا.`);
-    setDone(inserted); setRows([]);
+    /* الصفوف التي بها خطأ لم تُرفع: تبقى على الشاشة وتُذكر — كانت الشاشة تُمسح
+       كلها فلا يعرف المكتب أيّها سقط */
+    const left = rows.filter((r) => r._error);
+    const leftMsg = left.length ? `\n\n⚠️ لم تُرفع ${left.length} ${left.length === 1 ? "وحدة" : "وحدات"} بها مشكلة — بقيت أمامك في الجدول: صحّحها في الملف وارفعها وحدها.` : "";
+    if (!inserted) return alert(`كل الصفوف (${skipped}) موجودة أصلًا — لم يُضف شيء.${leftMsg}`);
+    if (skipped || left.length) alert(`أُضيفت ${inserted} وحدة${skipped ? `، وتُخطّيت ${skipped} موجودة أصلًا` : ""}.${leftMsg}`);
+    setDone(inserted); setRows(left);
     router.refresh();
   }
 
