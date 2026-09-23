@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient as createServiceClient } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase-server";
+import { fetchAllRows } from "@/lib/fetch-all";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -69,8 +70,9 @@ export async function POST(req: Request) {
 
   const [{ data: profiles }, { data: props }, { data: tenants }, { data: posts }, { data: team }] = await Promise.all([
     db.from("profiles").select("id,account_type,created_at,signup_source,subscribed_until"),
-    db.from("properties").select("id,user_id"),
-    db.from("tenants").select("id"),
+    /* على دفعات — الوحدات والعقارات عبر المنصة تتجاوز 1000 فكان «وحدات مدارة» ناقصًا */
+    ((t: string, c: string) => fetchAllRows(db, t, c).then((data) => ({ data, error: null as any }), (e) => ({ data: [] as any[], error: e })))("properties", "id,user_id"),
+    ((t: string, c: string) => fetchAllRows(db, t, c).then((data) => ({ data, error: null as any }), (e) => ({ data: [] as any[], error: e })))("tenants", "id"),
     db.from("ad_posts").select("channel,title,content,posted_at,outcome,replies").order("posted_at", { ascending: false }).limit(25),
     db.from("team_members").select("member_id"),
   ]);

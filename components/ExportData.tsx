@@ -56,7 +56,8 @@ export default function ExportData() {
   async function all(table: string, select = "*", order = "created_at"): Promise<any[]> {
     const out: any[] = [];
     for (let i = 0; ; i += 1000) {
-      const { data, error } = await supabase.from(table).select(select).order(order, { ascending: true }).range(i, i + 999);
+      /* ترتيب ثانوي بالمعرّف: صفّان بوقت إنشاء واحد عند حدّ صفحة قد يتكرر أحدهما أو يسقط */
+      const { data, error } = await supabase.from(table).select(select).order(order, { ascending: true }).order("id", { ascending: true }).range(i, i + 999);
       if (error) { if (out.length === 0 && /does not exist|relation/.test(error.message)) return []; throw new Error(`${table}: ${error.message}`); }
       out.push(...(data || []));
       if (!data || data.length < 1000 || out.length > 200000) break;

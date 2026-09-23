@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { tgSend } from "@/lib/telegram";
 import { subsDigest, type SubAccount } from "@/lib/subs-ops";
+import { fetchAllRows } from "@/lib/fetch-all";
 
 export const dynamic = "force-dynamic";
 
@@ -54,7 +55,9 @@ async function handle(req: Request) {
   const [profiles, newProfiles, props, assoc, tenants, owners, pays, newPays] = await Promise.all([
     db.from("profiles").select("id", { count: "exact", head: true }),
     db.from("profiles").select("id,full_name,org_name,account_type,created_at").gte("created_at", sinceISO),
-    db.from("properties").select("user_id").eq("is_demo", false),
+    /* id مع user_id: حجم الحساب في تنبيه الاشتراكات يعدّ الوحدات بمعرّف العقار —
+       كان يُجلب user_id وحده فيظهر «0 وحدة» لكل حساب. وعلى دفعات. */
+    fetchAllRows(db, "properties", "id,user_id", (q) => q.eq("is_demo", false)).then((data) => ({ data, error: null as any }), (e) => ({ data: [] as any[], error: e })),
     db.from("associations").select("user_id"),
     db.from("tenants").select("id", { count: "exact", head: true }),
     db.from("owners").select("id", { count: "exact", head: true }),
@@ -99,7 +102,8 @@ async function handle(req: Request) {
       .select("id,org_name,full_name,billing_phone,plan,trial_ends_at,subscribed_until").limit(1000);
     const byUser: Record<string, string[]> = {};
     (props.data || []).forEach((x: any) => { (byUser[x.user_id] ||= []).push(x.id); });
-    const { data: tenRows } = await db.from("tenants").select("id,property_id").limit(20000);
+    /* على دفعات — وحدات المنصة تتجاوز 1000 */
+    const tenRows = await fetchAllRows<any>(db, "tenants", "id,property_id");
     const perProp: Record<string, number> = {};
     (tenRows || []).forEach((t: any) => { perProp[t.property_id] = (perProp[t.property_id] || 0) + 1; });
     const accounts: SubAccount[] = (profs2 || []).map((p: any) => {

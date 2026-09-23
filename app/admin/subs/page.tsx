@@ -4,6 +4,7 @@ import { redirect, notFound } from "next/navigation";
 import Link from "next/link";
 import SubsBoard from "@/components/SubsBoard";
 import SubsAdmin, { type SubRow, type PayRow } from "@/components/SubsAdmin";
+import { fetchAllRows } from "@/lib/fetch-all";
 
 export const dynamic = "force-dynamic";
 
@@ -35,8 +36,11 @@ export default async function AdminSubsPage() {
       .select("id,user_id,invoice_no,months,amount,plan,method,note,paid_at,extended_to")
       .order("paid_at", { ascending: false })
       .limit(500),
-    db.from("properties").select("id,user_id").limit(5000),
-    db.from("tenants").select("id,property_id").limit(20000),
+    /* على دفعات: وحدات المنصة كلها وعقاراتها تتجاوز 1000 (كل حساب جرّب التجربة
+       يضيف ~80 وحدة)، وSupabase يقصّ عندها بصمت — فكان «حجم الحساب» الذي تُبنى
+       عليه قرارات المتابعة والتسعير ناقصًا */
+    fetchAllRows(db, "properties", "id,user_id").then((data) => ({ data, error: null as any }), (e) => ({ data: [] as any[], error: e })),
+    fetchAllRows(db, "tenants", "id,property_id").then((data) => ({ data, error: null as any }), (e) => ({ data: [] as any[], error: e })),
   ]);
 
   /* حجم كل حساب: الوحدات والعقارات — يُظهر ما يخسره المكتب إن انقطع،
