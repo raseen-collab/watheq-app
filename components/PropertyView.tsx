@@ -246,6 +246,9 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
   }, [items]);
   /* الدخل الشهري في البطاقة = ما قُبض فعلًا هذا الشهر (طلب مكتب تميز)، والمتوقع بجانبه */
   const [collectedThisMonth, setCollectedThisMonth] = useState<number | null>(null);
+  /* مصروفات الشهر: ما على المالك (يُخصم في تقريره) وما على المكتب نفسه */
+  const [expThisMonth, setExpThisMonth] = useState<{ owner: number; office: number } | null>(null);
+  const [expKey, setExpKey] = useState(0);
   /**
    * مفتاح إعادة الجلب: كان الاعتماد على «items» نفسها — وهي مصفوفة تتغيّر
    * هويتها مع كل رسم، فيتكرّر الاستعلام مرتين وثلاثًا في كل تنقّل (ظهر في
@@ -259,14 +262,22 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
   );
   useEffect(() => {
     if (!activeId) return;
-    const now = new Date(); const p2 = (n: number) => String(n).padStart(2, "0");
-    const from = `${now.getFullYear()}-${p2(now.getMonth() + 1)}-01`;
-    const to = `${now.getFullYear()}-${p2(now.getMonth() + 1)}-${p2(now.getDate())}`;
+    /* حدود الشهر بتوقيت الرياض — لا بساعة الجهاز */
+    const to = today(), from = `${to.slice(0, 7)}-01`;
     let alive = true;
-    supabase.from("payments").select("amount").eq("property_id", activeId).gte("paid_on", from).lte("paid_on", to).limit(5000)
+    setCollectedThisMonth(null); setExpThisMonth(null);
+    supabase.from("payments").select("amount").eq("property_id", activeId).gte("paid_on", from).lte("paid_on", to).limit(1000)
       .then(({ data }: any) => { if (alive) setCollectedThisMonth((data || []).reduce((a: number, x: any) => a + (Number(x.amount) || 0), 0)); });
+    supabase.from("expenses").select("amount, billable").eq("property_id", activeId).gte("spent_on", from).lte("spent_on", to).limit(1000)
+      .then(({ data, error }: any) => {
+        if (!alive) return;
+        if (error) { setExpThisMonth({ owner: 0, office: 0 }); return; }
+        let owner = 0, office = 0;
+        (data || []).forEach((e: any) => { if (e.billable === false) office += Number(e.amount) || 0; else owner += Number(e.amount) || 0; });
+        setExpThisMonth({ owner, office });
+      });
     return () => { alive = false; };
-  }, [activeId, paidKey, supabase]);
+  }, [activeId, paidKey, expKey, supabase]);
   /**
    * عرض الوحدات: بطاقات (الجوال دائمًا) أو جدول (الكمبيوتر). الجدول يعرض
    * 25 وحدة في شاشة بدل 5، والعين تمسح عمود الحالة في ثانية — وهو ما
@@ -1327,8 +1338,6 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
   const lateRows = allRows.filter((r) => r.key === "late" || r.key === "partial");
   const lateCount = lateRows.length;
   // الدخل الشهري المتوقع من الوحدات المؤجّرة فقط — الشاغرة كانت تُحسب فيه كأن فيها ساكنًا
-  const monthlyIncome = tenants.reduce((sum, t) =>
-    sum + (isVacant(t) ? 0 : (Number(t.rent_amount) || 0) * PERIODS_PER_MONTH[(t.payment_frequency || "monthly") as Frequency]), 0);
   const overdue = lateRows.reduce((s, r) => s + r.st.amountDue, 0);
   /**
    * متأخرات الوحدات الشاغرة.
@@ -1351,7 +1360,6 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
   /* من جدول الدفعات الفعلي لا من «الإيجار × دفعات السنة»: عقد ثلاثة أشهر
      بتسعة آلاف كان يُعرض 36,000 — أربعة أضعاف. الآن يُجمع ما يستحق فعلًا
      خلال الاثني عشر شهرًا القادمة، فينتهي القصير عند نهايته. */
-  const annualIncome = tenants.reduce((sum, t) => sum + expectedNext12(t as any), 0);
   const pct = allRows.length ? Math.round(((allRows.length - lateRows.length) / allRows.length) * 100) : 100;
 
 
@@ -1426,7 +1434,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
             <div className="text-xs text-[#9FB8B3]">لا متأخرات ولا استحقاقات قريبة ✓</div>
           )}
           <PortfolioStat v={`${occupancyPct}%`} l={`إشغال (${portfolio.vacant === 0 ? "لا شاغر" : plural(portfolio.vacant, "وحدة شاغرة", "وحدتان شاغرتان", "شاغرة", "شاغرة")})`} tone={portfolio.vacant ? "warn" : undefined} />
-          <PortfolioStat v={sar(Math.round(portfolio.monthly))} l="دخل شهري تقريبي" />
+            {/* «دخل شهري تقريبي» للمكتب كله أزيل من صفحة العمارة: نطاق آخر يُقرأ مناقضًا — مكانه «نظرة عامة» */}
         </div>
       )}
 
@@ -1472,47 +1480,67 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
         </div>
       )}
 
-      {/* إحصاءات — قابلة للنقر للتصفية */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
-        <Stat v={collectedThisMonth === null ? "…" : sar(Math.round(collectedThisMonth))} l={`المحصَّل فعليًّا هذا الشهر · المتوقع ${sar(Math.round(monthlyIncome))}`} kpi="income" icon="↑" />
-        {(lateCount > 0 || overdue > 0) && <Stat v={sar(overdue)} l={`المتأخر (${lateCount === 0 ? "لا وحدات" : plural(lateCount, "وحدة واحدة", "وحدتان", "وحدات", "وحدة")})`} kpi="overdue" icon="!" onClick={() => { setFilter("late"); setSort("amount"); }} active={filter === "late"} />}
-        {/* مال على مستأجرين سابقين — كان يختفي من كل المؤشرات */}
-        {vacantArrears > 0 && <Stat v={sar(vacantArrears)} l={`على مستأجرين سابقين (${plural(vacantArrearsCount, "وحدة واحدة", "وحدتان", "وحدات", "وحدة")})`} kpi="overdue" icon="↩" onClick={() => { if (pastHere.length) setDebtOpen(true); else { setFilter("vacant"); setSort("amount"); } }} active={filter === "vacant"} />}
-        {((counts.due || 0) + (counts.soon || 0)) > 0 && <Stat v={String((counts.due || 0) + (counts.soon || 0))} l={`تستحق خلال ${plural(windowsOf(active).soonDays, "يوم واحد", "يومين", "أيام", "يومًا")}`} kpi="soon" icon="●" onClick={() => setFilter("soon")} active={filter === "soon"} />}
-        {(counts.expiring || 0) > 0 && <Stat v={String(counts.expiring || 0)} l="عقود تنتهي قريبًا" kpi="expiring" icon="↻" onClick={() => setFilter("expiring")} active={filter === "expiring"} />}
-      </div>
-
       {/**
-        * دخل العمارة السنوي بعقودها الحالية (طلب مكتب).
-        * الإيجار السنوي لكل وحدة مؤجّرة = قيمة الدفعة × عدد دفعاتها في السنة،
-        * ومجموعه دخل العمارة. رقم دقيق من العقد الحالي — لا تقدير ولا تحصيل.
-        * (lib/income.ts — مختبَر على 3,425 وحدة بدفتر مستقل.)
+        * ثلاث خلايا لثلاثة أسئلة لا يكرر أحدها الآخر (طلب مكتب).
+        *
+        * كانت الصفحة تعرض سبعة أرقام مالية، أربعة منها صيغٌ لرقم واحد (الإيجار
+        * شهريًّا، وسنويًّا، وما بقي منه خلال 12 شهرًا، و«التعاقدي شهريًّا»
+        * مكرّرًا) وواحد لنطاق آخر (دخل المكتب كله في شريط المحفظة) — فتبدو
+        * متناقضة. ومن يدفع سنويًّا يدفع مرة واحدة، فيبدو المحصَّل أضعاف
+        * «المتوقع» الشهري. الآن: كم استلمنا · كم تُدخل · كم صرفنا.
         */}
       {tenants.length > 0 && (() => {
         const rr = annualRentRoll(tenants as any[]);
-        const unitsW = (n: number) => (n === 1 ? "وحدة" : n === 2 ? "وحدتان" : "وحدات");
+        const mLabel = arDate(`${today().slice(0, 7)}-01`).replace(/^\S+\s+/, "");
+        const units = (n: number) => (n === 1 ? "وحدة" : n === 2 ? "وحدتين" : n <= 10 ? "وحدات" : "وحدة");
+        const Cell = ({ t, v, sub, tone }: { t: string; v: string; sub: React.ReactNode; tone: string }) => (
+          <div className="bg-white border border-line rounded-xl px-4 py-3">
+            <div className="text-[12px] text-muted">{t}</div>
+            <div className={`text-2xl font-bold tabular-nums mt-0.5 ${tone}`}>{v} <span className="text-xs font-normal text-muted">ريال</span></div>
+            <div className="text-[11px] text-muted mt-1 leading-relaxed">{sub}</div>
+          </div>
+        );
         return (
-          <div className="bg-white border border-line rounded-xl px-4 py-3 mb-4">
-            <div className="font-semibold text-deep text-sm">دخل العمارة السنوي <span className="font-normal text-[11px] text-muted">— بعقودها الحالية</span></div>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-sm mt-2">
-              <div><div className="text-[11px] text-muted">الإيجار السنوي للوحدات المؤجّرة</div>
-                <b className="tabular-nums text-ink">{sar(Math.round(rr.annual))}</b> <span className="text-[11px] text-muted">ريال · {rr.occupied} {unitsW(rr.occupied)}</span></div>
-              <div><div className="text-[11px] text-muted">الشاغرة (بآخر إيجار لها)</div>
-                <b className={`tabular-nums ${rr.vacant ? "text-[#9A4B00]" : "text-muted"}`}>{rr.vacant ? sar(Math.round(rr.vacantAnnual)) : "—"}</b>
-                <span className="text-[11px] text-muted">{rr.vacant ? ` ريال · ${rr.vacant} ${unitsW(rr.vacant)}` : " لا شاغر"}</span></div>
-              <div><div className="text-[11px] text-muted">عقود انتهت ولم تُجدَّد</div>
-                <b className={`tabular-nums ${rr.expired ? "text-late" : "text-muted"}`}>{rr.expired ? sar(Math.round(rr.expiredAnnual)) : "—"}</b>
-                <span className="text-[11px] text-muted">{rr.expired ? ` ريال · ${rr.expired} ${rr.expired === 1 ? "عقد" : rr.expired === 2 ? "عقدان" : "عقود"}` : " لا شيء"}</span></div>
-            </div>
-            <p className="text-[11.5px] text-muted leading-relaxed mt-2.5 border-t border-line pt-2">
-              <b className="text-ink">ما نحسبه:</b> لكل وحدة مؤجّرة، قيمة دفعتها × عدد دفعاتها في السنة
-              (شهري ×12، ربع سنوي ×4، كل 4 أشهر ×3، نصف سنوي ×2، سنوي ×1)، ومجموعها دخل العمارة
-              لو استمرت عقودها الحالية سنة كاملة. هذا ما تُدخله العمارة بعقودها — لا ما قُبض منها.
-              الشاغرة لا تدخل المجموع، والعقود المنتهية داخلة فيه لكن دخلها غير مضمون حتى تُجدَّد.
-            </p>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3">
+            <Cell t="المحصَّل فعليًّا هذا الشهر" tone="text-[#137a50]"
+              v={collectedThisMonth === null ? "…" : sar(Math.round(collectedThisMonth))}
+              sub={<>ما قُبض في {mLabel} حتى اليوم</>} />
+            <Cell t="دخل العمارة السنوي" tone="text-deep" v={sar(Math.round(rr.annual))}
+              sub={<>إيجار سنة لـ{rr.occupied} {units(rr.occupied)} بعقد سارٍ
+                {rr.vacant ? <> · <span className="text-[#9A4B00]">شاغرة {rr.vacant}</span></> : null}
+                {rr.expired ? <> · <span className="text-late">{rr.expired === 1 ? "عقد انتهى ولم يُجدَّد" : `${rr.expired} عقود انتهت ولم تُجدَّد`} ({sar(Math.round(rr.expiredAnnual))} خارج المجموع)</span></> : null}</>} />
+            <Cell t="مصروفات هذا الشهر" tone="text-ink"
+              v={expThisMonth === null ? "…" : sar(Math.round(expThisMonth.owner))}
+              sub={<>على المالك في {mLabel}{expThisMonth && expThisMonth.office > 0 ? <> · و{sar(Math.round(expThisMonth.office))} على المكتب</> : null}</>} />
           </div>
         );
       })()}
+
+      {/* ما يحتاج إجراءً اليوم — أزرار تصفية لا أرقام دخل */}
+      {(overdue > 0 || vacantArrears > 0 || ((counts.due || 0) + (counts.soon || 0)) > 0 || (counts.expiring || 0) > 0) && (
+        <div className="flex flex-wrap gap-2 mb-5">
+          {(lateCount > 0 || overdue > 0) && (
+            <button type="button" onClick={() => setFilter("late")}
+              className={`text-xs px-3 py-2 rounded-full border ${filter === "late" ? "bg-[#FBE9E7] border-[#F5C6C2]" : "bg-white border-line"} text-late`}>
+              متأخر <b className="tabular-nums">{sar(overdue)}</b> · {plural(lateCount, "وحدة واحدة", "وحدتان", "وحدات", "وحدة")}</button>
+          )}
+          {vacantArrears > 0 && (
+            <button type="button" onClick={() => setFilter("vacant")}
+              className={`text-xs px-3 py-2 rounded-full border ${filter === "vacant" ? "bg-[#FFF6E5] border-[#F2D49B]" : "bg-white border-line"} text-[#9A4B00]`}>
+              على مستأجرين سابقين <b className="tabular-nums">{sar(vacantArrears)}</b></button>
+          )}
+          {((counts.due || 0) + (counts.soon || 0)) > 0 && (
+            <button type="button" onClick={() => setFilter("soon")}
+              className={`text-xs px-3 py-2 rounded-full border ${filter === "soon" ? "bg-paper2 border-line" : "bg-white border-line"} text-ink`}>
+              تستحق خلال {plural(windowsOf(active).soonDays, "يوم واحد", "يومين", "أيام", "يومًا")}: <b>{(counts.due || 0) + (counts.soon || 0)}</b></button>
+          )}
+          {(counts.expiring || 0) > 0 && (
+            <button type="button" onClick={() => setFilter("expiring")}
+              className={`text-xs px-3 py-2 rounded-full border ${filter === "expiring" ? "bg-paper2 border-line" : "bg-white border-line"} text-ink`}>
+              عقود تنتهي قريبًا: <b>{counts.expiring}</b></button>
+          )}
+        </div>
+      )}
 
       {/* الوحدات تأخذ العرض كاملًا: مكتب بمئات الوحدات يحتاج كل بكسل للجدول،
           وسجل العقار (ملاحظات نصية) ينتقل أسفلها — يُقرأ حين يُطلب لا دائمًا. */}
@@ -1769,8 +1797,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
      منه)، و«شهريًّا» هو معدَّل الإيجار التعاقدي. جمعهما بفاصلة أوحى بأن
      الأول = الثاني × 12 — وهو ليس كذلك. نفصلهما بمسمّييهما. */}
                           <td className="px-3 py-2 whitespace-nowrap">
-                            المتبقي من العقود خلال 12 شهرًا: <b>{sar(Math.round(annualIncome))}</b>
-                            <span className="text-muted"> · الإيجار التعاقدي {sar(Math.round(monthlyIncome))} شهريًّا</span>
+                            {/* «المتبقي خلال 12 شهرًا» و«التعاقدي شهريًّا» أزيلا: صيغتان أخريان لدخل العمارة تُقرآن مناقضتين له */}
                           </td>
                           <td className="px-3 py-2 whitespace-nowrap" colSpan={2}>{nearest ? `أقرب استحقاق: ${nearest}` : "—"}</td>
                           <td className={`px-3 py-2 text-left font-bold ${totalDue > 0 ? "text-late" : ""}`}>{totalDue > 0 ? <>{sar(totalDue)}<div className="text-[10px] font-normal text-muted">إجمالي المتأخر</div></> : "—"}</td>
@@ -2030,7 +2057,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
         <OwnerReportModal property={active} unitWord={ul} issuer={issuer || {}} onClose={() => setReporting(false)} />
       )}
       {expensesOpen && active && (
-        <ExpensesModal propertyId={active.id} propertyName={active.name} unitWord={ul} onClose={() => setExpensesOpen(false)} />
+        <ExpensesModal propertyId={active.id} propertyName={active.name} unitWord={ul} onClose={() => { setExpensesOpen(false); setExpKey((k) => k + 1); }} />
       )}
       {ownerLinkOpen && active && (
         <OwnerLinkModal propertyId={active.id} propertyName={active.name} ownerName={active.owner_name}

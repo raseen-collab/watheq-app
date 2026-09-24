@@ -115,9 +115,9 @@ export function yearBreakdown(input: {
  *   • العقود المنتهية بلا تجديد (دخلها غير مضمون حتى تُجدَّد)
  */
 export type RentRoll = {
-  annual: number; occupied: number;                 // المؤجّرة: مجموع الإيجار السنوي وعددها
+  annual: number; occupied: number;                 // المؤجّرة بعقد سارٍ: مجموع الإيجار السنوي وعددها
   vacant: number; vacantAnnual: number;             // الشاغرة وآخر إيجار سنوي لها
-  expired: number; expiredAnnual: number;           // منها عقود انتهت ولم تُجدَّد (ضمن المؤجّرة)
+  expired: number; expiredAnnual: number;           // عقود انتهت ولم تُجدَّد (خارج المجموع)
   perUnit: Record<string, number>;                  // الإيجار السنوي لكل وحدة (بمعرّفها)
 };
 export function annualRentRoll(tenants: any[]): RentRoll {
@@ -128,9 +128,11 @@ export function annualRentRoll(tenants: any[]): RentRoll {
     const a = r2(rent * perYear);
     if (t.id) out.perUnit[t.id] = a;
     if (isVacant(t)) { out.vacant++; out.vacantAnnual += a; continue; }
-    out.occupied++; out.annual += a;
+    /* العقد المنتهي بلا تجديد ليس دخلًا مضمونًا — خارج المجموع، في سطره وحده.
+       (كان داخلًا فيه: عقد انتهى قبل سنتين يُحسب ضمن «دخل العمارة».) */
     const st = contractState(t, {});
-    if (st.daysToEnd !== null && st.daysToEnd < 0) { out.expired++; out.expiredAnnual += a; }
+    if (st.daysToEnd !== null && st.daysToEnd < 0) { out.expired++; out.expiredAnnual += a; continue; }
+    out.occupied++; out.annual += a;
   }
   out.annual = r2(out.annual); out.vacantAnnual = r2(out.vacantAnnual); out.expiredAnnual = r2(out.expiredAnnual);
   return out;
