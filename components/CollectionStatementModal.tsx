@@ -15,7 +15,7 @@
 import {useEffect, useMemo, useState} from "react";
 import { createClient } from "@/lib/supabase-client";
 import { fetchAllRows } from "@/lib/fetch-all";
-import { collectionStatementHTML, pastVatOf } from "@/lib/documents";
+import { collectionStatementHTML, pastVatOf, openDoc } from "@/lib/documents";
 import { buildCollection } from "@/lib/collection";
 
 const today = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Riyadh", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
@@ -122,9 +122,11 @@ export default function CollectionStatementModal({ properties, issuer, onClose }
         : scopeKind === "owner" ? `كشف حساب — عمائر ${scope}`
         : "كشف حساب لعمائر المكتب";
       const html = collectionStatementHTML(rows, expRows, { label, from, to }, issuer || {}, { title, fin });
-      const w = window.open("", "_blank");
-      if (!w) { setErr("المتصفح منع فتح النافذة — اسمح بالنوافذ المنبثقة وأعد المحاولة."); return; }
-      w.document.write(html); w.document.close();
+      /* openDoc كبقية المستندات: تجرّب النافذة، وإن منعها المتصفح تعرض الكشف داخل
+         التطبيق. كان هذا المستند وحده يفتح نافذته بنفسه — وبعد جلب البيانات، فيمنعه
+         المتصفح دائمًا تقريبًا (النافذة تُسمح فورًا بعد الضغطة لا بعد انتظار)، وعلى
+         الجوال والتطبيق المثبَّت بالذات: «اسمح بالنوافذ المنبثقة». */
+      openDoc(html);
       onClose();
     } catch (e: any) {
       setErr(e?.message || "تعذّر بناء الكشف.");
