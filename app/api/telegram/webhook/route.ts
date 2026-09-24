@@ -211,16 +211,22 @@ async function showPayList(db: DB, chatId: number, messageId: number, p: any, sc
 async function confirmPay(db: DB, chatId: number, messageId: number, p: any, scope: string, id: string) {
   const row = (await getUnpaid(db, p, scope)).find((r) => r.id === id);
   if (!row) return tgEdit(chatId, messageId, "لم تُعثر على الدفعة (ربما سُجّلت).", reportButtons(scope));
+  /* كان يُعرض «المبلغ: كامل المتأخر» (7,500) ثم يُسجَّل قسط واحد (2,500) — فيظن صاحب
+     المكتب أنه سوّى المتأخرات. الآن خياران صريحان بمبلغيهما. */
+  const card = await contractCard(db, p, id);
+  const rent = Number(card?.rent) || 0;
+  const all = scope === "late" ? Number(row.amount) || 0 : 0;
   const buttons: TgKeyboard = [
-    [{ text: "✅ نعم، سجّلها مدفوعة", callback_data: `payok:${scope}:${id}` }],
+    [{ text: `✅ قسط واحد (${sar(rent || row.amount)})`, callback_data: `payok:${scope}:${id}:one` }],
+    ...(all > rent + 0.5 ? [[{ text: `✅ كامل المتأخر (${sar(all)})`, callback_data: `payok:${scope}:${id}:all` }]] : []),
     backBtn(scope),
   ];
-  return tgEdit(chatId, messageId, `تأكيد تسجيل دفعة:\n\n<b>${row.unit}</b> — ${row.tenant}\nالمبلغ: <b>${sar(row.amount)}</b> ريال · الاستحقاق: ${row.due}`, buttons);
+  return tgEdit(chatId, messageId, `تأكيد تسجيل دفعة:\n\n<b>${row.unit}</b> — ${row.tenant}\n${scope === "late" ? `المتأخر: <b>${sar(row.amount)}</b> ريال` : `المبلغ: <b>${sar(row.amount)}</b> ريال`} · الاستحقاق: ${row.due}\n\nكم استلمت؟`, buttons);
 }
 
 /** تنفيذ التسجيل ثم تحديث التقرير */
-async function doPay(db: DB, chatId: number, messageId: number, p: any, scope: string, id: string) {
-  const res = await markPaid(db, p, id);
+async function doPay(db: DB, chatId: number, messageId: number, p: any, scope: string, id: string, mode: string) {
+  const res = await markPaid(db, p, id, mode === "all" ? "all" : "one");
   const rep = await buildReport(db, p, scope);
   const banner = res.ok ? `✅ ${res.msg}` : `⚠️ ${res.msg}`;
   return tgEdit(chatId, messageId, `${banner}\n\n${rep}`, reportButtons(scope));
@@ -277,7 +283,7 @@ async function handleCallback(db: DB, cq: any) {
   RECENT_TAPS.set(dedupeKey, nowMs);
   if (RECENT_TAPS.size > 3000) RECENT_TAPS.clear();
 
-  const [action, a1, a2] = data.split(":");
+  const [action, a1, a2, a3] = data.split(":");
   switch (action) {
     case "cmd": {
       const rep = await buildReport(db, p, a1);
@@ -290,13 +296,14 @@ async function handleCallback(db: DB, cq: any) {
     }
     case "paylist": return showPayList(db, chatId, messageId, p, a1);
     case "pay": return confirmPay(db, chatId, messageId, p, a1, a2);
-    case "payok": return doPay(db, chatId, messageId, p, a1, a2);
+    case "payok": return doPay(db, chatId, messageId, p, a1, a2, a3);
     case "remindlist": return showRemindList(db, chatId, messageId, p, a1);
     case "remind": return doRemind(db, chatId, messageId, p, a1, a2);
     // آلة حالات العقد
     case "st": return showState(db, chatId, messageId, p, a1);
     case "card": return showCard(db, chatId, messageId, p, a2);
-    case "payt": return doPayTenant(db, chatId, messageId, p, a1);
+    case "payt": return confirmPayTenant(db, chatId, messageId, p, a1);
+    case "paytok": return doPayTenant(db, chatId, messageId, p, a1, a2);
     case "renew": return confirmRenew(db, chatId, messageId, p, a1);
     case "renewok": return doRenew(db, chatId, messageId, p, a1);
     case "claim": return doNotice(db, chatId, messageId, p, a1, "claim");
@@ -437,8 +444,20 @@ async function showCard(db: DB, chatId: number, messageId: number, p: any, tenan
 }
 
 /** تسجيل دفعة (أقدم فاتورة متأخرة للمستأجر) ثم تحديث البطاقة */
-async function doPayTenant(db: DB, chatId: number, messageId: number, p: any, tenantId: string) {
-  const res = await payTenantOldest(db, p, tenantId);
+async function confirmPayTenant(db: DB, chatId: number, messageId: number, p: any, tenantId: string) {
+  const c = await contractCard(db, p, tenantId);
+  if (!c) return tgEdit(chatId, messageId, "لم تُعثر على العقد.", statusButtons());
+  const rent = Number(c.rent) || 0, due = Number(c.state.owed) || 0;
+  const buttons: TgKeyboard = [
+    [{ text: `✅ قسط واحد (${sar(rent)})`, callback_data: `paytok:${tenantId}:one` }],
+    ...(due > rent + 0.5 ? [[{ text: `✅ كامل المتأخر (${sar(due)})`, callback_data: `paytok:${tenantId}:all` }]] : []),
+    [{ text: "⬅️ رجوع", callback_data: `card:x:${tenantId}` }],
+  ];
+  return tgEdit(chatId, messageId, `تأكيد تسجيل دفعة:\n\n<b>${escHtml(c.label)}</b> — ${escHtml(c.tenant)}${due > 0 ? `\nالمتأخر: <b>${sar(due)}</b> ريال` : ""}\n\nكم استلمت؟`, buttons);
+}
+
+async function doPayTenant(db: DB, chatId: number, messageId: number, p: any, tenantId: string, mode: string) {
+  const res = await payTenantOldest(db, p, tenantId, mode === "all" ? "all" : "one");
   const c = await contractCard(db, p, tenantId);
   const banner = res.ok ? `✅ ${res.msg}` : `⚠️ ${res.msg}`;
   if (!c) return tgEdit(chatId, messageId, banner, statusButtons());

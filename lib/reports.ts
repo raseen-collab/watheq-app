@@ -5,7 +5,10 @@
  *  ============================================================ */
 
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { contractState, renewContract as renewFields, freqShort, applyPayment, type Frequency } from "@/lib/contracts";
+import { contractState, renewContract as renewFields, freqShort, applyPayment, defaultTermPeriods, splitVat, unitVatApplies, type Frequency } from "@/lib/contracts";
+import { today as riyadhToday, waNumber } from "@/lib/utils";
+import { annualRentRoll } from "@/lib/income";
+import { fetchAllRows } from "@/lib/fetch-all";
 import { arDate } from "@/lib/documents";
 import { deriveState, STATE_ORDER, stateMeta, stateLabel, type StateKey } from "./contract-state";
 
@@ -16,7 +19,9 @@ const iso = (d: Date) => {
   const p = (n: number) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 };
-const todayISO = () => iso(new Date());
+/* «اليوم» بتوقيت الرياض — كانت iso(new Date()) بساعة الخادم (غرينتش)، فدفعة تُسجَّل من
+   البوت بين منتصف الليل و3 فجرًا تُؤرَّخ بالأمس، وقد تقع في الشهر السابق بتقرير المالك */
+const todayISO = () => riyadhToday();
 export const sar = (n: number) => (Number(n) || 0).toLocaleString("en-US");
 
 /** جمع عربي صحيح في رسائل البوت: 1 دفعة · 2 دفعتان · 3–10 دفعات · 11+ دفعة */
@@ -48,13 +53,10 @@ export function tgClip(text: string): string {
 
 const esc = (s: any) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
-function normalizeSaudi(raw: string): string {
-  let d = String(raw || "").replace(/[^0-9]/g, "");
-  if (d.startsWith("966")) return d;
-  if (d.startsWith("0")) return "966" + d.slice(1);
-  if (d.length === 9 && d.startsWith("5")) return "966" + d;
-  return d;
-}
+/* دالة الموقع نفسها (waNumber): كانت هنا نسخة لا تفهم الأرقام العربية (٠٥٥…) فتصنع
+   رابط واتساب بلا رقم. ويُتحقق من الناتج قبل صنع الرابط. */
+function normalizeSaudi(raw: string): string { return waNumber(raw); }
+function phoneOk(d: string): boolean { return /^9665\d{8}$/.test(d) || (!d.startsWith("966") && /^\d{10,15}$/.test(d)); }
 
 // ======================= اكتشاف نوع الحساب =======================
 
@@ -100,7 +102,7 @@ const rowLabel = (r: Enriched) => {
 };
 
 const cardOf = (r: Enriched): ContractCard => ({
-  tenantId: r.t.id,
+  tenantId: r.t.id, rent: Number(r.t.rent_amount) || 0,
   label: rowLabel(r),
   tenant: r.t.name || "—",
   phone: r.t.phone || "",
@@ -136,12 +138,13 @@ export async function todayReport(db: DB, profile: any): Promise<string> {
       const { rows } = await enrichedTenants(db, profile);
       const soon = rows.filter((r) => r.key === "due_soon")
         .sort((a, b) => (a.st.daysToNextDue || 0) - (b.st.daysToNextDue || 0));
-      if (!soon.length) return tgClip(`📅 <b>استحقاقات قريبة</b>\n\nلا توجد دفعات مستحقة خلال 7 أيام ✅`);
+      const win = Number(profile?.due_soon_days) || 10;   /* نافذة «قريب» الفعلية — كانت «7 أيام» ثابتة */
+      if (!soon.length) return tgClip(`📅 <b>استحقاقات قريبة</b>\n\nلا توجد دفعات مستحقة خلال ${win} أيام ✅`);
       const total = soon.reduce((s, r) => s + (Number(r.t.rent_amount) || 0), 0);
       const lines = soon.map((r) =>
         `• <b>${esc(rowLabel(r))}</b> — ${esc(r.t.name)} — <b>${sar(r.t.rent_amount)}</b> ريال — ${arDate(r.st.nextDueDate)}`
       ).join("\n");
-      return tgClip(`📅 <b>استحقاقات قريبة</b> (خلال 7 أيام)\n\n${capList(lines.split("\n"), soon.length, "دفعة")}\n\n— الإجمالي: <b>${sar(total)}</b> ريال · ${arPlural(soon.length, "دفعة واحدة", "دفعتان", "دفعات", "دفعة")}`);
+      return tgClip(`📅 <b>استحقاقات قريبة</b> (خلال ${win} أيام)\n\n${capList(lines.split("\n"), soon.length, "دفعة")}\n\n— الإجمالي: <b>${sar(total)}</b> ريال · ${arPlural(soon.length, "دفعة واحدة", "دفعتان", "دفعات", "دفعة")}`);
     }
     const { assocs, owners } = await assocContext(db, profile);
     const soon = assocs.filter((a: any) => a.cert_expiry && a.cert_expiry >= todayISO());
@@ -180,11 +183,20 @@ export async function summaryReport(db: DB, profile: any): Promise<string> {
     const track = await detectTrack(db, profile);
     if (track === "properties") {
       const { properties, rows } = await enrichedTenants(db, profile);
-      const collected = properties.reduce((s: number, p: any) => s + (Number(p.collected) || 0), 0);
+      /* الخلايا الثلاث نفسها في الموقع: كان «محصّل» كل ما قُبض منذ فتح الحساب بلا ذكر
+         للفترة، فيُقرأ تحصيلَ الشهر ويناقض الموقع. على دفعات (يتجاوز 1000 صف). */
+      const ids = properties.map((p: any) => p.id);
+      const to = todayISO(), from = `${to.slice(0, 7)}-01`;
+      const [mPays, mExp] = ids.length ? await Promise.all([
+        fetchAllRows<any>(db as any, "payments", "id,amount", (q) => q.in("property_id", ids).gte("paid_on", from).lte("paid_on", to)).catch(() => null),
+        fetchAllRows<any>(db as any, "expenses", "id,amount,billable", (q) => q.in("property_id", ids).gte("spent_on", from).lte("spent_on", to)).catch(() => null),
+      ]) : [[], []];
+      const monthCollected = mPays ? mPays.reduce((a: number, x: any) => a + (Number(x.amount) || 0), 0) : null;
+      const monthExp = mExp ? mExp.filter((e: any) => e.billable !== false).reduce((a: number, e: any) => a + (Number(e.amount) || 0), 0) : null;
+      const rr = annualRentRoll(rows.map((r) => r.t));
       const late = rows.filter((r) => r.key === "arrears");
       const soon = rows.filter((r) => r.key === "due_soon");
       const overdue = late.reduce((s, r) => s + (r.st.amountDue || 0), 0);
-      const pct = rows.length ? Math.round(((rows.length - late.length) / rows.length) * 100) : 100;
       /**
        * الدين المرحَّل لا يظهر في /late: المستأجر الحالي الذي سدّد شهره
        * ليس متأخرًا، والشاغرة لا تُدرج أصلًا — فيبقى مالٌ مستحقّ لا يعرف
@@ -206,12 +218,16 @@ export async function summaryReport(db: DB, profile: any): Promise<string> {
       const carriedN = rows.filter((r) => (r.st.carriedDebt || 0) > 0).length + pastN;
       return [
         `📊 <b>ملخّص وثيق — العقارات</b>`, ``,
-        `• العقارات: <b>${properties.length}</b> · الوحدات: <b>${rows.length}</b>`,
-        `• نسبة الانتظام: <b>${pct}٪</b>`,
-        `• محصّل: <b>${sar(collected)}</b> ريال`,
-        `• متأخرات: <b>${sar(overdue)}</b> ريال (${late.length} عقد)`,
-        ...(carried > 0 ? [`• ديون مرحَّلة: <b>${sar(carried)}</b> ريال (${carriedN} وحدة)`] : []),
-        `• تستحق خلال 7 أيام: <b>${soon.length}</b>`,
+        `• العقارات: <b>${properties.length}</b> · الوحدات: <b>${rows.length}</b> (مؤجّرة ${rr.occupied}${rr.vacant ? ` · شاغرة ${rr.vacant}` : ""})`,
+        ``,
+        `💰 المحصَّل هذا الشهر: <b>${monthCollected === null ? "—" : sar(Math.round(monthCollected))}</b> ريال`,
+        `🏢 دخل العقارات السنوي: <b>${sar(Math.round(rr.annual))}</b> ريال`,
+        `🧾 مصروفات هذا الشهر: <b>${monthExp === null ? "—" : sar(Math.round(monthExp))}</b> ريال`,
+        ``,
+        `🔴 متأخرات: <b>${sar(overdue)}</b> ريال (${late.length} عقد)`,
+        ...(carried > 0 ? [`💼 ديون مرحَّلة وسابقة: <b>${sar(carried)}</b> ريال (${carriedN})`] : []),
+        `🟡 تستحق قريبًا: <b>${soon.length}</b>`,
+        ...(rr.expired ? [`📄 عقود انتهت ولم تُجدَّد: <b>${rr.expired}</b>`] : []),
       ].join("\n");
     }
     const { assocs, assocById, owners } = await assocContext(db, profile);
@@ -261,7 +277,7 @@ export async function getUnpaid(db: DB, profile: any, scope: string): Promise<Un
 // ======================= آلة حالات العقد (بطاقات) =======================
 
 export type ContractCard = {
-  tenantId: string; label: string; tenant: string; phone: string;
+  tenantId: string; label: string; tenant: string; phone: string; rent?: number;
   state: { key: StateKey; label: string; dot: string; owed: number; nextDue: string | null; daysToEnd: number | null; endDate: string | null; };
 };
 
@@ -337,22 +353,30 @@ async function logPayment(db: DB, profile: any, row: Record<string, any>) {
 }
 
 /** تسجيل دفعة كاملة لمستأجر — نفس الدالة الذرّية التي تستخدمها اللوحة (schema-v12) */
-async function payTenant(db: DB, profile: any, tenantId: string): Promise<{ ok: boolean; msg: string }> {
-  const { data: t } = await db.from("tenants").select("id, rent_amount, property_id").eq("id", tenantId).maybeSingle();
+async function payTenant(db: DB, profile: any, tenantId: string, mode: "one" | "all" = "one"): Promise<{ ok: boolean; msg: string }> {
+  const { data: t } = await db.from("tenants").select("*").eq("id", tenantId).maybeSingle();
   if (!t) return { ok: false, msg: "العقد غير موجود." };
-  const { data: prop } = await db.from("properties").select("id,user_id").eq("id", t.property_id).maybeSingle();
+  const { data: prop } = await db.from("properties").select("id,user_id,grace_days").eq("id", t.property_id).maybeSingle();
   if (!prop || String(prop.user_id) !== String(profile.id)) return { ok: false, msg: "غير مصرّح." };
   const rent = Number(t.rent_amount) || 0;
   if (rent <= 0) return { ok: false, msg: "قيمة الدفعة غير محدّدة لهذا العقد." };
-
-  // البوت يعمل بمفتاح الخدمة بلا جلسة، فيمرّر صاحب الحساب كمُسجِّل — والدالة تتحقق أنه المالك فعلًا
+  /* حارس التكرار في القاعدة لا في الذاكرة: Vercel يشغّل نسخًا متعددة لا تتشارك الذاكرة،
+     فنقرتان على «سجّل» قد تصلان لنسختين فتُسجَّلان. نرفض دفعة ثانية من البوت للمستأجر
+     نفسه خلال 90 ثانية. (الموقع عرف المشكلة نفسها: ثماني ضغطات على ✔.) */
+  const since = new Date(Date.now() - 90_000).toISOString();
+  const { data: recent } = await db.from("payments").select("id").eq("tenant_id", tenantId)
+    .eq("note", "سُجّلت عبر بوت تليجرام").gte("created_at", since).limit(1);
+  if (recent && recent.length) return { ok: false, msg: "سُجّلت دفعة لهذا المستأجر قبل لحظات — لم تُسجَّل ثانية. إن كانت دفعة أخرى فعلًا، سجّلها من اللوحة." };
+  /* «كامل المتأخر» يسجّل ما عُرض في القائمة، لا قسطًا واحدًا (كان يُعرض 7,500 ويُسجَّل 2,500) */
+  const st = contractState(t, { graceDays: Number(prop.grace_days) || 0 });
+  const amount = mode === "all" && (st.amountDue || 0) > 0 ? Math.round((st.amountDue || 0) * 100) / 100 : rent;
   const { data, error } = await db.rpc("watheq_record_payment", {
-    p_tenant: tenantId, p_amount: rent, p_method: "other", p_note: "سُجّلت عبر بوت تليجرام",
+    p_tenant: tenantId, p_amount: amount, p_method: "other", p_note: "سُجّلت عبر بوت تليجرام",
     p_paid_on: todayISO(), p_actor: profile.id,
   });
   if (error) return { ok: false, msg: "تعذّر الحفظ: " + error.message };
   const r = (data || {}) as { completed?: number };
-  return { ok: true, msg: `سُجّلت دفعة (${sar(rent)} ريال)${(r.completed || 0) > 1 ? ` — اكتملت ${r.completed} دفعات` : ""}.` };
+  return { ok: true, msg: `سُجّلت ${mode === "all" ? "كامل المتأخرات" : "دفعة"} (${sar(amount)} ريال)${(r.completed || 0) > 1 ? ` — اكتملت ${r.completed} دفعات` : ""}.` };
 }
 
 /** تسجيل اشتراك شهر واحد لمالك في جمعية — يحترم السداد الجزئي */
@@ -380,12 +404,12 @@ async function payOwner(db: DB, profile: any, ownerId: string): Promise<{ ok: bo
 }
 
 /** موجّه واحد: يختار المسار الصحيح تلقائيًّا (كان يفشل للجمعيات) */
-async function recordPayment(db: DB, profile: any, id: string): Promise<{ ok: boolean; msg: string }> {
+async function recordPayment(db: DB, profile: any, id: string, mode: "one" | "all" = "one"): Promise<{ ok: boolean; msg: string }> {
   const track = await detectTrack(db, profile);
-  return track === "properties" ? payTenant(db, profile, id) : payOwner(db, profile, id);
+  return track === "properties" ? payTenant(db, profile, id, mode) : payOwner(db, profile, id);
 }
-export const markPaid = (db: DB, profile: any, id: string) => recordPayment(db, profile, id);
-export const payTenantOldest = (db: DB, profile: any, tenantId: string) => recordPayment(db, profile, tenantId);
+export const markPaid = (db: DB, profile: any, id: string, mode: "one" | "all" = "one") => recordPayment(db, profile, id, mode);
+export const payTenantOldest = (db: DB, profile: any, tenantId: string, mode: "one" | "all" = "one") => recordPayment(db, profile, tenantId, mode);
 
 /** تجديد العقد بنفس منطق اللوحة (renewContract في contracts.ts) + توثيق في السجل */
 export async function renewContract(db: DB, profile: any, tenantId: string): Promise<{ ok: boolean; msg: string }> {
@@ -394,31 +418,50 @@ export async function renewContract(db: DB, profile: any, tenantId: string): Pro
     if (!t) return { ok: false, msg: "العقد غير موجود." };
     const { data: prop } = await db.from("properties").select("id,user_id,property_type,name").eq("id", t.property_id).maybeSingle();
     if (!prop || String(prop.user_id) !== String(profile.id)) return { ok: false, msg: "غير مصرّح." };
-    const fields = renewFields(t, {});
+    /* «جدّد سنة» سنةً فعلًا: كانت بمدة العقد السابق (عقد سنتين يُجدَّد سنتين) */
+    const fields = renewFields(t, { periods: defaultTermPeriods((t.payment_frequency || "monthly") as Frequency) });
+    const moved = Math.round(((Number((fields as any).carried_debt) || 0) - (Number(t.carried_debt) || 0)) * 100) / 100;
     const { error } = await db.from("tenants").update(fields).eq("id", tenantId);
     if (error) return { ok: false, msg: "تعذّر الحفظ: " + error.message };
     await db.from("property_notes").insert({
       property_id: prop.id, note_date: todayISO(),
       text: `تجديد عقد ${t.name} (وحدة ${t.unit || "—"}) — إلى ${fields.contract_end} بقيمة ${sar(fields.rent_amount)} ريال / ${freqShort(fields.payment_frequency as Frequency)} — عبر البوت`,
     });
-    return { ok: true, msg: `تم تجديد العقد حتى ${fields.contract_end}.` };
+    return { ok: true, msg: `تم تجديد العقد حتى ${fields.contract_end}.${moved > 0 ? ` ورُحّلت متأخرات المدة المنتهية (${sar(moved)} ريال) دينًا عليه — تسويتها من اللوحة.` : ""}` };
   } catch (e: any) { return { ok: false, msg: e.message }; }
 }
 
 /** إشعار رسمي عبر واتساب (مطالبة / عدم تجديد) */
+/**
+ * ما على المستأجر كما يراه في كشفه: متأخر المدة الحالية + الدين المرحَّل، شاملَين
+ * الضريبة حيث تُضاف فوق الإيجار. كانت المطالبة والتذكير يذكران متأخر المدة الحالية
+ * وحده: من رُحّلت عليه 8,000 عند التجديد تصله مطالبة «المبلغ المتبقي: 0».
+ */
+function owedFor(t: any, prop: any, st: any) {
+  const v = { enabled: !!prop.vat_enabled && unitVatApplies(t, prop), rate: Number(prop.vat_rate) || 15, inclusive: prop.vat_inclusive !== false };
+  const due = v.enabled ? splitVat(st.amountDue || 0, v).total : (st.amountDue || 0);
+  const carried = Math.max(0, Number(t.carried_debt) || 0);
+  return { due: Math.round(due * 100) / 100, carried, total: Math.round((due + carried) * 100) / 100, vat: v.enabled };
+}
+/* الموقِّع: المكتب لا «مدير العقار» — ذاك الحقل كان المكاتب تكتب فيه اسم المالك،
+   فتصل مطالبة من المكتب موقّعة باسم المالك. كالمستندات: اسم المُصدِر أولًا. */
+const signer = (profile: any, prop: any) => profile?.billing_name || profile?.org_name || prop?.manager || "إدارة الأملاك";
+
 export async function buildNotice(db: DB, profile: any, tenantId: string, kind: "claim" | "nonrenewal"): Promise<{ ok: boolean; text: string; url?: string }> {
   try {
     const { data: t } = await db.from("tenants").select("*").eq("id", tenantId).maybeSingle();
     if (!t) return { ok: false, text: "العقد غير موجود." };
     const { data: prop } = await db.from("properties")
-      .select("id,user_id,name,manager,grace_days").eq("id", t.property_id).maybeSingle();
+      .select("id,user_id,name,manager,grace_days,property_type,vat_enabled,vat_rate,vat_inclusive").eq("id", t.property_id).maybeSingle();
     if (!prop || String(prop.user_id) !== String(profile.id)) return { ok: false, text: "غير مصرّح." };
     if (!t.phone) return { ok: false, text: `لا يوجد رقم جوال مسجّل لـ ${esc(t.name || "المستأجر")}.` };
+    if (!phoneOk(normalizeSaudi(t.phone))) return { ok: false, text: `رقم جوال ${esc(t.name || "المستأجر")} غير صالح (${esc(t.phone)}) — صحّحه من اللوحة ثم أعد المحاولة.` };
 
     const st = contractState(t, { graceDays: Number(prop.grace_days) || 0 });
     const unit = t.unit ? `الوحدة (${t.unit})` : "الوحدة";
-    const who = prop.manager || profile.org_name || "إدارة الأملاك";
+    const who = signer(profile, prop);
     const digits = normalizeSaudi(t.phone);
+    const ow = owedFor(t, prop, st);
     let msg: string, title: string;
 
     if (kind === "claim") {
@@ -427,9 +470,11 @@ export async function buildNotice(db: DB, profile: any, tenantId: string, kind: 
         `السلام عليكم ورحمة الله، ${t.name || ""}`,
         "",
         `نفيدكم بوجود مستحقّات غير مسدَّدة عن ${unit} بعقار ${prop.name || ""}:`,
-        `• عدد الدفعات المتأخرة: ${st.unpaid}`,
+        st.unpaid > 0 ? `• عدد الدفعات المتأخرة: ${st.unpaid}` : "",
         st.hasPartial ? `• المسدَّد جزئيًّا: ${sar(st.partial)} ريال` : "",
-        `• المبلغ المتبقّي: ${sar(st.amountDue)} ريال`,
+        ow.due > 0 ? `• متأخر العقد الحالي: ${sar(ow.due)} ريال${ow.vat ? " (شامل الضريبة)" : ""}` : "",
+        ow.carried > 0 ? `• مستحقّات من عقد سابق: ${sar(ow.carried)} ريال` : "",
+        `• إجمالي المطلوب: ${sar(ow.total)} ريال`,
         "",
         "نأمل المبادرة بالسداد خلال (5) أيام بالوسيلة المتفق عليها في العقد.",
         "وفي حال عدم السداد، سيتّخذ المؤجّر الإجراءات النظامية، ومنها إنذار رسمي عبر منصة «إيجار» ثم طلب تنفيذ عبر «ناجز».",
@@ -466,20 +511,23 @@ export async function buildReminder(db: DB, profile: any, contractId: string): P
       const { data: t } = await db.from("tenants").select("*").eq("id", contractId).maybeSingle();
       if (!t) return { ok: false, text: "المستأجر غير موجود." };
       const { data: prop } = await db.from("properties")
-        .select("id,user_id,name,manager,grace_days").eq("id", t.property_id).maybeSingle();
+        .select("id,user_id,name,manager,grace_days,property_type,vat_enabled,vat_rate,vat_inclusive").eq("id", t.property_id).maybeSingle();
       if (!prop || String(prop.user_id) !== String(profile.id)) return { ok: false, text: "غير مصرّح." };
       const st = contractState(t, { graceDays: Number(prop.grace_days) || 0 });
+      const ow = owedFor(t, prop, st);
       name = t.name || "المستأجر"; phone = t.phone || "";
       unit = t.unit ? `الوحدة (${t.unit})` : "الوحدة";
-      who = prop.manager || profile.org_name || "إدارة الأملاك";
-      if (st.unpaid === 0) {
+      who = signer(profile, prop);
+      if (ow.total <= 0) {
         lines = [`تذكير ودّي بأن الدفعة القادمة عن ${unit} بعقار ${prop.name || ""} تستحق بتاريخ ${arDate(st.nextDueDate)}.`];
       } else {
         lines = [
           `نودّ تذكيركم بوجود مستحقّات عن ${unit} بعقار ${prop.name || ""}:`,
-          `• الدفعات المتأخرة: ${st.unpaid}`,
+          st.unpaid > 0 ? `• الدفعات المتأخرة: ${st.unpaid}` : "",
           st.hasPartial ? `• المسدَّد جزئيًّا: ${sar(st.partial)} ريال` : "",
-          `• المبلغ المتبقّي: ${sar(st.amountDue)} ريال`,
+          ow.due > 0 ? `• متأخر العقد الحالي: ${sar(ow.due)} ريال${ow.vat ? " (شامل الضريبة)" : ""}` : "",
+          ow.carried > 0 ? `• مستحقّات من عقد سابق: ${sar(ow.carried)} ريال` : "",
+          `• إجمالي المطلوب: ${sar(ow.total)} ريال`,
           /* يعرف المستأجر متى الدفعة التالية أيضًا — فيسدّد المتبقي قبلها */
           st.upcomingDate ? `• الدفعة القادمة تستحق بتاريخ ${arDate(st.upcomingDate)}` : "",
         ].filter(Boolean);
@@ -510,6 +558,7 @@ export async function buildReminder(db: DB, profile: any, contractId: string): P
 
     if (!phone) return { ok: false, text: `لا يوجد رقم جوال مسجّل لـ ${esc(name)}.` };
     const digits = normalizeSaudi(phone);
+    if (!phoneOk(digits)) return { ok: false, text: `رقم جوال ${esc(name)} غير صالح (${esc(phone)}) — صحّحه من اللوحة ثم أعد المحاولة.` };
     const msg = [
       `السلام عليكم ورحمة الله، ${name}`, "",
       ...lines, "",

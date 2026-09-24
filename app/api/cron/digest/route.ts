@@ -89,6 +89,7 @@ export async function GET(req: Request) {
     const within = p.notify_days_before ?? 5;
     const dueSoon: string[] = [];
     const lateList: string[] = [];
+    const newLate: string[] = [];
     const legacyList: string[] = [];
     const litigationList: string[] = [];
     const expiring: string[] = [];
@@ -111,6 +112,9 @@ export async function GET(req: Request) {
         if (st.status === "late") {
           totalDue += st.amountDue;
           lateList.push(`• ${esc(t.name)} — ${ul} ${esc(t.unit || "—")} (${esc(prop.name)}) — <b>${sar(st.amountDue)}</b> ريال`);
+          /* «جديد اليوم»: أقدم قسط غير مدفوع تجاوز مهلة السماح اليوم تحديدًا */
+          if (st.daysToNextDue === -((Number(prop.grace_days) || 0) + 1))
+            newLate.push(`• ${esc(t.name)} — ${ul} ${esc(t.unit || "—")} (${esc(prop.name)}) — <b>${sar(st.amountDue)}</b> ريال`);
         } else if (st.daysToNextDue !== null && st.daysToNextDue >= 0 && st.daysToNextDue <= within) {
           dueSoon.push(`• ${esc(t.name)} — ${ul} ${esc(t.unit || "—")} — ${sar(t.rent_amount)} ريال بتاريخ ${arDate(st.nextDueDate)}`);
         }
@@ -181,11 +185,18 @@ export async function GET(req: Request) {
     // أقصى 12 سطرًا لكل قسم مع ذكر المتبقي — مكتب كبير لا يظن أن القائمة اكتملت
     const more = (n: number) => n > 12 ? [`… و${n - 12} أخرى في اللوحة`] : [];
     if (dueSoon.length) parts.push(`🟡 <b>تستحق خلال ${within} أيام (${dueSoon.length})</b>`, ...dueSoon.slice(0, 12), ...more(dueSoon.length), "");
-    if (lateList.length) parts.push(`🔴 <b>متأخرة (${lateList.length})</b> — إجمالي ${sar(totalDue)} ريال`, ...lateList.slice(0, 12), ...more(lateList.length), "");
+    /* المتأخرون: عدد وإجمالي، وبالاسم الجدد اليوم فقط. كانت القائمة كاملة كل صباح —
+       فمتأخر منذ شهرين يظهر ستين صباحًا، ويتعلّم صاحب المكتب تجاهل الرسالة كلها
+       ومعها الجديد. القائمة الكاملة بأمر /late. */
+    if (lateList.length) parts.push(
+      `🔴 <b>متأخرة: ${lateList.length}</b> — إجمالي ${sar(totalDue)} ريال`,
+      ...(newLate.length ? [`<i>تأخّر اليوم:</i>`, ...newLate.slice(0, 12), ...more(newLate.length)] : [`<i>لا متأخر جديد اليوم.</i>`]),
+      `القائمة كاملة: /late`, "");
     if (expiring.length) parts.push(`📄 <b>عقود تنتهي قريبًا (${expiring.length})</b>`, ...expiring.slice(0, 12), ...more(expiring.length), "");
-    if (legacyList.length) parts.push(`💼 <b>ديون على مستأجرين سابقين (${legacyList.length})</b>`, ...legacyList.slice(0, 8), "");
+    /* الثابت لا يُكرَّر بالأسماء كل صباح — سطر واحد، والتفاصيل من اللوحة */
+    if (legacyList.length) parts.push(`💼 ديون على مستأجرين سابقين: <b>${legacyList.length}</b> — «الديون المرحَّلة» في اللوحة`, "");
     if (tasks.length) parts.push(`🔧 <b>مهام العقارات (${tasks.length})</b>`, ...tasks.slice(0, 10), ...more(tasks.length), "");
-    if (litigationList.length) parts.push(`⚖️ <b>في التنفيذ القضائي (${litigationList.length})</b> — لا تُرسل لهم تذكيرات`, ...litigationList.slice(0, 8), "");
+    if (litigationList.length) parts.push(`⚖️ في التنفيذ القضائي: <b>${litigationList.length}</b> — لا تُرسل لهم تذكيرات`, "");
     if (compliance.length) parts.push(`⚖️ <b>التزامات المكتب (${compliance.length})</b>`, ...compliance.slice(0, 12), "");
     if (listings.length) parts.push(`📋 <b>المعروضات</b>`, ...listings, "");
     if (matchLines.length) parts.push(...matchLines, "");
