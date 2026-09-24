@@ -22,7 +22,6 @@ import { alertCount, complianceState, KIND_META, type ComplianceItem } from "@/l
 import ComplianceModal from "@/components/ComplianceModal";
 import { hijriShort } from "@/lib/hijri";
 import ExpensesOverview from "@/components/ExpensesOverview";
-import MonthlyCollection from "@/components/MonthlyCollection";
 
 type Tenant = any; type Property = any;
 const PER_MONTH: Record<string, number> = { daily: 30, weekly: 4.33, monthly: 1, quarterly: 1 / 3, trimester: 1 / 4, semiannual: 1 / 6, annual: 1 / 12 };
@@ -197,10 +196,10 @@ export default function PortfolioView({ properties, windows, compliance, orgName
           </div>
         );
       })()}
-      <div className="bg-white border border-line rounded-2xl p-4 mb-4">
-        {/* ستة أشهر افتراضيًّا: عشرة أشهر صفرية تأخذ مساحة الشهرين الحيَّين */}
-        <MonthlyCollection propertyIds={properties.map((p: any) => p.id)} months={6} />
-      </div>
+      {/* «التحصيل شهرًا بشهر» أُزيل: عند مكتب انتقل حديثًا تبدو أشهره السابقة فارغة
+          فيُقرأ الرسم ارتفاعًا لا حقيقة له، ومن يدفع سنويًّا يظهر شهره عمودًا ضخمًا
+          وبقية أشهره أصفارًا. وكان أثقل استعلام هنا (دفعات المكتب كله لسنة).
+          أي فترة بتفصيلها: كشف التحصيل وتقرير المالك. */}
 
       {/* ═══ التزامات المكتب — عقود الوساطة وتراخيص الإعلانات ورخصة فال ═══ */}
       {canComp && (() => {

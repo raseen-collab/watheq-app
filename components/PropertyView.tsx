@@ -20,7 +20,6 @@ import ActivityLog from "@/components/ActivityLog";
 import StatusLegend from "@/components/StatusLegend";
 import PropertyStatementModal, { type StatementPeriod } from "@/components/PropertyStatementModal";
 import DemoGuide from "@/components/DemoGuide";
-import MonthlyCollection from "@/components/MonthlyCollection";
 import DebtFollowUp from "@/components/DebtFollowUp";
 import CollectionStatementModal from "@/components/CollectionStatementModal";
 import ExpensesModal from "@/components/ExpensesModal";
