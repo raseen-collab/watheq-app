@@ -7,6 +7,7 @@ import { createClient } from "@/lib/supabase-client";
 import { officeId, getOffice, ROLE_LABEL, OWNER_PERMS } from "@/lib/office";
 import { arDate, termRentPaidOf, pastVatOf } from "@/lib/documents";
 import { annualRentRoll } from "@/lib/income";
+import type { ComplianceItem } from "@/lib/compliance";
 import { fetchAllRows } from "@/lib/fetch-all";
 import { hijriShort, hijriText, parseHijriInput } from "@/lib/hijri";
 import { sar, waLink, today, WATHEQ_WA, openExternal } from "@/lib/utils";
@@ -14,8 +15,6 @@ import { contractState, expectedNext12, buildSchedule, FREQUENCIES, freqLabel, f
   vacancyDays, TURNOVER_CHECKLIST, defaultTermPeriods, type Frequency } from "@/lib/contracts";
 import { PROPERTY_TYPES, typeLabel, unitLabel, typeIcon } from "@/lib/domain";
 import { statementHTML, invoiceHTML, propertyStatementHTML, moveOutSettlementHTML, quotationHTML, ownerReportHTML, DEFAULT_CHARGES, openDoc, type ChargeRow, type OwnerReportPayment } from "@/lib/documents";
-import { alertCount, type ComplianceItem } from "@/lib/compliance";
-import ComplianceModal from "@/components/ComplianceModal";
 import OwnerStatementModal from "@/components/OwnerStatementModal";
 import ActivityLog from "@/components/ActivityLog";
 import StatusLegend from "@/components/StatusLegend";
@@ -208,9 +207,6 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
   const [modal, setModal] = useState<null | { kind: "newProp" | "editProp" | "tenant"; id?: string }>(null);
   const [quoteOpen, setQuoteOpen] = useState(false);
   // ⚖️ التزامات المكتب: تُدار محليًّا وتُزامَن مع بيانات السيرفر عند كل refresh
-  const [comp, setComp] = useState<ComplianceItem[]>(compliance || []);
-  useEffect(() => { setComp(compliance || []); }, [compliance]);
-  const [compOpen, setCompOpen] = useState(false);
   const [ownerStmtOpen, setOwnerStmtOpen] = useState(false);
   const [logOpen, setLogOpen] = useState(false);
   const [chatTenant, setChatTenant] = useState<Tenant | null>(null);
@@ -1576,8 +1572,8 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
               <MenuBtn label={<><Icon name="doc" className="me-1.5" />مستندات</>} items={[
                 { label: "كشف حساب العقار", run: () => setStmtOpen(true) },
                 { label: "عرض سعر لمستأجر محتمل", run: () => setQuoteOpen(true) },
-                ...(may("manage_compliance") ? [{ label: `التزامات المكتب${alertCount(comp) > 0 ? ` (${alertCount(comp)})` : ""}`, run: () => setCompOpen(true) }] : []),
-              ]} badge={may("manage_compliance") ? alertCount(comp) : 0} />
+                /* «التزامات المكتب» انتقلت إلى «نظرة عامة» — للمكتب كله لا لعقار */
+              ]} />
 
               {may("view_financials") && <MenuBtn label={<><Icon name="owner" className="me-1.5" />المالك</>} items={[
                 { sep: "تُرسل للمالك" },
@@ -2048,11 +2044,6 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       {hasDemo && !demo && <DemoGuide onEvent={onGuideEvent} />}
       {stmtOpen && active && <PropertyStatementModal propertyName={active.name} onClose={() => setStmtOpen(false)} onIssue={openPropertyStatement} />}
 
-      {compOpen && (
-        <ComplianceModal initial={comp} orgName={orgName} issuer={issuer || {}}
-          properties={items.map((x) => ({ id: x.id, name: x.name }))}
-          onChanged={setComp} onClose={() => { setCompOpen(false); router.refresh(); }} />
-      )}
       {reporting && active && (
         <OwnerReportModal property={active} unitWord={ul} issuer={issuer || {}} onClose={() => setReporting(false)} />
       )}

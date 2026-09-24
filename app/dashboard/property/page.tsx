@@ -73,12 +73,8 @@ export default async function PropertyPage() {
   // ثلاث حالات: مشترك = مستند نظيف · تجربة نشطة = سطر «أُنشئ عبر وثيق» · انتهت بلا اشتراك = علامة مائية
   const { trial, expired } = issuerMarks(profile);
 
-  // ⚖️ التزامات المكتب (عقود الوساطة/الإعلانات/فال).
-  // إن لم يُشغَّل schema-v6.sql بعد يعود خطأ — نمرّر [] فلا تنكسر اللوحة.
-  const { data: compliance } = await supabase
-    .from("compliance_items").select("*")
-    .order("end_date", { ascending: true, nullsFirst: false });
+  // ⚖️ التزامات المكتب انتقلت إلى «نظرة عامة» — للمكتب كله لا لعقار واحد.
 
   return <PropertyView dueSoonDays={(profile as any)?.due_soon_days} dueImminentDays={(profile as any)?.due_imminent_days} expiringDays={(profile as any)?.expiring_days} initial={properties} orgName={profile?.org_name || ""}
-    issuer={{ ...(profile || {}), trial, expired }} compliance={compliance || []} />;
+    issuer={{ ...(profile || {}), trial, expired }} />;
 }

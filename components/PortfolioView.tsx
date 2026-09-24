@@ -9,12 +9,17 @@
 // ============================================================
 
 import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { fetchAllRows } from "@/lib/fetch-all";
 import { createClient } from "@/lib/supabase-client";
-import { contractState, isVacant, expectedNext12, type Frequency } from "@/lib/contracts";
+import { contractState, isVacant, type Frequency } from "@/lib/contracts";
 import { annualRentRoll } from "@/lib/income";
-import { sar, waLink } from "@/lib/utils";
+import { sar, waLink, today } from "@/lib/utils";
+import { arDate } from "@/lib/documents";
+import { getOffice } from "@/lib/office";
+import { alertCount, complianceState, KIND_META, type ComplianceItem } from "@/lib/compliance";
+import ComplianceModal from "@/components/ComplianceModal";
 import { hijriShort } from "@/lib/hijri";
 import ExpensesOverview from "@/components/ExpensesOverview";
 import MonthlyCollection from "@/components/MonthlyCollection";
@@ -23,11 +28,21 @@ type Tenant = any; type Property = any;
 const PER_MONTH: Record<string, number> = { daily: 30, weekly: 4.33, monthly: 1, quarterly: 1 / 3, trimester: 1 / 4, semiannual: 1 / 6, annual: 1 / 12 };
 const UNIT_AR: Record<string, string> = { residential: "شقة", commercial: "محل", office: "مكتب", warehouse: "مستودع", land: "أرض", villa: "فيلا" };
 
-export default function PortfolioView({ properties, windows }: {
+export default function PortfolioView({ properties, windows, compliance, orgName = "", issuer = {} }: {
   properties: Property[];
   windows: { soon: number; imminent: number; expiring: number };
+  /** التزامات المكتب — انتقلت من قائمة «مستندات» في صفحة العقار: للمكتب كله لا لعقار */
+  compliance?: ComplianceItem[]; orgName?: string; issuer?: any;
 }) {
   const supabase = createClient();
+  const router = useRouter();
+  const [comp, setComp] = useState<ComplianceItem[]>(compliance || []);
+  const [compOpen, setCompOpen] = useState(false);
+  /* صلاحية إدارة الالتزامات — كما في صفحة العقار (الحماية الحقيقية في القاعدة) */
+  const [canComp, setCanComp] = useState(true);
+  useEffect(() => { getOffice(supabase).then((o) => setCanComp(o?.isOwner !== false || (o?.perms || {}).manage_compliance !== false)); }, [supabase]);
+  /* مصروفات الشهر لكل العقارات: على المالك، وعلى المكتب */
+  const [expMonth, setExpMonth] = useState<{ owner: number; office: number } | null>(null);
   const [q, setQ] = useState("");
   /**
    * «يحتاج إجراء» كان يقصّ عند ١٢ ويقول «افتح كل عقار لرؤيتهم» — وهذا
@@ -56,12 +71,17 @@ export default function PortfolioView({ properties, windows }: {
 
   // المحصَّل هذا الشهر لكل عقار — استعلام واحد لكل المحفظة
   useEffect(() => {
-    const now = new Date(); const p2 = (n: number) => String(n).padStart(2, "0");
-    const from = `${now.getFullYear()}-${p2(now.getMonth() + 1)}-01`;
+    /* حدود الشهر بتوقيت الرياض، حتى اليوم — كصفحة العقار، فيساوي المجموعُ مجموعَ خلاياها */
+    const to = today(), from = `${to.slice(0, 7)}-01`;
     const ids = properties.map((p) => p.id);
-    if (!ids.length) { setMonthCollected({}); return; }
+    if (!ids.length) { setMonthCollected({}); setExpMonth({ owner: 0, office: 0 }); return; }
+    fetchAllRows(supabase as any, "expenses", "id, amount, billable", (q) => q.in("property_id", ids).gte("spent_on", from).lte("spent_on", to))
+      .then((data) => { let owner = 0, office = 0;
+        data.forEach((e: any) => { if (e.billable === false) office += Number(e.amount) || 0; else owner += Number(e.amount) || 0; });
+        setExpMonth({ owner, office }); })
+      .catch((e) => console.error("month expenses", e?.message));
     /* على دفعات، والفشل يُبقي «…» — كان يعرض «0 محصَّل» رقمًا خاطئًا */
-    fetchAllRows(supabase as any, "payments", "id, property_id, amount", (q) => q.in("property_id", ids).gte("paid_on", from))
+    fetchAllRows(supabase as any, "payments", "id, property_id, amount", (q) => q.in("property_id", ids).gte("paid_on", from).lte("paid_on", to))
       .then((data) => {
         const m: Record<string, number> = {};
         data.forEach((x: any) => { m[x.property_id] = (m[x.property_id] || 0) + (Number(x.amount) || 0); });
@@ -98,12 +118,6 @@ export default function PortfolioView({ properties, windows }: {
     return T;
   }, [rows]);
   const collectedTotal = monthCollected ? Object.values(monthCollected).reduce((a, b) => a + b, 0) : null;
-  const annualRoll = useMemo(() => annualRentRoll(rows.map((r: any) => r.t)).annual, [rows]);
-  /* الدخل المتوقع للمحفظة كلها — من جدول الدفعات الفعلي لكل وحدة، فالعقد
-     القصير ينتهي عند نهايته ولا يُضرب في اثني عشر. */
-  const expected12 = useMemo(
-    () => rows.reduce((a, { t }) => a + expectedNext12(t as any), 0),
-    [rows]);
 
   // ---------- البحث الشامل ----------
   const needle = q.trim().toLowerCase().replace(/[٠-٩]/g, (d) => String("٠١٢٣٤٥٦٧٨٩".indexOf(d)));
@@ -153,39 +167,77 @@ export default function PortfolioView({ properties, windows }: {
         <button className="btn btn-ghost text-sm" onClick={() => setExpOpen(true)}
           title="كل مصروفات المكتب بفلترة على المالك والفترة — جاهزة للطباعة">💸 مصروفات كل العقارات</button>
       </div>
-      {/* المال: انتقل من صفحة العقار إلى هنا.
-          تلك صفحة العمل اليومي — من تأخّر ومن أُحصّل منه — وهذه صفحة
-          الأرقام التي يقرؤها المكتب آخر الشهر. ومجمّعًا على كل العقارات
-          يصير الرقم عن المكتب لا عن عمارة واحدة. */}
+      {/**
+        * الخلايا الثلاث نفسها في صفحة كل عقار، لكل العقارات — فمجموع خلايا
+        * العقارات يساوي هذه حتمًا (الدوال والحدود نفسها). كان هنا «المتبقي من
+        * عقودك خلال 12 شهرًا»: صيغة أخرى للدخل تُقرأ مناقضة له.
+        */}
+      {(() => {
+        const rr = annualRentRoll(rows.map((r: any) => r.t));
+        const mLabel = arDate(`${today().slice(0, 7)}-01`).replace(/^\S+\s+/, "");
+        const Cell = ({ t, v, sub, tone }: { t: string; v: string; sub: React.ReactNode; tone: string }) => (
+          <div className="bg-white border border-line rounded-xl px-4 py-3">
+            <div className="text-[12px] text-muted">{t}</div>
+            <div className={`text-2xl font-bold tabular-nums mt-0.5 ${tone}`}>{v} <span className="text-xs font-normal text-muted">ريال</span></div>
+            <div className="text-[11px] text-muted mt-1 leading-relaxed">{sub}</div>
+          </div>
+        );
+        return (
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3">
+            <Cell t="المحصَّل فعليًّا هذا الشهر" tone="text-[#137a50]"
+              v={collectedTotal === null ? "…" : sar(Math.round(collectedTotal))}
+              sub={<>كل العقارات · ما قُبض في {mLabel} حتى اليوم</>} />
+            <Cell t="دخل العقارات السنوي" tone="text-deep" v={sar(Math.round(rr.annual))}
+              sub={<>إيجار سنة لـ{rr.occupied} وحدة بعقد سارٍ
+                {rr.vacant ? <> · <span className="text-[#9A4B00]">شاغرة {rr.vacant}</span></> : null}
+                {rr.expired ? <> · <span className="text-late">{rr.expired} {rr.expired === 1 ? "عقد انتهى" : "عقود انتهت"} ولم {rr.expired === 1 ? "يُجدَّد" : "تُجدَّد"} ({sar(Math.round(rr.expiredAnnual))} خارج المجموع)</span></> : null}</>} />
+            <Cell t="مصروفات هذا الشهر" tone="text-ink"
+              v={expMonth === null ? "…" : sar(Math.round(expMonth.owner))}
+              sub={<>على الملّاك في {mLabel}{expMonth && expMonth.office > 0 ? <> · و{sar(Math.round(expMonth.office))} على المكتب</> : null}</>} />
+          </div>
+        );
+      })()}
       <div className="bg-white border border-line rounded-2xl p-4 mb-4">
-        <div className="flex items-baseline justify-between gap-3 flex-wrap mb-3">
-          <div>
-            <div className="text-xs text-muted">المتبقي من عقودك خلال 12 شهرًا — كل العقارات</div>
-            <div className="text-2xl font-bold text-deep tabular-nums">
-              {sar(Math.round(expected12))} <span className="text-sm font-normal text-muted">ريال</span>
-            </div>
-            {/* مجموع «دخل العمارة السنوي» في صفحات العقارات — بالدالة نفسها، فيتطابقان حتمًا */}
-            <div className="text-xs text-muted mt-1">
-              الدخل السنوي بعقودها الحالية: <b className="text-ink tabular-nums">{sar(Math.round(annualRoll))}</b> ريال
-            </div>
-          </div>
-          <div className="text-xs text-muted">
-            محصَّل هذا الشهر <b className="text-[#137a50] tabular-nums">{collectedTotal === null ? "…" : sar(Math.round(collectedTotal))}</b>
-            {expected12 > 0 && collectedTotal !== null && (
-              /* النسبة كانت تبلغ آلاف المئات حين يكون المقام صغيرًا (عقود
-                 أوشكت تنتهي) — رقمٌ بلا معنى. نعرضها فقط حين تكون مفهومة. */
-              (() => { const avg = expected12 / 12; const pc = avg > 0 ? Math.round((collectedTotal / avg) * 100) : 0;
-                return avg > 0 && pc <= 300 ? <span> · {pc}٪ من متوسط الشهر</span> : null; })()
-            )}
-          </div>
-        </div>
         {/* ستة أشهر افتراضيًّا: عشرة أشهر صفرية تأخذ مساحة الشهرين الحيَّين */}
         <MonthlyCollection propertyIds={properties.map((p: any) => p.id)} months={6} />
-        <p className="text-[11px] text-muted mt-2 leading-relaxed">
-          <b>المتبقي خلال 12 شهرًا:</b> أقساط كل وحدة مشغولة من جدولها الفعلي حتى نهاية عقدها — فالعقد القصير ينتهي عند نهايته.
-          {" "}<b>الدخل السنوي بعقودها الحالية:</b> دفعة كل وحدة × عدد دفعاتها في السنة — مجموع «دخل العمارة السنوي» في صفحات العقارات.
-        </p>
       </div>
+
+      {/* ═══ التزامات المكتب — عقود الوساطة وتراخيص الإعلانات ورخصة فال ═══ */}
+      {canComp && (() => {
+        const withState = comp.map((it) => ({ it, st: complianceState(it) }))
+          .filter(({ it, st }) => it.status !== "closed" && st.phase !== "closed")
+          .sort((a, b) => Number(b.st.alert) - Number(a.st.alert) || (a.st.daysToEnd ?? 1e9) - (b.st.daysToEnd ?? 1e9));
+        const alerts = alertCount(comp);
+        const TONE: Record<string, string> = { bad: "text-late", warn: "text-[#9A4B00]", ok: "text-[#137a50]", muted: "text-muted" };
+        return (
+          <div className="bg-white border border-line rounded-2xl p-4 mb-4">
+            <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
+              <div className="font-semibold text-deep text-sm">التزامات المكتب
+                {alerts > 0 && <span className="ms-2 text-[11px] px-2 py-0.5 rounded-full bg-[#FBE9E7] text-late">{alerts} تحتاج انتباهًا</span>}</div>
+              <button type="button" className="btn btn-ghost text-xs" onClick={() => setCompOpen(true)}>إدارة الالتزامات</button>
+            </div>
+            {withState.length === 0 ? (
+              <p className="text-xs text-muted">لا التزامات مسجّلة — عقود الوساطة وتراخيص الإعلانات ورخصة فال تُتابَع هنا بمواعيد انتهائها.</p>
+            ) : (
+              <div className="space-y-1.5">
+                {withState.slice(0, 5).map(({ it, st }) => (
+                  <div key={it.id} className="flex items-center justify-between gap-2 text-sm border-t border-line pt-1.5">
+                    <span className="truncate">{KIND_META[it.kind]?.icon} {it.title}
+                      <span className="text-[11px] text-muted"> · {KIND_META[it.kind]?.one}</span></span>
+                    <span className={`text-xs whitespace-nowrap ${TONE[st.tone] || "text-muted"}`}>{st.label}</span>
+                  </div>
+                ))}
+                {withState.length > 5 && <button type="button" className="text-[11px] text-goldInk underline underline-offset-4" onClick={() => setCompOpen(true)}>و{withState.length - 5} أخرى</button>}
+              </div>
+            )}
+          </div>
+        );
+      })()}
+      {compOpen && (
+        <ComplianceModal initial={comp} orgName={orgName} issuer={issuer || {}}
+          properties={properties.map((x: any) => ({ id: x.id, name: x.name }))}
+          onChanged={setComp} onClose={() => { setCompOpen(false); router.refresh(); }} />
+      )}
 
       {expOpen && <ExpensesOverview properties={properties as any} onClose={() => setExpOpen(false)} />}
       <div className="bg-white border border-line rounded-2xl p-4 mb-4">
