@@ -41,6 +41,13 @@ export default function OwnerLinkModal({ propertyId, propertyName, ownerPhoneHin
    */
   const owner = (ownerName || "").trim();
   const ownerProps = (properties || []).filter((p) => (p.owner_name || "").trim() === owner && owner);
+  /* الاسم نفسه بكتابة مختلفة («أبو فهد» و«ابو فهد»): «كل عقاراته» يجمع على الخادم
+     بالاسم حرفيًّا فلا يشملها — ننبّه لذلك، ونضيفها لـ«عقارات أختارها» (بالمعرّفات،
+     يعمل دائمًا). كان خيار المجمّع يختفي كليًّا فلا يعرف المكتب لماذا. */
+  const norm = (x?: string | null) => String(x || "").trim().replace(/\s+/g, " ").replace(/[أإآ]/g, "ا")
+    .replace(/ة/g, "ه").replace(/ى/g, "ي").replace(/[\u064B-\u0652\u0640]/g, "");
+  const similarProps = (properties || []).filter((p) => owner && norm(p.owner_name) === norm(owner) && (p.owner_name || "").trim() !== owner);
+  const pickable = [...ownerProps, ...similarProps];
   const [scope, setScope] = useState<"one" | "all" | "pick">("one");
   const [picked, setPicked] = useState<string[]>([propertyId]);
   const [busy, setBusy] = useState(false);
@@ -127,7 +134,7 @@ export default function OwnerLinkModal({ propertyId, propertyName, ownerPhoneHin
         )}
 
         {/* النطاق — يظهر حين للمالك أكثر من عقار؛ وإلا فالرابط لهذا العقار */}
-        {ownerProps.length > 1 && (
+        {pickable.length > 1 && (
           <div className="mt-4">
             <span className="block text-sm font-semibold mb-2">الرابط يعرض</span>
             <div className="grid gap-1.5">
@@ -144,9 +151,16 @@ export default function OwnerLinkModal({ propertyId, propertyName, ownerPhoneHin
               ))}
             </div>
 
+            {similarProps.length > 0 && (
+              <p className="mt-2 text-[11.5px] leading-relaxed rounded-lg border border-[#F2D49B] bg-[#FFF6E5] px-3 py-2 text-[#6b4a10]">
+                {similarProps.length === 1 ? "عقار" : `${similarProps.length} عقارات`} باسم مالك مكتوب بطريقة أخرى
+                ({similarProps.map((p) => `«${p.name}»: «${(p.owner_name || "").trim()}»`).join("، ")}) — «كل عقارات {owner}» لا {similarProps.length === 1 ? "يشمله" : "يشملها"}
+                حتى يُوحَّد الاسم من إعدادات العقار. أو اختر «عقارات أختارها».
+              </p>
+            )}
             {scope === "pick" && (
               <div className="mt-2 rounded-lg border border-line p-2 max-h-48 overflow-y-auto">
-                {ownerProps.map((p) => (
+                {pickable.map((p) => (
                   <label key={p.id} className="flex items-center gap-2 px-2 py-2 text-sm">
                     <input type="checkbox" checked={picked.includes(p.id)}
                       onChange={(e) => setPicked(e.target.checked ? [...picked, p.id] : picked.filter((x) => x !== p.id))} />
@@ -154,7 +168,7 @@ export default function OwnerLinkModal({ propertyId, propertyName, ownerPhoneHin
                   </label>
                 ))}
                 <p className="text-[11px] text-muted px-2 pt-1">
-                  {picked.length} من {ownerProps.length} — والعقار الجديد لا يُضاف لهذا الرابط تلقائيًّا.
+                  {picked.length} من {pickable.length} — والعقار الجديد لا يُضاف لهذا الرابط تلقائيًّا.
                 </p>
               </div>
             )}

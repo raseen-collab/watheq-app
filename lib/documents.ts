@@ -4,6 +4,8 @@ import { KIND_META as L_KIND, OFFER_LABEL, STATUS_META, freshness, pricePerMeter
 import { ownerNet, sumByCategory, catLabel, sumAllExpenses, sumDue, isBillable, PAID_BY, type ExpenseRow } from "./expenses";
 import { unitLabel, typeLabel } from "./domain";
 import { hijriText } from "@/lib/hijri";
+import { annualRentRoll } from "./income";
+import { defaultTermPeriods } from "./contracts";
 
 const sar = (n: number) => {
   const v = Number(n) || 0;
@@ -370,6 +372,72 @@ function vatOfPayments(p: Property & { tenants?: any[] },
 
 /** للاستعمال خارج هذا الملف (كشف التحصيل) — الضريبة بإعدادات من دفع */
 export const vatOfPaymentsFor = (p: Property & { tenants?: any[] }, payments: any[], pastVat?: PastVat) => vatOfPayments(p, payments, pastVat);
+
+/**
+ * سجل الوحدات — لكل وحدة بطاقة: نوعها ووصفها، والمستأجر، والإيجار (الدفعة ×
+ * الدورة = السنوي)، ومدة العقد، ومسدَّد حتى متى، والقادمة، والمتأخر. والشاغرة:
+ * منذ متى وبآخر إيجار. وفوقها ملخّص العمارة بدالة «دخل العمارة» نفسها في صفحة
+ * العقار — فلا يرى المالك رقمًا غير الذي يراه المكتب.
+ *
+ * طلب مكتب: «بعض الملّاك لا يدري الشقة أو المحل، وصفها، وكم إيجارها». كان
+ * تقرير العمارة جدولًا بسبعة أعمدة بلا نوع ولا وصف ولا سنوي، والكشف المجمّع
+ * جدولًا عريضًا لا يُقرأ على الجوال — والملّاك يفتحون الرابط على الجوال.
+ * بطاقات تلتفّ على أي عرض، وتُطبع اثنتين في السطر. لا جوال المستأجر ولا هويته.
+ */
+function unitsRegisterHTML(p: any, tenants: any[], g: any): string {
+  const rr = annualRentRoll(tenants);
+  const kinds: Record<string, number> = {};
+  for (const t of tenants) { const k = t.unit_type ? (UNIT_TYPE_AR[String(t.unit_type)] || "وحدة") : unitLabel(p.property_type); kinds[k] = (kinds[k] || 0) + 1; }
+  const kindLine = Object.entries(kinds).map(([k, n]) => `${n} ${k}`).join(" · ");
+  const sorted = [...tenants].sort((a, b) => String(a.unit || "").localeCompare(String(b.unit || ""), "ar", { numeric: true }));
+  const KV = (k: string, v: string) => `<div style="display:flex;justify-content:space-between;gap:8px;padding:3px 0;border-top:1px dashed #E3E8E6"><span style="color:#5C6B67">${k}</span><span style="text-align:left">${v}</span></div>`;
+  const card = (t: any) => {
+    const vac = isVacant(t); const st = contractState(t, g);
+    const type = t.unit_type ? (UNIT_TYPE_AR[String(t.unit_type)] || "وحدة") : unitLabel(p.property_type);
+    /* العدد يطابق المعدود: غرفة · غرفتان · 3 غرف · 11 غرفة */
+    const cnt = (n: any, one: string, two: string, few: string, many: string) => {
+      const k = Number(n) || 0; return !k ? "" : k === 1 ? one : k === 2 ? two : k <= 10 ? `${k} ${few}` : `${k} ${many}`; };
+    const desc = [cnt(t.rooms, "غرفة", "غرفتان", "غرف", "غرفة"), cnt(t.baths, "دورة مياه", "دورتا مياه", "دورات مياه", "دورة مياه"),
+      cnt(t.acs, "مكيف", "مكيفان", "مكيفات", "مكيفًا")].filter(Boolean).join(" · ");
+    const inst = splitVat(Number(t.rent_amount) || 0, vatOf(p, t)).total;
+    const perYear = defaultTermPeriods((t.payment_frequency || "monthly") as any) || 0;
+    const annual = Math.round(inst * perYear * 100) / 100;
+    const hij = (d?: string | null) => (String(t.calendar) === "hijri" && d ? ` <span style="font-size:.7em;color:#5C6B67">(${hijriText(d)})</span>` : "");
+    const pill = vac ? `<span class="pill">شاغرة</span>`
+      : st.daysToEnd !== null && st.daysToEnd < 0 ? `<span class="pill l">انتهى العقد</span>`
+      : st.status === "late" ? `<span class="pill l">متأخر</span>` : st.inGrace ? `<span class="pill u">فترة سماح</span>`
+      : st.expiringSoon ? `<span class="pill u">ينتهي قريبًا</span>` : `<span class="pill p">منتظم</span>`;
+    let body = "";
+    if (vac) {
+      const vd = vacancyDays(t.move_out_date);
+      body += KV("شاغرة منذ", vd !== null ? `${vd} يومًا${t.move_out_date ? ` (${arDate(t.move_out_date)})` : ""}` : "—");
+      if (Number(t.rent_amount) > 0) body += KV("آخر إيجار", `${sar(inst)} ${freqLabel(t.payment_frequency)} = <b>${sar(annual)}</b> سنويًّا`);
+      const owed = (st.legacyArrears || 0) + (Number(t.carried_debt) || 0);
+      if (owed > 0) body += KV("على المستأجر السابق", `<b style="color:#a5322c">${sar(owed)}</b>`);
+    } else {
+      const sched = buildSchedule(t as any);
+      const paidN = Math.min(Number(t.paid_periods) || 0, sched.length);
+      body += KV("المستأجر", String(t.name || "—"));
+      body += KV("الإيجار", `${sar(inst)} ${freqLabel(t.payment_frequency)} = <b>${sar(annual)}</b> سنويًّا`);
+      body += KV("العقد", `${arDate(t.contract_start)}${hij(t.contract_start)} ← ${arDate(st.endDate)}${hij(st.endDate)}`);
+      body += KV("مسدَّد حتى", paidN > 0 ? `دفعة ${arDate(sched[paidN - 1].date)}${hij(sched[paidN - 1].date)} <span style="color:#5C6B67">(${paidN} من ${sched.length})</span>` : "لم تُسدَّد دفعة من هذا العقد");
+      if (st.upcomingDate) body += KV("القادمة", `${arDate(st.upcomingDate)}${hij(st.upcomingDate)} · ${sar(inst)}`);
+      const due = st.amountDue || 0, car = Number(t.carried_debt) || 0;
+      body += KV("المتأخر", due + car > 0
+        ? `<b style="color:#a5322c">${sar(due)}</b>${car > 0 ? ` <span style="color:#9A4B00">+ ${sar(car)} دين مرحَّل</span>` : ""}` : `<span style="color:#137a50">لا شيء</span>`);
+    }
+    return `<div style="border:1px solid #D9E2DF;border-radius:10px;padding:8px 10px;break-inside:avoid;page-break-inside:avoid">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:6px"><b>${type} ${t.unit || "—"}</b>${pill}</div>
+      ${desc ? `<div style="font-size:.78em;color:#5C6B67;margin:2px 0 4px">${desc}</div>` : `<div style="height:4px"></div>`}
+      <div style="font-size:.82em">${body}</div></div>`;
+  };
+  return `<div class="box" style="margin-bottom:8px">
+    <div class="r"><span>الوحدات</span><span>${Object.keys(kinds).length > 1 ? `<b>${tenants.length}</b> — ${kindLine}` : `<b>${kindLine || tenants.length}</b>`}</span></div>
+    <div class="r"><span>مؤجّرة بعقد سارٍ</span><span>${rr.occupied}${rr.vacant ? ` · شاغرة ${rr.vacant}` : ""}${rr.expired ? ` · انتهى عقدها ولم يُجدَّد ${rr.expired}` : ""}</span></div>
+    <div class="r"><span>دخل العمارة السنوي</span><span><b>${sar(Math.round(rr.annual))}</b> ريال <span style="font-size:.72rem;color:#5C6B67">(إيجار سنة بالعقود السارية)</span></span></div>
+  </div>
+  <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:8px">${sorted.map(card).join("")}</div>`;
+}
 
 /** فترة السماح الخاصة بالعقار */
 const graceOf = (p: Property) => ({ graceDays: Number(p.grace_days) || 0 });
@@ -1905,31 +1973,12 @@ ${(fin.feeExceedsCollected || (fin.feePct !== null && fin.feePct >= 30)) ? `
   صحّحها من إعدادات العقار وأعد إصدار التقرير.
 </div>` : ""}
 
-<h2>حالة الوحدات في نهاية الفترة</h2>
-<div class="scrollx"><table>
-  <thead><tr><th>${ul}</th><th>المستأجر</th><th>الدفعة</th><th>الدورة</th><th>نهاية العقد</th><th>المتأخر</th><th>الحالة</th></tr></thead>
-  <tbody>
-    ${rows.map(({ t, st, vacant: vc }) => `<tr>
-      <td>${t.unit || "—"}</td>
-      <td>${vc ? "—" : t.name}</td>
-      <td>${vc ? "—" : sar(splitVat(Number(t.rent_amount) || 0, vatOf(p, t)).total)}</td>
-      <td>${vc ? "—" : freqLabel(t.payment_frequency)}</td>
-      <td>${vc ? "—" : `${arDate(st.endDate)}${String((t as any).calendar) === "hijri" && st.endDate
-        ? `<div style="font-size:.62rem;color:#5C6B67">${hijriText(st.endDate)}</div>` : ""}`}</td>
-      <td>${st.totalOwed ? `${sar(st.amountDue)}${st.carriedDebt > 0 ? `<div style="font-size:.62rem;color:#9A4B00">+ ${sar(st.carriedDebt)} دين مرحَّل</div>` : ""}${vc ? '<div style="font-size:.65rem;color:#5C6B67">على المستأجر السابق</div>' : ""}` : "—"}</td>
-      <td>${vc ? '<span class="pill u">شاغرة</span>'
-          : st.status === "late" ? '<span class="pill l">متأخر</span>'
-          : st.inGrace ? '<span class="pill u">فترة سماح</span>'
-          : st.status === "soon" ? '<span class="pill u">يستحق قريبًا</span>'
-          : '<span class="pill p">منتظم</span>'}</td>
-    </tr>`).join("")}
-  </tbody>
-  <tfoot><tr>
-    <td colspan="${5}"><b>الإجمالي</b> <span style="font-size:.72rem;color:#5C6B67">(${activeLate} وحدة متأخرة${vacantOwing ? ` · ${vacantOwing} شاغرة عليها دين سابق` : ""})</span></td>
-    <td><b>${sar(activeOwed)}</b>${legacyOwed > 0 ? `<div style="font-size:.65rem;color:#5C6B67">+ ${sar(legacyOwed)} على مستأجرين سابقين</div>` : ""}</td>
-    <td></td>
-  </tr></tfoot>
-</table></div>
+<h2>الوحدات — وصفها وإيجارها وحالتها في نهاية الفترة</h2>
+${unitsRegisterHTML(p, p.tenants || [], g)}
+<div class="box" style="margin-top:8px">
+  <div class="r"><span><b>إجمالي المتأخر</b> <span style="font-size:.72rem;color:#5C6B67">(${activeLate} وحدة متأخرة${vacantOwing ? ` · ${vacantOwing} شاغرة عليها دين سابق` : ""})</span></span>
+    <span><b>${sar(activeOwed)}</b>${legacyOwed > 0 ? ` <span style="font-size:.72rem;color:#5C6B67">+ ${sar(legacyOwed)} على مستأجرين سابقين</span>` : ""}</span></div>
+</div>
 
 <h2>الدفعات المستلمة خلال الفترة (${shownPays.length})</h2>
 ${shownPays.length ? `<div class="scrollx"><table>
@@ -2113,25 +2162,8 @@ ${rows.map((r) => `
 <h2 style="margin-top:22px">${r.s.property.name} — التفصيل</h2>
 <div class="sub" style="margin-bottom:6px">${typeLabel(r.s.property.property_type)}${r.s.property.city ? ` · ${r.s.property.city}` : ""}${r.s.property.address ? ` · ${r.s.property.address}` : ""}${r.s.property.usage ? ` · ${USAGE_AR[String(r.s.property.usage)] || r.s.property.usage}` : ""} · ${r.units} وحدة (${r.units - r.vacant} مؤجّرة، ${r.vacant} شاغرة)</div>
 ${detail === "full" ? `
-<h3 style="font-size:.85rem;margin:10px 0 4px">وحدات العقار وحالتها</h3>
-<div class="scrollx"><table>
-  <thead><tr><th>${unitLabel(r.s.property.property_type)}</th><th>النوع</th><th>المستأجر</th><th>الإيجار / الدورة</th><th>بداية العقد</th><th>نهاية العقد</th><th>الحالة</th><th>متأخر</th></tr></thead>
-  <tbody>
-    ${(r.s.property.tenants || []).map((t: any) => {
-      const g = graceOf(r.s.property); const cs = contractState(t, g); const vac = isVacant(t);
-      return `<tr>
-        <td><b>${t.unit || "—"}</b></td>
-        <td>${t.unit_type ? (UNIT_TYPE_AR[String(t.unit_type)] || "—") : unitLabel(r.s.property.property_type)}${(t.rooms || t.baths || t.acs) ? `<div style="font-size:.68rem;color:#5C6B67">${[t.rooms ? `${t.rooms} غرف` : "", t.baths ? `${t.baths} حمام` : "", t.acs ? `${t.acs} مكيف` : ""].filter(Boolean).join(" · ")}</div>` : ""}</td>
-        <td>${vac ? "<span style='color:#5C6B67'>— شاغرة —</span>" : t.name}${t.contract_no ? `<div style="font-size:.68rem;color:#5C6B67" dir="ltr">عقد ${t.contract_no}</div>` : ""}</td>
-        <td>${vac ? "—" : `${sar(t.rent_amount)} / ${freqLabel(t.payment_frequency)}`}</td>
-        <td>${vac ? "—" : arDate(t.contract_start)}</td>
-        <td>${vac ? "—" : arDate(cs.endDate)}</td>
-        <td>${vac ? '<span class="pill">شاغرة</span>' : cs.status === "late" ? '<span class="pill l">متأخر</span>' : cs.expiringSoon ? '<span class="pill u">ينتهي قريبًا</span>' : '<span class="pill p">منتظم</span>'}</td>
-        <td>${!vac && cs.amountDue > 0 ? `<b>${sar(cs.amountDue)}</b>` : "—"}</td>
-      </tr>`;
-    }).join("")}
-  </tbody>
-</table></div>` : ""}
+<h3 style="font-size:.85rem;margin:10px 0 4px">الوحدات — وصفها وإيجارها وحالتها</h3>
+${unitsRegisterHTML(r.s.property, r.s.property.tenants || [], graceOf(r.s.property))}` : ""}
 ${ownerVisiblePayments(r.s.payments as any[]).length ? `<div class="scrollx"><table>
   <thead><tr><th>التاريخ</th><th>المستأجر</th><th>${unitLabel(r.s.property.property_type)}</th><th>المبلغ</th><th>الطريقة</th></tr></thead>
   <tbody>
