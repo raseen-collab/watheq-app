@@ -2027,7 +2027,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
           onClose={() => setModal(null)} onSubmit={(d) => saveProperty(d, active.id)} onDelete={deleteProperty} />
       )}
       {modal?.kind === "tenant" && (
-        <TenantModal open initial={editing} unitWord={ul} error={saveErr} saving={saving}
+        <TenantModal open initial={editing} unitWord={ul} error={saveErr} saving={saving} vatEnabled={!!active?.vat_enabled}
           onClose={() => setModal(null)} onSubmit={(d) => saveTenant(d, editing?.id)} />
       )}
 
@@ -2677,26 +2677,38 @@ function PropertyModal({ open, initial, orgName, ownerNames = [], officeSoon = 1
           <Field label="المدينة"><input className="fld" value={d.city || ""} onChange={(e) => setD({ ...d, city: e.target.value })} placeholder="الرياض" /></Field>
           <Field label="الحي / العنوان"><input className="fld" value={d.address || ""} onChange={(e) => setD({ ...d, address: e.target.value })} placeholder="حي الياسمين" /></Field>
         </div>
-        <Field label="اسم المالك أو المكتب" hint="يظهر في الخطابات"><input className="fld" value={d.manager || ""} onChange={(e) => setD({ ...d, manager: e.target.value })} placeholder={orgName || "مكتب اليمامة"} /></Field>
-        <Field label="استخدام العقار" hint="يظهر في المستندات والإعلانات">
-          <select className="fld" value={d.usage || ""} onChange={(e) => setD({ ...d, usage: e.target.value })}>
-            <option value="">— غير محدد —</option>
-            {Object.entries(PROPERTY_USAGE).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
-          </select>
-        </Field>
-        <Field label="تنبيه انتهاء العقد قبله بـ (يوم)" hint={`فارغ = افتراضي المكتب (${officeExpiring} يوم) — يظهر باللون الأحمر ضمن «ينتهي قريبًا»`}>
-          <input className="fld" type="number" min={1} max={180} value={d.expiring_days ?? ""} onChange={(e) => setD({ ...d, expiring_days: e.target.value === "" ? null : Number(e.target.value) })} placeholder={String(officeExpiring)} />
-        </Field>
-        <Field label="نافذة «قريب» لهذا العقار" hint={`فارغ = افتراضي المكتب (${officeSoon} يوم)`}>
-          <input className="fld" type="number" min={1} max={60} value={d.soon_days ?? ""} onChange={(e) => setD({ ...d, soon_days: e.target.value === "" ? null : Number(e.target.value) })} placeholder={`افتراضي المكتب: ${officeSoon}`} />
-        </Field>
-        <Field label="نافذة «مستحق» لهذا العقار" hint={`فارغ = افتراضي المكتب (${officeImminent} يوم) — يجب أن تكون أقل من «قريب»`}>
-          <input className="fld" type="number" min={1} max={60} value={d.imminent_days ?? ""} onChange={(e) => setD({ ...d, imminent_days: e.target.value === "" ? null : Number(e.target.value) })} placeholder={`افتراضي المكتب: ${officeImminent}`} />
-        </Field>
         <Field label="المالك" hint="يجمع عقاراته في كشف حساب واحد — اختر اسمًا موجودًا أو اكتب جديدًا">
           <input className="fld" list="watheq-owner-names" value={d.owner_name || ""} onChange={(e) => setD({ ...d, owner_name: e.target.value })} placeholder="مثال: عبدالله بن سعد" />
           <datalist id="watheq-owner-names">{ownerNames.map((n) => <option key={n} value={n} />)}</datalist>
         </Field>
+        {/* «اسم المالك أو المكتب» أزيل: هو في الكود «مدير العقار» ولا يظهر في مستند إلا
+            إن فرغ اسم المُصدِر في الإعدادات، وقيمته اسم المكتب أصلًا — لكن تسميته جعلت
+            المكتب يكتب فيه اسم المالك مرتين (أو هنا لا في «المالك» فلا يُجمَّع كشفه).
+            يبقى محفوظًا كما هو (اسم المكتب افتراضيًّا عند الحفظ). */}
+        {/* الاستخدام (عوائل/عزّاب) للعمارة والفيلا فقط — لا معنى له لمعرض أو مستودع */}
+        {(["residential", "villa"].includes(d.property_type || "residential") || d.usage) && (
+          <Field label="استخدام العقار" hint="يظهر في المستندات والإعلانات">
+            <select className="fld" value={d.usage || ""} onChange={(e) => setD({ ...d, usage: e.target.value })}>
+              <option value="">— غير محدد —</option>
+              {Object.entries(PROPERTY_USAGE).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+            </select>
+          </Field>
+        )}
+        {/* نوافذ التنبيه لهذا العقار: الافتراضي من إعدادات المكتب — تُغيَّر نادرًا */}
+        <details open={d.expiring_days != null || d.soon_days != null || d.imminent_days != null} className="border border-line rounded-xl p-3 bg-paper">
+          <summary className="cursor-pointer text-sm font-semibold text-deep">إعدادات التنبيه لهذا العقار <span className="text-xs text-muted font-normal">— اختيارية، الافتراضي من إعدادات المكتب</span></summary>
+          <div className="space-y-3 mt-3">
+            <Field label="تنبيه انتهاء العقد قبله بـ (يوم)" hint={`فارغ = افتراضي المكتب (${officeExpiring} يوم) — يظهر باللون الأحمر ضمن «ينتهي قريبًا»`}>
+              <input className="fld" type="number" min={1} max={180} value={d.expiring_days ?? ""} onChange={(e) => setD({ ...d, expiring_days: e.target.value === "" ? null : Number(e.target.value) })} placeholder={String(officeExpiring)} />
+            </Field>
+            <Field label="نافذة «قريب» لهذا العقار" hint={`فارغ = افتراضي المكتب (${officeSoon} يوم)`}>
+              <input className="fld" type="number" min={1} max={60} value={d.soon_days ?? ""} onChange={(e) => setD({ ...d, soon_days: e.target.value === "" ? null : Number(e.target.value) })} placeholder={`افتراضي المكتب: ${officeSoon}`} />
+            </Field>
+            <Field label="نافذة «مستحق» لهذا العقار" hint={`فارغ = افتراضي المكتب (${officeImminent} يوم) — يجب أن تكون أقل من «قريب»`}>
+              <input className="fld" type="number" min={1} max={60} value={d.imminent_days ?? ""} onChange={(e) => setD({ ...d, imminent_days: e.target.value === "" ? null : Number(e.target.value) })} placeholder={`افتراضي المكتب: ${officeImminent}`} />
+            </Field>
+          </div>
+        </details>
 
         <div className="block">
           <span className="block text-sm font-semibold mb-1">فترة السماح (أيام) <span className="text-muted font-normal text-xs">— لا تُحتسب الدفعة متأخرة خلالها</span></span>
@@ -2781,8 +2793,10 @@ function PropertyModal({ open, initial, orgName, ownerNames = [], officeSoon = 1
   );
 }
 
-function TenantModal({ open, initial, unitWord, error, saving, onClose, onSubmit }: {
+function TenantModal({ open, initial, unitWord, error, saving, onClose, onSubmit, vatEnabled = false }: {
   open: boolean; initial?: Tenant; unitWord: string; onClose: () => void; onSubmit: (d: any) => void;
+  /** حقل ضريبة الوحدة يظهر فقط لعقار مفعّلة ضريبته — كان يظهر لكل عمارة سكنية */
+  vatEnabled?: boolean;
   /** سبب فشل الحفظ — يُعرض بجانب الزر لا في أعلى الصفحة */
   error?: string | null;
   saving?: boolean;
@@ -2790,6 +2804,9 @@ function TenantModal({ open, initial, unitWord, error, saving, onClose, onSubmit
   const [d, setD] = useState<any>(initial || { payment_frequency: "monthly", contract_start: today() });
   /* «عقد جديد يبدأ لاحقًا» — يؤكّده المكتب مرة فيختفي التنبيه */
   const [startIsNew, setStartIsNew] = useState(false);
+  const [extraOpen] = useState(() => !!(initial && ((initial as any).first_due || (initial as any).national_id || Number((initial as any).carried_debt) > 0
+    || (initial as any).contract_no || (initial as any).elec_account || (initial as any).water_account || (initial as any).meter_elec_in
+    || (initial as any).meter_water_in || ((initial as any).vat_mode && (initial as any).vat_mode !== "auto"))));
   if (!open) return null;
   const preview = d.contract_start && d.rent_amount ? contractState({ ...d, paid_periods: d.paid_periods || 0 }) : null;
   /**
@@ -2842,13 +2859,22 @@ function TenantModal({ open, initial, unitWord, error, saving, onClose, onSubmit
           <Field label={`رقم ${unitWord}`}><input className="fld" value={d.unit || ""} onChange={(e) => setD({ ...d, unit: e.target.value })} placeholder="101" /></Field>
         </div>
         <div className="grid grid-cols-2 gap-3">
-          <Field label="قيمة الدفعة (ريال)"><input className="fld" type="number" value={d.rent_amount || ""} onChange={(e) => setD({ ...d, rent_amount: e.target.value })} placeholder="2500" /></Field>
+          <Field label="قيمة الدفعة (ريال)" hint={(() => {
+            const st = ({ monthly: 1, quarterly: 3, trimester: 4, semiannual: 6, annual: 12 } as any)[d.payment_frequency || "monthly"];
+            const r = Number(d.rent_amount) || 0;
+            return r > 0 && st ? `= ${sar(Math.round(r * 12 / st))} سنويًّا` : undefined;
+          })()}><input className="fld" type="number" value={d.rent_amount || ""} onChange={(e) => setD({ ...d, rent_amount: e.target.value })} placeholder="2500" /></Field>
           <Field label="جوال المستأجر"><input className="fld" value={d.phone || ""} onChange={(e) => setD({ ...d, phone: e.target.value })} placeholder="05xxxxxxxx" /></Field>
         </div>
         <Field label="دورة السداد">
           <div className="grid grid-cols-3 gap-2">
             {FREQUENCIES.map((f) => (
-              <button key={f.value} type="button" onClick={() => setD({ ...d, payment_frequency: f.value })}
+              <button key={f.value} type="button" onClick={() => {
+                const MO: Record<string, number> = { monthly: 1, quarterly: 3, trimester: 4, semiannual: 6, annual: 12 };
+                const oldM = (Number(d.contract_periods) || 0) * (MO[d.payment_frequency || "monthly"] || 0);
+                setD({ ...d, payment_frequency: f.value,
+                  ...(oldM && MO[f.value] && oldM % MO[f.value] === 0 ? { contract_periods: oldM / MO[f.value] } : {}) });
+              }}
                 className={`border-2 rounded-lg py-2 text-xs font-semibold transition ${
                   d.payment_frequency === f.value ? "border-gold bg-[#FBF1DF]" : "border-line hover:border-goldSoft"}`}>
                 {f.label}
@@ -2862,44 +2888,49 @@ function TenantModal({ open, initial, unitWord, error, saving, onClose, onSubmit
             /* أدخل التاريخ بالهجري؟ إذن عقده هجري وأقساطه تُحسب بالأشهر الهجرية —
                كان يجب عليه تغيير خانة ثانية بنفسه، فينسى وتخرج الاستحقاقات منحرفة أيامًا */
             ...(mode ? { calendar: mode === "h" ? "hijri" : "gregorian", _calAuto: true } : {}) })} /></Field>
-        <Field label="أول تاريخ استحقاق" hint="اختياري — الافتراضي أن أول دفعة تستحق يوم بداية العقد. املأه فقط إن كان يختلف (يبدأ 1/1 والدفعة الأولى 5/1). بقية الدفعات تُعدّ منه">
-          <DateField value={d.first_due || ""} onChange={(v) => setD({ ...d, first_due: v })} />
-        </Field>
         <Field label="تُحسب الأقساط بالتقويم" hint={d._calAuto ? `ضُبط تلقائيًّا لأنك أدخلت البداية بالتقويم ${d.calendar === "hijri" ? "الهجري" : "الميلادي"} — غيّره إن كان العقد مكتوبًا بالتقويم الآخر` : "عقد مكتوب بالهجري (كل 6 أشهر هجرية) اختر هجري — وإلا يزحف الاستحقاق أيامًا كل قسط"}>
           <select className="fld" value={d.calendar || "gregorian"} onChange={(e) => setD({ ...d, calendar: e.target.value, _calAuto: false })}>
             <option value="gregorian">ميلادي — الأشهر الميلادية</option>
             <option value="hijri">هجري — الأشهر الهجرية (أم القرى)</option>
           </select>
         </Field>
-          <Field label="عدد الدفعات — وهو ما يحدد مدة العقد" hint={(() => {
-            /* عدد الدفعات هو مدة العقد فعليًّا: 24 دفعة شهرية = سنتان، و6 = نصف
-               سنة. كان الحقل يقول «فارغ = سنة» فقط، فيظنّ المكتب أن العقود
-               السنوية وحدها مدعومة. الآن يرى المدة والنهاية وهو يكتب. */
+          {/* «مدة العقد» لا «عدد الدفعات»: المكتب يعرف المدة من العقد، والعدد يُحسب منها —
+              عقد سنة بدفع نصف سنوي = دفعتان حتمًا. «أخرى» للمدد غير المعتادة. */}
+          {(() => {
+            const MO: Record<string, number> = { monthly: 1, quarterly: 3, trimester: 4, semiannual: 6, annual: 12 };
+            const f = (d.payment_frequency || "monthly") as Frequency; const st = MO[f] || 0;
             const n = Number(d.contract_periods) || 0;
-            const f = (d.payment_frequency || "monthly") as Frequency;
-            if (!n) return "فارغ = سنة كاملة. اكتب 24 لعقد سنتين، أو 6 لعقد نصف سنة.";
-            const months = n * ({ daily: 0, weekly: 0, monthly: 1, quarterly: 3, trimester: 4, semiannual: 6, annual: 12 } as any)[f];
-            const dur = !months ? `${n} دفعة`
-              : months % 12 === 0 ? plural(months / 12, "سنة واحدة", "سنتان", "سنوات", "سنة")
-              : months < 12 ? plural(months, "شهر واحد", "شهران", "أشهر", "شهرًا")
-              : `${plural(Math.floor(months / 12), "سنة", "سنتان", "سنوات", "سنة")} و${plural(months % 12, "شهر", "شهران", "أشهر", "شهرًا")}`;
-            const end = d.contract_start ? derivedEndDate(d.contract_start, f, n, null, d.calendar === "hijri" ? "hijri" : "gregorian") : null;
-            return `المدة: ${dur}${end ? ` · ينتهي ${end}` : ""}`;
-          })()}>
-            <input className="fld" type="number" min={1} value={d.contract_periods || ""} onChange={(e) => setD({ ...d, contract_periods: e.target.value })} placeholder={String(defPeriods)} />
-          </Field>
+            if (!st) return (   /* يومي/أسبوعي: المدة بالأشهر لا تنطبق — العدد مباشرة */
+              <Field label="عدد الدفعات"><input className="fld" type="number" min={1} value={d.contract_periods || ""}
+                onChange={(e) => setD({ ...d, contract_periods: e.target.value })} placeholder={String(defPeriods)} /></Field>);
+            const months = (n || defPeriods) * st;
+            const PRESETS = [6, 12, 24, 36].filter((m) => m % st === 0);
+            const custom = d._durCustom || !PRESETS.includes(months);
+            const dur = (m: number) => m % 12 === 0 ? plural(m / 12, "سنة", "سنتان", "سنوات", "سنة")
+              : m < 12 ? plural(m, "شهر واحد", "شهران", "أشهر", "شهرًا")
+              : `${plural(Math.floor(m / 12), "سنة", "سنتان", "سنوات", "سنة")} و${plural(m % 12, "شهر", "شهران", "أشهر", "شهرًا")}`;
+            const cnt = n || defPeriods;
+            const FW: Record<string, string> = { monthly: "شهرية", quarterly: "ربع سنوية", trimester: "كل 4 أشهر", semiannual: "نصف سنوية", annual: "سنوية" };
+            const end = d.contract_start ? derivedEndDate(d.contract_start, f, cnt, null, d.calendar === "hijri" ? "hijri" : "gregorian") : null;
+            return (
+              <Field label="مدة العقد" hint={`= ${plural(cnt, "دفعة واحدة", "دفعتان", "دفعات", "دفعة")} ${FW[f]}${end ? ` · ينتهي ${end}` : ""}`}>
+                <select className="fld" value={custom ? "custom" : String(months)}
+                  onChange={(e) => e.target.value === "custom" ? setD({ ...d, _durCustom: true })
+                    : setD({ ...d, _durCustom: false, contract_periods: Number(e.target.value) / st })}>
+                  {PRESETS.map((m) => <option key={m} value={m}>{dur(m)}</option>)}
+                  <option value="custom">مدة أخرى…</option>
+                </select>
+                {custom && (
+                  <div className="flex items-center gap-2 mt-1.5">
+                    <input className="fld" type="number" min={st} step={st} value={months}
+                      onChange={(e) => { const m = Number(e.target.value) || 0; if (m > 0 && m % st === 0) setD({ ...d, _durCustom: true, contract_periods: m / st }); }} />
+                    <span className="text-xs text-muted whitespace-nowrap">شهرًا{st > 1 ? ` (مضاعفات ${st})` : ""}</span>
+                  </div>
+                )}
+              </Field>
+            );
+          })()}
         </div>
-        <Field label="رقم الهوية / السجل" hint="للخطابات"><input className="fld" value={d.national_id || ""} onChange={(e) => setD({ ...d, national_id: e.target.value })} /></Field>
-        <Field label="دين مرحَّل (ريال)" hint="متأخرات من عقد سابق أو مستأجر سابق — تظهر في الكشوف ولا تدخل في دفعات العقد الجاري">
-          <input className="fld" type="number" min={0} value={d.carried_debt ?? ""} onChange={(e) => setD({ ...d, carried_debt: e.target.value })} placeholder="0" />
-        </Field>
-        <Field label="ضريبة القيمة المضافة لهذه الوحدة" hint="العمارة المختلطة: السكني معفى والتجاري خاضع — «تلقائي» يقرّر بحسب نوع الوحدة">
-          <select className="fld" value={d.vat_mode || "auto"} onChange={(e) => setD({ ...d, vat_mode: e.target.value })}>
-            <option value="auto">تلقائي — بحسب نوع الوحدة</option>
-            <option value="on">تُطبَّق دائمًا</option>
-            <option value="off">معفاة</option>
-          </select>
-        </Field>
         <Field label="نوع الوحدة" hint="يظهر في المستندات ومخالصة الإخلاء">
           <select className="fld" value={d.unit_type || ""} onChange={(e) => setD({ ...d, unit_type: e.target.value })}>
             <option value="">— بحسب العقار —</option>
@@ -2911,7 +2942,6 @@ function TenantModal({ open, initial, unitWord, error, saving, onClose, onSubmit
           <Field label="دورات المياه"><input className="fld" type="number" min={0} value={d.baths ?? ""} onChange={(e) => setD({ ...d, baths: e.target.value })} /></Field>
           <Field label="المكيفات"><input className="fld" type="number" min={0} value={d.acs ?? ""} onChange={(e) => setD({ ...d, acs: e.target.value })} /></Field>
         </div>
-        <Field label="رقم العقد" hint="رقمه لديكم أو في «إيجار» — يظهر في كشوف الحساب والخطابات"><input className="fld" dir="ltr" value={d.contract_no || ""} onChange={(e) => setD({ ...d, contract_no: e.target.value })} /></Field>
         {/* كان يظهر عند الإضافة فقط، فمن أخطأ في الرقم — أو استورده خطأً من
             إكسل — لا يستطيع تصحيحه من اللوحة إطلاقًا، وتبقى الوحدة تشير إلى
             دفعة خاطئة أبدًا. الآن يظهر في الحالتين بنصّ يناسب كلًّا منهما. */}
@@ -2957,9 +2987,32 @@ function TenantModal({ open, initial, unitWord, error, saving, onClose, onSubmit
             </span>
           )}
         </Field>
-        <details className="mt-3 border border-line rounded-xl p-3 bg-paper">
-          <summary className="cursor-pointer text-sm font-semibold text-deep">⚡ المرافق — حساب الكهرباء والماء وقراءات التسليم</summary>
-          <div className="grid sm:grid-cols-2 gap-3 mt-3">
+        {/* «تفاصيل إضافية» مطويّة: ما لا يُملأ عادةً عند الإدخال الأول — كان النموذج
+            عشرين حقلًا دفعة واحدة. تنفتح وحدها إن كان فيها بيانات، فلا يُخفى شيء. */}
+        <details open={extraOpen} className="mt-3 border border-line rounded-xl p-3 bg-paper">
+          <summary className="cursor-pointer text-sm font-semibold text-deep">تفاصيل إضافية
+            <span className="text-xs text-muted font-normal"> — اختيارية: رقم العقد، الهوية، دين سابق{vatEnabled ? "، الضريبة" : ""}، الكهرباء والماء</span></summary>
+          <div className="space-y-3 mt-3">
+          <Field label="رقم العقد" hint="رقمه لديكم أو في «إيجار» — يظهر في كشوف الحساب والخطابات"><input className="fld" dir="ltr" value={d.contract_no || ""} onChange={(e) => setD({ ...d, contract_no: e.target.value })} /></Field>
+          <Field label="رقم الهوية / السجل" hint="للخطابات"><input className="fld" value={d.national_id || ""} onChange={(e) => setD({ ...d, national_id: e.target.value })} /></Field>
+          <Field label="دين مرحَّل (ريال)" hint="متأخرات من عقد سابق أو مستأجر سابق — تظهر في الكشوف ولا تدخل في دفعات العقد الجاري">
+            <input className="fld" type="number" min={0} value={d.carried_debt ?? ""} onChange={(e) => setD({ ...d, carried_debt: e.target.value })} placeholder="0" />
+          </Field>
+            <Field label="أول تاريخ استحقاق" hint="الافتراضي أن أول دفعة تستحق يوم بداية العقد. املأه فقط إن كان يختلف (يبدأ 1/1 والدفعة الأولى 5/1)">
+              <DateField value={d.first_due || ""} onChange={(v) => setD({ ...d, first_due: v })} />
+            </Field>
+            {vatEnabled && (
+          <Field label="ضريبة القيمة المضافة لهذه الوحدة" hint="العمارة المختلطة: السكني معفى والتجاري خاضع — «تلقائي» يقرّر بحسب نوع الوحدة">
+            <select className="fld" value={d.vat_mode || "auto"} onChange={(e) => setD({ ...d, vat_mode: e.target.value })}>
+              <option value="auto">تلقائي — بحسب نوع الوحدة</option>
+              <option value="on">تُطبَّق دائمًا</option>
+              <option value="off">معفاة</option>
+            </select>
+          </Field>
+            )}
+          </div>
+          <div className="text-[11px] font-semibold text-muted mt-3">⚡ المرافق</div>
+          <div className="grid sm:grid-cols-2 gap-3 mt-1.5">
             <Field label="رقم حساب الكهرباء" hint="ثابت للوحدة — يُستخدم في الاستعلام ونقل الخدمة">
               <input className="fld" dir="ltr" value={d.elec_account || ""} onChange={(e) => setD({ ...d, elec_account: e.target.value })} placeholder="رقم الحساب في شركة الكهرباء" />
             </Field>
