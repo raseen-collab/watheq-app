@@ -747,6 +747,24 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
        * دون أن يدفع شيئًا. هذا صحيح حسابيًّا (النظام يعدّ دفعات لا مبالغ)
        * لكنه مفاجئ — فنُنبّه ونقترح التجديد الذي يبدأ مدة جديدة بسعر جديد.
        */
+      /**
+       * تغيير دورة السداد وسط عقد عليه دفعات: العدّاد يعدّ دفعات بالدورة القديمة.
+       * «مسدَّد 7» شهرية (سبعة أشهر) تُقرأ بعد التغيير سبع دفعات نصف سنوية —
+       * ثلاث سنوات ونصف مقدّمًا، فيظهر المستأجر منتظمًا لسنوات. لم يكن عليه حارس
+       * (بخلاف تغيير الإيجار أدناه). نمنع الحفظ ما لم يُراجَع «مسدَّد حتى»، ونعرض
+       * ما يعادله بالدورة الجديدة.
+       */
+      if (prev && (prev.paid_periods || 0) > 0 && (d.payment_frequency || "monthly") !== (prev.payment_frequency || "monthly")
+          && Number(d.paid_periods) === Number(prev.paid_periods)) {
+        const MO: Record<string, number> = { monthly: 1, quarterly: 3, trimester: 4, semiannual: 6, annual: 12 };
+        const oldM = MO[prev.payment_frequency || "monthly"], newM = MO[d.payment_frequency || "monthly"];
+        const months = (prev.paid_periods || 0) * (oldM || 0);
+        const eq = oldM && newM ? months / newM : null;
+        fail(`غيّرت دورة السداد لعقد عليه ${prev.paid_periods} دفعة مسجَّلة بالدورة القديمة`
+          + (eq !== null ? ` (= ${months} ${months === 1 ? "شهر" : "أشهر"}${Number.isInteger(eq) ? `، أي ${eq} بالدورة الجديدة` : `، أي ${Math.floor(eq)} دفعة وجزء من التالية بالدورة الجديدة`})` : "")
+          + `. راجع «مسدَّد حتى» واختر آخر دفعة سُدّدت فعلًا بالدورة الجديدة، ثم احفظ. أو جدّد العقد بالدورة الجديدة.`);
+        return;
+      }
       if (prev && (prev.paid_periods || 0) > 0 && Number(d.rent_amount) !== Number(prev.rent_amount)) {
         const st0 = contractState(prev, { graceDays: Number(active.grace_days) || 0, ...windowsOf(active) });
         const after = contractState({ ...prev, rent_amount: Number(d.rent_amount) || 0 }, { graceDays: Number(active.grace_days) || 0, ...windowsOf(active) });
