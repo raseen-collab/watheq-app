@@ -6,6 +6,7 @@ import { unitLabel, typeLabel } from "./domain";
 import { hijriText } from "@/lib/hijri";
 import { annualRentRoll } from "./income";
 import { defaultTermPeriods } from "./contracts";
+import { unitStatus, unitStatusLabel } from "./contract-state";
 
 const sar = (n: number) => {
   const v = Number(n) || 0;
@@ -384,7 +385,13 @@ export const vatOfPaymentsFor = (p: Property & { tenants?: any[] }, payments: an
  * جدولًا عريضًا لا يُقرأ على الجوال — والملّاك يفتحون الرابط على الجوال.
  * بطاقات تلتفّ على أي عرض، وتُطبع اثنتين في السطر. لا جوال المستأجر ولا هويته.
  */
-function unitsRegisterHTML(p: any, tenants: any[], g: any): string {
+function unitsRegisterHTML(p: any, tenants: any[], g: any, issuer: any = {}): string {
+  /* نوافذ «قريب» و«مستحق» و«ينتهي قريبًا» كاللوحة (windowsOf): العقار ثم المكتب ثم
+     الافتراض — كان التقرير يحسب بالافتراض وحده فيختلف عند من غيّر إعداداته */
+  const win = { ...g,
+    soonDays: Number(p.soon_days) || Number(issuer?.due_soon_days) || undefined,
+    imminentDays: Number(p.imminent_days) || Number(issuer?.due_imminent_days) || undefined,
+    expiringDays: Number(p.expiring_days) || Number(issuer?.expiring_days) || undefined };
   const rr = annualRentRoll(tenants);
   const kinds: Record<string, number> = {};
   for (const t of tenants) { const k = t.unit_type ? (UNIT_TYPE_AR[String(t.unit_type)] || "وحدة") : unitLabel(p.property_type); kinds[k] = (kinds[k] || 0) + 1; }
@@ -392,7 +399,7 @@ function unitsRegisterHTML(p: any, tenants: any[], g: any): string {
   const sorted = [...tenants].sort((a, b) => String(a.unit || "").localeCompare(String(b.unit || ""), "ar", { numeric: true }));
   const KV = (k: string, v: string) => `<div style="display:flex;justify-content:space-between;gap:8px;padding:3px 0;border-top:1px dashed #E3E8E6"><span style="color:#5C6B67">${k}</span><span style="text-align:left">${v}</span></div>`;
   const card = (t: any) => {
-    const vac = isVacant(t); const st = contractState(t, g);
+    const vac = isVacant(t); const st = contractState(t, win);
     const type = t.unit_type ? (UNIT_TYPE_AR[String(t.unit_type)] || "وحدة") : unitLabel(p.property_type);
     /* العدد يطابق المعدود: غرفة · غرفتان · 3 غرف · 11 غرفة */
     const cnt = (n: any, one: string, two: string, few: string, many: string) => {
@@ -403,10 +410,10 @@ function unitsRegisterHTML(p: any, tenants: any[], g: any): string {
     const perYear = defaultTermPeriods((t.payment_frequency || "monthly") as any) || 0;
     const annual = Math.round(inst * perYear * 100) / 100;
     const hij = (d?: string | null) => (String(t.calendar) === "hijri" && d ? ` <span style="font-size:.7em;color:#5C6B67">(${hijriText(d)})</span>` : "");
-    const pill = vac ? `<span class="pill">شاغرة</span>`
-      : st.daysToEnd !== null && st.daysToEnd < 0 ? `<span class="pill l">انتهى العقد</span>`
-      : st.status === "late" ? `<span class="pill l">متأخر</span>` : st.inGrace ? `<span class="pill u">فترة سماح</span>`
-      : st.expiringSoon ? `<span class="pill u">ينتهي قريبًا</span>` : `<span class="pill p">منتظم</span>`;
+    /* الشارة نفسها التي في اللوحة (unitStatus) — والعقد المنتهي يُسمّى باسمه */
+    const key = unitStatus(t, st as any);
+    const PC: Record<string, string> = { late: "l", partial: "l", due: "u", soon: "u", expiring: "u", incomplete: "u", ok: "p" };
+    const pill = `<span class="pill ${PC[key] || ""}">${unitStatusLabel(key, st)}</span>`;
     let body = "";
     if (vac) {
       const vd = vacancyDays(t.move_out_date);
@@ -1974,7 +1981,7 @@ ${(fin.feeExceedsCollected || (fin.feePct !== null && fin.feePct >= 30)) ? `
 </div>` : ""}
 
 <h2>الوحدات — وصفها وإيجارها وحالتها في نهاية الفترة</h2>
-${unitsRegisterHTML(p, p.tenants || [], g)}
+${unitsRegisterHTML(p, p.tenants || [], g, issuer)}
 <div class="box" style="margin-top:8px">
   <div class="r"><span><b>إجمالي المتأخر</b> <span style="font-size:.72rem;color:#5C6B67">(${activeLate} وحدة متأخرة${vacantOwing ? ` · ${vacantOwing} شاغرة عليها دين سابق` : ""})</span></span>
     <span><b>${sar(activeOwed)}</b>${legacyOwed > 0 ? ` <span style="font-size:.72rem;color:#5C6B67">+ ${sar(legacyOwed)} على مستأجرين سابقين</span>` : ""}</span></div>
@@ -2163,7 +2170,7 @@ ${rows.map((r) => `
 <div class="sub" style="margin-bottom:6px">${typeLabel(r.s.property.property_type)}${r.s.property.city ? ` · ${r.s.property.city}` : ""}${r.s.property.address ? ` · ${r.s.property.address}` : ""}${r.s.property.usage ? ` · ${USAGE_AR[String(r.s.property.usage)] || r.s.property.usage}` : ""} · ${r.units} وحدة (${r.units - r.vacant} مؤجّرة، ${r.vacant} شاغرة)</div>
 ${detail === "full" ? `
 <h3 style="font-size:.85rem;margin:10px 0 4px">الوحدات — وصفها وإيجارها وحالتها</h3>
-${unitsRegisterHTML(r.s.property, r.s.property.tenants || [], graceOf(r.s.property))}` : ""}
+${unitsRegisterHTML(r.s.property, r.s.property.tenants || [], graceOf(r.s.property), issuer)}` : ""}
 ${ownerVisiblePayments(r.s.payments as any[]).length ? `<div class="scrollx"><table>
   <thead><tr><th>التاريخ</th><th>المستأجر</th><th>${unitLabel(r.s.property.property_type)}</th><th>المبلغ</th><th>الطريقة</th></tr></thead>
   <tbody>

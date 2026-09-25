@@ -119,7 +119,7 @@ async function render(_req: Request, { params }: { params: { token: string } }) 
     const [pays, exps, { data: profile }] = await Promise.all([
       fetchAll("payments", "*", "paid_on"),
       fetchAll("expenses", "*", "spent_on"),
-      db.from("profiles").select("org_name, billing_name, vat_number, cr_number, billing_phone, plan, trial_ends_at, subscribed_until")
+      db.from("profiles").select("org_name, billing_name, vat_number, cr_number, billing_phone, plan, trial_ends_at, subscribed_until, due_soon_days, due_imminent_days, expiring_days")
         .eq("id", link.user_id).maybeSingle(),
     ]);
     /* إعدادات الضريبة للمستأجرين السابقين — لضريبة دفعاتهم */
@@ -189,7 +189,7 @@ async function render(_req: Request, { params }: { params: { token: string } }) 
       (q) => q.eq("property_id", link.property_id).gte("paid_on", from).lte("paid_on", to).order("paid_on", { ascending: true })),
     fetchAllRows(db as any, "expenses", "*",
       (q) => q.eq("property_id", link.property_id).gte("spent_on", from).lte("spent_on", to).order("spent_on", { ascending: true })),
-    db.from("profiles").select("org_name, billing_name, vat_number, cr_number, billing_phone, plan, trial_ends_at, subscribed_until")
+    db.from("profiles").select("org_name, billing_name, vat_number, cr_number, billing_phone, plan, trial_ends_at, subscribed_until, due_soon_days, due_imminent_days, expiring_days")
       .eq("id", link.user_id).maybeSingle(),
   ]);
 

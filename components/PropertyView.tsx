@@ -7,6 +7,7 @@ import { createClient } from "@/lib/supabase-client";
 import { officeId, getOffice, ROLE_LABEL, OWNER_PERMS } from "@/lib/office";
 import { arDate, termRentPaidOf, pastVatOf } from "@/lib/documents";
 import { annualRentRoll } from "@/lib/income";
+import { unitStatus, unitStatusLabel } from "@/lib/contract-state";
 import type { ComplianceItem } from "@/lib/compliance";
 import { fetchAllRows } from "@/lib/fetch-all";
 import { hijriShort, hijriText, parseHijriInput } from "@/lib/hijri";
@@ -136,16 +137,10 @@ function UpcomingLine({ st, rent, imminentDays }: {
   );
 }
 
+/* التصنيف في lib/contract-state (unitStatus) — مشترك مع رابط المالك وتقاريره،
+   فلا تعرض اللوحة «مستحق» والتقرير «منتظم» للوحدة نفسها */
 function rowKey(t: Tenant, st: ReturnType<typeof contractState>): RowKey {
-  if (isVacant(t)) return "vacant";
-  /* وحدة مؤجّرة بلا تاريخ بداية كانت تظهر «منتظم» خضراء — فيمرّ عليها المكتب
-     مطمئنًّا وهي بلا استحقاقات إطلاقًا. تُعرَض الآن كنقص يستدعي إكمالًا. */
-  if (st.incomplete) return "incomplete";
-  if (t.litigation) return "litigation";
-  if (st.status === "late") return st.hasPartial ? "partial" : "late";
-  if (st.status === "soon") return st.soonTier === "near" ? "soon" : "due";
-  if (st.expiringSoon) return "expiring";
-  return "ok";
+  return unitStatus(t, st as any) as RowKey;
 }
 
 const UNIT_TYPES: Record<string, string> = {
@@ -1113,7 +1108,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       const key = rowKey(t, st);
       return [t.name, t.unit || "", t.phone || "", t.national_id || "",
         Number(t.rent_amount) || 0, freqShort(t.payment_frequency),
-        t.contract_start || "", st.endDate || "", ROW_META[key].label,
+        t.contract_start || "", st.endDate || "", unitStatusLabel(key as any, st),
         key === "late" || key === "partial" ? st.amountDue : 0, st.nextDueDate || ""]
         .map((v) => `"${String(v ?? "").replace(/"/g, '""')}"`).join(",");
     });
@@ -1561,7 +1556,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
           {(counts.expiring || 0) > 0 && (
             <button type="button" onClick={() => setFilter("expiring")}
               className={`text-xs px-3 py-2 rounded-full border ${filter === "expiring" ? "bg-paper2 border-line" : "bg-white border-line"} text-ink`}>
-              عقود تنتهي قريبًا: <b>{counts.expiring}</b></button>
+              عقود للتجديد أو الإخلاء: <b>{counts.expiring}</b></button>
           )}
         </div>
       )}
@@ -1871,7 +1866,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                       بدل نصّ صغير بجانب الشارة. */}
                   <div className="text-right sm:text-left shrink-0 border-t sm:border-0 border-line/70 pt-2 sm:pt-0 sm:me-auto">
                     <div className="flex sm:block items-center justify-between gap-2">
-                      <StatusPill k={key} />
+                      <StatusPill k={key} ended={st.daysToEnd !== null && st.daysToEnd < 0} />
                       {(key === "late" || key === "partial") && st.amountDue > 0 && (
                         <span className={`sm:block sm:mt-1 tabular-nums font-bold leading-none ${key === "late" ? "text-late text-lg" : "text-[#9A5B00] text-base"}`}>
                           {sar(st.amountDue)}<span className="text-[10px] font-normal text-muted"> ريال</span>
@@ -2477,11 +2472,12 @@ function HistoryModal({ data, unitWord, onClose, canEdit = true, onChanged }: {
 
 
 /** شارة الحالة — تقرأ من ROW_META */
-function StatusPill({ k }: { k: RowKey }) {
+function StatusPill({ k, ended = false }: { k: RowKey; ended?: boolean }) {
   const m = ROW_META[k];
+  const label = ended && k === "expiring" ? "انتهى العقد" : m.label;
   return (
     <span className={`inline-flex items-center gap-1.5 text-xs font-semibold rounded-lg px-2.5 py-1 ${m.cls}`}>
-      <span className={`w-1.5 h-1.5 rounded-full ${m.dot}`} /> {m.label}
+      <span className={`w-1.5 h-1.5 rounded-full ${m.dot}`} /> {label}
     </span>
   );
 }
@@ -2843,7 +2839,9 @@ function TenantModal({ open, initial, unitWord, error, saving, onClose, onSubmit
    * الذي كان سيكتبه في مكانه الصحيح. (15 من الـ33 كتبوا التاريخ نفسه في «البداية»
    * و«أول استحقاق» — فهموهما سؤالًا واحدًا.) التعديل لا يمرّ بهذا: حمايته v49.
    */
-  const [occ, setOcc] = useState<"" | "current" | "new">("");
+  /* «fresh»: ساكن من قبل، والقديم مسوّى خارج وثيق (عمارة ورثة بلا عقد إيجار مثلًا) —
+     المتابعة من دفعته القادمة. كان المكتب مضطرًّا لاختيار «لم يسكن بعد» وهو ساكن. */
+  const [occ, setOcc] = useState<"" | "current" | "new" | "fresh">("");
   const [localErr, setLocalErr] = useState<string | null>(null);
   const [extraOpen] = useState(() => !!(initial && ((initial as any).first_due || (initial as any).national_id || Number((initial as any).carried_debt) > 0
     || (initial as any).contract_no || (initial as any).elec_account || (initial as any).water_account || (initial as any).meter_elec_in
@@ -2928,9 +2926,11 @@ function TenantModal({ open, initial, unitWord, error, saving, onClose, onSubmit
         {askOcc && (
           <div className={`rounded-xl border p-3 ${occ ? "border-line bg-paper" : "border-[#F2D49B] bg-[#FFF6E5]"}`}>
             <div className="text-sm font-semibold text-deep mb-2">المستأجر ساكن في الوحدة الآن؟</div>
-            <div className="grid grid-cols-2 gap-2">
-              {([["current", "نعم — عقد قائم", "ساكن من قبل، وعقده ساري"], ["new", "لا — عقد جديد", "لم يسكن بعد، يبدأ لاحقًا"]] as const).map(([v, t, sub]) => (
-                <button key={v} type="button" onClick={() => { setOcc(v); setLocalErr(null); if (v === "new") setD({ ...d, paid_periods: 0, partial_amount: 0 }); }}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+              {([["current", "نعم — أنقل وضعه", "ساكن، وأسجّل ما دفعه من عقده"],
+                 ["fresh", "نعم — بداية جديدة", "ساكن، والقديم مسوّى عندي — أبدأ من دفعته القادمة"],
+                 ["new", "لا — عقد جديد", "لم يسكن بعد، يبدأ لاحقًا"]] as const).map(([v, t, sub]) => (
+                <button key={v} type="button" onClick={() => { setOcc(v); setLocalErr(null); if (v === "new" || v === "fresh") setD({ ...d, paid_periods: 0, partial_amount: 0 }); }}
                   className={`text-start rounded-lg border px-3 py-2 min-h-[44px] ${occ === v ? "border-gold bg-[#FBF1DF]" : "border-line bg-white hover:border-goldSoft"}`}>
                   <div className="text-sm font-semibold text-deep">{t}</div>
                   <div className="text-[11px] text-muted">{sub}</div>
@@ -2940,8 +2940,9 @@ function TenantModal({ open, initial, unitWord, error, saving, onClose, onSubmit
           </div>
         )}
         <div className="grid grid-cols-2 gap-3">
-          <Field label={askOcc && occ === "current" ? "بداية العقد في إيجار — قبل اليوم" : "بداية العقد"}
-            hint={askOcc && occ === "current" ? "من عقد إيجار نفسه — ليس موعد الدفعة القادمة" : undefined}>
+          <Field label={askOcc && occ === "current" ? "بداية العقد في إيجار — قبل اليوم" : askOcc && occ === "fresh" ? "موعد دفعته القادمة" : "بداية العقد"}
+            hint={askOcc && occ === "current" ? "من عقد إيجار نفسه — ليس موعد الدفعة القادمة"
+              : askOcc && occ === "fresh" ? "من هنا يبدأ وثيق متابعته، وتنتهي المدة بعد «مدة العقد» منه" : undefined}>
           <DateField value={d.contract_start || ""} onChange={(v, mode) => setD({ ...d, contract_start: v,
             /* أدخل التاريخ بالهجري؟ إذن عقده هجري وأقساطه تُحسب بالأشهر الهجرية —
                كان يجب عليه تغيير خانة ثانية بنفسه، فينسى وتخرج الاستحقاقات منحرفة أيامًا */
@@ -3012,9 +3013,9 @@ function TenantModal({ open, initial, unitWord, error, saving, onClose, onSubmit
         {/* «مسدَّد حتى» بكلمات الموظف. كان العنوان «دفعات سُدّدت حتى اليوم» يسأل عن
             عدد والقائمة تحته تواريخ، والخيارات «الدفعة 3 — 2026-07-01» (مكتب: «قريتها
             وما فهمت»). وعقد جديد لم يُدفع فيه شيء لا يُسأل أصلًا. */}
-        {askOcc && occ === "new" ? (
+        {askOcc && (occ === "new" || occ === "fresh") ? (
           <div className="text-[12px] text-muted rounded-lg bg-paper border border-line px-3 py-2">
-            عقد جديد — لا دفعات سابقة. إن استلمت دفعة عند التوقيع فسجّلها بعد الحفظ بزر ✔ «استلام».
+            {occ === "fresh" ? "بداية جديدة — لا دفعات سابقة في وثيق؛ القديم يبقى في دفاترك." : "عقد جديد — لا دفعات سابقة."} إن استلمت دفعة عند التوقيع أو اليوم فسجّلها بعد الحفظ بزر ✔ «استلام».
           </div>
         ) : (
         <Field label="مسدَّد حتى: آخر دفعة دفعها المستأجر"

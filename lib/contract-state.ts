@@ -1,3 +1,4 @@
+import { isVacant } from "./contracts";
 /** ============================================================
  *  وثيق — تسميات وألوان حالات العقد (طبقة عرض فقط)
  *  الحساب الفعلي يتم في lib/contracts.ts (نفس مصدر لوحة التحكّم).
@@ -36,4 +37,31 @@ export function deriveState(
   if (st.status === "soon") return "due_soon";
   if (st.daysToEnd !== null && st.daysToEnd <= RENEW_DAYS) return "expiring";
   return "active";
+}
+
+
+/**
+ * حالة الوحدة كما تعرضها اللوحة — منقولة حرفيًّا من rowKey في PropertyView، فيستعملها
+ * الموقع والمستندات معًا. كان «سجل الوحدات» في رابط المالك يصنّف بمنطق مختصر لا
+ * يعرف «مستحق» ولا «قريب»: دفعة تستحق اليوم ظهرت «مستحق» في اللوحة و«منتظم» في
+ * التقرير (عمارة الزهراء، مكتب عمرو باعبدالله).
+ */
+export type UnitStatus = "vacant" | "litigation" | "incomplete" | "late" | "partial" | "due" | "soon" | "expiring" | "ok";
+export const UNIT_STATUS_LABEL: Record<UnitStatus, string> = {
+  vacant: "شاغرة", litigation: "في التنفيذ", late: "متأخر", partial: "سداد جزئي", incomplete: "بيانات ناقصة",
+  due: "مستحق", soon: "قريب", expiring: "ينتهي قريبًا", ok: "منتظم",
+};
+export function unitStatus(t: any, st: { incomplete?: boolean; status: string; hasPartial?: boolean; soonTier?: string | null; expiringSoon?: boolean; daysToEnd?: number | null }): UnitStatus {
+  if (isVacant(t)) return "vacant";
+  if (st.incomplete) return "incomplete";
+  if (t?.litigation) return "litigation";
+  if (st.status === "late") return st.hasPartial ? "partial" : "late";
+  if (st.status === "soon") return st.soonTier === "near" ? "soon" : "due";
+  /* عقد انتهى ولم يُسجَّل إخلاء ولا تجديد: كان «منتظم» أخضر، وفلتر التجديد لا يعدّه */
+  if (st.expiringSoon || (st.daysToEnd != null && st.daysToEnd < 0)) return "expiring";
+  return "ok";
+}
+/** الاسم المعروض: «ينتهي قريبًا» لعقد انتهى فعلًا كذب — يُسمّى «انتهى العقد» */
+export function unitStatusLabel(key: UnitStatus, st: { daysToEnd?: number | null }): string {
+  return key === "expiring" && st.daysToEnd != null && st.daysToEnd < 0 ? "انتهى العقد" : UNIT_STATUS_LABEL[key];
 }
