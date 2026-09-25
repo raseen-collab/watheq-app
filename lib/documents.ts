@@ -428,10 +428,14 @@ function unitsRegisterHTML(p: any, tenants: any[], g: any, issuer: any = {}): st
       body += KV("الإيجار", `${sar(inst)} ${freqLabel(t.payment_frequency)} = <b>${sar(annual)}</b> سنويًّا`);
       body += KV("العقد", `${arDate(t.contract_start)}${hij(t.contract_start)} ← ${arDate(st.endDate)}${hij(st.endDate)}`);
       body += KV("مسدَّد حتى", paidN > 0 ? `دفعة ${arDate(sched[paidN - 1].date)}${hij(sched[paidN - 1].date)} <span style="color:#5C6B67">(${paidN} من ${sched.length})</span>` : "لم تُسدَّد دفعة من هذا العقد");
-      if (st.upcomingDate) body += KV("القادمة", `${arDate(st.upcomingDate)}${hij(st.upcomingDate)} · ${sar(inst)}`);
+      /* «القادمة» لتاريخ حلّ أو مضى تُقرأ «لم تحن بعد» — فتُسمّى «مستحقة» */
+      if (st.upcomingDate) body += KV(st.upcomingDate <= today() ? "مستحقة" : "القادمة", `${arDate(st.upcomingDate)}${hij(st.upcomingDate)} · ${sar(inst)}`);
       const due = st.amountDue || 0, car = Number(t.carried_debt) || 0;
       body += KV("المتأخر", due + car > 0
-        ? `<b style="color:#a5322c">${sar(due)}</b>${car > 0 ? ` <span style="color:#9A4B00">+ ${sar(car)} دين مرحَّل</span>` : ""}` : `<span style="color:#137a50">لا شيء</span>`);
+        ? `<b style="color:#a5322c">${sar(due)}</b>${car > 0 ? ` <span style="color:#9A4B00">+ ${sar(car)} دين مرحَّل</span>` : ""}`
+        /* في فترة السماح: مستحق لم يتأخر بعد — كما تقول اللوحة، لا «لا شيء» وحدها */
+        : st.inGrace ? `<span style="color:#9A4B00">لا شيء بعد — فترة سماح ${st.graceDaysLeft > 0 ? `(${st.graceDaysLeft === 1 ? "يوم" : st.graceDaysLeft === 2 ? "يومان" : `${st.graceDaysLeft} أيام`})` : ""}</span>`
+        : `<span style="color:#137a50">لا شيء</span>`);
     }
     return `<div style="border:1px solid #D9E2DF;border-radius:10px;padding:8px 10px;break-inside:avoid;page-break-inside:avoid">
       <div style="display:flex;justify-content:space-between;align-items:center;gap:6px"><b>${type} ${t.unit || "—"}</b>${pill}</div>
