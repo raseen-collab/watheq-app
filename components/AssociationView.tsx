@@ -1319,7 +1319,7 @@ function OwnerModal({ owner, onClose, onSubmit }: {
               <input className="fld" value={d.phone} onChange={(e) => setD({ ...d, phone: e.target.value })} placeholder="05xxxxxxxx" />
             </Field>
           </div>
-          <Field label="الفترات المتأخرة">
+          <Field label="الأشهر المتأخرة" hint="اشتراكات شهرية لم تُدفع حتى اليوم">
             <input className="fld" type="number" min={0} value={d.months_late}
               onChange={(e) => setD({ ...d, months_late: e.target.value })} />
           </Field>

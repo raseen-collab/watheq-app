@@ -107,8 +107,8 @@ const ROW_META: Record<RowKey, { label: string; dot: string; cls: string }> = {
  */
 function renewalNote(st: ReturnType<typeof contractState>): string {
   if (st.endDate && st.daysToEnd !== null && st.daysToEnd >= 0)
-    return `العقد ينتهي ${st.endDate} (${st.daysToEnd === 0 ? "اليوم" : `بعد ${st.daysToEnd} يوم`}) — الدفعة التالية مع التجديد`;
-  if (st.endDate) return `انتهى العقد ${st.endDate} — جدّده لتظهر الدفعات القادمة`;
+    return `العقد ينتهي ${arDate(st.endDate)} (${st.daysToEnd === 0 ? "اليوم" : `بعد ${st.daysToEnd} يوم`}) — الدفعة التالية مع التجديد`;
+  if (st.endDate) return `انتهى العقد ${arDate(st.endDate)} — جدّده لتظهر الدفعات القادمة`;
   return "لا دفعات قادمة في العقد";
 }
 
@@ -1735,20 +1735,20 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                             <td className={`px-3 ${cellY} whitespace-nowrap tabular-nums`}>
                               {key === "vacant" ? <span className="text-muted">—</span>
                               : st.fullyPaid && st.endDate ? (<>
-                                <div className="text-[#137a50]">ينتهي {st.endDate}</div>
+                                <div className="text-[#137a50]">ينتهي {arDate(st.endDate)}</div>
                                 <div className="text-[11px] text-muted">{hijriShort(st.endDate)} · القادم مع التجديد</div>
                               </>)
                               /* المتأخر: أقدم غير مسدَّد في الماضي — نُسمّيه «متأخر منذ»
                                  ونُظهر القادم الحقيقي تحته. كان التاريخ الماضي يُعرض
                                  وحده تحت عنوان «الاستحقاق القادم» فيُربك المكتب. */
                               : st.nextDueDate && (st.daysToNextDue ?? 0) < 0 ? (<>
-                                <div className="text-late text-xs font-semibold">متأخر منذ {st.nextDueDate}</div>
+                                <div className="text-late text-xs font-semibold">متأخر منذ {arDate(st.nextDueDate)}</div>
                                 {st.upcomingDate
                                   ? <div className="text-[11px] text-muted"><UpcomingLine st={st} rent={Number(t.rent_amount) || 0} imminentDays={windowsOf(active).imminentDays} /></div>
                                   : st.upcomingDate === null ? <div className="text-[11px] text-muted">{renewalNote(st)}</div> : null}
                               </>)
                               : st.nextDueDate ? (<>
-                                <div>{st.nextDueDate}</div>
+                                <div>{arDate(st.nextDueDate)}</div>
                                 <div className="text-[11px] text-muted">{hijriShort(st.nextDueDate)}</div>
                               </>) : <span className="text-muted">—</span>}
                             </td>
@@ -1886,19 +1886,19 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                         /* حالة حسن خليل: متبقٍ من دفعة سابقة، والقادمة بعد أيام —
                            كانت البطاقة تذكر المتبقي ولا تذكر متى الدفعة التالية. */
                         : key === "partial" ? <span className="text-[#9A5B00] font-semibold">
-                            متأخر {sar(st.amountDue)} ريال{st.nextDueDate ? <span className="font-normal"> منذ {st.nextDueDate}</span> : null}
+                            متأخر {sar(st.amountDue)} ريال{st.nextDueDate ? <span className="font-normal"> منذ {arDate(st.nextDueDate)}</span> : null}
                             <span className="block font-normal text-muted">دُفع منها {sar(st.partial)}</span>
                             <UpcomingLine st={st} rent={Number(t.rent_amount) || 0} imminentDays={windowsOf(active).imminentDays} />
                           </span>
                         : key === "late" ? <span className="text-late font-semibold">
-                            {st.unpaid} {st.unpaid === 1 ? "دفعة" : "دفعات"} متأخرة{st.nextDueDate ? <span className="font-normal"> منذ {st.nextDueDate}</span> : null}
+                            {st.unpaid} {st.unpaid === 1 ? "دفعة" : "دفعات"} متأخرة{st.nextDueDate ? <span className="font-normal"> منذ {arDate(st.nextDueDate)}</span> : null}
                             <UpcomingLine st={st} rent={Number(t.rent_amount) || 0} imminentDays={windowsOf(active).imminentDays} />
                           </span>
                         : key === "due" ? <span className="text-[#9A4B00] font-semibold">
                             {st.statusLabel}
                             {/* «مستحق خلال 4 أيام» بلا مبلغ يجعل المكتب يسأل: كم؟ */}
                             {Number(t.rent_amount) > 0 && <span> · {sar(Number(t.rent_amount))} ريال</span>}
-                            {st.nextDueDate ? <span className="font-normal text-muted"> · {st.nextDueDate}</span> : null}
+                            {st.nextDueDate ? <span className="font-normal text-muted"> · {arDate(st.nextDueDate)}</span> : null}
                           </span>
                         : key === "expiring" && st.daysToEnd !== null ? <span className="text-[#5B21B6] font-semibold">ينتهي بعد {st.daysToEnd} يوم</span>
                         : key === "litigation" ? <span className="text-[#475569]">{t.enforcement_no ? `طلب ${t.enforcement_no}` : "متابعة نظامية"}</span>
@@ -2258,7 +2258,7 @@ function TurnoverModal({ tenant, unitWord, onClose, onSubmit }: {
       <p className="text-sm text-muted mb-4">{tenant.name} · {unitWord} {tenant.unit || "—"}</p>
 
       <div className="grid grid-cols-2 gap-3">
-        <Field label="تاريخ الإشعار" hint="اختياري">
+        <Field label="تاريخ إبلاغ المستأجر بالإخلاء" hint="اختياري">
           <DateField value={d.notice_date} onChange={(v) => set("notice_date", v)} />
         </Field>
         <Field label="تاريخ الإخلاء الفعلي">
@@ -2730,10 +2730,10 @@ function PropertyModal({ open, initial, orgName, ownerNames = [], officeSoon = 1
             <Field label="تنبيه انتهاء العقد قبله بـ (يوم)" hint={`فارغ = افتراضي المكتب (${officeExpiring} يوم) — يظهر باللون الأحمر ضمن «ينتهي قريبًا»`}>
               <input className="fld" type="number" min={1} max={180} value={d.expiring_days ?? ""} onChange={(e) => setD({ ...d, expiring_days: e.target.value === "" ? null : Number(e.target.value) })} placeholder={String(officeExpiring)} />
             </Field>
-            <Field label="نافذة «قريب» لهذا العقار" hint={`فارغ = افتراضي المكتب (${officeSoon} يوم)`}>
+            <Field label="«قريب» — قبل الاستحقاق بـ (يوم)" hint={`فارغ = إعداد المكتب (${officeSoon} يوم)`}>
               <input className="fld" type="number" min={1} max={60} value={d.soon_days ?? ""} onChange={(e) => setD({ ...d, soon_days: e.target.value === "" ? null : Number(e.target.value) })} placeholder={`افتراضي المكتب: ${officeSoon}`} />
             </Field>
-            <Field label="نافذة «مستحق» لهذا العقار" hint={`فارغ = افتراضي المكتب (${officeImminent} يوم) — يجب أن تكون أقل من «قريب»`}>
+            <Field label="«مستحق» — قبل الاستحقاق بـ (يوم)" hint={`فارغ = إعداد المكتب (${officeImminent} يوم) — أقل من «قريب»`}>
               <input className="fld" type="number" min={1} max={60} value={d.imminent_days ?? ""} onChange={(e) => setD({ ...d, imminent_days: e.target.value === "" ? null : Number(e.target.value) })} placeholder={`افتراضي المكتب: ${officeImminent}`} />
             </Field>
           </div>
@@ -2772,14 +2772,14 @@ function PropertyModal({ open, initial, orgName, ownerNames = [], officeSoon = 1
           </p>
           {d.vat_enabled && (
             <div className="grid grid-cols-2 gap-3 mt-3">
-              <Field label="النسبة %">
+              <Field label="نسبة الضريبة %">
                 <input className="fld" type="number" value={d.vat_rate ?? 15} onChange={(e) => setD({ ...d, vat_rate: e.target.value })} />
               </Field>
               {/* «غير شاملة» لا يُعرض للإعداد الجديد: يجعل المسجَّل غير المقبوض
                   (العدّاد بالأساس والمستأجر يدفع الضريبة فوقه) وهو أكثر وضع ظهرت فيه
                   أخطاء. العقار المضبوط عليه أصلًا يبقى كما هو ويعمل صحيحًا. */}
               {initial?.vat_inclusive === false ? (
-                <Field label="قيمة الإيجار المُدخلة">
+                <Field label="الإيجار الذي تكتبه في الوحدات">
                   <select className="fld" value={d.vat_inclusive === false ? "ex" : "in"}
                     onChange={(e) => setD({ ...d, vat_inclusive: e.target.value === "in" })}>
                     <option value="in">شاملة الضريبة</option>
@@ -2787,7 +2787,7 @@ function PropertyModal({ open, initial, orgName, ownerNames = [], officeSoon = 1
                   </select>
                 </Field>
               ) : (
-                <Field label="قيمة الإيجار المُدخلة">
+                <Field label="الإيجار الذي تكتبه في الوحدات">
                   <div className="fld bg-paper text-muted text-sm">شاملة الضريبة — أدخل الإيجار كما يدفعه المستأجر</div>
                 </Field>
               )}
@@ -2977,7 +2977,7 @@ function TenantModal({ open, initial, unitWord, error, saving, onClose, onSubmit
             const FW: Record<string, string> = { monthly: "شهرية", quarterly: "ربع سنوية", trimester: "كل 4 أشهر", semiannual: "نصف سنوية", annual: "سنوية" };
             const end = d.contract_start ? derivedEndDate(d.contract_start, f, cnt, null, d.calendar === "hijri" ? "hijri" : "gregorian") : null;
             return (
-              <Field label="مدة العقد" hint={`= ${plural(cnt, "دفعة واحدة", "دفعتان", "دفعات", "دفعة")} ${FW[f]}${end ? ` · ينتهي ${end}` : ""}`}>
+              <Field label="مدة العقد" hint={`= ${plural(cnt, "دفعة واحدة", "دفعتان", "دفعات", "دفعة")} ${FW[f]}${end ? ` · ينتهي ${arDate(end)}` : ""}`}>
                 <select className="fld" value={custom ? "custom" : String(months)}
                   onChange={(e) => e.target.value === "custom" ? setD({ ...d, _durCustom: true })
                     : setD({ ...d, _durCustom: false, contract_periods: Number(e.target.value) / st })}>
@@ -3048,14 +3048,14 @@ function TenantModal({ open, initial, unitWord, error, saving, onClose, onSubmit
           )}
           {askOcc && occ === "current" && !startTooLate && preview && preview.nextDueDate && (
             <div className="text-[12px] mt-1.5 rounded-lg bg-paper border border-line px-3 py-2">
-              الدفعة القادمة بحسب ما أدخلت: <b className="text-deep">{preview.nextDueDate}</b>
+              الدفعة القادمة بحسب ما أدخلت: <b className="text-deep">{arDate(preview.nextDueDate)}</b>
               {(preview.daysToNextDue ?? 0) < 0 ? <span className="text-late"> (متأخرة)</span> : null}
               <span className="text-muted"> — إن لم يكن الموعد الذي تعرفه، راجع البداية أو «مسدَّد حتى».</span>
             </div>
           )}
           {futureStartQ && (
             <div className="bg-[#FFF6E5] border border-[#F2D49B] rounded-xl p-3 text-[12.5px] leading-relaxed mt-2">
-              <b className="text-deep">بداية العقد بعد اليوم ({startISO}).</b> هل هو عقد جديد يبدأ في هذا التاريخ، أم عقد ساري من قبل؟
+              <b className="text-deep">بداية العقد بعد اليوم ({arDate(startISO)}).</b> هل هو عقد جديد يبدأ في هذا التاريخ، أم عقد ساري من قبل؟
               <div className="mt-1.5">
                 <b>عقد ساري:</b> اكتب في «بداية العقد» تاريخ بدايته الفعلي من العقد نفسه — <b>لا موعد الدفعة القادمة</b> —
                 ثم اختر هنا آخر دفعة سدّدها. الدفعة القادمة ونهاية العقد تُحسبان تلقائيًّا.
@@ -3118,11 +3118,11 @@ function TenantModal({ open, initial, unitWord, error, saving, onClose, onSubmit
             <div className="font-semibold text-deep mb-1.5">استنتاج تلقائي</div>
             <div className="text-muted space-y-1 text-xs leading-relaxed">
               {(preview.daysToNextDue ?? 0) < 0 && preview.amountDue > 0 && (
-                <div>متأخر منذ: <b className="text-late">{preview.nextDueDate}</b> · {sar(preview.amountDue)} ريال</div>
+                <div>متأخر منذ: <b className="text-late">{arDate(preview.nextDueDate)}</b> · {sar(preview.amountDue)} ريال</div>
               )}
               <div>الدفعة القادمة: <b className="text-ink">{preview.upcomingDate
                 ?? (preview.upcomingDate === null ? "لا دفعات قادمة" : preview.nextDueDate)}</b></div>
-              <div>نهاية العقد: <b className="text-ink">{preview.endDate}</b></div>
+              <div>نهاية العقد: <b className="text-ink">{arDate(preview.endDate)}</b></div>
               <div>إجمالي قيمة العقد: <b className="text-ink">{sar(totalValue)} ريال</b></div>
             </div>
             {sched.length > 0 && (() => {
@@ -3138,8 +3138,8 @@ function TenantModal({ open, initial, unitWord, error, saving, onClose, onSubmit
                     <b>بهذه البيانات:</b>{" "}
                     {paidN > 0 ? `مسدَّد حتى دفعة ${sched[paidN - 1].date}` : "لم يُسدَّد شيء من هذا العقد"}
                     {lateN > 0 ? ` · حلّ ولم يُسدَّد ${lateN} ${lateN === 1 ? "دفعة" : lateN === 2 ? "دفعتان" : "دفعات"}` : " · لا متأخرات"}
-                    {preview.upcomingDate ? ` · القادمة ${preview.upcomingDate}` : ""}
-                    {` · ينتهي العقد ${preview.endDate}`}
+                    {preview.upcomingDate ? ` · القادمة ${arDate(preview.upcomingDate)}` : ""}
+                    {` · ينتهي العقد ${arDate(preview.endDate)}`}
                   </div>
                   <div className="flex flex-wrap gap-1 mt-1.5">
                     {sched.slice(0, 24).map((x) => (
@@ -3173,9 +3173,9 @@ function TenantModal({ open, initial, unitWord, error, saving, onClose, onSubmit
             ? { opacity: .5, cursor: "not-allowed" } : undefined}
           onClick={() => {
             if (askOcc && !occ) { setLocalErr("اختر أولًا: المستأجر ساكن في الوحدة الآن، أم عقد جديد لم يبدأ؟"); return; }
-            if (startTooLate) { setLocalErr(`بداية العقد ${startISO} بعد اليوم، والمستأجر ساكن الآن. اكتب تاريخ بداية العقد من إيجار — لا موعد الدفعة القادمة.`); return; }
+            if (startTooLate) { setLocalErr(`بداية العقد ${arDate(startISO)} بعد اليوم، والمستأجر ساكن الآن. اكتب تاريخ بداية العقد من إيجار — لا موعد الدفعة القادمة.`); return; }
             setLocalErr(null);
-            if (futureStartQ && !confirm(`بداية العقد ${startISO} بعد اليوم، ولا دفعات مسدَّدة.\n\n`
+            if (futureStartQ && !confirm(`بداية العقد ${arDate(startISO)} بعد اليوم، ولا دفعات مسدَّدة.\n\n`
               + `موافق = عقد جديد يبدأ في هذا التاريخ — احفظ.\n`
               + `إلغاء = عقد ساري من قبل — سأكتب بدايته الفعلية وآخر دفعة سُدّدت.`)) return;
             onSubmit(d);
@@ -3447,24 +3447,7 @@ function QuoteModal({ property, unitWord, issuer, onClose }: {
           </Field>
         </div>
 
-        {/**
-          * الرصيد الافتتاحي: عدد الدفعات المستلمة قبل الدخول على وثيق.
-          *
-          * كان يُدخَل عند الرفع من إكسل فقط، فمن أخطأ فيه لا يستطيع تصحيحه
-          * من اللوحة — والوحدة تبقى تشير إلى دفعة خاطئة إلى الأبد. متاح
-          * للمدير وحده لأنه يغيّر المتأخرات بلا سجل دفعة يقابله.
-          */}
-        <Field label="الدفعات المسدَّدة" hint="عدد الدفعات المستلمة حتى الآن. الدفعات التي تُسجَّل بزر ✔ تُضاف فوقها تلقائيًّا">
-          <input className="fld" type="number" min={0} max={999}
-            value={d.paid_periods ?? ""} onChange={(e) => setD({ ...d, paid_periods: e.target.value })} placeholder="0" />
-          {Number(d.paid_periods) > 0 && Number(d.contract_periods) > 0 && (
-            <span className="block text-[11px] text-muted mt-1">
-              {Number(d.paid_periods) > Number(d.contract_periods)
-                ? `⚠️ أكبر من مدة العقد (${d.contract_periods}) — سداد مقدَّم لمدة قادمة؟`
-                : `المتبقي ${Number(d.contract_periods) - Number(d.paid_periods)} دفعة`}
-            </span>
-          )}
-        </Field>
+        {/* «الدفعات المسدَّدة» أزيلت من عرض السعر: مستأجر محتمل لم يوقّع لم يدفع شيئًا، والمستند لا يستعملها — كانت منسوخة من نموذج الوحدة. */}
 
         <Field label="دورة السداد">
           <div className="grid grid-cols-3 gap-2">
@@ -3617,6 +3600,7 @@ function RenewModal({ tenant, unitWord, onClose, onRenew }: {
   const curFreq = (tenant.payment_frequency || "monthly") as Frequency;
   const [freq, setFreq] = useState<Frequency>(curFreq);
   const [periods, setPeriods] = useState<string>(String(tenant.contract_periods || defaultTermPeriods(curFreq)));
+  const [durCustom, setDurCustom] = useState(false);   // «مدة أخرى…» اختيار يُحفظ، لا يُستنتج من المدة
   /* تغيير الدورة يحفظ المدة لا العدد: شهري ×12 ← سنوي كان يبقى 12 = اثنتا عشرة سنة */
   const MONTHS_PER: Record<string, number> = { monthly: 1, quarterly: 3, trimester: 4, semiannual: 6, annual: 12 };
   function changeFreq(f: Frequency) {
@@ -3662,7 +3646,30 @@ function RenewModal({ tenant, unitWord, onClose, onRenew }: {
           </div>
         </Field>
         <div className="grid grid-cols-2 gap-3">
-          <Field label="عدد الدفعات"><input className="fld" type="number" value={periods} onChange={(e) => setPeriods(e.target.value)} placeholder={String(defaultTermPeriods(freq))} /></Field>
+          {/* «مدة العقد الجديد» لا «عدد الدفعات» — كنموذج الوحدة: المكتب يعرف المدة،
+              والعدد يُحسب منها. «مدة أخرى» للمدد غير المعتادة. */}
+          {(() => {
+            const st = MONTHS_PER[freq] || 0;
+            const n = Number(periods) || defaultTermPeriods(freq);
+            if (!st) return <Field label="عدد الدفعات"><input className="fld" type="number" value={periods} onChange={(e) => setPeriods(e.target.value)} /></Field>;
+            const months = n * st;
+            const PRESETS = [6, 12, 24, 36].filter((m) => m % st === 0);
+            const custom = durCustom || !PRESETS.includes(months);
+            const dur = (m: number) => m % 12 === 0 ? plural(m / 12, "سنة", "سنتان", "سنوات", "سنة") : plural(m, "شهر واحد", "شهران", "أشهر", "شهرًا");
+            return (
+              <Field label="مدة العقد الجديد" hint={`= ${plural(n, "دفعة واحدة", "دفعتان", "دفعات", "دفعة")}`}>
+                <select className="fld" value={custom ? "custom" : String(months)}
+                  onChange={(e) => { if (e.target.value === "custom") { setDurCustom(true); return; } setDurCustom(false); setPeriods(String(Number(e.target.value) / st)); }}>
+                  {PRESETS.map((m) => <option key={m} value={m}>{dur(m)}</option>)}
+                  <option value="custom">{custom ? `مدة أخرى: ${dur(months)}` : "مدة أخرى…"}</option>
+                </select>
+                {custom && (
+                  <input className="fld mt-1.5" type="number" min={st} step={st} value={months}
+                    onChange={(e) => { const m = Number(e.target.value) || 0; if (m > 0 && m % st === 0) setPeriods(String(m / st)); }} />
+                )}
+              </Field>
+            );
+          })()}
           <Field label="قيمة الدفعة (ريال)"><input className="fld" type="number" value={amount} onChange={(e) => setAmount(e.target.value)} /></Field>
         </div>
       </div>
