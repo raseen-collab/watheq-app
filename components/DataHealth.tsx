@@ -30,7 +30,7 @@ export default function DataHealth({ initial }: { initial: any[] }) {
     const [pr, pa, ex] = await Promise.all([
       supabase.from("properties").select("*, tenants(*)").eq("is_demo", false).limit(2000, { referencedTable: "tenants" }),
       /* كل الدفعات والمصروفات على دفعات — فحصٌ على جزء منها يطمئن كذبًا */
-      fetchAllRows(supabase as any, "payments", "id,tenant_id,property_id,amount,paid_on")
+      fetchAllRows(supabase as any, "payments", "id,tenant_id,property_id,amount,paid_on,applies_to,created_at")
         .then((data) => ({ data, error: null as any })).catch((e) => ({ data: null as any, error: e })),
       fetchAllRows(supabase as any, "expenses", "id,property_id,amount,spent_on")
         .then((data) => ({ data, error: null as any })).catch((e) => ({ data: null as any, error: e })),

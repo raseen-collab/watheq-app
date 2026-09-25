@@ -847,6 +847,17 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       if (reletting && payload.status === "active") {
         return fail("لتأجير الوحدة لمستأجر جديد استعمل «إعادة تأجير» من قائمة الوحدة — تحفظ المستأجر السابق ودينه ودفعاته. والتعديل هنا يُبقي الوحدة شاغرة.");
       }
+      /* تعديل ينقل البداية للأمام ويصفّر المسدَّد وعلى المدة متأخرات: يُحفظ تصحيحًا
+         (schema-v49) فتختفي متأخرات تلك المدة. إن كان المقصود تجديدًا فطريقه
+         «تجديد العقد» الذي يسأل عنها. كان التعديل «يجدّد» صامتًا ويمحوها. */
+      if (prev && prev.contract_start && payload.contract_start && paidNew === 0) {
+        const jump = (Date.parse(String(payload.contract_start)) - Date.parse(String(prev.contract_start))) / 86400000;
+        const st0 = contractState(prev, { graceDays: Number(active.grace_days) || 0, ...windowsOf(active) });
+        if (jump >= 25 && (st0.amountDue || 0) > 0 && !confirm(
+          `نقلتَ بداية العقد ${Math.round(jump)} يومًا للأمام وصفّرت المسدَّد، وعلى المدة الحالية متأخرات ${sar(st0.amountDue)} ريال.\n\n`
+          + `إن كان هذا تجديدًا لعقد جديد: اضغط «إلغاء» واستعمل «تجديد العقد» من قائمة الوحدة — يسألك عن المتأخرات ولا يضيّعها.\n\n`
+          + `إن كان تصحيحًا لبيانات أُدخلت خطأً: اضغط «موافق».`)) { setSaving(false); return; }
+      }
       const full: any = { ...payload, paid_periods: paidNew };
       const { data: _u2, error } = await supabase.from("tenants").update(full).eq("id", id).select("id");
       if (error) { console.error("Watheq save error:", error); return fail(error.message); }

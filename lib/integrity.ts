@@ -10,7 +10,8 @@
 // دوال نقية بلا شبكة: تُستدعى من الصفحة وتُختبر مباشرة.
 // ============================================================
 
-import { contractState, isVacant, unitVatApplies, type Frequency } from "./contracts";
+import { contractState, isVacant, unitVatApplies, splitVat, type Frequency } from "./contracts";
+import { termRentPaidOf } from "./documents";
 
 export type Severity = "critical" | "warn" | "info";
 
@@ -216,6 +217,31 @@ export function auditOffice(properties: P[], payments: any[] = [], expenses: any
   const tenantIds = new Set(properties.flatMap((p) => (p.tenants || []).map((t: T) => t.id)));
   const propIds = new Set(properties.map((p) => p.id));
   const orphanPays = (payments || []).filter((x) => x.tenant_id && !tenantIds.has(x.tenant_id)).length;
+  /**
+   * دفعات مسجّلة لا يعكسها «المسدَّد» (شكوى مكتب: «دافع ويطلع ما دافع»).
+   *
+   * تسجيل الدفعة يرفع العدّاد تلقائيًّا؛ فإن كان إيجار المدة الحالية المسجَّل أكبر
+   * مما يعكسه العدّاد، فشيء أعاده بعد التسجيل — غالبًا «مسدَّد حتى» عُدّل يدويًّا.
+   * فتقول المستندات «دفع» (تقرأ سجل الدفعات) وتقول الوحدة «لم يدفع» (تقرأ العدّاد)،
+   * وكلاهما «صحيح» من مصدره. الاتجاه المعاكس طبيعي (رصيد افتتاحي بلا دفعات).
+   * الدالة نفسها التي تبني ملاحظة الرصيد الافتتاحي في التقارير.
+   */
+  const allT = properties.flatMap((p) => (p.tenants || []).map((t: any) => ({ t, p })));
+  const trp = termRentPaidOf(allT.map(({ t }) => t), payments || []);
+  for (const { t, p } of allT) {
+    if (isVacant(t) || !trp[t.id]) continue;
+    const rent = num(t.rent_amount);
+    const v = { enabled: !!p.vat_enabled && unitVatApplies(t, p), rate: num(p.vat_rate) || 15, inclusive: p.vat_inclusive !== false };
+    const inst = v.enabled ? splitVat(rent, v).total : rent;
+    const reflected = num(t.paid_periods) * inst + num(t.partial_amount);
+    if (trp[t.id] > reflected + Math.max(1, inst * 0.01)) {
+      push({ severity: "critical", title: "دفعات مسجّلة لا يعكسها «المسدَّد»", propertyId: p.id, propertyName: p.name, unit: t.unit, tenant: t.name,
+        detail: `سُجّل ${Math.round(trp[t.id]).toLocaleString("en-US")} ريال إيجارًا في مدة هذا العقد، و«المسدَّد» ${num(t.paid_periods)} دفعة (${Math.round(reflected).toLocaleString("en-US")}). `
+          + `فتُظهره المستندات دافعًا وتُظهره الوحدة غير دافع — غالبًا عُدّل «مسدَّد حتى» بعد تسجيل الدفعة.`,
+        fix: "افتح الوحدة ← «تعديل البيانات» ← «مسدَّد حتى»: اختر آخر دفعة سُدّدت فعلًا. وإن كانت الدفعة خطأً فاعكسها من «سجل الدفعات»." } as any);
+    }
+  }
+
   if (orphanPays) {
     push({ severity: "warn", title: `${orphanPays} دفعة لوحدات محذوفة`,
       why: "مبالغ مسجّلة لا تظهر في أي كشف وحدة — تختلّ بها المطابقة مع البنك.",

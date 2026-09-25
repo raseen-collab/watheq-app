@@ -603,6 +603,10 @@ export function renewContract(t: {
     carried_debt: opts.arrears === "settled" ? Math.max(0, Number(t.carried_debt) || 0)
       : Math.round((Math.max(0, Number(t.carried_debt) || 0) + st.amountDue) * 100) / 100,
     billing_anchor_day: anchor, // ← تثبيت يوم السداد عبر كل التجديدات
+    /* إعلان التجديد (schema-v49): القاعدة تبدأ مدة جديدة بهذه العلامة وحدها وتضع
+       وقتها بنفسها. كانت تخمّنه من «البداية تقفز + المسدَّد صفر» — فتصحيح بيانات
+       من نموذج التعديل صار «تجديدًا» ونقل دفعات مسجّلة إلى «العقد السابق». */
+    term_started_at: new Date().toISOString(),
   };
 }
 
