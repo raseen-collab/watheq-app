@@ -2833,6 +2833,18 @@ function TenantModal({ open, initial, unitWord, error, saving, onClose, onSubmit
   const [d, setD] = useState<any>(initial || { payment_frequency: "monthly", contract_start: today() });
   /* «عقد جديد يبدأ لاحقًا» — يؤكّده المكتب مرة فيختفي التنبيه */
   const [startIsNew, setStartIsNew] = useState(false);
+  /**
+   * «المستأجر ساكن الآن؟» — أول سؤال عند الإضافة، قبل التواريخ.
+   *
+   * مكتب عمرو باعبدالله أدخل «موعد الدفعة القادمة» في «بداية العقد» 33 مرة
+   * رغم الشريط الأصفر وتأكيد الحفظ: كلاهما يأتي بعد أن اقتنع أن التاريخ صحيح،
+   * و«موافق» هو الافتراضي. فالسؤال الآن قبل التاريخ، و«ساكن الآن» يرفض بداية
+   * بعد اليوم بلا طريق للتجاوز — ويعرض له الدفعة القادمة محسوبة ليرى التاريخ
+   * الذي كان سيكتبه في مكانه الصحيح. (15 من الـ33 كتبوا التاريخ نفسه في «البداية»
+   * و«أول استحقاق» — فهموهما سؤالًا واحدًا.) التعديل لا يمرّ بهذا: حمايته v49.
+   */
+  const [occ, setOcc] = useState<"" | "current" | "new">("");
+  const [localErr, setLocalErr] = useState<string | null>(null);
   const [extraOpen] = useState(() => !!(initial && ((initial as any).first_due || (initial as any).national_id || Number((initial as any).carried_debt) > 0
     || (initial as any).contract_no || (initial as any).elec_account || (initial as any).water_account || (initial as any).meter_elec_in
     || (initial as any).meter_water_in || ((initial as any).vat_mode && (initial as any).vat_mode !== "auto"))));
@@ -2846,8 +2858,10 @@ function TenantModal({ open, initial, unitWord, error, saving, onClose, onSubmit
    * والكشف يقول «المسدَّد 0» لمستأجر منتظم منذ أشهر.
    */
   const startISO = String(d.contract_start || "").slice(0, 10);
+  const askOcc = !initial && String(d.status) !== "vacated";
   const futureStartQ = !!startISO && startISO > today() && !(Number(d.paid_periods) > 0)
-    && String(d.status) !== "vacated" && !startIsNew;
+    && String(d.status) !== "vacated" && !startIsNew && !askOcc;
+  const startTooLate = askOcc && occ === "current" && !!startISO && startISO > today();
   /* جدول الأقساط بالبيانات الحالية — لقائمة «مسدَّد حتى» والمعاينة */
   const sched: { n: number; date: string; status: string }[] = d.contract_start && Number(d.rent_amount) > 0
     ? buildSchedule({ ...d, paid_periods: Number(d.paid_periods) || 0 } as any) : [];
@@ -2911,12 +2925,33 @@ function TenantModal({ open, initial, unitWord, error, saving, onClose, onSubmit
             ))}
           </div>
         </Field>
+        {askOcc && (
+          <div className={`rounded-xl border p-3 ${occ ? "border-line bg-paper" : "border-[#F2D49B] bg-[#FFF6E5]"}`}>
+            <div className="text-sm font-semibold text-deep mb-2">المستأجر ساكن في الوحدة الآن؟</div>
+            <div className="grid grid-cols-2 gap-2">
+              {([["current", "نعم — عقد قائم", "ساكن من قبل، وعقده ساري"], ["new", "لا — عقد جديد", "لم يسكن بعد، يبدأ لاحقًا"]] as const).map(([v, t, sub]) => (
+                <button key={v} type="button" onClick={() => { setOcc(v); setLocalErr(null); if (v === "new") setD({ ...d, paid_periods: 0, partial_amount: 0 }); }}
+                  className={`text-start rounded-lg border px-3 py-2 min-h-[44px] ${occ === v ? "border-gold bg-[#FBF1DF]" : "border-line bg-white hover:border-goldSoft"}`}>
+                  <div className="text-sm font-semibold text-deep">{t}</div>
+                  <div className="text-[11px] text-muted">{sub}</div>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
         <div className="grid grid-cols-2 gap-3">
-          <Field label="بداية العقد">
+          <Field label={askOcc && occ === "current" ? "بداية العقد في إيجار — قبل اليوم" : "بداية العقد"}
+            hint={askOcc && occ === "current" ? "من عقد إيجار نفسه — ليس موعد الدفعة القادمة" : undefined}>
           <DateField value={d.contract_start || ""} onChange={(v, mode) => setD({ ...d, contract_start: v,
             /* أدخل التاريخ بالهجري؟ إذن عقده هجري وأقساطه تُحسب بالأشهر الهجرية —
                كان يجب عليه تغيير خانة ثانية بنفسه، فينسى وتخرج الاستحقاقات منحرفة أيامًا */
-            ...(mode ? { calendar: mode === "h" ? "hijri" : "gregorian", _calAuto: true } : {}) })} /></Field>
+            ...(mode ? { calendar: mode === "h" ? "hijri" : "gregorian", _calAuto: true } : {}) })} />
+            {startTooLate && (
+              <div className="text-[11.5px] text-late mt-1 leading-relaxed">
+                هذا بعد اليوم — والمستأجر ساكن الآن، فعقده بدأ قبل اليوم. إن كان هذا <b>موعد الدفعة القادمة</b> فلا يُكتب هنا:
+                اكتب بداية العقد من إيجار، ثم اختر من «مسدَّد حتى» آخر دفعة دفعها — والقادمة تُحسب تلقائيًّا.
+              </div>
+            )}</Field>
         <Field label="تُحسب الأقساط بالتقويم" hint={d._calAuto ? `ضُبط تلقائيًّا لأنك أدخلت البداية بالتقويم ${d.calendar === "hijri" ? "الهجري" : "الميلادي"} — غيّره إن كان العقد مكتوبًا بالتقويم الآخر` : "عقد مكتوب بالهجري (كل 6 أشهر هجرية) اختر هجري — وإلا يزحف الاستحقاق أيامًا كل قسط"}>
           <select className="fld" value={d.calendar || "gregorian"} onChange={(e) => setD({ ...d, calendar: e.target.value, _calAuto: false })}>
             <option value="gregorian">ميلادي — الأشهر الميلادية</option>
@@ -2974,28 +3009,49 @@ function TenantModal({ open, initial, unitWord, error, saving, onClose, onSubmit
         {/* كان يظهر عند الإضافة فقط، فمن أخطأ في الرقم — أو استورده خطأً من
             إكسل — لا يستطيع تصحيحه من اللوحة إطلاقًا، وتبقى الوحدة تشير إلى
             دفعة خاطئة أبدًا. الآن يظهر في الحالتين بنصّ يناسب كلًّا منهما. */}
-        <Field label="دفعات سُدّدت حتى اليوم"
+        {/* «مسدَّد حتى» بكلمات الموظف. كان العنوان «دفعات سُدّدت حتى اليوم» يسأل عن
+            عدد والقائمة تحته تواريخ، والخيارات «الدفعة 3 — 2026-07-01» (مكتب: «قريتها
+            وما فهمت»). وعقد جديد لم يُدفع فيه شيء لا يُسأل أصلًا. */}
+        {askOcc && occ === "new" ? (
+          <div className="text-[12px] text-muted rounded-lg bg-paper border border-line px-3 py-2">
+            عقد جديد — لا دفعات سابقة. إن استلمت دفعة عند التوقيع فسجّلها بعد الحفظ بزر ✔ «استلام».
+          </div>
+        ) : (
+        <Field label="مسدَّد حتى: آخر دفعة دفعها المستأجر"
           hint={initial
-            ? "صحّحه إن كان الرقم غلطًا. الدفعات المسجَّلة بزر ✔ تُضاف فوقه تلقائيًّا"
-            : "اختر آخر دفعة سدّدها المستأجر من هذا العقد — التواريخ محسوبة من بداية العقد ودورته"}>
-          {/* قائمة بتواريخ الأقساط الفعلية بدل عدّها: المكتب يعرف «مسدّد لين يوليو»
-              ولا يعرف «سدّد 2» — والعدّ كان مصدر أخطاء الإدخال */}
+            ? "لتصحيح خطأ فقط. الدفعة الجديدة تُسجَّل بزر ✔ «استلام» وتظهر هنا تلقائيًّا"
+            : "اختر تاريخ آخر دفعة دفعها، ولو كانت قبل أن تبدأ مع وثيق — ووثيق يحسب منها القادمة والمتأخرة"}>
           {sched.length > 0 ? (
             <select className="fld" value={String(Number(d.paid_periods) || 0)}
               onChange={(e) => setD({ ...d, paid_periods: Number(e.target.value) })}>
-              <option value="0">لم يسدّد أي دفعة من هذا العقد</option>
-              {sched.map((x) => (
-                <option key={x.n} value={x.n}>
-                  {`مسدَّد حتى الدفعة ${x.n} — ${x.date}${d.calendar === "hijri" ? ` (${hijriShort(x.date)})` : ""}${x.date > today() ? " · مقدَّمًا" : ""}`}
-                </option>
-              ))}
+              <option value="0">لم يدفع أي دفعة من هذا العقد</option>
+              {sched.map((x) => {
+                const ORD = ["الأولى", "الثانية", "الثالثة", "الرابعة", "الخامسة", "السادسة", "السابعة", "الثامنة", "التاسعة", "العاشرة", "الحادية عشرة", "الثانية عشرة"];
+                const ord = ORD[x.n - 1] ? `${ORD[x.n - 1]} من ${sched.length}` : `${x.n} من ${sched.length}`;
+                return (
+                  <option key={x.n} value={x.n}>
+                    {`دفعة ${arDate(x.date)}${d.calendar === "hijri" ? ` (${hijriShort(x.date)})` : ""} — ${ord}${x.date > today() ? " · مقدَّمًا" : ""}`}
+                  </option>
+                );
+              })}
               {Number(d.paid_periods) > sched.length && (
                 <option value={String(Number(d.paid_periods))}>{`${d.paid_periods} دفعات — أكثر من مدة العقد`}</option>
               )}
             </select>
-          ) : (
+          ) : initial ? (
             <input className="fld" type="number" min={0} value={d.paid_periods ?? ""}
               onChange={(e) => setD({ ...d, paid_periods: e.target.value })} placeholder="0" />
+          ) : (
+            <div className="text-[12px] text-muted rounded-lg bg-paper border border-line px-3 py-2">
+              تظهر هنا تواريخ الدفعات بعد إدخال «بداية العقد» و«قيمة الدفعة» — اختر منها آخر دفعة دفعها.
+            </div>
+          )}
+          {askOcc && occ === "current" && !startTooLate && preview && preview.nextDueDate && (
+            <div className="text-[12px] mt-1.5 rounded-lg bg-paper border border-line px-3 py-2">
+              الدفعة القادمة بحسب ما أدخلت: <b className="text-deep">{preview.nextDueDate}</b>
+              {(preview.daysToNextDue ?? 0) < 0 ? <span className="text-late"> (متأخرة)</span> : null}
+              <span className="text-muted"> — إن لم يكن الموعد الذي تعرفه، راجع البداية أو «مسدَّد حتى».</span>
+            </div>
           )}
           {futureStartQ && (
             <div className="bg-[#FFF6E5] border border-[#F2D49B] rounded-xl p-3 text-[12.5px] leading-relaxed mt-2">
@@ -3016,6 +3072,7 @@ function TenantModal({ open, initial, unitWord, error, saving, onClose, onSubmit
             </span>
           )}
         </Field>
+        )}
         {/* «تفاصيل إضافية» مطويّة: ما لا يُملأ عادةً عند الإدخال الأول — كان النموذج
             عشرين حقلًا دفعة واحدة. تنفتح وحدها إن كان فيها بيانات، فلا يُخفى شيء. */}
         <details open={extraOpen} className="mt-3 border border-line rounded-xl p-3 bg-paper">
@@ -3100,9 +3157,9 @@ function TenantModal({ open, initial, unitWord, error, saving, onClose, onSubmit
       </div>
       {/* سبب الفشل بجانب الزر: الإشعار العائم في أعلى الصفحة لا يراه من كان
           منزلًا داخل النموذج على الجوال، فيظن أن الزر لا يعمل. */}
-      {error && (
+      {(localErr || error) && (
         <div className="bg-[#FBE9E7] border border-[#F5C6C2] text-[#a5322c] rounded-xl p-3 text-sm mt-4 leading-relaxed">
-          <b>لم يُحفظ:</b> {error}
+          <b>لم يُحفظ:</b> {localErr || error}
         </div>
       )}
       <div className="flex gap-2 mt-6">
@@ -3115,6 +3172,9 @@ function TenantModal({ open, initial, unitWord, error, saving, onClose, onSubmit
           style={String(d.status) !== "vacated" && !(d.name || "").trim()
             ? { opacity: .5, cursor: "not-allowed" } : undefined}
           onClick={() => {
+            if (askOcc && !occ) { setLocalErr("اختر أولًا: المستأجر ساكن في الوحدة الآن، أم عقد جديد لم يبدأ؟"); return; }
+            if (startTooLate) { setLocalErr(`بداية العقد ${startISO} بعد اليوم، والمستأجر ساكن الآن. اكتب تاريخ بداية العقد من إيجار — لا موعد الدفعة القادمة.`); return; }
+            setLocalErr(null);
             if (futureStartQ && !confirm(`بداية العقد ${startISO} بعد اليوم، ولا دفعات مسدَّدة.\n\n`
               + `موافق = عقد جديد يبدأ في هذا التاريخ — احفظ.\n`
               + `إلغاء = عقد ساري من قبل — سأكتب بدايته الفعلية وآخر دفعة سُدّدت.`)) return;

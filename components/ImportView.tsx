@@ -116,6 +116,10 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
   const [propId, setPropId] = useState(properties[0]?.id || "");
   const [rows, setRows] = useState<Row[]>([]);
   const [busy, setBusy] = useState(false);
+  /* صفوف بدايتها بعد اليوم بلا دفعات: كانت تُلوَّن فقط وتُرفع — والنمط نفسه
+     (موعد الدفعة القادمة في خانة البداية) تكرّر 33 مرة عند مكتب واحد. الآن
+     لا يُحفظ الملف حتى يقرّر المكتب صراحةً أنها عقود جديدة لم تبدأ. */
+  const [futureOk, setFutureOk] = useState(false);
   const [progress, setProgress] = useState(0);
   const [done, setDone] = useState<number | null>(null);
   const [fileName, setFileName] = useState("");
@@ -284,7 +288,7 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
       const k = `${(r.prop_name || "").trim()}|${(r.unit || "").trim()}`;
       if ((seenInFile.get(k) || 0) > 1) r._error = `رقم الوحدة «${r.unit}» مكرّر في الملف`;
     });
-    setRows(parsed);
+    setRows(parsed); setFutureOk(false);   // ملف جديد = سؤال جديد
   }
 
   async function importRows() {
@@ -458,10 +462,22 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
                     {warnCount > 0 && <> · <span className="text-[#8a5a11] font-semibold">{warnCount} بدايتها بعد اليوم — تحقّق منها</span></>}
                   </div>
                 </div>
-                <button onClick={importRows} disabled={busy || !validCount} className="btn btn-gold text-sm disabled:opacity-40">
+                <button onClick={importRows} disabled={busy || !validCount || (warnCount > 0 && !futureOk)} className="btn btn-gold text-sm disabled:opacity-40"
+                  title={warnCount > 0 && !futureOk ? "قرّر أولًا في الصفوف الصفراء أدناه" : undefined}>
                   {busy ? (progress ? `جارٍ الحفظ… ${progress}` : "جارٍ الحفظ…") : `حفظ ${validCount} وحدة`}
                 </button>
               </div>
+              {warnCount > 0 && (
+                <div className="mx-4 mb-3 rounded-xl border border-[#F2D49B] bg-[#FFF6E5] p-3 text-[12.5px] leading-relaxed">
+                  <b className="text-deep">{warnCount} {warnCount === 1 ? "وحدة" : "وحدات"} بداية عقدها بعد اليوم ولا دفعات مسدَّدة</b> (الصفوف الصفراء).
+                  <div className="mt-1">إن كان المستأجر <b>ساكنًا الآن</b>: فالمكتوب غالبًا <b>موعد الدفعة القادمة</b> — صحّح في الملف «بداية العقد» من إيجار
+                    و«الدفعات المسدّدة»، ثم ارفعه من جديد. وإن كانت <b>عقودًا جديدة لم يسكن مستأجروها بعد</b>، فأكّد:</div>
+                  <label className="flex items-center gap-2 mt-2 cursor-pointer min-h-[44px]">
+                    <input type="checkbox" className="w-4 h-4" checked={futureOk} onChange={(e) => setFutureOk(e.target.checked)} />
+                    <span>نعم، هذه {warnCount === 1 ? "الوحدة عقد جديد" : `الـ${warnCount} عقود جديدة`} لم يسكن {warnCount === 1 ? "مستأجره" : "مستأجروها"} بعد</span>
+                  </label>
+                </div>
+              )}
               <div className="overflow-x-auto max-h-[50vh]">
                 <table className="w-full text-sm">
                   <thead className="bg-paper2 sticky top-0">
