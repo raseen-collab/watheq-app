@@ -1545,7 +1545,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       })()}
 
       {/* ما يحتاج إجراءً اليوم — أزرار تصفية لا أرقام دخل */}
-      {(overdue > 0 || arrears.litigation > 0 || vacantArrears > 0 || ((counts.due || 0) + (counts.soon || 0)) > 0 || (counts.expiring || 0) > 0) && (
+      {(overdue > 0 || arrears.litigation > 0 || arrears.carried > 0 || vacantArrears > 0 || ((counts.due || 0) + (counts.soon || 0)) > 0 || (counts.expiring || 0) > 0) && (
         <div className="flex flex-wrap gap-2 mb-5">
           {(lateCount > 0 || overdue > 0) && (
             <button type="button" onClick={() => setFilter("late")}
@@ -1556,6 +1556,11 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
             <button type="button" onClick={() => setFilter("litigation")}
               className={`text-xs px-3 py-2 rounded-full border ${filter === "litigation" ? "bg-[#EEF2F6] border-[#CBD5E1]" : "bg-white border-line"} text-[#475569]`}>
               تحت التنفيذ <b className="tabular-nums">{sar(arrears.litigation)}</b> · {plural(arrears.litigationCount, "وحدة واحدة", "وحدتان", "وحدات", "وحدة")}</button>
+          )}
+          {arrears.carried > 0 && (
+            <button type="button" onClick={() => setDebtOpen(true)}
+              className="text-xs px-3 py-2 rounded-full border bg-white border-line text-[#9A4B00]">
+              دين مُرحَّل <b className="tabular-nums">{sar(arrears.carried)}</b> · {plural(arrears.carriedCount, "وحدة واحدة", "وحدتان", "وحدات", "وحدة")}</button>
           )}
           {vacantArrears > 0 && (
             <button type="button" onClick={() => setFilter("vacant")}

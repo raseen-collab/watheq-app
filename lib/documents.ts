@@ -899,10 +899,11 @@ export function propertyStatementHTML(
    *
    * بدلها حقائق: ما تأخّر فعلًا، وما حُصِّل خلال الفترة إن حُدّدت.
    */
-  const arrearsTotal = (p.tenants || []).reduce((a: number, t: any) => {
-    const st = contractState(t, { graceDays: Number(p.grace_days) || 0 });
-    return a + (Number(st.totalOwed) || 0);
-  }, 0);
+  /* رقم واحد مجمَّع كان يخالف تقرير المالك لنفس العقار بلا تفسير
+     (40,700 هنا مقابل 36,200 هناك). نعرضه مفصَّلًا بمصدر واحد. */
+  const stArr = arrearsOf((p.tenants || []).map((t: any) =>
+    ({ t, st: contractState(t, { graceDays: Number(p.grace_days) || 0 }) })));
+  const arrearsTotal = stArr.grand;
   const collectedInPeriod = (payments || []).reduce((a, x) => a + (Number(x.amount) || 0), 0);
   const soonCount = rows.filter((r) => r.st.status === "soon").length;
   /* أرقام الفترة: تُحسب من الدفعات والمصروفات المسجّلة داخلها فقط —
@@ -967,7 +968,11 @@ ${mode === "full" ? `
   <div class="box">
     <div class="r"><span>الوحدات</span><span>${p.tenants.length} (${occupied} مؤجّرة · ${vacantCount} شاغرة)</span></div>
     <div class="r"><span>نسبة الإشغال</span><span>${p.tenants.length ? Math.round((occupied / p.tenants.length) * 100) : 0}%</span></div>
-    <div class="r"><span>إجمالي المتأخرات</span><span><b style="color:${arrearsTotal > 0 ? "#a5322c" : "#137a50"}">${sar(arrearsTotal)} ريال</b></span></div>
+    <div class="r"><span>إجمالي المستحق على العقار</span><span><b style="color:${arrearsTotal > 0 ? "#a5322c" : "#137a50"}">${sar(arrearsTotal)} ريال</b></span></div>
+    ${stArr.current > 0 ? `<div class="r"><span style="padding-inline-start:12px">— قيد المطالبة</span><span>${sar(stArr.current)} ريال</span></div>` : ""}
+    ${stArr.litigation > 0 ? `<div class="r"><span style="padding-inline-start:12px">— تحت التنفيذ القضائي</span><span>${sar(stArr.litigation)} ريال</span></div>` : ""}
+    ${stArr.carried > 0 ? `<div class="r"><span style="padding-inline-start:12px">— دين مُرحَّل من مدة سابقة</span><span>${sar(stArr.carried)} ريال</span></div>` : ""}
+    ${stArr.legacy > 0 ? `<div class="r"><span style="padding-inline-start:12px">— على مستأجرين سابقين (وحدات شاغرة)</span><span>${sar(stArr.legacy)} ريال</span></div>` : ""}
     ${period ? `<div class="r"><span>المحصَّل خلال الفترة</span><span><b>${sar(collectedInPeriod)} ريال</b></span></div>` : ""}
     ${(p as any).mgmt_fee_pct ? `<div class="r"><span>أتعاب الإدارة</span><span>${(p as any).mgmt_fee_pct}%</span></div>` : ""}
     ${Number(p.grace_days) > 0 ? `<div class="r"><span>فترة السماح</span><span>${p.grace_days} أيام</span></div>` : ""}
@@ -975,7 +980,7 @@ ${mode === "full" ? `
   </div>
 </div>` : ""}
 
-${totalDue > 0 ? `<div class="due"><span class="l">إجمالي المستحق على العقار${totalVat > 0 ? ` (منه ضريبة ${sar(totalVat)} ريال)` : ""}</span><span class="v">${sar(totalDue)} ريال</span></div>` : ""}
+${totalDue > 0 ? `<div class="due"><span class="l">إجمالي الإيجار المتأخر${totalVat > 0 ? ` (منه ضريبة ${sar(totalVat)} ريال)` : ""}</span><span class="v">${sar(totalDue)} ريال</span></div>${stArr.carried > 0 ? `<div class="note">ويُضاف إليه <b>${sar(stArr.carried)}</b> ريال دينًا مُرحَّلًا من مدد سابقة — إجمالي المستحق على العقار <b>${sar(stArr.grand)}</b> ريال.</div>` : ""}` : ""}
 
 <table>
   <thead><tr><th>${ul}</th>${mode === "full" ? "<th>النوع والمواصفات</th>" : ""}<th>المستأجر</th>${mode === "full" ? "<th>الجوال</th><th>رقم العقد</th>" : ""}<th>الدفعة</th><th>الدورة</th>${mode === "full" ? "<th>بداية العقد</th><th>نهايته</th>" : ""}<th>القادمة</th><th>المتأخر</th><th>الحالة</th></tr></thead>
@@ -1976,6 +1981,9 @@ ${mode === "full" ? `
     <div class="r"><span>المتأخرات القائمة</span><span><b style="color:${totalDue > 0 ? "#a5322c" : "#137a50"}">${sar(totalDue)}</b> ريال</span></div>
     ${arr.litigation > 0 ? `<div class="r"><span style="padding-inline-start:12px">— قيد المطالبة</span><span>${sar(arr.current)} ريال</span></div>
     <div class="r"><span style="padding-inline-start:12px">— تحت التنفيذ القضائي</span><span>${sar(arr.litigation)} ريال</span></div>` : ""}
+    ${arr.carried > 0 ? `<div class="r"><span>دين مُرحَّل من مدة سابقة</span><span><b style="color:#9A4B00">${sar(arr.carried)}</b> ريال</span></div>` : ""}
+    ${arr.legacy > 0 ? `<div class="r"><span>على مستأجرين سابقين (وحدات شاغرة)</span><span><b style="color:#9A4B00">${sar(arr.legacy)}</b> ريال</span></div>` : ""}
+    ${arr.grand !== arr.total ? `<div class="r"><span><b>إجمالي المستحق على العقار</b></span><span><b style="color:${arr.grand > 0 ? "#a5322c" : "#137a50"}">${sar(arr.grand)}</b> ريال</span></div>` : ""}
     ${extra.fee_pct ? `<div class="r"><span>أتعاب الإدارة</span><span>${extra.fee_pct}%</span></div>` : ""}
     ${Number(p.grace_days) > 0 ? `<div class="r"><span>فترة السماح</span><span>${p.grace_days} أيام</span></div>` : ""}
   </div>

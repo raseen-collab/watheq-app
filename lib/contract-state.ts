@@ -93,15 +93,25 @@ export type Arrears = {
   litigation: number; litigationCount: number;
   /** دين مستأجر سابق على وحدة شاغرة */
   legacy: number; legacyCount: number;
-  /** current + litigation — كل ما على السّاكنين، بما فيه التنفيذ */
+  /** دين مُرحَّل من مدة سابقة، محمول على الوحدة نفسها (carried_debt) */
+  carried: number; carriedCount: number;
+  /** current + litigation — كل ما على السّاكنين ضمن مددهم الحالية */
   total: number; totalCount: number;
+  /** كل ريال مستحق على العقار: total + carried + legacy.
+   *  يساوي مجموع totalOwed لكل الوحدات — وهو ما يعرضه كشف العقار. */
+  grand: number;
 };
 
 export function arrearsOf(rows: ArrearsRow[]): Arrears {
   const a: Arrears = { current: 0, currentCount: 0, litigation: 0, litigationCount: 0,
-    legacy: 0, legacyCount: 0, total: 0, totalCount: 0 };
+    legacy: 0, legacyCount: 0, carried: 0, carriedCount: 0, total: 0, totalCount: 0, grand: 0 };
   for (const { t, st } of rows) {
     const owed = Number(st?.amountDue) || 0;
+    /* الدين المرحَّل محمول على الوحدة لا على المدة، فيُجمع لكل الوحدات
+       (مشغولة أو شاغرة أو تحت تنفيذ) — وإلا اختفى من كل مؤشر وبقي
+       ظاهرًا في كشف العقار وحده، فيختلف رقمان في مستندين للمالك نفسه. */
+    const carried = Number((st as any)?.carriedDebt) || 0;
+    if (carried > 0) { a.carried += carried; a.carriedCount++; }
     if (st?.vacant || isVacant(t)) {
       const leg = Number(st?.legacyArrears) || 0;
       if (leg > 0) { a.legacy += leg; a.legacyCount++; }
@@ -114,8 +124,10 @@ export function arrearsOf(rows: ArrearsRow[]): Arrears {
     if (st?.status === "late") { a.current += owed; a.currentCount++; }
   }
   const r2 = (n: number) => Math.round(n * 100) / 100;
-  a.current = r2(a.current); a.litigation = r2(a.litigation); a.legacy = r2(a.legacy);
+  a.current = r2(a.current); a.litigation = r2(a.litigation);
+  a.legacy = r2(a.legacy); a.carried = r2(a.carried);
   a.total = r2(a.current + a.litigation);
   a.totalCount = a.currentCount + a.litigationCount;
+  a.grand = r2(a.total + a.carried + a.legacy);
   return a;
 }
