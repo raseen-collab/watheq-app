@@ -6,6 +6,7 @@ import { trialDaysLeft } from "@/lib/domain";
 import type { AccountType } from "@/lib/roles";
 import type { SubState } from "@/lib/subscription";
 import OfficeChat from "@/components/OfficeChat";
+import { daysAr } from "@/lib/utils";
 
 const WA_RENEW = "https://wa.me/966596300591?text=" + encodeURIComponent("أبغى أجدّد اشتراكي في وثيق");
 
@@ -117,7 +118,7 @@ export default function DashboardShell({
       {/* دورة التذكير بالتجديد: 7 أيام قبل (ذهبي) → سماح 5 أيام (أحمر بعدّاد) → انتهى */}
       {sub?.kind === "paid_soon" && sub.subDaysLeft !== null && (
         <div className="text-center text-sm py-2 px-4 bg-[#FBF1DF] text-[#8a5a11] border-b border-[#EBD9AA]">
-          💳 اشتراكك ينتهي {sub.subDaysLeft <= 0 ? "اليوم" : sub.subDaysLeft === 1 ? "غدًا" : `خلال ${sub.subDaysLeft} أيام`}.
+          💳 اشتراكك ينتهي {sub.subDaysLeft <= 0 ? "اليوم" : sub.subDaysLeft === 1 ? "غدًا" : `خلال ${daysAr(sub.subDaysLeft)}`}.
           {" "}<a href={WA_RENEW} target="_blank" rel="noreferrer" className="underline font-bold">جدّد الآن</a> ولا ينقطع شيء.
         </div>
       )}

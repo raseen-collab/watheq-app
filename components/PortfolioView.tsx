@@ -15,7 +15,7 @@ import { fetchAllRows } from "@/lib/fetch-all";
 import { createClient } from "@/lib/supabase-client";
 import { contractState, isVacant, type Frequency } from "@/lib/contracts";
 import { annualRentRoll } from "@/lib/income";
-import { sar, waLink, today } from "@/lib/utils";
+import { sar, waLink, today, daysAr } from "@/lib/utils";
 import { arDate } from "@/lib/documents";
 import { getOffice } from "@/lib/office";
 import { alertCount, complianceState, KIND_META, type ComplianceItem } from "@/lib/compliance";
@@ -263,7 +263,7 @@ export default function PortfolioView({ properties, windows, compliance, orgName
         {[
           { v: `${properties.length}`, l: "عقار", s: `${totals.units} وحدة · ${totals.units ? Math.round(((totals.units - totals.vacant) / totals.units) * 100) : 0}% إشغال` },
           { v: sar(totals.overdue), l: "ريال متأخر", s: `${totals.late} متأخر · ${totals.partial} جزئي`, tone: totals.overdue ? "bad" : "" },
-          { v: `${totals.due + totals.soon}`, l: `تستحق خلال ${windows.soon} يوم`, s: `${totals.due} مستحق · ${totals.soon} قريب`, tone: totals.due ? "warn" : "" },
+          { v: `${totals.due + totals.soon}`, l: `تستحق خلال ${daysAr(windows.soon)}`, s: `${totals.due} مستحق · ${totals.soon} قريب`, tone: totals.due ? "warn" : "" },
           { v: collectedTotal === null ? "…" : sar(Math.round(collectedTotal)), l: "محصَّل هذا الشهر", s: `المتوقع شهريًّا ${sar(Math.round(totals.monthly))}`, tone: "good" },
         ].map((c) => (
           <div key={c.l} className="bg-white border border-line rounded-2xl p-4">
@@ -280,8 +280,8 @@ export default function PortfolioView({ properties, windows, compliance, orgName
         {!late.length && !due.length && !expiring.length && !vacant.length ? <p className="text-sm opacity-80">لا شيء عاجل في المحفظة كلها.</p> : (
           <div className="grid lg:grid-cols-2 gap-4">
             {late.length > 0 && <div><div className="text-xs opacity-80 mb-1.5">🔴 متأخرون ({late.length}) — {sar(totals.overdue)} ريال</div><div className="space-y-1.5">{cut("late", late).map(({ p, t, st }) => <Item key={t.id} p={p} t={t} st={st} tone="late" note={`${st.statusLabel} · ${sar(st.amountDue)} ريال`} />)}<More k="late" n={late.length} /></div></div>}
-            {due.length > 0 && <div><div className="text-xs opacity-80 mb-1.5">🟠 مستحق خلال {windows.imminent} أيام ({due.length})</div><div className="space-y-1.5">{cut("due", due).map(({ p, t, st }) => <Item key={t.id} p={p} t={t} st={st} tone="due" note={`${st.statusLabel} · ${st.nextDueDate} (${hijriShort(st.nextDueDate || "")})`} />)}<More k="due" n={due.length} /></div></div>}
-            {expiring.length > 0 && <div><div className="text-xs opacity-80 mb-1.5">⏳ عقود تنتهي خلال {windows.expiring} يومًا ({expiring.length})</div><div className="space-y-1.5">{cut("exp", expiring).map(({ p, t, st }) => <Item key={t.id} p={p} t={t} st={st} tone="exp" note={`ينتهي ${st.endDate} (بعد ${st.daysToEnd} يوم)`} />)}<More k="exp" n={expiring.length} /></div></div>}
+            {due.length > 0 && <div><div className="text-xs opacity-80 mb-1.5">🟠 مستحق خلال {daysAr(windows.imminent)} ({due.length})</div><div className="space-y-1.5">{cut("due", due).map(({ p, t, st }) => <Item key={t.id} p={p} t={t} st={st} tone="due" note={`${st.statusLabel} · ${st.nextDueDate} (${hijriShort(st.nextDueDate || "")})`} />)}<More k="due" n={due.length} /></div></div>}
+            {expiring.length > 0 && <div><div className="text-xs opacity-80 mb-1.5">⏳ عقود تنتهي خلال {daysAr(windows.expiring)} ({expiring.length})</div><div className="space-y-1.5">{cut("exp", expiring).map(({ p, t, st }) => <Item key={t.id} p={p} t={t} st={st} tone="exp" note={`ينتهي ${st.endDate} (بعد ${daysAr(st.daysToEnd)})`} />)}<More k="exp" n={expiring.length} /></div></div>}
             {vacant.length > 0 && <div><div className="text-xs opacity-80 mb-1.5">⚪ شاغرة ({vacant.length})</div><div className="space-y-1.5">{cut("vac", vacant).map(({ p, t, st }) => <Item key={t.id} p={p} t={t} st={st} note={t.move_out_date ? `شاغرة منذ ${t.move_out_date}` : "شاغرة"} />)}<More k="vac" n={vacant.length} /></div></div>}
           </div>
         )}

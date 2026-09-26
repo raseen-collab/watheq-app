@@ -31,12 +31,13 @@ const RANGES = [
   { k: "c", label: "فترة مخصّصة", from: () => shift(-30), to: today },
 ];
 
-export default function CollectionStatementModal({ properties, issuer, onClose }: {
+export default function CollectionStatementModal({ properties, issuer, onClose, db }: {
   /** اسم المالك يأتي مع العقار — فالتصفية بالمالك بلا استعلام إضافي */
   /** العقار كاملًا: mgmt_fee_pct وإعدادات الضريبة تدخل حساب صافي المالك */
   properties: ({ id: string; name: string; owner_name?: string | null } & Record<string, any>)[];
   issuer: any;
   onClose: () => void;
+  db?: any;
 }) {
 
   /* قفل تمرير الصفحة خلف النافذة — يُزال حتمًا عند الإغلاق */
@@ -44,7 +45,7 @@ export default function CollectionStatementModal({ properties, issuer, onClose }
     document.body.classList.add("wq-modal-open");
     return () => document.body.classList.remove("wq-modal-open");
   }, []);
-  const supabase = useMemo(() => createClient(), []);
+  const supabase: any = useMemo(() => db || createClient(), [db]);
   const [rangeKey, setRangeKey] = useState("m");
   const [from, setFrom] = useState(RANGES[0].from());
   const [to, setTo] = useState(today());

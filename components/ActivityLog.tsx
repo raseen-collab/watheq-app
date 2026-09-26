@@ -36,14 +36,14 @@ const fmtTime = (iso: string | null) => {
   } catch { return iso.slice(0, 16).replace("T", " "); }
 };
 
-export default function ActivityLog({ properties, onClose }: { properties: any[]; onClose: () => void }) {
+export default function ActivityLog({ properties, onClose, db }: { properties: any[]; onClose: () => void; db?: any }) {
 
   /* قفل تمرير الصفحة خلف النافذة — يُزال حتمًا عند الإغلاق */
   useEffect(() => {
     document.body.classList.add("wq-modal-open");
     return () => document.body.classList.remove("wq-modal-open");
   }, []);
-  const supabase = createClient();
+  const supabase: any = db || createClient();
   const [rows, setRows] = useState<Entry[]>([]);
   const [names, setNames] = useState<Record<string, string>>({});
   const [me, setMe] = useState<string | null>(null);

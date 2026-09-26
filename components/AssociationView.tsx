@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase-client";
 import { officeId } from "@/lib/office";
-import { sar, daysLeft, waLink, WATHEQ_WA, today, openExternal } from "@/lib/utils";
+import { sar, daysLeft, waLink, WATHEQ_WA, today, openExternal, daysAr } from "@/lib/utils";
 import { ownerStatementHTML, associationStatementHTML, budgetHTML, foundingMinutesHTML,
   renewalMinutesHTML, DEFAULT_BUDGET_ITEMS, openDoc, type BudgetItem } from "@/lib/documents";
 import DateField from "@/components/DateField";
@@ -550,7 +550,7 @@ export default function AssociationView({ initial, issuer }: { initial: Associat
   function renewLink() {
     if (!active) return "#";
     const dl = daysLeft(active.cert_expiry);
-    return waLink(WATHEQ_WA, `مرحبًا، أرغب بمساعدتكم في تجهيز موازنة جمعيتنا وأرقام الاشتراك.\nالجمعية: ${active.name}\nانتهاء الشهادة: ${active.cert_expiry || "غير محدد"}${dl !== null ? ` (خلال ${dl} يومًا)` : ""}\nالمطلوب: الموازنة وبنود رسوم الاشتراك.`);
+    return waLink(WATHEQ_WA, `مرحبًا، أرغب بمساعدتكم في تجهيز موازنة جمعيتنا وأرقام الاشتراك.\nالجمعية: ${active.name}\nانتهاء الشهادة: ${active.cert_expiry || "غير محدد"}${dl !== null ? ` (خلال ${daysAr(dl)})` : ""}\nالمطلوب: الموازنة وبنود رسوم الاشتراك.`);
   }
 
   // ---------- عرض ----------
@@ -658,7 +658,7 @@ export default function AssociationView({ initial, issuer }: { initial: Associat
       {dl !== null && dl >= 0 && dl <= 60 && (
         <div className={`flex flex-wrap items-center gap-3 rounded-xl p-3.5 mb-4 border ${dl <= 30 ? "bg-[#FBE9E7] border-[#F5C6C2] text-[#8f2b26]" : "bg-[#FBF1DF] border-[#EBD9AA] text-[#8a5a11]"}`}>
           <span>{dl <= 30 ? "🔴" : "⚠️"}</span>
-          <span><b>تنتهي شهادة الجمعية خلال {dl} يومًا</b> ({a.cert_expiry}). إصدارها من «ملاك» إجراء مباشر ويشترط الرقم الموحّد 700 أولًا.</span>
+          <span><b>تنتهي شهادة الجمعية خلال {daysAr(dl)}</b> ({a.cert_expiry}). إصدارها من «ملاك» إجراء مباشر ويشترط الرقم الموحّد 700 أولًا.</span>
           <div className="flex gap-2 mr-auto">
             <button type="button" className="btn btn-gold text-sm" onClick={openRenewal}>🗂 جهّز الاجتماع السنوي</button>
             <a href={renewLink()} target="_blank" rel="noreferrer" className="btn btn-ghost text-sm">اطلبها جاهزة</a>

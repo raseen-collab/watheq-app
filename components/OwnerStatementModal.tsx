@@ -19,10 +19,12 @@ const AR_MONTHS = ["يناير","فبراير","مارس","أبريل","مايو
 const ymLabel = (ym: string) => `${AR_MONTHS[Number(ym.slice(5, 7)) - 1] || ym} ${ym.slice(0, 4)}`;
 const thisMonth = () => today().slice(0, 7);      // شهر الرياض — ليلة 1 أكتوبر كان يفتح على سبتمبر
 
-export default function OwnerStatementModal({ properties, issuer, onClose }: {
+export default function OwnerStatementModal({ properties, issuer, onClose, db }: {
   properties: any[]; issuer?: any; onClose: () => void;
+  /** قاعدة التجربة في الذاكرة — صفحة /demo تمرّرها فلا يُستعلم الخادم بمعرّفات وهمية */
+  db?: any;
 }) {
-  const supabase = createClient();
+  const supabase: any = db || createClient();
   const owners = useMemo(() => {
     const m = new Map<string, number>();
     properties.forEach((p) => { const n = (p.owner_name || "").trim(); if (n) m.set(n, (m.get(n) || 0) + 1); });

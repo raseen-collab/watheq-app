@@ -18,10 +18,10 @@ const ymLabel = (ym: string) => /^\d{4}-\d{2}$/.test(ym) ? `${AR_MONTHS[Number(y
 
 type Row = ExpenseRow & { id: string };
 
-export default function ExpensesModal({ propertyId, propertyName, unitWord, onClose }: {
-  propertyId: string; propertyName: string; unitWord: string; onClose: () => void;
+export default function ExpensesModal({ propertyId, propertyName, unitWord, onClose, db }: {
+  propertyId: string; propertyName: string; unitWord: string; onClose: () => void; db?: any;
 }) {
-  const supabase = createClient();
+  const supabase: any = db || createClient();
   const thisMonth = today().slice(0, 7);
   const [ym, setYm] = useState(thisMonth);
   const [rows, setRows] = useState<Row[] | null>(null); // null = لم يُحمَّل بعد

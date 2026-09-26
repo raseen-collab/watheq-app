@@ -23,13 +23,16 @@ function randomToken(): string {
   return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-export default function OwnerLinkModal({ propertyId, propertyName, ownerPhoneHint, ownerName, properties, onClose }: {
+export default function OwnerLinkModal({ propertyId, propertyName, ownerPhoneHint, ownerName, properties, onClose, db, demo = false }: {
   propertyId: string; propertyName: string; ownerPhoneHint?: string | null; ownerName?: string | null;
   /** عقارات المكتب — لنطاقَي «كل عقارات المالك» و«عقارات مختارة» */
   properties?: { id: string; name: string; owner_name?: string | null }[];
   onClose: () => void;
+  db?: any;
+  /** في التجربة الرابط لا يفتح (لا قاعدة) — نشرح ذلك بدل رابط معطّل */
+  demo?: boolean;
 }) {
-  const supabase = createClient();
+  const supabase: any = db || createClient();
   const [rows, setRows] = useState<LinkRow[] | null>(null);
   const [label, setLabel] = useState("");
   /**
@@ -183,6 +186,13 @@ export default function OwnerLinkModal({ propertyId, propertyName, ownerPhoneHin
           <button className="btn btn-gold text-sm" onClick={createLink} disabled={busy}>{busy ? "…" : "+ إنشاء رابط"}</button>
         </div>
 
+        {demo && (
+          <div className="mt-3 rounded-xl border border-deep/30 bg-paper2 p-3 text-xs text-deep leading-relaxed">
+            <b>في التجربة:</b> جرّب إنشاء الرابط وإبطاله، لكنه لا يفتح لأن بيانات التجربة في متصفحك فقط.
+            في حسابك يفتحه المالك من جواله فيرى تقرير عقاره حيًّا — التحصيل والمصروفات والصافي — بلا تسجيل.
+          </div>
+        )}
+
         <div className="mt-3 rounded-xl border border-[#EBD9AA] bg-[#FBF1DF] p-3 text-xs text-[#6b4a10] leading-relaxed">
           الرابط نفسه هو السر: من وصله رأى أرقام هذا العقار (قراءة فقط). أرسله للمالك مباشرة،
           وإن تسرّب أو تغيّر المالك اضغط <b>إبطال</b> وأنشئ غيره — القديم يموت فورًا.
@@ -211,7 +221,7 @@ export default function OwnerLinkModal({ propertyId, propertyName, ownerPhoneHin
                 </div>
                 <input className="fld font-mono text-[.7rem] mt-2" dir="ltr" readOnly value={urlOf(x.token)} onFocus={(e) => e.currentTarget.select()} />
                 <div className="flex flex-wrap gap-1.5 justify-end mt-2">
-                  {!x.revoked && (
+                  {!x.revoked && !demo && (
                     <>
                       <button className="btn btn-ghost text-xs" onClick={() => copy(x.token)}>📋 نسخ</button>
                       <a className="btn btn-ghost text-xs" target="_blank" rel="noreferrer" href={waLink(ownerPhoneHint || "", waText(x.token))} onClick={(e) => { e.preventDefault(); openExternal(waLink(ownerPhoneHint || "", waText(x.token))); }}>واتساب</a>

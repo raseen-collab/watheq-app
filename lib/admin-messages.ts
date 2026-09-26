@@ -9,6 +9,7 @@
  * كل رسالة تُفتح بضغطة في واتساب مكتوبةً بالفعل — لا نسخ ولا لصق.
  */
 
+import { daysAr } from "@/lib/utils";
 export type MsgKind = "renew" | "hot_trial" | "expired" | "silent_new" | "gone_quiet" | "welcome";
 
 export type MsgCtx = {
@@ -37,7 +38,7 @@ export function buildMessage(kind: MsgKind, c: MsgCtx): { title: string; text: s
         text:
 `السلام عليكم ${who}
 
-اشتراككم في وثيق ينتهي ${c.endDate ? `بتاريخ ${c.endDate}` : "قريبًا"}${c.daysLeft !== null && c.daysLeft !== undefined ? ` (بقي ${c.daysLeft} يوم)` : ""}.
+اشتراككم في وثيق ينتهي ${c.endDate ? `بتاريخ ${c.endDate}` : "قريبًا"}${c.daysLeft !== null && c.daysLeft !== undefined ? ` (بقي ${daysAr(c.daysLeft, true)})` : ""}.
 
 للتجديد: ${c.price ? `${c.price} ريال` : "نفس الباقة"} شهريًا، ويستمر كل شيء كما هو — ${units ? `${units} وحدة` : "بياناتكم"} وسجلاتكم بلا انقطاع.
 
@@ -50,7 +51,7 @@ export function buildMessage(kind: MsgKind, c: MsgCtx): { title: string; text: s
         text:
 `السلام عليكم ${who}
 
-ملاحظة سريعة: تجربتكم في وثيق تنتهي ${c.daysLeft === 0 ? "اليوم" : `خلال ${c.daysLeft} يوم`}${c.endDate ? ` (${c.endDate})` : ""}.
+ملاحظة سريعة: تجربتكم في وثيق تنتهي ${c.daysLeft === 0 ? "اليوم" : `خلال ${daysAr(c.daysLeft)}`}${c.endDate ? ` (${c.endDate})` : ""}.
 
 شفت إنكم مدخلين ${c.props ? `${c.props} عقار و` : ""}${units} وحدة${c.pays ? ` ومسجّلين ${c.pays} دفعة` : ""} — يعني النظام صار جزءًا من شغلكم.
 
@@ -76,7 +77,7 @@ export function buildMessage(kind: MsgKind, c: MsgCtx): { title: string; text: s
         text:
 `السلام عليكم ${who}
 
-سجّلت في وثيق ${c.sinceJoin ? `قبل ${c.sinceJoin} يوم` : "مؤخرًا"} وما بدأت بعد — وأتوقّع السبب إن إدخال البيانات يبي وقت.
+سجّلت في وثيق ${c.sinceJoin ? `قبل ${daysAr(c.sinceJoin)}` : "مؤخرًا"} وما بدأت بعد — وأتوقّع السبب إن إدخال البيانات يبي وقت.
 
 عرض بدون أي التزام: أرسل لي بيانات عقاراتك بأي شكل عندك (ملف إكسل، صورة دفتر، أو حتى رسالة) وأنا أجهّز لك الحساب كامل بنفسي خلال يوم — العقارات والوحدات والعقود والمسدَّد.
 
@@ -89,7 +90,7 @@ export function buildMessage(kind: MsgKind, c: MsgCtx): { title: string; text: s
         text:
 `السلام عليكم ${who}
 
-شفت إنك مدخل ${units} وحدة في وثيق، وآخر نشاط ${c.sinceLast ? `قبل ${c.sinceLast} يوم` : "له فترة"}.
+شفت إنك مدخل ${units} وحدة في وثيق، وآخر نشاط ${c.sinceLast ? `قبل ${daysAr(c.sinceLast)}` : "له فترة"}.
 
 سؤال واحد بصراحة: فيه شيء وقفك أو ناقصك؟ أنا المطوّر نفسه وأقدر أضيف أو أعدّل بسرعة، وإذا الموضوع وقت أجهّز لك أي شيء ناقص بنفسي.`,
       };

@@ -11,7 +11,7 @@ import { unitStatus, unitStatusLabel } from "@/lib/contract-state";
 import type { ComplianceItem } from "@/lib/compliance";
 import { fetchAllRows } from "@/lib/fetch-all";
 import { hijriShort, hijriText, parseHijriInput } from "@/lib/hijri";
-import { sar, waLink, today, WATHEQ_WA, openExternal } from "@/lib/utils";
+import { sar, waLink, today, WATHEQ_WA, openExternal, daysAr } from "@/lib/utils";
 import { contractState, expectedNext12, buildSchedule, FREQUENCIES, freqLabel, freqShort, derivedEndDate, renewContract, needsRenewal, applyPayment, splitVat, isCommercial, isVacant, settleDeposit, unitVatApplies,
   vacancyDays, TURNOVER_CHECKLIST, defaultTermPeriods, type Frequency } from "@/lib/contracts";
 import { PROPERTY_TYPES, typeLabel, unitLabel, typeIcon } from "@/lib/domain";
@@ -108,7 +108,7 @@ const ROW_META: Record<RowKey, { label: string; dot: string; cls: string }> = {
  */
 function renewalNote(st: ReturnType<typeof contractState>): string {
   if (st.endDate && st.daysToEnd !== null && st.daysToEnd >= 0)
-    return `العقد ينتهي ${arDate(st.endDate)} (${st.daysToEnd === 0 ? "اليوم" : `بعد ${st.daysToEnd} يوم`}) — الدفعة التالية مع التجديد`;
+    return `العقد ينتهي ${arDate(st.endDate)} (${st.daysToEnd === 0 ? "اليوم" : `بعد ${daysAr(st.daysToEnd)}`}) — الدفعة التالية مع التجديد`;
   if (st.endDate) return `انتهى العقد ${arDate(st.endDate)} — جدّده لتظهر الدفعات القادمة`;
   return "لا دفعات قادمة في العقد";
 }
@@ -849,7 +849,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
         const jump = (Date.parse(String(payload.contract_start)) - Date.parse(String(prev.contract_start))) / 86400000;
         const st0 = contractState(prev, { graceDays: Number(active.grace_days) || 0, ...windowsOf(active) });
         if (jump >= 25 && (st0.amountDue || 0) > 0 && !confirm(
-          `نقلتَ بداية العقد ${Math.round(jump)} يومًا للأمام وصفّرت المسدَّد، وعلى المدة الحالية متأخرات ${sar(st0.amountDue)} ريال.\n\n`
+          `نقلتَ بداية العقد ${plural(jump, "يومًا واحدًا", "يومين", "أيام", "يومًا")} للأمام وصفّرت المسدَّد، وعلى المدة الحالية متأخرات ${sar(st0.amountDue)} ريال.\n\n`
           + `إن كان هذا تجديدًا لعقد جديد: اضغط «إلغاء» واستعمل «تجديد العقد» من قائمة الوحدة — يسألك عن المتأخرات ولا يضيّعها.\n\n`
           + `إن كان تصحيحًا لبيانات أُدخلت خطأً: اضغط «موافق».`)) { setSaving(false); return; }
       }
@@ -1494,7 +1494,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       {expiringSoon && (
         <div className={`flex flex-wrap items-center gap-3 rounded-xl p-3.5 mb-4 border text-sm ${
           (expiringSoon.st.daysToEnd || 0) <= 30 ? "bg-[#FBE9E7] border-[#F5C6C2] text-[#8f2b26]" : "bg-[#FBF1DF] border-[#EBD9AA] text-[#8a5a11]"}`}>
-          <span>عقد {expiringSoon.t.name} ({ul} {expiringSoon.t.unit || "—"}) ينتهي خلال <b>{expiringSoon.st.daysToEnd}</b> يومًا ({expiringSoon.st.endDate}). جهّز التجديد أو الإخلاء.</span>
+          <span>عقد {expiringSoon.t.name} ({ul} {expiringSoon.t.unit || "—"}) ينتهي خلال <b>{plural(expiringSoon.st.daysToEnd ?? 0, "يوم واحد", "يومين", "أيام", "يومًا")}</b> ({expiringSoon.st.endDate}). جهّز التجديد أو الإخلاء.</span>
           <button className="btn btn-ghost text-xs mr-auto" onClick={() => setRenewing(expiringSoon.t)}>تجديد الآن</button>
         </div>
       )}
@@ -1875,9 +1875,9 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                     </div>
                     <div className="text-xs mt-1 tabular-nums">
                       {key === "vacant" ? (() => { const v = vacancyDays(t.move_out_date); return (
-                          <span className="text-[#475569] font-semibold">شاغرة{v !== null ? ` منذ ${v} يوم` : ""}</span>
+                          <span className="text-[#475569] font-semibold">شاغرة{v !== null ? ` منذ ${daysAr(v)}` : ""}</span>
                         ); })()
-                        : st.inGrace ? <span className="text-[#8a5a11] font-semibold">فترة سماح — {st.graceDaysLeft} يوم</span>
+                        : st.inGrace ? <span className="text-[#8a5a11] font-semibold">فترة سماح — {daysAr(st.graceDaysLeft, true)}</span>
                         /* حالة حسن خليل: متبقٍ من دفعة سابقة، والقادمة بعد أيام —
                            كانت البطاقة تذكر المتبقي ولا تذكر متى الدفعة التالية. */
                         : key === "partial" ? <span className="text-[#9A5B00] font-semibold">
@@ -1895,9 +1895,9 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                             {Number(t.rent_amount) > 0 && <span> · {sar(Number(t.rent_amount))} ريال</span>}
                             {st.nextDueDate ? <span className="font-normal text-muted"> · {arDate(st.nextDueDate)}</span> : null}
                           </span>
-                        : key === "expiring" && st.daysToEnd !== null ? <span className="text-[#5B21B6] font-semibold">ينتهي بعد {st.daysToEnd} يوم</span>
+                        : key === "expiring" && st.daysToEnd !== null ? <span className="text-[#5B21B6] font-semibold">ينتهي بعد {daysAr(st.daysToEnd)}</span>
                         : key === "litigation" ? <span className="text-[#475569]">{t.enforcement_no ? `طلب ${t.enforcement_no}` : "متابعة نظامية"}</span>
-                        : st.fullyPaid ? <span className="text-[#137a50] font-semibold">✓ سدّد كامل العقد ({st.paid} من {t.contract_periods || st.paid}){st.endDate ? <span className="font-normal text-muted"> · ينتهي {st.endDate}{st.daysToEnd !== null && st.daysToEnd >= 0 ? ` (بعد ${st.daysToEnd} يوم)` : ""} — القسط القادم مع التجديد</span> : null}</span>
+                        : st.fullyPaid ? <span className="text-[#137a50] font-semibold">✓ سدّد كامل العقد ({st.paid} من {t.contract_periods || st.paid}){st.endDate ? <span className="font-normal text-muted"> · ينتهي {st.endDate}{st.daysToEnd !== null && st.daysToEnd >= 0 ? ` (بعد ${daysAr(st.daysToEnd)})` : ""} — القسط القادم مع التجديد</span> : null}</span>
                         : st.nextDueDate ? <span className="text-muted">
                             القادمة {st.upcomingDate || st.nextDueDate}{` · ${hijriShort(st.upcomingDate || st.nextDueDate || "")}`}
                             {Number(t.rent_amount) > 0 && <span> · {sar(Number(t.rent_amount))} ريال</span>}
@@ -2059,22 +2059,22 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
         <QuoteModal property={active} unitWord={ul} issuer={issuer || {}} onClose={() => setQuoteOpen(false)} />
       )}
 
-      {ownerStmtOpen && <OwnerStatementModal properties={items} issuer={issuer} onClose={() => setOwnerStmtOpen(false)} />}
-      {logOpen && <ActivityLog properties={items} onClose={() => setLogOpen(false)} />}
+      {ownerStmtOpen && <OwnerStatementModal properties={items} issuer={issuer} db={db} onClose={() => setOwnerStmtOpen(false)} />}
+      {logOpen && <ActivityLog properties={items} db={db} onClose={() => setLogOpen(false)} />}
       {/* الصفحة العامة ترسم دليلها بنفسها — لا نكرّره هنا */}
-      {collOpen && <CollectionStatementModal properties={items as any /* كاملة: نسبة الأتعاب وإعدادات الضريبة تحدّد صافي المالك */} issuer={issuer} onClose={() => setCollOpen(false)} />}
-      {debtOpen && <DebtFollowUp properties={items.map((p) => ({ id: p.id, name: p.name }))} orgName={orgName} onClose={() => setDebtOpen(false)} />}
+      {collOpen && <CollectionStatementModal properties={items as any /* كاملة: نسبة الأتعاب وإعدادات الضريبة تحدّد صافي المالك */} issuer={issuer} db={db} onClose={() => setCollOpen(false)} />}
+      {debtOpen && <DebtFollowUp properties={items.map((p) => ({ id: p.id, name: p.name }))} orgName={orgName} db={db} onClose={() => setDebtOpen(false)} />}
       {hasDemo && !demo && <DemoGuide onEvent={onGuideEvent} />}
       {stmtOpen && active && <PropertyStatementModal propertyName={active.name} onClose={() => setStmtOpen(false)} onIssue={openPropertyStatement} />}
 
       {reporting && active && (
-        <OwnerReportModal property={active} unitWord={ul} issuer={issuer || {}} onClose={() => setReporting(false)} />
+        <OwnerReportModal property={active} unitWord={ul} issuer={issuer || {}} db={db} onClose={() => setReporting(false)} />
       )}
       {expensesOpen && active && (
-        <ExpensesModal propertyId={active.id} propertyName={active.name} unitWord={ul} onClose={() => { setExpensesOpen(false); setExpKey((k) => k + 1); }} />
+        <ExpensesModal propertyId={active.id} propertyName={active.name} unitWord={ul} db={db} onClose={() => { setExpensesOpen(false); setExpKey((k) => k + 1); }} />
       )}
       {ownerLinkOpen && active && (
-        <OwnerLinkModal propertyId={active.id} propertyName={active.name} ownerName={active.owner_name}
+        <OwnerLinkModal propertyId={active.id} propertyName={active.name} ownerName={active.owner_name} db={db} demo={demo}
           properties={items.map((p) => ({ id: p.id, name: p.name, owner_name: (p as any).owner_name }))}
           onClose={() => setOwnerLinkOpen(false)} />
       )}
@@ -2089,8 +2089,8 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
         onSubmit={(amt, method, note, paidOn, reference) => { recordPayment(paying, amt, method, note, paidOn, reference); setPaying(null); }} />}
       {turnover && <TurnoverModal key={turnover.id} tenant={turnover} unitWord={ul} onClose={() => setTurnover(null)}
         onSubmit={(d) => saveTurnover(turnover, d)} />}
-      {history && <HistoryModal data={history} unitWord={ul} canEdit={may("undo_actions")} onChanged={() => router.refresh()} onClose={() => setHistory(null)} />}
-      {remindAll && <RemindAllModal rows={lateRows} unitWord={ul} linkOf={remindLink}
+      {history && <HistoryModal data={history} unitWord={ul} db={db} canEdit={may("undo_actions")} onChanged={() => router.refresh()} onClose={() => setHistory(null)} />}
+      {remindAll && <RemindAllModal rows={lateRows} unitWord={ul} linkOf={remindLink} demo={demo}
         onClose={() => setRemindAll(false)} />}
       {doc && <DocModal doc={doc} onClose={() => setDoc(null)} />}
     </div>
@@ -2338,13 +2338,13 @@ function TurnoverModal({ tenant, unitWord, onClose, onSubmit }: {
  * أسبوع يحتاج تصحيح تاريخ وصول المال أو إضافة مرجعه — بلا مساس بالمبلغ
  * (تغييره يفسد عدّاد الدفعات). القاعدة تسمح بهذين العمودين فقط.
  */
-function HistoryModal({ data, unitWord, onClose, canEdit = true, onChanged }: {
-  data: { tenant: Tenant; rows: any[] }; unitWord: string; onClose: () => void; canEdit?: boolean;
+function HistoryModal({ data, unitWord, onClose, canEdit = true, onChanged, db }: {
+  data: { tenant: Tenant; rows: any[] }; unitWord: string; onClose: () => void; canEdit?: boolean; db?: any;
   /** تُستدعى بعد عكس دفعة ليُعاد تحميل أرقام اللوحة */
   onChanged?: () => void;
 }) {
   const { tenant } = data;
-  const supabase = useMemo(() => createClient(), []);
+  const supabase: any = useMemo(() => db || createClient(), [db]);
   const [rows, setRows] = useState<any[]>(data.rows);
   const [editing, setEditing] = useState<string | null>(null);
   const [eDate, setEDate] = useState("");
@@ -2723,13 +2723,13 @@ function PropertyModal({ open, initial, orgName, ownerNames = [], officeSoon = 1
         <details open={d.expiring_days != null || d.soon_days != null || d.imminent_days != null} className="border border-line rounded-xl p-3 bg-paper">
           <summary className="cursor-pointer text-sm font-semibold text-deep">إعدادات التنبيه لهذا العقار <span className="text-xs text-muted font-normal">— اختيارية، الافتراضي من إعدادات المكتب</span></summary>
           <div className="space-y-3 mt-3">
-            <Field label="تنبيه انتهاء العقد قبله بـ (يوم)" hint={`فارغ = افتراضي المكتب (${officeExpiring} يوم) — يظهر باللون الأحمر ضمن «ينتهي قريبًا»`}>
+            <Field label="تنبيه انتهاء العقد قبله بـ (يوم)" hint={`فارغ = افتراضي المكتب (${daysAr(officeExpiring)}) — يظهر باللون الأحمر ضمن «ينتهي قريبًا»`}>
               <input className="fld" type="number" min={1} max={180} value={d.expiring_days ?? ""} onChange={(e) => setD({ ...d, expiring_days: e.target.value === "" ? null : Number(e.target.value) })} placeholder={String(officeExpiring)} />
             </Field>
-            <Field label="«قريب» — قبل الاستحقاق بـ (يوم)" hint={`فارغ = إعداد المكتب (${officeSoon} يوم)`}>
+            <Field label="«قريب» — قبل الاستحقاق بـ (يوم)" hint={`فارغ = إعداد المكتب (${daysAr(officeSoon)})`}>
               <input className="fld" type="number" min={1} max={60} value={d.soon_days ?? ""} onChange={(e) => setD({ ...d, soon_days: e.target.value === "" ? null : Number(e.target.value) })} placeholder={`افتراضي المكتب: ${officeSoon}`} />
             </Field>
-            <Field label="«مستحق» — قبل الاستحقاق بـ (يوم)" hint={`فارغ = إعداد المكتب (${officeImminent} يوم) — أقل من «قريب»`}>
+            <Field label="«مستحق» — قبل الاستحقاق بـ (يوم)" hint={`فارغ = إعداد المكتب (${daysAr(officeImminent)}) — أقل من «قريب»`}>
               <input className="fld" type="number" min={1} max={60} value={d.imminent_days ?? ""} onChange={(e) => setD({ ...d, imminent_days: e.target.value === "" ? null : Number(e.target.value) })} placeholder={`افتراضي المكتب: ${officeImminent}`} />
             </Field>
           </div>
@@ -3204,10 +3204,10 @@ function TenantModal({ open, initial, unitWord, error, saving, onClose, onSubmit
  */
 const AR_MONTHS = ["يناير","فبراير","مارس","أبريل","مايو","يونيو","يوليو","أغسطس","سبتمبر","أكتوبر","نوفمبر","ديسمبر"];
 
-function OwnerReportModal({ property, unitWord, issuer, onClose }: {
-  property: Property; unitWord: string; issuer: any; onClose: () => void;
+function OwnerReportModal({ property, unitWord, issuer, onClose, db }: {
+  property: Property; unitWord: string; issuer: any; onClose: () => void; db?: any;
 }) {
-  const supabase = createClient();
+  const supabase: any = db || createClient();
   /* كان الشهر الواحد هو الخيار الوحيد. المالك يطلب الربع والسنة و«منذ
      البداية»، والمكتب يحتاج فترة مخصّصة عند التسليم أو النزاع. */
   const [preset, setPreset] = useState<"month" | "quarter" | "half" | "year" | "all" | "custom">("month");
@@ -3630,7 +3630,7 @@ function RenewModal({ tenant, unitWord, onClose, onRenew }: {
         <div className="text-muted text-xs leading-relaxed">
           من {tenant.contract_start || "—"} إلى <b className="text-ink">{cur.endDate}</b> ·
           {" "}{sar(tenant.rent_amount)} ريال / {freqShort(curFreq)} ·
-          {" "}{cur.daysToEnd !== null && cur.daysToEnd >= 0 ? `متبقٍ ${cur.daysToEnd} يومًا` : "منتهية"}
+          {" "}{cur.daysToEnd !== null && cur.daysToEnd >= 0 ? `متبقٍ ${plural(cur.daysToEnd, "يوم واحد", "يومان", "أيام", "يومًا")}` : "منتهية"}
         </div>
       </div>
 
@@ -3731,10 +3731,45 @@ function EnforcementModal({ tenant, unitWord, onClose, onSubmit }: {
 }
 
 /** تذكير جماعي — يفتح واتساب لكل متأخر واحدًا تلو الآخر مع تتبّع من أُرسل له */
-function RemindAllModal({ rows, unitWord, linkOf, onClose }: {
+function RemindAllModal({ rows, unitWord, linkOf, onClose, demo = false }: {
   rows: Row[]; unitWord: string; linkOf: (t: Tenant) => string; onClose: () => void;
+  /** التجربة: مستأجروها بلا أرقام (عمدًا — لا رقم حقيقي يُراسَل بالخطأ)، فنعرض الرسالة الجاهزة نفسها */
+  demo?: boolean;
 }) {
   const [sent, setSent] = useState<Record<string, boolean>>({});
+  const [shown, setShown] = useState<string | null>(null);
+  const textOf = (t: Tenant) => { try { return new URL(linkOf(t)).searchParams.get("text") || ""; } catch { return ""; } };
+  if (demo) return (
+    <div className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4" onClick={onClose}>
+      <div className="w-full max-w-lg bg-white rounded-2xl shadow-xl p-6 max-h-[92vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
+        <h3 className="font-display font-bold text-deep text-xl mb-1">💬 تذكير جماعي بالسداد</h3>
+        <p className="text-sm text-muted mb-4">
+          لكل متأخر رسالة جاهزة بمبلغه ودفعاته وتواريخها. في حسابك يفتح كل زر محادثة واتساب مع المستأجر
+          والرسالة مكتوبة — ترسلها بضغطة وتنتقل للتالي. في التجربة المستأجرون بلا أرقام، فاعرض الرسالة كما ستصله:
+        </p>
+        <div className="flex flex-col gap-2">
+          {rows.map(({ t, st }) => (
+            <div key={t.id} className="rounded-xl border border-line bg-paper p-3">
+              <div className="flex items-center gap-3">
+                <div className="min-w-0 flex-1">
+                  <div className="font-semibold truncate text-sm">{t.name}</div>
+                  <div className="text-xs text-muted">{unitWord} {t.unit || "—"} · {st.unpaid} دفعة · {sar(st.amountDue)} ريال</div>
+                </div>
+                <button type="button" className="btn btn-wa text-xs" onClick={() => setShown(shown === t.id ? null : t.id)}>
+                  {shown === t.id ? "إخفاء" : "عرض الرسالة"}
+                </button>
+              </div>
+              {shown === t.id && (
+                <div className="mt-2 whitespace-pre-wrap text-[12.5px] leading-relaxed rounded-lg bg-[#E7F7EE] border border-[#B7DFC7] p-3">{textOf(t)}</div>
+              )}
+            </div>
+          ))}
+          {!rows.length && <div className="text-center text-muted text-sm py-6">لا متأخرين في هذا العقار الآن.</div>}
+        </div>
+        <button type="button" className="btn btn-ghost w-full justify-center mt-4" onClick={onClose}>إغلاق</button>
+      </div>
+    </div>
+  );
   const withPhone = rows.filter((r) => r.t.phone);
   const noPhone = rows.length - withPhone.length;
   const sentCount = Object.values(sent).filter(Boolean).length;

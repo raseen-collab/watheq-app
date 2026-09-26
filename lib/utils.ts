@@ -27,6 +27,21 @@ export function waNumber(phone?: string | null): string {
   return p;
 }
 
+/**
+ * «عدد + يوم» بالعربية الصحيحة: يوم واحد · يومين · 3–10 أيام · 11–99 يومًا · 100 يوم.
+ * كانت اللوحة تكتب «بعد 106 يوم» و«خلال 4 يومًا» — أول ما يقرؤه الزائر.
+ * nominative: «يومان» بدل «يومين» حين يكون العدد مبتدأً أو فاعلًا («بقي يومان»).
+ */
+export function daysAr(n: number | null | undefined, nominative = false): string {
+  const x = Math.abs(Math.round(Number(n) || 0));
+  if (x === 1) return "يوم واحد";
+  if (x === 2) return nominative ? "يومان" : "يومين";
+  const r = x % 100;
+  if (r >= 3 && r <= 10) return `${x} أيام`;
+  if (r >= 11) return `${x} يومًا`;
+  return `${x} يوم`;
+}
+
 export function waLink(phone: string | undefined | null, text: string) {
   return `https://wa.me/${waNumber(phone)}?text=${encodeURIComponent(text)}`;
 }

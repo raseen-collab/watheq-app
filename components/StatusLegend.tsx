@@ -4,6 +4,7 @@
 // موظف جديد يفتحه مرة ويفهم النمط كله — لا شرح شفهي ولا تخمين.
 // ============================================================
 import { useEffect, useState } from "react";
+import { daysAr } from "@/lib/utils";
 
 export default function StatusLegend({ soonDays, imminentDays, expiringDays = 60, graceDays, scope }: {
   soonDays: number; imminentDays: number; expiringDays?: number; graceDays?: number | null; scope: string;
@@ -11,14 +12,14 @@ export default function StatusLegend({ soonDays, imminentDays, expiringDays = 60
   const [open, setOpen] = useState(false);
   const g = Number(graceDays) || 0;
   const rows: { dot: string; name: string; when: string }[] = [
-    { dot: "bg-paid", name: "منتظم", when: `لا استحقاق خلال ${soonDays} يومًا القادمة، وكل دفعاته السابقة مسدَّدة.` },
-    { dot: "bg-gold", name: "قريب", when: `تبقّى على الاستحقاق ${imminentDays + 1}–${soonDays} يومًا — للمتابعة الهادئة.` },
-    { dot: "bg-[#D97706]", name: "مستحق", when: `تبقّى ${imminentDays} أيام أو أقل — وقت التذكير.` },
+    { dot: "bg-paid", name: "منتظم", when: `لا استحقاق خلال الـ${daysAr(soonDays)} القادمة، وكل دفعاته السابقة مسدَّدة.` },
+    { dot: "bg-gold", name: "قريب", when: `تبقّى على الاستحقاق من ${imminentDays + 1} إلى ${daysAr(soonDays)} — للمتابعة الهادئة.` },
+    { dot: "bg-[#D97706]", name: "مستحق", when: `تبقّى ${daysAr(imminentDays, true)} أو أقل — وقت التذكير.` },
     { dot: "bg-[#D97706]", name: "يستحق اليوم", when: "اليوم هو يوم الاستحقاق — للمستأجر يومه كاملًا." },
-    ...(g > 0 ? [{ dot: "bg-[#8a5a11]", name: "فترة سماح", when: `مرّ يوم الاستحقاق ولم يسدّد، وله ${g} أيام مهلة قبل أن يُعدّ متأخرًا.` }] : []),
-    { dot: "bg-late", name: "متأخر", when: g > 0 ? `انتهت المهلة (${g} أيام بعد الاستحقاق) ولم يسدّد.` : "مرّ يوم الاستحقاق ولم يسدّد — يبدأ من اليوم التالي." },
+    ...(g > 0 ? [{ dot: "bg-[#8a5a11]", name: "فترة سماح", when: `مرّ يوم الاستحقاق ولم يسدّد، وله ${daysAr(g, true)} مهلة قبل أن يُعدّ متأخرًا.` }] : []),
+    { dot: "bg-late", name: "متأخر", when: g > 0 ? `انتهت المهلة (${daysAr(g, true)} بعد الاستحقاق) ولم يسدّد.` : "مرّ يوم الاستحقاق ولم يسدّد — يبدأ من اليوم التالي." },
     { dot: "bg-[#EA8C00]", name: "سداد جزئي", when: "سدّد جزءًا من الدفعة المستحقة والباقي متأخر." },
-    { dot: "bg-[#DC2626]", name: "ينتهي قريبًا", when: `العقد ينتهي خلال ${expiringDays} يومًا — وقت التفاوض على التجديد.` },
+    { dot: "bg-[#DC2626]", name: "ينتهي قريبًا", when: `العقد ينتهي خلال ${daysAr(expiringDays)} — وقت التفاوض على التجديد.` },
     { dot: "bg-[#137a50]", name: "✓ مسدَّد كاملًا", when: "سدّد كل دفعات العقد مقدّمًا — القسط القادم مع التجديد." },
     { dot: "bg-[#64748B]", name: "في التنفيذ", when: "أُحيل إلى محكمة التنفيذ — يُتابَع نظاميًّا لا بالتذكير." },
     { dot: "bg-[#94A3B8]", name: "شاغرة", when: "لا مستأجر — لا تدخل في الحسابات ولا التنبيهات." },

@@ -13,7 +13,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase-client";
 import { contractState } from "@/lib/contracts";
-import { waLink, openExternal } from "@/lib/utils";
+import { waLink, openExternal, daysAr } from "@/lib/utils";
 
 const sar = (n: number) => Math.round(Number(n) || 0).toLocaleString("en-US");
 const today = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Riyadh", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
@@ -48,14 +48,15 @@ function ageOf(since: string | null): { days: number; txt: string; tone: string 
   /* جمع عربي صحيح: «سنة» لا «1 سنة»، و«سنتان» لا «2 سنتان» */
   const txt = y >= 1 ? (y === 1 ? "سنة" : y === 2 ? "سنتين" : y <= 10 ? `${y} سنوات` : `${y} سنة`)
     : m >= 1 ? (m === 1 ? "شهر" : m === 2 ? "شهرين" : m <= 10 ? `${m} أشهر` : `${m} شهرًا`)
-    : d === 1 ? "يوم" : d === 2 ? "يومين" : `${d} يومًا`;
+    : d === 1 ? "يوم" : daysAr(d);
   return { days: d, txt, tone: d > 365 ? "text-late font-bold" : d > 180 ? "text-[#9A4B00] font-semibold" : "text-muted" };
 }
 
-export default function DebtFollowUp({ properties, orgName, onClose }: {
+export default function DebtFollowUp({ properties, orgName, onClose, db }: {
   properties: { id: string; name: string }[];
   orgName?: string;
   onClose: () => void;
+  db?: any;
 }) {
 
   /* قفل تمرير الصفحة خلف النافذة — يُزال حتمًا عند الإغلاق */
@@ -63,7 +64,7 @@ export default function DebtFollowUp({ properties, orgName, onClose }: {
     document.body.classList.add("wq-modal-open");
     return () => document.body.classList.remove("wq-modal-open");
   }, []);
-  const supabase = useMemo(() => createClient(), []);
+  const supabase: any = useMemo(() => db || createClient(), [db]);
   const [rows, setRows] = useState<Row[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [filter, setFilter] = useState<string>("active");

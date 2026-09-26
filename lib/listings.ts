@@ -9,6 +9,7 @@
 // كل ما هنا دوال نقية بلا شبكة ولا حالة — تصلح للوحة والمستند والبوت.
 // ============================================================
 
+import { daysAr } from "@/lib/utils";
 export type ListingKind = "land" | "apartment" | "villa" | "building" | "shop" | "other";
 export type OfferType = "sale" | "rent";
 export type ListingStatus = "available" | "reserved" | "contracted" | "withdrawn";
@@ -96,7 +97,7 @@ export function freshness(l: Listing, asOf?: Date): Freshness {
   if (!isOpen(l)) return { stale: false, days: daysSinceConfirm(l, asOf), label: "—", tone: "muted" };
   const d = daysSinceConfirm(l, asOf);
   if (d === null) return { stale: true, days: null, label: "لم يُؤكَّد بعد", tone: "warn" };
-  if (d >= STALE_DAYS) return { stale: true, days: d, label: `آخر تأكيد قبل ${d} يومًا — راجعه`, tone: "warn" };
+  if (d >= STALE_DAYS) return { stale: true, days: d, label: `آخر تأكيد قبل ${daysAr(d)} — راجعه`, tone: "warn" };
   if (d === 0) return { stale: false, days: 0, label: "أُكِّد اليوم", tone: "ok" };
   return { stale: false, days: d, label: `أُكِّد قبل ${d} يومًا`, tone: "ok" };
 }
