@@ -37,11 +37,10 @@ ck("إجمالي المتأخر في اللوحة = مجموع صفوفه", dash
 const legacy = r2(sts.filter((x) => x.st.vacant).reduce((a, x) => a + x.st.legacyArrears, 0));
 ck("ديون الشاغرة منفصلة عن المتأخر", !dashLate.some((x) => x.st.vacant) && legacy >= 0, `legacy=${legacy}`);
 
-// 3) الدخل السنوي = مجموع (إيجار × دفعات السنة) للمؤجّرة فقط
-const PY = { monthly: 12, quarterly: 4, semiannual: 2, annual: 1 };
-const annualManual = r2(tenants.filter((t) => t.status !== "vacated").reduce((a, t) => a + t.rent_amount * PY[t.payment_frequency], 0));
+// 3) كشف الحساب يذكر ما حدث لا ما يُتوقَّع — «الدخل السنوي المتوقع» أُزيل
+//    من propertyStatementHTML بطلب مكتب؛ الاختبار القديم كان يطالب بوجوده فيفشل دائمًا
 const html = D.propertyStatementHTML(p, {}, "full");
-ck("الدخل السنوي في الكشف = الحساب اليدوي", html.includes(annualManual.toLocaleString("en-US")), `${annualManual}`);
+ck("الكشف لا يعرض دخلًا متوقَّعًا", !html.includes("الدخل السنوي المتوقع"), "ظهر رقم تقديري في كشف حساب");
 
 // 4) عدد الوحدات: مؤجّرة + شاغرة = الإجمالي
 const vacN = tenants.filter((t) => t.status === "vacated").length;
