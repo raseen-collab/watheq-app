@@ -6,7 +6,7 @@ import { unitLabel, typeLabel } from "./domain";
 import { hijriText } from "@/lib/hijri";
 import { annualRentRoll } from "./income";
 import { defaultTermPeriods } from "./contracts";
-import { unitStatus, unitStatusLabel } from "./contract-state";
+import { unitStatus, unitStatusLabel, arrearsOf } from "./contract-state";
 
 const sar = (n: number) => {
   const v = Number(n) || 0;
@@ -1880,6 +1880,10 @@ export function ownerReportHTML(
   const occupancy = total ? Math.round((occupied / total) * 100) : 0;
   const late = rows.filter((r) => !r.vacant && r.st.status === "late").length;
   const totalDue = rows.reduce((s, r) => s + (r.vacant ? 0 : r.st.amountDue), 0);
+  /* التقرير يعرض الإجمالي (حق المالك أن يراه كاملًا)، لكن اللوحة تعرض
+     «المتأخر» بلا وحدات التنفيذ. بلا هذا التفصيل يرى المكتب رقمين
+     مختلفين ولا يعرف أيهما الصحيح — فنُظهر الشقّين ومجموعهما. */
+  const arr = arrearsOf(rows as any[]);
   const collected = payments.reduce((s, x) => s + (Number(x.amount) || 0), 0);
   /* المالك يرى ما استُلم فعلًا: العكس يُسقَط مع دفعته، والملاحظات الداخلية تُحذف */
   const shownPays = ownerVisiblePayments(payments as any[]);
@@ -1953,6 +1957,7 @@ ${header("تقرير دوري للمالك", p.name)}
 
 ${totalDue > 0 || expiring > 0 ? `<div class="note">${[
     late ? `${late} ${late === 1 ? "وحدة متأخرة" : "وحدات متأخرة"} بإجمالي ${sar(totalDue)} ريال` : "",
+    arr.litigation > 0 ? `منها <b>${sar(arr.litigation)}</b> ريال على ${arr.litigationCount === 1 ? "وحدة واحدة" : `${arr.litigationCount} وحدات`} تحت التنفيذ القضائي، و<b>${sar(arr.current)}</b> ريال قيد المطالبة` : "",
     expiring ? `${expiring} ${expiring === 1 ? "عقد ينتهي" : "عقود تنتهي"} خلال 60 يومًا — قرار التجديد مطلوب` : "",
   ].filter(Boolean).join(" · ")}</div>` : ""}
 
@@ -1969,6 +1974,8 @@ ${mode === "full" ? `
     <div class="r"><span>عدد الوحدات</span><span>${p.tenants.length}</span></div>
     <div class="r"><span>المحصَّل خلال الفترة</span><span><b style="color:#137a50">${sar(fin.collected)}</b> ريال</span></div>
     <div class="r"><span>المتأخرات القائمة</span><span><b style="color:${totalDue > 0 ? "#a5322c" : "#137a50"}">${sar(totalDue)}</b> ريال</span></div>
+    ${arr.litigation > 0 ? `<div class="r"><span style="padding-inline-start:12px">— قيد المطالبة</span><span>${sar(arr.current)} ريال</span></div>
+    <div class="r"><span style="padding-inline-start:12px">— تحت التنفيذ القضائي</span><span>${sar(arr.litigation)} ريال</span></div>` : ""}
     ${extra.fee_pct ? `<div class="r"><span>أتعاب الإدارة</span><span>${extra.fee_pct}%</span></div>` : ""}
     ${Number(p.grace_days) > 0 ? `<div class="r"><span>فترة السماح</span><span>${p.grace_days} أيام</span></div>` : ""}
   </div>

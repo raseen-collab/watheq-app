@@ -135,7 +135,9 @@ export default function PortfolioView({ properties, windows, compliance, orgName
     return {
       p, units: mine.length, occupied: occ.length,
       late: occ.filter((r) => r.st.status === "late" && !r.t.litigation).length,
-      overdue: occ.reduce((a, r) => a + (r.st.status === "late" ? r.st.amountDue : 0), 0),
+      /* نفس قاعدة arrearsOf التي تحسب بها إجماليات الأعلى — كان العمود
+         يضمّ وحدات التنفيذ فيخالف الإجمالي فوقه في الصفحة نفسها */
+      overdue: occ.reduce((a, r) => a + (!r.t.litigation && r.st.status === "late" ? r.st.amountDue : 0), 0),
       due: occ.filter((r) => r.st.status === "soon").length,
       expiring: occ.filter((r) => r.st.expiringSoon).length,
       monthly: occ.reduce((a, r) => a + (Number(r.t.rent_amount) || 0) * (PER_MONTH[r.t.payment_frequency || "monthly"] || 1), 0),

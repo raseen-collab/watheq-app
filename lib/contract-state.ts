@@ -65,3 +65,57 @@ export function unitStatus(t: any, st: { incomplete?: boolean; status: string; h
 export function unitStatusLabel(key: UnitStatus, st: { daysToEnd?: number | null }): string {
   return key === "expiring" && st.daysToEnd != null && st.daysToEnd < 0 ? "انتهى العقد" : UNIT_STATUS_LABEL[key];
 }
+
+/** ============================================================
+ *  مصدر واحد لتعريف «المتأخر» — 27 سبتمبر 2026
+ *
+ *  كانت خمس شاشات تحسبه بخمس طرق: بطاقة العقار وملخّص تليجرام
+ *  وإجماليات المحفظة تستبعد وحدات التنفيذ، بينما شريط المحفظة
+ *  وجدول العقارات وتقرير المالك تُدخلها — فيرى المكتب 33,000 في
+ *  موضع و36,200 في موضع آخر على الصفحة نفسها، ولا يعرف أيهما الصحيح.
+ *
+ *  القاعدة المعتمدة (وهي قاعدة الملخّص اليومي أصلًا): «المتأخر» هو ما
+ *  يمكن مطالبة ساكنٍ حاليٍّ به اليوم. ووحدة تحت التنفيذ القضائي مالها
+ *  مستحق لكنه بمسار آخر، فيُعرض مستقلًّا لا مطويًّا داخل الرقم.
+ *  ودين المستأجر السابق على وحدة شاغرة يبقى مستقلًّا كما كان.
+ *
+ *  كل شاشة تعرض المتأخر تستدعي هذه الدالة — فلا يعود أي رقمين يختلفان.
+ *  ============================================================ */
+export type ArrearsRow = {
+  t: { litigation?: boolean | null } | any;
+  st: { vacant?: boolean; status?: string; amountDue?: number; legacyArrears?: number };
+};
+
+export type Arrears = {
+  /** ما يُطالَب به ساكن حالي اليوم */
+  current: number; currentCount: number;
+  /** مستحق على وحدات تحت التنفيذ القضائي — لا تُرسل لها تذكيرات */
+  litigation: number; litigationCount: number;
+  /** دين مستأجر سابق على وحدة شاغرة */
+  legacy: number; legacyCount: number;
+  /** current + litigation — كل ما على السّاكنين، بما فيه التنفيذ */
+  total: number; totalCount: number;
+};
+
+export function arrearsOf(rows: ArrearsRow[]): Arrears {
+  const a: Arrears = { current: 0, currentCount: 0, litigation: 0, litigationCount: 0,
+    legacy: 0, legacyCount: 0, total: 0, totalCount: 0 };
+  for (const { t, st } of rows) {
+    const owed = Number(st?.amountDue) || 0;
+    if (st?.vacant || isVacant(t)) {
+      const leg = Number(st?.legacyArrears) || 0;
+      if (leg > 0) { a.legacy += leg; a.legacyCount++; }
+      continue;
+    }
+    if (t?.litigation) {
+      if (owed > 0) { a.litigation += owed; a.litigationCount++; }
+      continue;
+    }
+    if (st?.status === "late") { a.current += owed; a.currentCount++; }
+  }
+  const r2 = (n: number) => Math.round(n * 100) / 100;
+  a.current = r2(a.current); a.litigation = r2(a.litigation); a.legacy = r2(a.legacy);
+  a.total = r2(a.current + a.litigation);
+  a.totalCount = a.currentCount + a.litigationCount;
+  return a;
+}

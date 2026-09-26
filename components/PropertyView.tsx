@@ -7,7 +7,7 @@ import { createClient } from "@/lib/supabase-client";
 import { officeId, getOffice, ROLE_LABEL, OWNER_PERMS } from "@/lib/office";
 import { arDate, termRentPaidOf, pastVatOf } from "@/lib/documents";
 import { annualRentRoll } from "@/lib/income";
-import { unitStatus, unitStatusLabel } from "@/lib/contract-state";
+import { unitStatus, unitStatusLabel, arrearsOf } from "@/lib/contract-state";
 import type { ComplianceItem } from "@/lib/compliance";
 import { fetchAllRows } from "@/lib/fetch-all";
 import { hijriShort, hijriText, parseHijriInput } from "@/lib/hijri";
@@ -1251,14 +1251,17 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       /* المُخلاة: لا تدخل في الدخل الشهري (لا ساكن يدفع) ولا في عدّاد المتأخرين؛
          ودينها القديم يُجمع على حدة. كانت تُعدّ كأنها مؤجّرة فيرتفع الدخل زورًا. */
       if (st.vacant) { acc.vacant++; acc.legacy += st.legacyArrears; return; }
-      if (st.status === "late") { acc.late++; acc.overdue += st.amountDue; }
+      /* التنفيذ القضائي خارج «المتأخر» (قاعدة arrearsOf) ويُعرض مستقلًّا —
+         كان الشريط يجمعه فيخالف بطاقة العقار أسفله على الصفحة نفسها */
+      if (t.litigation) { if (st.amountDue > 0) { acc.litigation++; acc.litigationOwed += st.amountDue; } }
+      else if (st.status === "late") { acc.late++; acc.overdue += st.amountDue; }
       if (st.incomplete) acc.incomplete++;
       if (st.status === "soon") { if (st.soonTier === "near") acc.soon++; else acc.due++; }
       if (st.expiringSoon) acc.expiring++;
       acc.monthly += (Number(t.rent_amount) || 0) * PERIODS_PER_MONTH[(t.payment_frequency || "monthly") as Frequency];
     });
     return acc;
-  }, { units: 0, late: 0, soon: 0, due: 0, overdue: 0, expiring: 0, monthly: 0, vacant: 0, legacy: 0, incomplete: 0 }),
+  }, { units: 0, late: 0, soon: 0, due: 0, overdue: 0, expiring: 0, monthly: 0, vacant: 0, legacy: 0, incomplete: 0, litigation: 0, litigationOwed: 0 }),
   // eslint-disable-next-line react-hooks/exhaustive-deps
   [items, officeSoon, officeImminent, officeExpiring]);
 
@@ -1355,9 +1358,11 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
   const counts = searched.reduce((acc, r) => { acc[r.key] = (acc[r.key] || 0) + 1; return acc; },
     {} as Record<RowKey, number>);
   const lateRows = allRows.filter((r) => r.key === "late" || r.key === "partial");
-  const lateCount = lateRows.length;
+  /* مصدر واحد لكل أرقام المتأخر على هذه الصفحة وفي المستندات */
+  const arrears = arrearsOf(allRows as any[]);
+  const lateCount = arrears.currentCount;
   // الدخل الشهري المتوقع من الوحدات المؤجّرة فقط — الشاغرة كانت تُحسب فيه كأن فيها ساكنًا
-  const overdue = lateRows.reduce((s, r) => s + r.st.amountDue, 0);
+  const overdue = arrears.current;
   /**
    * متأخرات الوحدات الشاغرة.
    *
@@ -1444,6 +1449,10 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
           {portfolio.overdue > 0 && (
             <PortfolioStat v={sar(portfolio.overdue)}
               l={`ريال متأخر · ${plural(portfolio.late, "وحدة واحدة", "وحدتان", "وحدات", "وحدة")}`} tone="warn" />
+          )}
+          {portfolio.litigationOwed > 0 && (
+            <PortfolioStat v={sar(portfolio.litigationOwed)}
+              l={`تحت التنفيذ · ${plural(portfolio.litigation, "وحدة واحدة", "وحدتان", "وحدات", "وحدة")}`} tone="warn" />
           )}
           {(portfolio.due + portfolio.soon) > 0 && (
             <PortfolioStat v={String(portfolio.due + portfolio.soon)} l={`تستحق خلال ${plural(officeSoon, "يوم واحد", "يومين", "أيام", "يومًا")}`} />
@@ -1536,12 +1545,17 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       })()}
 
       {/* ما يحتاج إجراءً اليوم — أزرار تصفية لا أرقام دخل */}
-      {(overdue > 0 || vacantArrears > 0 || ((counts.due || 0) + (counts.soon || 0)) > 0 || (counts.expiring || 0) > 0) && (
+      {(overdue > 0 || arrears.litigation > 0 || vacantArrears > 0 || ((counts.due || 0) + (counts.soon || 0)) > 0 || (counts.expiring || 0) > 0) && (
         <div className="flex flex-wrap gap-2 mb-5">
           {(lateCount > 0 || overdue > 0) && (
             <button type="button" onClick={() => setFilter("late")}
               className={`text-xs px-3 py-2 rounded-full border ${filter === "late" ? "bg-[#FBE9E7] border-[#F5C6C2]" : "bg-white border-line"} text-late`}>
               متأخر <b className="tabular-nums">{sar(overdue)}</b> · {plural(lateCount, "وحدة واحدة", "وحدتان", "وحدات", "وحدة")}</button>
+          )}
+          {arrears.litigation > 0 && (
+            <button type="button" onClick={() => setFilter("litigation")}
+              className={`text-xs px-3 py-2 rounded-full border ${filter === "litigation" ? "bg-[#EEF2F6] border-[#CBD5E1]" : "bg-white border-line"} text-[#475569]`}>
+              تحت التنفيذ <b className="tabular-nums">{sar(arrears.litigation)}</b> · {plural(arrears.litigationCount, "وحدة واحدة", "وحدتان", "وحدات", "وحدة")}</button>
           )}
           {vacantArrears > 0 && (
             <button type="button" onClick={() => setFilter("vacant")}
