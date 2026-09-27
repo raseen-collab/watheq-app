@@ -105,6 +105,17 @@ export default async function AdminPage({ searchParams }: { searchParams?: { vie
   const errors = [profilesRes, propsRes, tenantsRes, assocRes, ownersRes, paysRes, subsRes, teamRes]
     .map((r) => r.error?.message).filter(Boolean) as string[];
 
+  /* 🚨 كل رقم في هذه اللوحة مبنيّ على العقارات: منها يُعرف أيّها تجريبي، وبها
+     تُنسب الوحدات والدفعات لأصحابها. حين فشل جلب العقارات مرة واحدة (`JWT
+     issued at future`) بقيت اللوحة تحسب من مصفوفة فارغة فطبعت بثقة:
+     «0 عقار · 543 وحدة» و«أضاف عقارًا 2» بعدها «سجّل دفعة 7» (قمع تصعد فيه
+     مرحلة متأخرة فوق سابقتها!) و«تميز التطوير — لم يبدأ» لمكتب فيه 226 وحدة.
+     رقم خاطئ بثقة أسوأ من لا رقم: عليه تُبنى مكالمة أو قرار قناة. فمن الآن
+     يُعرض «—» لكل ما لا نملك بياناته، والبانر الأحمر يشرح السبب. */
+  const dataOk = !propsRes.error && !tenantsRes.error && !paysRes.error;
+  /** يُخفي أي رقم مبنيّ على بيانات لم تُحمَّل */
+  const q = <T,>(v: T): T | "—" => (dataOk ? v : "—");
+
   const emailOf: Record<string, string> = {}; const lastLogin: Record<string, string | null> = {};
   authUsers.forEach((u) => { emailOf[u.id] = u.email || ""; lastLogin[u.id] = u.last_sign_in_at || null; });
   /* بذرة التجربة تُحسب استخدامًا حقيقيًّا فتكذب اللوحة على صاحبها:
@@ -251,14 +262,20 @@ export default async function AdminPage({ searchParams }: { searchParams?: { vie
         </div>
       </div>
 
-      {errors.length > 0 && <div className="bg-[#FBE9E7] border border-[#F5C6C2] text-[#a5322c] rounded-xl p-3 text-sm mb-4">{errors.join(" · ")}</div>}
+      {errors.length > 0 && (
+        <div className="bg-[#FBE9E7] border border-[#F5C6C2] text-[#a5322c] rounded-xl p-3 text-sm mb-4">
+          <div className="font-semibold mb-1">تعذّر تحميل بعض البيانات — الأرقام المتأثرة تظهر «—» لا رقمًا مُقدَّرًا.</div>
+          <div className="text-xs opacity-90">{errors.join(" · ")}</div>
+          <div className="text-xs opacity-90 mt-1">أعد تحميل الصفحة؛ فإن تكرر فالعطل في القاعدة لا في اللوحة.</div>
+        </div>
+      )}
 
       {/* ═══ المال ═══ */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
         <Metric v={`${sar(revenueMonth)} ر`} l="محصَّل هذا الشهر" sub={`منذ البداية: ${sar(revenueAll)} ر`} tone={revenueMonth > 0 ? "good" : undefined} />
         <Metric v={`${sar(mrr)} ر`} l="الدخل الشهري المتكرر (MRR)" sub={`${paying.length} مشترك دافع`} tone={mrr > 0 ? "good" : undefined} />
         <Metric v={subEnding.length} l="اشتراكات تنتهي خلال 7 أيام" sub={subExpired.length ? `${subExpired.length} انتهت ولم تُجدَّد` : "لا انتهاءات قريبة"} tone={subEnding.length ? "warn" : undefined} />
-        <Metric v={`${funnel[2].n}/${rows.length}`} l="حسابات أضافت بيانات فعلًا" sub={`${rows.length ? Math.round((funnel[2].n / rows.length) * 100) : 0}% تفعيل`} tone={rows.length && funnel[2].n / rows.length < 0.3 ? "bad" : undefined} />
+        <Metric v={dataOk ? `${funnel[2].n}/${rows.length}` : "—"} l="حسابات أضافت بيانات فعلًا" sub={dataOk ? `${rows.length ? Math.round((funnel[2].n / rows.length) * 100) : 0}% تفعيل` : "تعذّر تحميل البيانات"} tone={dataOk && rows.length && funnel[2].n / rows.length < 0.3 ? "bad" : undefined} />
       </div>
 
       <AdminBrief />
@@ -283,14 +300,16 @@ export default async function AdminPage({ searchParams }: { searchParams?: { vie
           <h2 className="font-semibold text-deep mb-3">قمع التحويل — أين يتسرّب الناس؟</h2>
           <div className="space-y-2">
             {funnel.map((f, i) => {
+              /* المراحل من «أضاف عقارًا» فأدنى تُقرأ من العقارات والدفعات — تُكتم إن لم تُحمَّل */
+              const known = dataOk || i < 2;
               const prev = i === 0 ? f.n : funnel[i - 1].n;
-              const pct = rows.length ? Math.round((f.n / rows.length) * 100) : 0;
-              const drop = i === 0 ? null : prev ? Math.round(((prev - f.n) / prev) * 100) : 0;
+              const pct = known && rows.length ? Math.round((f.n / rows.length) * 100) : 0;
+              const drop = !known || i === 0 || !dataOk ? null : prev ? Math.round(((prev - f.n) / prev) * 100) : 0;
               return (
                 <div key={f.k} className="flex items-center gap-3 text-sm">
                   <div className="w-28 text-muted">{f.k}</div>
                   <div className="flex-1 bg-paper rounded-full h-5 overflow-hidden"><div className="h-full bg-gold rounded-full" style={{ width: `${pct}%` }} /></div>
-                  <div className="w-10 text-right font-bold tabular-nums">{f.n}</div>
+                  <div className="w-10 text-right font-bold tabular-nums">{known ? f.n : "—"}</div>
                   <div className={`w-16 text-[11px] tabular-nums ${drop !== null && drop >= 50 ? "text-late font-semibold" : "text-muted"}`}>{drop === null ? "" : `−${drop}%`}</div>
                 </div>
               );
@@ -303,10 +322,10 @@ export default async function AdminPage({ searchParams }: { searchParams?: { vie
           <ul className="space-y-2 text-sm">
             <li className="flex justify-between gap-2"><span className="text-muted">ملخّص تليجرام اليومي</span><span className={digestOk ? "text-[#137a50] font-semibold" : "text-late font-semibold"}>{lastDigest ? `${digestOk ? "✓" : "⚠️"} ${agoLabel(since(lastDigest))}` : "لم يُرسل بعد"}</span></li>
             <li className="flex justify-between gap-2"><span className="text-muted">نشطون خلال 7 أيام</span><b className="tabular-nums">{activeWeek} / {rows.length}</b></li>
-            <li className="flex justify-between gap-2"><span className="text-muted">دفعات هذا الأسبوع</span><b className="tabular-nums">{paysWeek}</b></li>
-            <li className="flex justify-between gap-2"><span className="text-muted">وحدات أُضيفت هذا الأسبوع</span><b className="tabular-nums">{unitsWeek}</b></li>
+            <li className="flex justify-between gap-2"><span className="text-muted">دفعات هذا الأسبوع</span><b className="tabular-nums">{q(paysWeek)}</b></li>
+            <li className="flex justify-between gap-2"><span className="text-muted">وحدات أُضيفت هذا الأسبوع</span><b className="tabular-nums">{q(unitsWeek)}</b></li>
             <li className="flex justify-between gap-2"><span className="text-muted">مرتبطون بتليجرام</span><b className="tabular-nums">{linked} / {rows.length}</b></li>
-            <li className="flex justify-between gap-2"><span className="text-muted">على المنصة</span><b className="tabular-nums text-xs">{realProperties.length} عقار · {realTenants.length} وحدة · {realPayments.length} دفعة</b></li>
+            <li className="flex justify-between gap-2"><span className="text-muted">على المنصة</span><b className="tabular-nums text-xs">{dataOk ? `${realProperties.length} عقار · ${realTenants.length} وحدة · ${realPayments.length} دفعة` : "—"}</b></li>
           </ul>
           <p className="text-[11px] text-muted mt-3">الأخطاء التقنية تصلك من Sentry على بريدك لحظة وقوعها.</p>
         </section>
@@ -332,7 +351,7 @@ export default async function AdminPage({ searchParams }: { searchParams?: { vie
             <table className="w-full text-sm">
               <thead><tr className="text-[11px] text-muted"><th className="text-right font-normal pb-1">القناة</th><th className="font-normal pb-1">سجّل</th><th className="font-normal pb-1">فعّل</th><th className="font-normal pb-1">اشترك</th></tr></thead>
               <tbody>{sources.map(([k, v]) => (
-                <tr key={k} className="border-t border-line"><td className="py-1.5">{k}</td><td className="py-1.5 text-center tabular-nums">{v.n}</td><td className="py-1.5 text-center tabular-nums">{v.act}<span className="text-[10px] text-muted"> ({v.n ? Math.round((v.act / v.n) * 100) : 0}%)</span></td><td className="py-1.5 text-center tabular-nums font-semibold">{v.paid}</td></tr>
+                <tr key={k} className="border-t border-line"><td className="py-1.5">{k}</td><td className="py-1.5 text-center tabular-nums">{v.n}</td><td className="py-1.5 text-center tabular-nums">{dataOk ? <>{v.act}<span className="text-[10px] text-muted"> ({v.n ? Math.round((v.act / v.n) * 100) : 0}%)</span></> : "—"}</td><td className="py-1.5 text-center tabular-nums font-semibold">{v.paid}</td></tr>
               ))}</tbody>
             </table>
           )}
@@ -377,7 +396,7 @@ export default async function AdminPage({ searchParams }: { searchParams?: { vie
                         : <span className="text-late">منتهية</span>}
                       {r.paidTotal > 0 && <div className="text-[11px] text-muted">دفع {sar(r.paidTotal)} ر</div>}
                     </td>
-                    <td className="px-3 py-2 whitespace-nowrap text-muted">{r.props ? `${r.props} عقار · ${r.units} وحدة · ${r.pays} دفعة` : <span className="text-late">لم يبدأ</span>}</td>
+                    <td className="px-3 py-2 whitespace-nowrap text-muted">{!dataOk ? "—" : r.props ? `${r.props} عقار · ${r.units} وحدة · ${r.pays} دفعة` : <span className="text-late">لم يبدأ</span>}</td>
                     <td className="px-3 py-2">{r.p.telegram_chat_id ? "✓" : <span className="text-muted">—</span>}</td>
                     <td className="px-3 py-2 whitespace-nowrap">{wa ? <a href={`https://wa.me/${wa}`} target="_blank" rel="noreferrer" className="text-[11px] bg-[#25D366] text-white rounded-md px-2 py-1">واتساب</a> : <span className="text-[11px] text-muted">لا جوال</span>}</td>
                   </tr>

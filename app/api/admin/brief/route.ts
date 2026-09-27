@@ -34,7 +34,7 @@ export async function POST() {
   if (!key) return NextResponse.json({ error: "مفتاح الذكاء غير مضبوط" }, { status: 500 });
 
   const db = createServiceClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!, { auth: { persistSession: false } });
-  const [{ data: profiles }, { data: props }, { data: tenants }, { data: pays }, { data: subs }, { data: team }] = await Promise.all([
+  const [{ data: profiles }, propsRes, tenantsRes, paysRes, { data: subs }, { data: team }] = await Promise.all([
     db.from("profiles").select("id,account_type,created_at,trial_ends_at,subscribed_until,plan,signup_source,telegram_chat_id"),
     page(db, "properties", "id,user_id,created_at,is_demo"),
     page(db, "tenants", "id,property_id,created_at"),
@@ -42,6 +42,20 @@ export async function POST() {
     db.from("subscription_payments").select("amount,paid_at,user_id"),
     db.from("team_members").select("member_id"),
   ]);
+
+  /* الإحاطة تُبنى على هذه الأرقام ثم تُقرأ كأنها حقيقة، ويُصرف عليها وقت اليوم.
+     فإن فشل جلب أيٍّ منها لا تُكتب إحاطة على أرقام ناقصة — يُقال إن الجلب فشل.
+     (حدث فعلًا: `JWT issued at future` على العقارات جعل اللوحة تطبع «0 عقار ·
+     543 وحدة» — ولو مرّ إلى المستشار لكتب خطة يوم على أرقام كاذبة.) */
+  for (const [name, r] of [["العقارات", propsRes], ["الوحدات", tenantsRes], ["الدفعات", paysRes]] as const) {
+    if (r?.error) {
+      return NextResponse.json(
+        { error: `تعذّر تحميل ${name} — لا تُبنى إحاطة على أرقام ناقصة. أعد المحاولة.` },
+        { status: 503 },
+      );
+    }
+  }
+  const props = propsRes.data, tenants = tenantsRes.data, pays = paysRes.data;
 
   const members = new Set((team || []).map((t: any) => t.member_id));
   const accounts = (profiles || []).filter((p: any) => !members.has(p.id));

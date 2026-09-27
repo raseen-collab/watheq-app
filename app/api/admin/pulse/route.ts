@@ -100,11 +100,21 @@ async function handle(req: Request) {
 
   if (dayPays.length) L.push(`💰 دفعات اليوم: <b>${dayPays.length}</b> بمبلغ <b>${sar(dayTotal)}</b> ﷼`, "");
 
+  /* إن فشل جلب العقارات فلا يُعرف التجريبي من الحقيقي، وتصبح «الوحدات» كلها
+     بلا مالك معروف — فكانت الرسالة تُرسل «العقارات 0 · الوحدات 543». رسالة
+     تصل جواله بأرقام كاذبة أسوأ من رسالة تقول إن الجلب فشل. */
+  const dataOk = !props.error && !tenants.error && !pays.error;
+
   L.push("— الإجمالي —");
   L.push(`• الحسابات: <b>${total}</b> (فعّلوا: ${withData.size} · لم يبدؤوا: ${dormant})`);
-  L.push(`• العقارات: <b>${realProperties.length}</b> · الوحدات: <b>${unitCount}</b>`);
-  L.push(`• الجمعيات: <b>${(assoc.data || []).length}</b> · الملّاك: <b>${owners.count || 0}</b>`);
-  L.push(`• الدفعات المسجّلة: <b>${payCount}</b>`);
+  if (dataOk) {
+    L.push(`• العقارات: <b>${realProperties.length}</b> · الوحدات: <b>${unitCount}</b>`);
+    L.push(`• الجمعيات: <b>${(assoc.data || []).length}</b> · الملّاك: <b>${owners.count || 0}</b>`);
+    L.push(`• الدفعات المسجّلة: <b>${payCount}</b>`);
+  } else {
+    L.push("• ⚠️ تعذّر تحميل العقارات أو الوحدات أو الدفعات — الأرقام محجوبة هذه المرة لا مُقدَّرة.");
+    L.push(`• الجمعيات: <b>${(assoc.data || []).length}</b> · الملّاك: <b>${owners.count || 0}</b>`);
+  }
 
   /* تنبيه الاشتراكات: من انتهى أو يقترب — بلا هذا يعتمد التجديد على أن
      أتذكّر أنا، والمكتب لا يجدّد ما لم يُذكَّر في وقته. */
