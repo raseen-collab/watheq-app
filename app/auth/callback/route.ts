@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase-server";
+import { recordSignupSource } from "@/lib/signup-source-server";
 
 export const dynamic = "force-dynamic";
 
@@ -46,6 +47,16 @@ export async function GET(request: Request) {
     return NextResponse.redirect(
       new URL(`/login?err=${encodeURIComponent(error.message)}`, url.origin)
     );
+  }
+
+  /* مصدر التسجيل للداخل بقوقل: قوقل يملك `user_metadata` فلا يمكن حشو المصدر
+     فيه كما نفعل في التسجيل بالبريد، ولا يمرّ مستخدم قوقل بقائمة «كيف عرفت
+     عنا؟». فيُحمَل المصدر في `redirectTo` من صفحة الدخول ويُثبَّت هنا — وهذه
+     هي اللحظة الوحيدة التي تجمع جلسةً ناجحة وقيمةَ المصدر معًا.
+     لا يُعطّل الدخول إن فشل: الدالة لا ترمي، ولا نتحقق من نتيجتها. */
+  const { data: { user } } = await supabase.auth.getUser();
+  if (user) {
+    await recordSignupSource(user.id, url.searchParams.get("src"), { requireFreshProfile: true });
   }
 
   // نجحت الجلسة — الوسيط يتكفّل بتوجيه من لم يكمل onboarding

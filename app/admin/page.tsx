@@ -9,6 +9,7 @@ import AdminMessage from "@/components/AdminMessage";
 import type { MsgKind } from "@/lib/admin-messages";
 import { fetchAllRows } from "@/lib/fetch-all";
 import { splitDemo } from "@/lib/real-data";
+import { sourceAdminLabel } from "@/lib/signup-sources";
 
 /* على دفعات: Supabase يقصّ كل استجابة عند 1000 صف بصمت — والمنصة تجاوزتها
    (كل حساب جرّب البيانات التجريبية أضاف ~80 وحدة ودفعاتها)، فكانت أرقام
@@ -44,11 +45,9 @@ const fmt = (v?: string | null) => (v ? String(v).slice(0, 10) : "—");
 const PLAN_PRICE: Record<string, number> = { basic: 99, pro: 199, full: 199 };
 const PLAN_AR: Record<string, string> = { basic: "المالك", pro: "المكتب", full: "المكتب" };
 
-const SOURCE_AR: Record<string, string> = {
-  haraj: "حراج", group: "قروب", twitter: "تويتر", search: "بحث جوجل",
-  referral: "توصية", direct: "تواصل مباشر", other: "أخرى", skip: "لم يذكر",
-};
-const sourceLabel = (v?: string | null) => SOURCE_AR[String(v || "")] || "غير معروف";
+/* التسميات من lib/signup-sources — كانت مكتوبة هنا ثانيةً فأي مصدر جديد
+   (مثل «demo») يظهر «غير معروف» في اللوحة وإن سُجّل صحيحًا في القاعدة. */
+const sourceLabel = sourceAdminLabel;
 
 function since(v?: string | null): number | null {
   if (!v) return null;

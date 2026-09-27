@@ -2,19 +2,7 @@
 import { Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase-client";
-
-/** مصادر التسجيل — يختارها المستخدم بنفسه، بلا كوكيز ولا تتبّع */
-const SOURCES: { v: string; l: string }[] = [
-  { v: "haraj", l: "حراج" },
-  { v: "group", l: "قروب واتساب أو تليجرام" },
-  { v: "twitter", l: "تويتر / X" },
-  { v: "search", l: "بحث في جوجل" },
-  { v: "referral", l: "توصية من شخص" },
-  { v: "direct", l: "تواصل مباشر معكم" },
-  { v: "other", l: "مصدر آخر" },
-  { v: "skip", l: "أفضّل عدم الذكر" },
-];
-const sourceLabel = (v?: string | null) => SOURCES.find((s) => s.v === v)?.l || "—";
+import { CHOSEN_SOURCES, isSignupSource, sourceLabel } from "@/lib/signup-sources";
 
 /**
  * تنظيف وجهة ما بعد الدخول.
@@ -52,10 +40,10 @@ function LoginInner() {
   // يبقى true بعد نجاح الدخول حتى تُغادر الصفحة — فلا يعود الزر قابلًا للضغط
   const [leaving, setLeaving] = useState(false);
 
-  // يقبل ?src=twitter من روابط الحملات فيملأ الحقل تلقائيًّا
+  // يقبل ?src=twitter و?src=demo من روابط الحملات فيملأ الحقل تلقائيًّا
   useEffect(() => {
     const s = searchParams.get("src");
-    if (s && SOURCES.some((x) => x.v === s)) setSource(s);
+    if (isSignupSource(s)) setSource(s as string);
     if (searchParams.get("mode") === "signup") setMode("signup");
     // خطأ عائد من /auth/callback (فشل قوقل أو رفض المستخدم)
     const err = searchParams.get("err");
@@ -66,18 +54,16 @@ function LoginInner() {
    * ينقل مصدر التسجيل من بيانات الحساب إلى الملف الشخصي عند أول دخول.
    * سبب التأجيل: عند إنشاء الحساب لا توجد جلسة بعد (يلزم تفعيل البريد)،
    * فلا يمكن الكتابة في profiles إلا بعد أول تسجيل دخول ناجح.
-   * ويُكتب مرة واحدة فقط — لا يُستبدل إن كان محفوظًا.
+   *
+   * ⚠️ كان يكتب من المتصفح مباشرةً — وصلاحيات الأعمدة على `profiles` تُمنح
+   * عمودًا عمودًا (schema-v11)، فأي عمود أضيف بعد ذلك المنح قد يُرفَض بـ42501
+   * ويُبتلع الخطأ في catch صامت. صار النداء على مسار خادم يكتب بمفتاح الخدمة
+   * فلا يعتمد الرقم على منحٍ قد نكون نسيناه.
    */
-  async function syncSource(supabase: ReturnType<typeof createClient>) {
+  async function syncSource(src?: string) {
     try {
-      const { data } = await supabase.auth.getUser();
-      const u = data?.user;
-      const src = (u?.user_metadata as any)?.signup_source;
-      if (!u || !src) return;
-      await supabase.from("profiles")
-        .update({ signup_source: src })
-        .eq("id", u.id)
-        .is("signup_source", null);
+      const q = src ? `?src=${encodeURIComponent(src)}` : "";
+      await fetch(`/api/auth/source${q}`, { method: "POST" });
     } catch {
       /* لا يُعطّل الدخول إن فشل */
     }
@@ -95,7 +81,9 @@ function LoginInner() {
       const { error } = await supabase.auth.signInWithOAuth({
         provider: "google",
         options: {
-          redirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent(next)}`,
+          /* المصدر يُحمَل في الوجهة: قوقل لا يسمح بحشوه في user_metadata،
+             و/auth/callback هو أول موضع تتوفّر فيه جلسة ناجحة ليُثبَّت. */
+          redirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent(next)}${source ? `&src=${encodeURIComponent(source)}` : ""}`,
           queryParams: { prompt: "select_account" },   // يسمح باختيار الحساب لا الدخول بآخر واحد صامتًا
         },
       });
@@ -145,7 +133,7 @@ function LoginInner() {
          * فلا ينكسر شيء إن غُيّر الإعداد لاحقًا.
          */
         if (data.session) {
-          await syncSource(supabase);
+          await syncSource();
           setLeaving(true);
           window.location.assign(next);
           return;
@@ -156,7 +144,7 @@ function LoginInner() {
       } else {
         const { error } = await supabase.auth.signInWithPassword({ email, password });
         if (error) throw error;
-        await syncSource(supabase);
+        await syncSource();
         /**
          * تنقّل صلب مقصود بدل router.push + router.refresh.
          * السبب: الاثنان معًا يتسابقان — refresh يُلغي التنقّل الجاري أحيانًا
@@ -265,7 +253,11 @@ function LoginInner() {
                   وفائدته لنا لا له. الفارغ يُحفظ "skip" كما كان. */}
               <select className="fld" value={source} onChange={(e) => setSource(e.target.value)}>
                 <option value="">أفضّل عدم الذكر</option>
-                {SOURCES.map((s) => <option key={s.v} value={s.v}>{s.l}</option>)}
+                {CHOSEN_SOURCES.map((s) => <option key={s.v} value={s.v}>{s.l}</option>)}
+                {/* مصدر جاء من رابط حملة (مثل demo) — يُعرض ولا يُختار يدويًّا */}
+                {source && !CHOSEN_SOURCES.some((s) => s.v === source) && (
+                  <option value={source}>{sourceLabel(source)}</option>
+                )}
               </select>
             </div>
           )}
