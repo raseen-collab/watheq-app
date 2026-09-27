@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { tgSend } from "@/lib/telegram";
 import { subsDigest, type SubAccount } from "@/lib/subs-ops";
+import { splitDemo } from "@/lib/real-data";
 import { fetchAllRows } from "@/lib/fetch-all";
 
 export const dynamic = "force-dynamic";
@@ -57,22 +58,32 @@ async function handle(req: Request) {
     db.from("profiles").select("id,full_name,org_name,account_type,created_at").gte("created_at", sinceISO),
     /* id مع user_id: حجم الحساب في تنبيه الاشتراكات يعدّ الوحدات بمعرّف العقار —
        كان يُجلب user_id وحده فيظهر «0 وحدة» لكل حساب. وعلى دفعات. */
-    fetchAllRows(db, "properties", "id,user_id", (q) => q.eq("is_demo", false)).then((data) => ({ data, error: null as any }), (e) => ({ data: [] as any[], error: e })),
+    fetchAllRows(db, "properties", "id,user_id,is_demo").then((data) => ({ data, error: null as any }), (e) => ({ data: [] as any[], error: e })),
     db.from("associations").select("user_id"),
-    db.from("tenants").select("id", { count: "exact", head: true }),
+    /* بمعرّف العقار لا بالعدد المجرّد: العدد المجرّد يضمّ وحدات البذرة التجريبية
+       فيظهر «العقارات 55 · الوحدات 543» — عقارات حقيقية ووحدات نصفها ديمو. */
+    fetchAllRows(db, "tenants", "id,property_id").then((data) => ({ data, error: null as any }), (e) => ({ data: [] as any[], error: e })),
     db.from("owners").select("id", { count: "exact", head: true }),
-    db.from("payments").select("id", { count: "exact", head: true }),
-    db.from("payments").select("amount,paid_on").gte("paid_on", sinceISO.slice(0, 10)),
+    fetchAllRows(db, "payments", "id,property_id").then((data) => ({ data, error: null as any }), (e) => ({ data: [] as any[], error: e })),
+    db.from("payments").select("amount,paid_on,property_id").gte("paid_on", sinceISO.slice(0, 10)),
   ]);
+
+  /* التعريف الواحد للبيانات الحقيقية — lib/real-data */
+  const { realProperties, realTenants, realPayments } = splitDemo(
+    (props.data || []) as any[], (tenants.data || []) as any[], (pays.data || []) as any[],
+  );
 
   const total = profiles.count || 0;
   const fresh = newProfiles.data || [];
   const withData = new Set([
-    ...(props.data || []).map((r: any) => r.user_id),
+    ...realProperties.map((r: any) => r.user_id),
     ...(assoc.data || []).map((r: any) => r.user_id),
   ]);
   const dormant = Math.max(0, total - withData.size);
-  const dayPays = newPays.data || [];
+  const demoPropIds = new Set((props.data || []).filter((p: any) => p.is_demo).map((p: any) => p.id));
+  const unitCount = realTenants.length;
+  const payCount = realPayments.length;
+  const dayPays = (newPays.data || []).filter((p: any) => !p.property_id || !demoPropIds.has(p.property_id));
   const dayTotal = dayPays.reduce((s: number, r: any) => s + (Number(r.amount) || 0), 0);
 
   const L: string[] = ["📈 <b>نبض وثيق — آخر 24 ساعة</b>", ""];
@@ -91,9 +102,9 @@ async function handle(req: Request) {
 
   L.push("— الإجمالي —");
   L.push(`• الحسابات: <b>${total}</b> (فعّلوا: ${withData.size} · لم يبدؤوا: ${dormant})`);
-  L.push(`• العقارات: <b>${(props.data || []).length}</b> · الوحدات: <b>${tenants.count || 0}</b>`);
+  L.push(`• العقارات: <b>${realProperties.length}</b> · الوحدات: <b>${unitCount}</b>`);
   L.push(`• الجمعيات: <b>${(assoc.data || []).length}</b> · الملّاك: <b>${owners.count || 0}</b>`);
-  L.push(`• الدفعات المسجّلة: <b>${pays.count || 0}</b>`);
+  L.push(`• الدفعات المسجّلة: <b>${payCount}</b>`);
 
   /* تنبيه الاشتراكات: من انتهى أو يقترب — بلا هذا يعتمد التجديد على أن
      أتذكّر أنا، والمكتب لا يجدّد ما لم يُذكَّر في وقته. */
@@ -101,11 +112,10 @@ async function handle(req: Request) {
     const { data: profs2 } = await db.from("profiles")
       .select("id,org_name,full_name,billing_phone,plan,trial_ends_at,subscribed_until").limit(1000);
     const byUser: Record<string, string[]> = {};
-    (props.data || []).forEach((x: any) => { (byUser[x.user_id] ||= []).push(x.id); });
+    realProperties.forEach((x: any) => { (byUser[x.user_id] ||= []).push(x.id); });
     /* على دفعات — وحدات المنصة تتجاوز 1000 */
-    const tenRows = await fetchAllRows<any>(db, "tenants", "id,property_id");
     const perProp: Record<string, number> = {};
-    (tenRows || []).forEach((t: any) => { perProp[t.property_id] = (perProp[t.property_id] || 0) + 1; });
+    realTenants.forEach((t: any) => { perProp[t.property_id] = (perProp[t.property_id] || 0) + 1; });
     const accounts: SubAccount[] = (profs2 || []).map((p: any) => {
       const ids = byUser[p.id] || [];
       return { ...p, properties: ids.length, units: ids.reduce((a: number, id: string) => a + (perProp[id] || 0), 0) };

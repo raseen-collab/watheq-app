@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient as createServiceClient } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase-server";
 import { fetchAllRows } from "@/lib/fetch-all";
+import { splitDemo, adminIds } from "@/lib/real-data";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -22,7 +23,7 @@ function admin() {
 async function requireAdmin(): Promise<string> {
   const { data: { user } } = await createClient().auth.getUser();
   if (!user) throw new Error("غير مصرّح");
-  const allowed = (process.env.ADMIN_USER_IDS || "").split(",").map((s) => s.trim()).filter(Boolean);
+  const allowed = adminIds();
   if (!allowed.includes(user.id)) throw new Error("غير مصرّح");
   return user.id;
 }
@@ -71,21 +72,28 @@ export async function POST(req: Request) {
   const [{ data: profiles }, { data: props }, { data: tenants }, { data: posts }, { data: team }] = await Promise.all([
     db.from("profiles").select("id,account_type,created_at,signup_source,subscribed_until"),
     /* على دفعات — الوحدات والعقارات عبر المنصة تتجاوز 1000 فكان «وحدات مدارة» ناقصًا */
-    ((t: string, c: string) => fetchAllRows(db, t, c).then((data) => ({ data, error: null as any }), (e) => ({ data: [] as any[], error: e })))("properties", "id,user_id"),
-    ((t: string, c: string) => fetchAllRows(db, t, c).then((data) => ({ data, error: null as any }), (e) => ({ data: [] as any[], error: e })))("tenants", "id"),
+    ((t: string, c: string) => fetchAllRows(db, t, c).then((data) => ({ data, error: null as any }), (e) => ({ data: [] as any[], error: e })))("properties", "id,user_id,is_demo"),
+    ((t: string, c: string) => fetchAllRows(db, t, c).then((data) => ({ data, error: null as any }), (e) => ({ data: [] as any[], error: e })))("tenants", "id,property_id"),
     db.from("ad_posts").select("channel,title,content,posted_at,outcome,replies").order("posted_at", { ascending: false }).limit(25),
     db.from("team_members").select("member_id"),
   ]);
   const members = new Set((team || []).map((t: any) => t.member_id));
   const accounts = (profiles || []).filter((p: any) => !members.has(p.id));
-  const withProps = new Set((props || []).map((p: any) => p.user_id));
+
+  /* بذرة التجربة (is_demo) تُستثنى: «وحدات مدارة» رقم يُكتب في إعلان عام،
+     وأي وحدة تجريبية فيه تجعل الإعلان يدّعي ما لا يوجد. */
+  const { realProperties: realProps, realTenants } =
+    splitDemo((props || []) as any[], (tenants || []) as any[], []);
+  const withProps = new Set(realProps.map((p: any) => p.user_id));
+  /* حساب صاحب المنصة مشترك حتى 2028 — لا يُعدّ عميلًا دافعًا في أي رقم */
+  const own = adminIds();
   const perChannel: Record<string, { signups: number; activated: number; paid: number }> = {};
   accounts.forEach((p: any) => {
     const k = p.signup_source || "غير معروف";
     perChannel[k] ||= { signups: 0, activated: 0, paid: 0 };
     perChannel[k].signups++;
     if (withProps.has(p.id)) perChannel[k].activated++;
-    if (p.subscribed_until && Date.parse(p.subscribed_until) > Date.now()) perChannel[k].paid++;
+    if (!own.includes(p.id) && p.subscribed_until && Date.parse(p.subscribed_until) > Date.now()) perChannel[k].paid++;
   });
 
   const system = `أنت مسؤول الإعلانات والنمو لمنصة "وثيق" السعودية (إدارة أملاك وجمعيات ملاك للمكاتب العقارية الصغيرة).
@@ -111,7 +119,7 @@ ${CHANNEL_RULES[channel] || CHANNEL_RULES.other}
     أرقام_المنصة: {
       حسابات: accounts.length,
       فعّلوا_بيانات: accounts.filter((p: any) => withProps.has(p.id)).length,
-      وحدات_مدارة: (tenants || []).length,
+      وحدات_مدارة: realTenants.length,
       تسجيلات_آخر_14_يوم: accounts.filter((p: any) => (Date.now() - Date.parse(p.created_at || "")) / 86400000 <= 14).length,
     },
     نتائج_القنوات: perChannel,

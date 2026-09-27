@@ -8,6 +8,7 @@ import AdminBrief from "@/components/AdminBrief";
 import AdminMessage from "@/components/AdminMessage";
 import type { MsgKind } from "@/lib/admin-messages";
 import { fetchAllRows } from "@/lib/fetch-all";
+import { splitDemo } from "@/lib/real-data";
 
 /* على دفعات: Supabase يقصّ كل استجابة عند 1000 صف بصمت — والمنصة تجاوزتها
    (كل حساب جرّب البيانات التجريبية أضاف ~80 وحدة ودفعاتها)، فكانت أرقام
@@ -84,11 +85,11 @@ export default async function AdminPage({ searchParams }: { searchParams?: { vie
   const db = serviceDb();
   const [profilesRes, propsRes, tenantsRes, assocRes, ownersRes, paysRes, subsRes, teamRes, authRes] = await Promise.all([
     db.from("profiles").select("id,full_name,org_name,account_type,created_at,trial_ends_at,subscribed_until,plan,telegram_chat_id,billing_phone,last_digest_at,signup_source").order("created_at", { ascending: false }).limit(1000),
-    page(db, "properties", "id,user_id,created_at"),
+    page(db, "properties", "id,user_id,created_at,is_demo"),
     page(db, "tenants", "id,status,property_id,created_at"),
     db.from("associations").select("id,user_id,created_at"),
     page(db, "owners", "id,association_id,created_at"),
-    page(db, "payments", "id,user_id,amount,paid_on,created_at"),
+    page(db, "payments", "id,user_id,amount,paid_on,created_at,property_id"),
     db.from("subscription_payments").select("id,user_id,amount,months,plan,paid_at,extended_to").order("paid_at", { ascending: false }),
     db.from("team_members").select("owner_id,member_id,role,created_at"),
     db.auth.admin.listUsers({ perPage: 1000 }),
@@ -107,6 +108,12 @@ export default async function AdminPage({ searchParams }: { searchParams?: { vie
 
   const emailOf: Record<string, string> = {}; const lastLogin: Record<string, string | null> = {};
   authUsers.forEach((u) => { emailOf[u.id] = u.email || ""; lastLogin[u.id] = u.last_sign_in_at || null; });
+  /* بذرة التجربة تُحسب استخدامًا حقيقيًّا فتكذب اللوحة على صاحبها:
+     حسابان لم يُدخلا شيئًا ظهرا «يسجّل دفعات» بـ5 عقارات و80 وحدة و148 دفعة
+     — وهي أرقام الديمو حرفيًّا. التعريف في lib/real-data ليكون واحدًا لكل اللوحات. */
+  const { realProperties, realTenants, realPayments, demoOnly } =
+    splitDemo(properties, tenants, payments, associations);
+
   const propOwner: Record<string, string> = {}; properties.forEach((p) => (propOwner[p.id] = p.user_id));
   const assocOwner: Record<string, string> = {}; associations.forEach((a) => (assocOwner[a.id] = a.user_id));
   const memberOf: Record<string, { owner: string; role: string }> = {}; team.forEach((t) => (memberOf[t.member_id] = { owner: t.owner_id, role: t.role }));
@@ -124,15 +131,19 @@ export default async function AdminPage({ searchParams }: { searchParams?: { vie
   }
 
   function buildRow(p: any) {
-    const units = tenants.filter((t) => propOwner[t.property_id] === p.id).length;
-    const props = properties.filter((x) => x.user_id === p.id).length + associations.filter((a) => a.user_id === p.id).length;
-    const pays = payments.filter((x) => x.user_id === p.id).length;
+    const units = realTenants.filter((t) => propOwner[t.property_id] === p.id).length;
+    const props = realProperties.filter((x) => x.user_id === p.id).length + associations.filter((a) => a.user_id === p.id).length;
+    const pays = realPayments.filter((x) => x.user_id === p.id).length;
+    const onlyDemo = demoOnly(p.id);
+    /* حسابك أنت مشترك حتى 2028 (اشتراك إداري لا بيع) — فكان يظهر «مشترك دافع 1»
+       و«MRR 199» وهي أسوأ كذبة تُقال لصاحب منصة. يُستثنى من المال والقمع ويبقى في القائمة. */
+    const self = allowed.includes(p.id);
     const sub = subState(p);
     const last = lastActivity(p.id);
     const trialLeft = p.trial_ends_at ? Math.round((Date.parse(p.trial_ends_at) - Date.now()) / 86400000) : null;
     const paidTotal = subs.filter((s) => s.user_id === p.id).reduce((a: number, s) => a + (Number(s.amount) || 0), 0);
-    const stage: Stage = sub.paid ? "paying" : pays > 0 ? "collecting" : props > 0 ? "activated" : sub.expired ? "expired" : p.account_type ? "onboarded" : "new";
-    return { p, units, props, pays, sub, last, sinceLast: since(last), sinceJoin: since(p.created_at), trialLeft, paidTotal, stage, staff: staffCount[p.id] || 0, employer: memberOf[p.id] };
+    const stage: Stage = (sub.paid && !self) ? "paying" : pays > 0 ? "collecting" : props > 0 ? "activated" : sub.expired ? "expired" : p.account_type ? "onboarded" : "new";
+    return { p, units, props, pays, sub, last, sinceLast: since(last), sinceJoin: since(p.created_at), trialLeft, paidTotal, stage, onlyDemo, self, staff: staffCount[p.id] || 0, employer: memberOf[p.id] };
   }
   type Row = ReturnType<typeof buildRow>;
   // الموظفون لا يُعدّون حسابات — يُحسبون على مكتبهم
@@ -142,9 +153,10 @@ export default async function AdminPage({ searchParams }: { searchParams?: { vie
   // ---------- المال ----------
   /* بداية الشهر بتوقيت الرياض — لا غرينتش (الخادم): تسجيلات ليلة 1 من الشهر كانت تُحسب للسابق */
   const monthStart = new Date(riyadhMonthStartISO());
-  const revenueMonth = subs.filter((s) => Date.parse(s.paid_at) >= monthStart.getTime()).reduce((a: number, s) => a + (Number(s.amount) || 0), 0);
-  const revenueAll = subs.reduce((a: number, s) => a + (Number(s.amount) || 0), 0);
-  const paying = rows.filter((r) => r.sub.paid);
+  const realSubs = subs.filter((s) => !allowed.includes(s.user_id));
+  const revenueMonth = realSubs.filter((s) => Date.parse(s.paid_at) >= monthStart.getTime()).reduce((a: number, s) => a + (Number(s.amount) || 0), 0);
+  const revenueAll = realSubs.reduce((a: number, s) => a + (Number(s.amount) || 0), 0);
+  const paying = rows.filter((r) => r.sub.paid && !r.self);
   const mrr = paying.reduce((a, r) => a + (PLAN_PRICE[String(r.p.plan)] || 0), 0);
   const subEnding = paying.filter((r) => r.sub.subDaysLeft !== null && r.sub.subDaysLeft <= 7);
   const subExpired = rows.filter((r) => r.p.plan && !r.sub.paid && r.p.subscribed_until);
@@ -167,8 +179,8 @@ export default async function AdminPage({ searchParams }: { searchParams?: { vie
   // ---------- صحة المنصة ----------
   const lastDigest = profiles.map((p) => p.last_digest_at).filter(Boolean).sort().reverse()[0] || null;
   const digestOk = lastDigest ? (since(lastDigest) as number) <= 1 : false;
-  const paysWeek = payments.filter((p) => { const d = since(p.created_at || p.paid_on); return d !== null && d <= 7; }).length;
-  const unitsWeek = tenants.filter((t) => { const d = since(t.created_at); return d !== null && d <= 7; }).length;
+  const paysWeek = realPayments.filter((p) => { const d = since(p.created_at || p.paid_on); return d !== null && d <= 7; }).length;
+  const unitsWeek = realTenants.filter((t) => { const d = since(t.created_at); return d !== null && d <= 7; }).length;
   const linked = rows.filter((r) => r.p.telegram_chat_id).length;
   const activeWeek = rows.filter((r) => r.sinceLast !== null && r.sinceLast <= 7).length;
 
@@ -293,7 +305,7 @@ export default async function AdminPage({ searchParams }: { searchParams?: { vie
             <li className="flex justify-between gap-2"><span className="text-muted">دفعات هذا الأسبوع</span><b className="tabular-nums">{paysWeek}</b></li>
             <li className="flex justify-between gap-2"><span className="text-muted">وحدات أُضيفت هذا الأسبوع</span><b className="tabular-nums">{unitsWeek}</b></li>
             <li className="flex justify-between gap-2"><span className="text-muted">مرتبطون بتليجرام</span><b className="tabular-nums">{linked} / {rows.length}</b></li>
-            <li className="flex justify-between gap-2"><span className="text-muted">على المنصة</span><b className="tabular-nums text-xs">{properties.length} عقار · {tenants.length} وحدة · {payments.length} دفعة</b></li>
+            <li className="flex justify-between gap-2"><span className="text-muted">على المنصة</span><b className="tabular-nums text-xs">{realProperties.length} عقار · {realTenants.length} وحدة · {realPayments.length} دفعة</b></li>
           </ul>
           <p className="text-[11px] text-muted mt-3">الأخطاء التقنية تصلك من Sentry على بريدك لحظة وقوعها.</p>
         </section>
@@ -353,7 +365,7 @@ export default async function AdminPage({ searchParams }: { searchParams?: { vie
                 const wa = waNumber(r.p.billing_phone);
                 return (
                   <tr key={r.p.id} className="border-t border-line align-top">
-                    <td className="px-3 py-2"><b className="text-deep">{r.p.org_name || r.p.full_name || "—"}</b><div className="text-[11px] text-muted" dir="ltr">{emailOf[r.p.id]}</div>{r.staff > 0 && <div className="text-[11px] text-muted">👥 {r.staff} موظف</div>}</td>
+                    <td className="px-3 py-2"><b className="text-deep">{r.p.org_name || r.p.full_name || "—"}</b><div className="text-[11px] text-muted" dir="ltr">{emailOf[r.p.id]}</div>{r.staff > 0 && <div className="text-[11px] text-muted">👥 {r.staff} موظف</div>}{r.onlyDemo && <div className="text-[11px] text-[#9A4B00]">🧪 بيانات تجريبية فقط</div>}{r.self && <div className="text-[11px] text-muted">🔧 حسابك — مستثنى من المال والقمع</div>}</td>
                     <td className="px-3 py-2"><span className={`inline-block text-[11px] font-semibold px-2 py-0.5 rounded-full border ${STAGE[r.stage].cls}`}>{STAGE[r.stage].label}</span></td>
                     <td className="px-3 py-2 text-muted">{sourceLabel(r.p.signup_source)}</td>
                     <td className="px-3 py-2 text-muted whitespace-nowrap">{agoLabel(r.sinceJoin)}</td>

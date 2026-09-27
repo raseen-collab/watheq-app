@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { createClient as createServiceClient } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase-server";
 import { fetchAllRows } from "@/lib/fetch-all";
+import { splitDemo } from "@/lib/real-data";
 
 /* على دفعات: Supabase يقصّ كل استجابة عند 1000 صف بصمت — والمنصة تجاوزتها
    (كل حساب جرّب البيانات التجريبية أضاف ~80 وحدة ودفعاتها)، فكانت أرقام
@@ -35,20 +36,29 @@ export async function POST() {
   const db = createServiceClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!, { auth: { persistSession: false } });
   const [{ data: profiles }, { data: props }, { data: tenants }, { data: pays }, { data: subs }, { data: team }] = await Promise.all([
     db.from("profiles").select("id,account_type,created_at,trial_ends_at,subscribed_until,plan,signup_source,telegram_chat_id"),
-    page(db, "properties", "id,user_id,created_at"),
+    page(db, "properties", "id,user_id,created_at,is_demo"),
     page(db, "tenants", "id,property_id,created_at"),
-    page(db, "payments", "id,user_id,created_at,paid_on"),
-    db.from("subscription_payments").select("amount,paid_at"),
+    page(db, "payments", "id,user_id,created_at,paid_on,property_id"),
+    db.from("subscription_payments").select("amount,paid_at,user_id"),
     db.from("team_members").select("member_id"),
   ]);
 
   const members = new Set((team || []).map((t: any) => t.member_id));
   const accounts = (profiles || []).filter((p: any) => !members.has(p.id));
-  const owner: Record<string, string> = {}; (props || []).forEach((p: any) => (owner[p.id] = p.user_id));
+
+  /* بذرة التجربة (is_demo) ليست استخدامًا: حسابان لم يُدخلا شيئًا كانا يظهران
+     «أضاف عقارًا» و«سجّل دفعة» بـ5 عقارات و80 وحدة و148 دفعة — وهي أرقام الديمو
+     حرفيًّا. التعريف في lib/real-data ليكون واحدًا لكل اللوحات. */
+  const { realProperties: realProps, realTenants, realPayments: realPays } =
+    splitDemo((props || []) as any[], (tenants || []) as any[], (pays || []) as any[]);
+
+  const owner: Record<string, string> = {}; realProps.forEach((p: any) => (owner[p.id] = p.user_id));
   const since = (v?: string | null) => { const t = Date.parse(String(v || "")); return isNaN(t) ? null : Math.round((Date.now() - t) / 86400000); };
-  const withProps = new Set((props || []).map((p: any) => p.user_id));
-  const withPays = new Set((pays || []).map((p: any) => p.user_id));
-  const paying = accounts.filter((p: any) => p.subscribed_until && Date.parse(p.subscribed_until) > Date.now());
+  const withProps = new Set(realProps.map((p: any) => p.user_id));
+  const withPays = new Set(realPays.map((p: any) => p.user_id));
+  /* حساب صاحب المنصة نفسه مشترك حتى 2028 — لو حُسب ضمن الدافعين لبدا أن هناك
+     عميلًا دافعًا واحدًا وليس صفرًا، وهي أسوأ كذبة تُقال لصاحب منصة. */
+  const paying = accounts.filter((p: any) => !allowed.includes(p.id) && p.subscribed_until && Date.parse(p.subscribed_until) > Date.now());
   const monthStart = new Date(); monthStart.setDate(1);
 
   const snapshot = {
@@ -58,14 +68,14 @@ export async function POST() {
     أضافوا_عقارًا: accounts.filter((p: any) => withProps.has(p.id)).length,
     سجّلوا_دفعة: accounts.filter((p: any) => withPays.has(p.id)).length,
     مشتركون_دافعون: paying.length,
-    إجمالي_العقارات: (props || []).length,
-    إجمالي_الوحدات: (tenants || []).length,
-    وحدات_أضيفت_هذا_الأسبوع: (tenants || []).filter((t: any) => (since(t.created_at) ?? 99) <= 7).length,
-    دفعات_هذا_الأسبوع: (pays || []).filter((p: any) => (since(p.created_at || p.paid_on) ?? 99) <= 7).length,
+    إجمالي_العقارات: realProps.length,
+    إجمالي_الوحدات: realTenants.length,
+    وحدات_أضيفت_هذا_الأسبوع: realTenants.filter((t: any) => (since(t.created_at) ?? 99) <= 7).length,
+    دفعات_هذا_الأسبوع: realPays.filter((p: any) => (since(p.created_at || p.paid_on) ?? 99) <= 7).length,
     تسجيلات_هذا_الأسبوع: accounts.filter((p: any) => (since(p.created_at) ?? 99) <= 7).length,
     تسجيلات_الأسبوع_الماضي: accounts.filter((p: any) => { const d = since(p.created_at) ?? 999; return d > 7 && d <= 14; }).length,
     تجارب_تنتهي_خلال_أسبوع: accounts.filter((p: any) => { const d = p.trial_ends_at ? Math.round((Date.parse(p.trial_ends_at) - Date.now()) / 86400000) : null; return d !== null && d >= 0 && d <= 7; }).length,
-    محصَّل_هذا_الشهر: (subs || []).filter((s: any) => Date.parse(s.paid_at) >= monthStart.getTime()).reduce((a: number, s: any) => a + (Number(s.amount) || 0), 0),
+    محصَّل_هذا_الشهر: (subs || []).filter((s: any) => !allowed.includes(s.user_id) && Date.parse(s.paid_at) >= monthStart.getTime()).reduce((a: number, s: any) => a + (Number(s.amount) || 0), 0),
     القنوات: Object.entries((accounts as any[]).reduce((m: any, p: any) => { const k = p.signup_source || "غير معروف"; m[k] = (m[k] || 0) + 1; return m; }, {})),
   };
 
