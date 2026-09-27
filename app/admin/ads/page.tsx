@@ -3,6 +3,7 @@ import { createClient as createServiceClient } from "@supabase/supabase-js";
 import { redirect, notFound } from "next/navigation";
 import Link from "next/link";
 import AdsWorkspace from "@/components/AdsWorkspace";
+import { splitDemo } from "@/lib/real-data";
 
 export const dynamic = "force-dynamic";
 
@@ -23,14 +24,17 @@ export default async function AdsPage() {
   const db = createServiceClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!, { auth: { persistSession: false } });
   const [{ data: profiles }, { data: props }, { data: posts, error: postsErr }, { data: team }] = await Promise.all([
     db.from("profiles").select("id,created_at,signup_source,subscribed_until"),
-    db.from("properties").select("user_id"),
+    db.from("properties").select("id,user_id,is_demo"),
     db.from("ad_posts").select("*").order("posted_at", { ascending: false }).limit(60),
     db.from("team_members").select("member_id"),
   ]);
 
   const members = new Set((team || []).map((t: any) => t.member_id));
   const accounts = (profiles || []).filter((p: any) => !members.has(p.id));
-  const withProps = new Set((props || []).map((p: any) => p.user_id));
+  /* بذرة التجربة لا تُعدّ تفعيلًا، وحسابك أنت لا يُعدّ اشتراكًا مدفوعًا —
+     وإلا نسب جدول القنوات إلى قناةٍ عميلًا دافعًا لا وجود له. */
+  const { realProperties } = splitDemo((props || []) as any[], [], []);
+  const withProps = new Set(realProperties.map((p: any) => p.user_id));
 
   const CH = [
     { k: "haraj", l: "حراج" }, { k: "twitter", l: "تويتر / X" },
@@ -42,7 +46,7 @@ export default async function AdsPage() {
     const src = srcKey[c.k];
     const list = src ? accounts.filter((p: any) => p.signup_source === src) : [];
     const activated = list.filter((p: any) => withProps.has(p.id)).length;
-    const paid = list.filter((p: any) => p.subscribed_until && Date.parse(p.subscribed_until) > Date.now()).length;
+    const paid = list.filter((p: any) => !allowed.includes(p.id) && p.subscribed_until && Date.parse(p.subscribed_until) > Date.now()).length;
     const postCount = (posts || []).filter((p: any) => p.channel === c.k).length;
     const last = (posts || []).find((p: any) => p.channel === c.k)?.posted_at || null;
     return { ...c, signups: list.length, activated, paid, postCount, last, perPost: postCount ? (list.length / postCount) : null };

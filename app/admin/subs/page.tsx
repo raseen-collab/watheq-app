@@ -5,6 +5,7 @@ import Link from "next/link";
 import SubsBoard from "@/components/SubsBoard";
 import SubsAdmin, { type SubRow, type PayRow } from "@/components/SubsAdmin";
 import { fetchAllRows } from "@/lib/fetch-all";
+import { splitDemo } from "@/lib/real-data";
 
 export const dynamic = "force-dynamic";
 
@@ -39,16 +40,21 @@ export default async function AdminSubsPage() {
     /* على دفعات: وحدات المنصة كلها وعقاراتها تتجاوز 1000 (كل حساب جرّب التجربة
        يضيف ~80 وحدة)، وSupabase يقصّ عندها بصمت — فكان «حجم الحساب» الذي تُبنى
        عليه قرارات المتابعة والتسعير ناقصًا */
-    fetchAllRows(db, "properties", "id,user_id").then((data) => ({ data, error: null as any }), (e) => ({ data: [] as any[], error: e })),
+    fetchAllRows(db, "properties", "id,user_id,is_demo").then((data) => ({ data, error: null as any }), (e) => ({ data: [] as any[], error: e })),
     fetchAllRows(db, "tenants", "id,property_id").then((data) => ({ data, error: null as any }), (e) => ({ data: [] as any[], error: e })),
   ]);
 
   /* حجم كل حساب: الوحدات والعقارات — يُظهر ما يخسره المكتب إن انقطع،
      وهو أهم رقم في قرار المتابعة (حساب بـ140 وحدة يستحق مكالمة لا رسالة). */
+  /* بذرة التجربة تُستثنى (lib/real-data): بلا ذلك يظهر حساب لم يُدخل شيئًا
+     بحجم «5 عقار · 80 وحدة» فتُبنى عليه مكالمة متابعة لا محلّ لها. */
+  const { realProperties, realTenants } = splitDemo(
+    (propRes.data || []) as any[], (tenRes.data || []) as any[], [],
+  );
   const propsOf: Record<string, string[]> = {};
-  (propRes.data || []).forEach((x: any) => { (propsOf[x.user_id] ||= []).push(x.id); });
+  realProperties.forEach((x: any) => { (propsOf[x.user_id] ||= []).push(x.id); });
   const unitsPerProp: Record<string, number> = {};
-  (tenRes.data || []).forEach((t: any) => { unitsPerProp[t.property_id] = (unitsPerProp[t.property_id] || 0) + 1; });
+  realTenants.forEach((t: any) => { unitsPerProp[t.property_id] = (unitsPerProp[t.property_id] || 0) + 1; });
   const sizeOf = (uid: string) => {
     const ids = propsOf[uid] || [];
     return { properties: ids.length, units: ids.reduce((a, id) => a + (unitsPerProp[id] || 0), 0) };

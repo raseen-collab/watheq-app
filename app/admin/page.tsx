@@ -191,7 +191,9 @@ export default async function AdminPage({ searchParams }: { searchParams?: { vie
   }).reverse();
   const maxWeek = Math.max(1, ...weeks.map((w) => w.n));
   const bySource: Record<string, { n: number; act: number; paid: number }> = {};
-  rows.forEach((r) => { const k = sourceLabel(r.p.signup_source); bySource[k] ||= { n: 0, act: 0, paid: 0 }; bySource[k].n++; if (r.props > 0) bySource[k].act++; if (r.sub.paid) bySource[k].paid++; });
+  rows.forEach((r) => { const k = sourceLabel(r.p.signup_source); bySource[k] ||= { n: 0, act: 0, paid: 0 }; bySource[k].n++; if (r.props > 0) bySource[k].act++; if (r.sub.paid && !r.self) bySource[k].paid++; });
+  /* بلا `!r.self` كان جدول القنوات يقول «غير معروف: اشترك 1» والقمع يقول
+     «اشترك 0» في الصفحة نفسها — وهو حسابك أنت. الجدولان يقرآن رقمًا واحدًا. */
   const sources = Object.entries(bySource).sort((a, b) => b[1].n - a[1].n);
 
   // ---------- الجدول ----------
