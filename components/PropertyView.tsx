@@ -22,6 +22,7 @@ import StatusLegend from "@/components/StatusLegend";
 import PropertyStatementModal, { type StatementPeriod } from "@/components/PropertyStatementModal";
 import DemoGuide from "@/components/DemoGuide";
 import DebtFollowUp from "@/components/DebtFollowUp";
+import UnitInvoicesModal from "@/components/UnitInvoicesModal";
 import CollectionStatementModal from "@/components/CollectionStatementModal";
 import ExpensesModal from "@/components/ExpensesModal";
 import OwnerLinkModal from "@/components/OwnerLinkModal";
@@ -1020,6 +1021,9 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
   const [stmtOpen, setStmtOpen] = useState(false);
   const [seeding, setSeeding] = useState(false);
   const [debtOpen, setDebtOpen] = useState(false);
+  /* سجلّ فواتير الوحدة: الجدول كان يُكتب فيه ولا يُقرأ — فالمكتب يُصدر
+     ثلاث فواتير لوحدة ولا يستطيع رؤيتها ولا إعادة طباعة واحدة طلبها المستأجر. */
+  const [invoicesFor, setInvoicesFor] = useState<Tenant | null>(null);
   const [collOpen, setCollOpen] = useState(false);
   /* خطأ الحفظ يُعرض داخل النموذج لا إشعارًا عائمًا في أعلى الصفحة: على
      الجوال يكون المستخدم منزلًا داخل نموذج طويل، فيضغط «حفظ» ويظهر الإشعار
@@ -1129,6 +1133,21 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
     const amount = Number(t.rent_amount) || 0;
     const dueDate = st.nextDueDate || today();
 
+    /* فاتورة ثانية لنفس الدفعة تُصدَر بصمت: المكتب يضغط «فاتورة» مرتين فتخرج
+       فاتورتان ضريبيتان برقمين مختلفين لنفس المبلغ ونفس الفترة، ولا شيء ينبّه.
+       نسأل قبل الإصدار — والقرار يبقى له، فقد يكون الإصدار الثاني مقصودًا. */
+    const { data: dup } = await supabase.from("invoices")
+      .select("invoice_no,issue_date")
+      .eq("tenant_id", t.id).eq("period_label", period).neq("status", "void").limit(3);
+    if (dup && dup.length) {
+      const list = dup.map((x: any) => `${x.invoice_no}${x.issue_date ? ` (${arDate(x.issue_date)})` : ""}`).join("\n");
+      if (!confirm(
+        `صدرت فاتورة لنفس الفترة من قبل:\n\n${list}\n\n` +
+        `${period} — ${t.name}\n\nتُصدر فاتورة أخرى بنفس الفترة؟\n` +
+        `موافق = إصدار فاتورة جديدة برقم جديد\nإلغاء = فتح سجل الفواتير لإعادة طباعة واحدة منها`,
+      )) { setInvoicesFor(t); return; }
+    }
+
     // ترقيم متسلسل من قاعدة البيانات
     /* رقم الفاتورة الضريبية من القاعدة وحدها. كان الفشل يُسقط إلى «INV-السنة-0001»
        بصمت — فاتورة ضريبية برقم مكرَّر. الآن الفشل يوقف الإصدار ويقول لماذا. */
@@ -1146,6 +1165,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       user_id: await officeId(supabase),
       tenant_id: t.id, property_id: active.id,
       invoice_no: invoiceNo, due_date: dueDate, period_label: period, amount,
+      issue_date: today(), status: "issued",
     });
     if (insErr) return notify("err", `تعذّر حفظ الفاتورة ${invoiceNo} — لم تُصدر (${insErr.message})`);
 
@@ -1815,6 +1835,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                                   { label: "كشف حساب شامل", run: () => openStatement(t, "full") },
                                   { label: "كشف حساب مختصر", run: () => openStatement(t, "brief") },
                                   ...(may("issue_invoices") ? [{ label: "فاتورة", run: () => openInvoice(t) }] : []),
+                                  { label: "سجل الفواتير", run: () => setInvoicesFor(t) },
                                   { label: "جدول الدفعات", run: () => setSchedule(t) },
                                   { label: "سجل المدفوعات", run: () => openHistory(t) },
                                   ...(isVacant(t) ? [{ label: "مخالصة الإخلاء", run: () => openSettlement(t) }] : []),
@@ -1983,6 +2004,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                       { label: "كشف حساب شامل", run: () => openStatement(t, "full") },
                       { label: "كشف حساب مختصر", run: () => openStatement(t, "brief") },
                       ...(may("issue_invoices") ? [{ label: "فاتورة", run: () => openInvoice(t) }] : []),
+                      { label: "سجل الفواتير", run: () => setInvoicesFor(t) },
                       { label: "جدول الدفعات", run: () => setSchedule(t) },
                       { label: "سجل المدفوعات", run: () => openHistory(t) },
                       ...(isVacant(t) ? [{ label: "مخالصة الإخلاء", run: () => openSettlement(t) }] : []),
@@ -2099,6 +2121,8 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       {/* الصفحة العامة ترسم دليلها بنفسها — لا نكرّره هنا */}
       {collOpen && <CollectionStatementModal properties={items as any /* كاملة: نسبة الأتعاب وإعدادات الضريبة تحدّد صافي المالك */} issuer={issuer} db={db} onClose={() => setCollOpen(false)} />}
       {debtOpen && <DebtFollowUp properties={items.map((p) => ({ id: p.id, name: p.name }))} orgName={orgName} db={db} onClose={() => setDebtOpen(false)} />}
+      {invoicesFor && active && <UnitInvoicesModal tenant={invoicesFor} property={active} issuer={issuer} db={db}
+        canIssue={may("issue_invoices")} onClose={() => setInvoicesFor(null)} />}
       {hasDemo && !demo && <DemoGuide onEvent={onGuideEvent} />}
       {stmtOpen && active && <PropertyStatementModal propertyName={active.name} onClose={() => setStmtOpen(false)} onIssue={openPropertyStatement} />}
 
