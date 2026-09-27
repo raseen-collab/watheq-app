@@ -1,9 +1,9 @@
-import { today } from "@/lib/utils";
+import { today, riyadhMonthStartISO } from "@/lib/utils";
 import { NextResponse } from "next/server";
 import { createClient as createServiceClient } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase-server";
 import { fetchAllRows } from "@/lib/fetch-all";
-import { splitDemo } from "@/lib/real-data";
+import { splitDemo, isPayingCustomer } from "@/lib/real-data";
 
 /* على دفعات: Supabase يقصّ كل استجابة عند 1000 صف بصمت — والمنصة تجاوزتها
    (كل حساب جرّب البيانات التجريبية أضاف ~80 وحدة ودفعاتها)، فكانت أرقام
@@ -38,7 +38,7 @@ export async function POST() {
     db.from("profiles").select("id,account_type,created_at,trial_ends_at,subscribed_until,plan,signup_source,telegram_chat_id"),
     page(db, "properties", "id,user_id,created_at,is_demo"),
     page(db, "tenants", "id,property_id,created_at"),
-    page(db, "payments", "id,user_id,created_at,paid_on,property_id"),
+    page(db, "payments", "id,user_id,created_at,paid_on,property_id,is_demo"),
     db.from("subscription_payments").select("amount,paid_at,user_id"),
     db.from("team_members").select("member_id"),
   ]);
@@ -72,8 +72,14 @@ export async function POST() {
   const withPays = new Set(realPays.map((p: any) => p.user_id));
   /* حساب صاحب المنصة نفسه مشترك حتى 2028 — لو حُسب ضمن الدافعين لبدا أن هناك
      عميلًا دافعًا واحدًا وليس صفرًا، وهي أسوأ كذبة تُقال لصاحب منصة. */
-  const paying = accounts.filter((p: any) => !allowed.includes(p.id) && p.subscribed_until && Date.parse(p.subscribed_until) > Date.now());
-  const monthStart = new Date(); monthStart.setDate(1);
+  /* التعريف الواحد (lib/real-data): مقارنة subscribed_until مباشرةً تتجاهل
+     فترة السماح والباقات المضبوطة يدويًّا بلا تاريخ، فتخالف /admin. */
+  const paying = accounts.filter((p: any) => isPayingCustomer(p, { admins: allowed, memberIds: members }));
+  /* بتوقيت الرياض لا غرينتش، ومن منتصف الليل لا من ساعة اللحظة: setDate(1)
+     وحدها تُبقي وقت التنفيذ، فدفعة سُجّلت في 1 سبتمبر 09:00Z تُستبعد إن وُلّدت
+     الإحاطة 14:30Z، وإيراد أغسطس كله يُحسب «هذا الشهر» إن وُلّدت 1 سبتمبر 1 فجرًا
+     بالرياض. و/admin يستعمل riyadhMonthStartISO() — فكان الرقمان يتناقضان. */
+  const monthStart = new Date(riyadhMonthStartISO());
 
   const snapshot = {
     اليوم: today(),                       // تاريخ الرياض — الخادم بتوقيت غرينتش

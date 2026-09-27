@@ -10,6 +10,7 @@ import type { MsgKind } from "@/lib/admin-messages";
 import { fetchAllRows } from "@/lib/fetch-all";
 import { splitDemo } from "@/lib/real-data";
 import { sourceAdminLabel } from "@/lib/signup-sources";
+import { isPayingCustomer } from "@/lib/real-data";
 
 /* على دفعات: Supabase يقصّ كل استجابة عند 1000 صف بصمت — والمنصة تجاوزتها
    (كل حساب جرّب البيانات التجريبية أضاف ~80 وحدة ودفعاتها)، فكانت أرقام
@@ -88,7 +89,7 @@ export default async function AdminPage({ searchParams }: { searchParams?: { vie
     page(db, "tenants", "id,status,property_id,created_at"),
     db.from("associations").select("id,user_id,created_at"),
     page(db, "owners", "id,association_id,created_at"),
-    page(db, "payments", "id,user_id,amount,paid_on,created_at,property_id"),
+    page(db, "payments", "id,user_id,amount,paid_on,created_at,property_id,is_demo"),
     db.from("subscription_payments").select("id,user_id,amount,months,plan,paid_at,extended_to").order("paid_at", { ascending: false }),
     db.from("team_members").select("owner_id,member_id,role,created_at"),
     db.auth.admin.listUsers({ perPage: 1000 }),
@@ -104,6 +105,9 @@ export default async function AdminPage({ searchParams }: { searchParams?: { vie
   const authUsers = (authRes.data?.users || []) as any[];
   const errors = [profilesRes, propsRes, tenantsRes, assocRes, ownersRes, paysRes, subsRes, teamRes]
     .map((r) => r.error?.message).filter(Boolean) as string[];
+  /* listUsers لم يكن في القائمة، ففشله يجعل «آخر نشاط» فارغًا لكل حساب
+     و«نشطون خلال 7 أيام 0» بلا أي تحذير على الشاشة */
+  if ((authRes as any)?.error?.message) errors.push(`تعذّر تحميل المستخدمين: ${(authRes as any).error.message}`);
 
   /* 🚨 كل رقم في هذه اللوحة مبنيّ على العقارات: منها يُعرف أيّها تجريبي، وبها
      تُنسب الوحدات والدفعات لأصحابها. حين فشل جلب العقارات مرة واحدة (`JWT
@@ -112,7 +116,16 @@ export default async function AdminPage({ searchParams }: { searchParams?: { vie
      مرحلة متأخرة فوق سابقتها!) و«تميز التطوير — لم يبدأ» لمكتب فيه 226 وحدة.
      رقم خاطئ بثقة أسوأ من لا رقم: عليه تُبنى مكالمة أو قرار قناة. فمن الآن
      يُعرض «—» لكل ما لا نملك بياناته، والبانر الأحمر يشرح السبب. */
-  const dataOk = !propsRes.error && !tenantsRes.error && !paysRes.error;
+  /* كانت تغطّي ثلاثة استعلامات من ثمانية، فبقيت أبواب تطبع أصفارًا بثقة:
+     فشل profiles ⇒ «0 حساب · MRR 0 ر» بجانب «55 عقار · 543 وحدة»؛ وفشل
+     subscription_payments ⇒ «محصَّل هذا الشهر 0 ر» وهو رقم مالي مُقدَّر.
+     نفصلها بحسب ما يعتمد على كل منها بدل علم واحد يغطّي البعض. */
+  const propsOk   = !propsRes.error && !tenantsRes.error && !paysRes.error;
+  const accountsOk = !profilesRes.error;
+  const assocOk   = !assocRes.error;
+  const moneyOk   = !subsRes.error;
+  /** أرقام العقارات والوحدات والدفعات */
+  const dataOk = propsOk && accountsOk && assocOk;
   /** يُخفي أي رقم مبنيّ على بيانات لم تُحمَّل */
   const q = <T,>(v: T): T | "—" => (dataOk ? v : "—");
 
@@ -152,7 +165,7 @@ export default async function AdminPage({ searchParams }: { searchParams?: { vie
     const last = lastActivity(p.id);
     const trialLeft = p.trial_ends_at ? Math.round((Date.parse(p.trial_ends_at) - Date.now()) / 86400000) : null;
     const paidTotal = subs.filter((s) => s.user_id === p.id).reduce((a: number, s) => a + (Number(s.amount) || 0), 0);
-    const stage: Stage = (sub.paid && !self) ? "paying" : pays > 0 ? "collecting" : props > 0 ? "activated" : sub.expired ? "expired" : p.account_type ? "onboarded" : "new";
+    const stage: Stage = isPayingCustomer(p, { admins: allowed }) ? "paying" : pays > 0 ? "collecting" : props > 0 ? "activated" : sub.expired ? "expired" : p.account_type ? "onboarded" : "new";
     return { p, units, props, pays, sub, last, sinceLast: since(last), sinceJoin: since(p.created_at), trialLeft, paidTotal, stage, onlyDemo, self, staff: staffCount[p.id] || 0, employer: memberOf[p.id] };
   }
   type Row = ReturnType<typeof buildRow>;
@@ -166,17 +179,21 @@ export default async function AdminPage({ searchParams }: { searchParams?: { vie
   const realSubs = subs.filter((s) => !allowed.includes(s.user_id));
   const revenueMonth = realSubs.filter((s) => Date.parse(s.paid_at) >= monthStart.getTime()).reduce((a: number, s) => a + (Number(s.amount) || 0), 0);
   const revenueAll = realSubs.reduce((a: number, s) => a + (Number(s.amount) || 0), 0);
-  const paying = rows.filter((r) => r.sub.paid && !r.self);
+  const paying = rows.filter((r) => isPayingCustomer(r.p, { admins: allowed }));
   const mrr = paying.reduce((a, r) => a + (PLAN_PRICE[String(r.p.plan)] || 0), 0);
   const subEnding = paying.filter((r) => r.sub.subDaysLeft !== null && r.sub.subDaysLeft <= 7);
   const subExpired = rows.filter((r) => r.p.plan && !r.sub.paid && r.p.subscribed_until);
 
   // ---------- القمع ----------
+  /* حسابك أنت خارج القمع كله لا مرحلته الأخيرة فقط: كان يُستثنى من «اشترك»
+     ويُحسب في المراحل الأربع الأولى وفي المقام، فظهر «4/13 — 31% تفعيل»
+     بدل «3/12 — 25%». رقم يُبنى عليه قرار قناة. */
+  const fRows = rows.filter((r) => !r.self);
   const funnel = [
-    { k: "سجّل", n: rows.length },
-    { k: "أكمل الترحيب", n: rows.filter((r) => r.p.account_type).length },
-    { k: "أضاف عقارًا", n: rows.filter((r) => r.props > 0).length },
-    { k: "سجّل دفعة", n: rows.filter((r) => r.pays > 0).length },
+    { k: "سجّل", n: fRows.length },
+    { k: "أكمل الترحيب", n: fRows.filter((r) => r.p.account_type).length },
+    { k: "أضاف عقارًا", n: fRows.filter((r) => r.props > 0).length },
+    { k: "سجّل دفعة", n: fRows.filter((r) => r.pays > 0).length },
     { k: "اشترك", n: paying.length },
   ];
 
@@ -272,10 +289,10 @@ export default async function AdminPage({ searchParams }: { searchParams?: { vie
 
       {/* ═══ المال ═══ */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
-        <Metric v={`${sar(revenueMonth)} ر`} l="محصَّل هذا الشهر" sub={`منذ البداية: ${sar(revenueAll)} ر`} tone={revenueMonth > 0 ? "good" : undefined} />
-        <Metric v={`${sar(mrr)} ر`} l="الدخل الشهري المتكرر (MRR)" sub={`${paying.length} مشترك دافع`} tone={mrr > 0 ? "good" : undefined} />
-        <Metric v={subEnding.length} l="اشتراكات تنتهي خلال 7 أيام" sub={subExpired.length ? `${subExpired.length} انتهت ولم تُجدَّد` : "لا انتهاءات قريبة"} tone={subEnding.length ? "warn" : undefined} />
-        <Metric v={dataOk ? `${funnel[2].n}/${rows.length}` : "—"} l="حسابات أضافت بيانات فعلًا" sub={dataOk ? `${rows.length ? Math.round((funnel[2].n / rows.length) * 100) : 0}% تفعيل` : "تعذّر تحميل البيانات"} tone={dataOk && rows.length && funnel[2].n / rows.length < 0.3 ? "bad" : undefined} />
+        <Metric v={moneyOk ? `${sar(revenueMonth)} ر` : "—"} l="محصَّل هذا الشهر" sub={moneyOk ? `منذ البداية: ${sar(revenueAll)} ر` : "تعذّر تحميل الاشتراكات"} tone={moneyOk && revenueMonth > 0 ? "good" : undefined} />
+        <Metric v={accountsOk ? `${sar(mrr)} ر` : "—"} l="الدخل الشهري المتكرر (MRR)" sub={accountsOk ? `${paying.length} مشترك دافع` : "تعذّر تحميل الحسابات"} tone={accountsOk && mrr > 0 ? "good" : undefined} />
+        <Metric v={accountsOk ? subEnding.length : "—"} l="اشتراكات تنتهي خلال 7 أيام" sub={subExpired.length ? `${subExpired.length} انتهت ولم تُجدَّد` : "لا انتهاءات قريبة"} tone={subEnding.length ? "warn" : undefined} />
+        <Metric v={dataOk ? `${funnel[2].n}/${fRows.length}` : "—"} l="حسابات أضافت بيانات فعلًا" sub={dataOk ? `${fRows.length ? Math.round((funnel[2].n / fRows.length) * 100) : 0}% تفعيل` : "تعذّر تحميل البيانات"} tone={dataOk && fRows.length && funnel[2].n / fRows.length < 0.3 ? "bad" : undefined} />
       </div>
 
       <AdminBrief />
@@ -301,9 +318,9 @@ export default async function AdminPage({ searchParams }: { searchParams?: { vie
           <div className="space-y-2">
             {funnel.map((f, i) => {
               /* المراحل من «أضاف عقارًا» فأدنى تُقرأ من العقارات والدفعات — تُكتم إن لم تُحمَّل */
-              const known = dataOk || i < 2;
+              const known = i < 2 ? accountsOk : dataOk;
               const prev = i === 0 ? f.n : funnel[i - 1].n;
-              const pct = known && rows.length ? Math.round((f.n / rows.length) * 100) : 0;
+              const pct = known && fRows.length ? Math.round((f.n / fRows.length) * 100) : 0;
               const drop = !known || i === 0 || !dataOk ? null : prev ? Math.round(((prev - f.n) / prev) * 100) : 0;
               return (
                 <div key={f.k} className="flex items-center gap-3 text-sm">

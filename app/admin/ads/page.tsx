@@ -3,7 +3,8 @@ import { createClient as createServiceClient } from "@supabase/supabase-js";
 import { redirect, notFound } from "next/navigation";
 import Link from "next/link";
 import AdsWorkspace from "@/components/AdsWorkspace";
-import { splitDemo } from "@/lib/real-data";
+import { splitDemo, isPayingCustomer } from "@/lib/real-data";
+import { CHOSEN_SOURCES, LINK_SOURCES } from "@/lib/signup-sources";
 
 export const dynamic = "force-dynamic";
 
@@ -36,17 +37,19 @@ export default async function AdsPage() {
   const { realProperties } = splitDemo((props || []) as any[], [], []);
   const withProps = new Set(realProperties.map((p: any) => p.user_id));
 
-  const CH = [
-    { k: "haraj", l: "حراج" }, { k: "twitter", l: "تويتر / X" },
-    { k: "group", l: "قروبات" }, { k: "direct", l: "تواصل مباشر" }, { k: "other", l: "أخرى" },
-  ];
-  const srcKey: Record<string, string> = { haraj: "haraj", twitter: "twitter", group: "group", direct: "direct" };
+  /* من lib/signup-sources لا نسخة يدوية: القائمة السابقة أغفلت «بحث جوجل»
+     و«توصية» و«النسخة التجريبية»، فحساب جاء منها لا يُنسب لأي صفّ ويقلّ
+     مجموع «سجّل» هنا عن /admin بلا إشارة. و«أخرى» كانت بلا مفتاح فتعرض «—»
+     دائمًا حتى لو كان فيها حسابات. وأي مصدر يُضاف لاحقًا يظهر هنا تلقائيًّا. */
+  const CH = CHOSEN_SOURCES.map((s) => ({ k: s.v, l: s.adminLabel }));
+  const srcKey: Record<string, string> = Object.fromEntries(CHOSEN_SOURCES.map((s) => [s.v, s.v]));
+  LINK_SOURCES.forEach((s) => { CH.push({ k: s.v, l: s.adminLabel }); srcKey[s.v] = s.v; });
 
   const perChannel = CH.map((c) => {
     const src = srcKey[c.k];
     const list = src ? accounts.filter((p: any) => p.signup_source === src) : [];
     const activated = list.filter((p: any) => withProps.has(p.id)).length;
-    const paid = list.filter((p: any) => !allowed.includes(p.id) && p.subscribed_until && Date.parse(p.subscribed_until) > Date.now()).length;
+    const paid = list.filter((p: any) => isPayingCustomer(p, { admins: allowed, memberIds: members })).length;
     const postCount = (posts || []).filter((p: any) => p.channel === c.k).length;
     const last = (posts || []).find((p: any) => p.channel === c.k)?.posted_at || null;
     return { ...c, signups: list.length, activated, paid, postCount, last, perPost: postCount ? (list.length / postCount) : null };

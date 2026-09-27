@@ -45,7 +45,11 @@ export async function recordSignupSource(
     const db = createServiceClient(url, key, { auth: { persistSession: false } });
 
     if (opts.requireFreshProfile) {
-      const { data: prof } = await db.from("profiles").select("created_at").eq("id", userId).maybeSingle();
+      const { data: prof, error: profErr } = await db.from("profiles")
+        .select("created_at").eq("id", userId).maybeSingle();
+      /* يفشل مغلقًا: تجاهل الخطأ كان يجعل فشل قراءة عابرًا يُقرأ «صفّ يُنشأ
+         الآن»، فيُكتب المصدر على حساب عمره سنة — وهو بالضبط ما يمنعه الحارس. */
+      if (profErr) { console.error("signup_source age check failed:", profErr.message); return false; }
       /* صفّ غير موجود بعد = حساب يُنشأ الآن، فيُسمح ويُعالج التأخير أدناه */
       if (prof?.created_at) {
         const age = Date.now() - Date.parse(String(prof.created_at));

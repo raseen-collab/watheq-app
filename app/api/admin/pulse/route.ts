@@ -53,8 +53,8 @@ async function handle(req: Request) {
   const since = new Date(); since.setDate(since.getDate() - 1);
   const sinceISO = since.toISOString();
 
-  const [profiles, newProfiles, props, assoc, tenants, owners, pays, newPays] = await Promise.all([
-    db.from("profiles").select("id", { count: "exact", head: true }),
+  const [profiles, newProfiles, props, assoc, tenants, owners, team, pays, newPays] = await Promise.all([
+    db.from("profiles").select("id"),
     db.from("profiles").select("id,full_name,org_name,account_type,created_at").gte("created_at", sinceISO),
     /* id مع user_id: حجم الحساب في تنبيه الاشتراكات يعدّ الوحدات بمعرّف العقار —
        كان يُجلب user_id وحده فيظهر «0 وحدة» لكل حساب. وعلى دفعات. */
@@ -64,8 +64,9 @@ async function handle(req: Request) {
        فيظهر «العقارات 55 · الوحدات 543» — عقارات حقيقية ووحدات نصفها ديمو. */
     fetchAllRows(db, "tenants", "id,property_id").then((data) => ({ data, error: null as any }), (e) => ({ data: [] as any[], error: e })),
     db.from("owners").select("id", { count: "exact", head: true }),
-    fetchAllRows(db, "payments", "id,property_id").then((data) => ({ data, error: null as any }), (e) => ({ data: [] as any[], error: e })),
-    db.from("payments").select("amount,paid_on,property_id").gte("paid_on", sinceISO.slice(0, 10)),
+    db.from("team_members").select("member_id"),
+    fetchAllRows(db, "payments", "id,property_id,is_demo").then((data) => ({ data, error: null as any }), (e) => ({ data: [] as any[], error: e })),
+    db.from("payments").select("amount,paid_on,property_id,is_demo").gte("paid_on", sinceISO.slice(0, 10)),
   ]);
 
   /* التعريف الواحد للبيانات الحقيقية — lib/real-data */
@@ -73,17 +74,25 @@ async function handle(req: Request) {
     (props.data || []) as any[], (tenants.data || []) as any[], (pays.data || []) as any[],
   );
 
-  const total = profiles.count || 0;
+  /* الموظفون وحسابك ليسوا حسابات عملاء: كان «الحسابات 120 (لم يبدؤوا 80)»
+     بينما /admin يقول «40 حساب · 80 موظف» — رقمان لشيء واحد في شاشتين. */
+  const memberIds = new Set(((team.data || []) as any[]).map((t: any) => t.member_id));
+  const own = (process.env.ADMIN_USER_IDS || "").split(",").map((x) => x.trim()).filter(Boolean);
+  const accountIds = ((profiles.data || []) as any[])
+    .map((p: any) => p.id as string)
+    .filter((id) => !memberIds.has(id) && !own.includes(id));
+  const total = accountIds.length;
   const fresh = newProfiles.data || [];
-  const withData = new Set([
+  const withDataAll = new Set([
     ...realProperties.map((r: any) => r.user_id),
     ...(assoc.data || []).map((r: any) => r.user_id),
   ]);
+  const withData = new Set(accountIds.filter((id) => withDataAll.has(id)));
   const dormant = Math.max(0, total - withData.size);
   const demoPropIds = new Set((props.data || []).filter((p: any) => p.is_demo).map((p: any) => p.id));
   const unitCount = realTenants.length;
   const payCount = realPayments.length;
-  const dayPays = (newPays.data || []).filter((p: any) => !p.property_id || !demoPropIds.has(p.property_id));
+  const dayPays = (newPays.data || []).filter((p: any) => !p.is_demo && (!p.property_id || !demoPropIds.has(p.property_id)));
   const dayTotal = dayPays.reduce((s: number, r: any) => s + (Number(r.amount) || 0), 0);
 
   const L: string[] = ["📈 <b>نبض وثيق — آخر 24 ساعة</b>", ""];

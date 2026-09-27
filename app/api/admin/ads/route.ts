@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient as createServiceClient } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase-server";
 import { fetchAllRows } from "@/lib/fetch-all";
-import { splitDemo, adminIds } from "@/lib/real-data";
+import { splitDemo, adminIds, isPayingCustomer } from "@/lib/real-data";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -93,7 +93,7 @@ export async function POST(req: Request) {
     perChannel[k] ||= { signups: 0, activated: 0, paid: 0 };
     perChannel[k].signups++;
     if (withProps.has(p.id)) perChannel[k].activated++;
-    if (!own.includes(p.id) && p.subscribed_until && Date.parse(p.subscribed_until) > Date.now()) perChannel[k].paid++;
+    if (isPayingCustomer(p, { admins: own, memberIds: members })) perChannel[k].paid++;
   });
 
   const system = `أنت مسؤول الإعلانات والنمو لمنصة "وثيق" السعودية (إدارة أملاك وجمعيات ملاك للمكاتب العقارية الصغيرة).

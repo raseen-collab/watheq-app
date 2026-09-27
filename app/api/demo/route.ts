@@ -68,6 +68,9 @@ export async function POST() {
     const payRows = demoPayments(p).filter((x) => idByUnit[x.unit]).map((x) => ({
       user_id: user.id, property_id: pid, tenant_id: idByUnit[x.unit], paid_on: x.paid_on,
       amount: x.amount, method: x.method, note: x.note, reference: x.reference, periods_covered: 1, created_by: user.id,
+      /* الوسم على الدفعة نفسها (schema-v50): مرجع العقار يُفرَّغ عند حذفه
+         (on delete set null)، فالاستدلال عليه وحده يجعل الدفعة تبدو حقيقية. */
+      is_demo: true,
     }));
     if (payRows.length) {
       const { error: pErr } = await db.from("payments").insert(payRows);
@@ -102,6 +105,9 @@ export async function DELETE() {
   const ids = (demoProps || []).map((x: any) => x.id as string);
   if (!ids.length) return NextResponse.json({ ok: true, removed: 0 });
 
+  /* بالوسم أولًا ليشمل الدفعات التي فُرّغ مرجع عقارها سابقًا، ثم بالمرجع
+     للصفوف القديمة التي سبقت schema-v50 ولم تُرحَّل */
+  await db.from("payments").delete().eq("user_id", user.id).eq("is_demo", true);
   await db.from("payments").delete().eq("user_id", user.id).in("property_id", ids);
   await db.from("expenses").delete().eq("user_id", user.id).in("property_id", ids);
   const { data, error } = await db.from("properties").delete()

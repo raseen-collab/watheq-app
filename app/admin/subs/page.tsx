@@ -28,7 +28,7 @@ export default async function AdminSubsPage() {
 
   const db = serviceDb();
 
-  const [profRes, payRes, propRes, tenRes] = await Promise.all([
+  const [profRes, payRes, propRes, tenRes, teamRes] = await Promise.all([
     db.from("profiles")
       .select("id,full_name,org_name,account_type,billing_phone,plan,trial_ends_at,subscribed_until,created_at")
       .order("created_at", { ascending: false })
@@ -42,6 +42,7 @@ export default async function AdminSubsPage() {
        عليه قرارات المتابعة والتسعير ناقصًا */
     fetchAllRows(db, "properties", "id,user_id,is_demo").then((data) => ({ data, error: null as any }), (e) => ({ data: [] as any[], error: e })),
     fetchAllRows(db, "tenants", "id,property_id").then((data) => ({ data, error: null as any }), (e) => ({ data: [] as any[], error: e })),
+    db.from("team_members").select("member_id"),
   ]);
 
   /* حجم كل حساب: الوحدات والعقارات — يُظهر ما يخسره المكتب إن انقطع،
@@ -61,7 +62,13 @@ export default async function AdminSubsPage() {
   };
 
   const error = profRes.error?.message || payRes.error?.message || null;
-  const rows = (profRes.data || []) as SubRow[];
+  /* الموظف له صفّ profiles بتجربة 30 يومًا ولا اشتراك له، فبعد انقضائها كان
+     يظهر «انتهى» في قائمة «من أتواصل معه اليوم» مع زر واتساب لتجديد اشتراك
+     لا وجود له — بمكتبين لكل أربعين مكتبًا: 80 اسمًا وهميًّا. وحسابك أنت
+     مشترك إداريًّا حتى 2028 فكان يظهر «اشتراك ساري 1» بينما /admin يقول صفر. */
+  const memberIds = new Set(((teamRes.data || []) as any[]).map((t) => t.member_id));
+  const rows = ((profRes.data || []) as SubRow[])
+    .filter((r: any) => !memberIds.has(r.id) && !allowed.includes(r.id));
   const pays = (payRes.data || []) as PayRow[];
 
   return (
