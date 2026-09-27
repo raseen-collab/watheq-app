@@ -42,7 +42,7 @@ export default function OwnerStatementModal({ properties, issuer, onClose, db }:
   /* اختيار العقارات: فارغ = كل عقارات المالك. ومستوى التفصيل: شامل يضم
      جدول الوحدات وحالتها وبيانات كل وحدة، والمختصر يبقى كما كان. */
   const [picked, setPicked] = useState<string[]>([]);
-  const [detail, setDetail] = useState<"full" | "brief">("full");
+  const [detail, setDetail] = useState<"full" | "brief" | "arrears">("full");
   const ownerProps = useMemo(() => properties.filter((p) => (p.owner_name || "").trim() === owner), [properties, owner]);
   useEffect(() => { setPicked([]); }, [owner]);
   const toggleProp = (id: string) => setPicked((cur) => cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]);
@@ -105,10 +105,14 @@ export default function OwnerStatementModal({ properties, issuer, onClose, db }:
       }
       return { rows: out, error: null };
     }
-    const [pay, ex] = await Promise.all([
-      fetchAll("payments", "*", "paid_on"),
-      fetchAll("expenses", "*", "spent_on"),
-    ]);
+    /* كشف المتأخرات لا يعرض دفعات ولا مصروفات — فلا تُجلب أصلًا.
+       مالك بـ400 وحدة على سنة يوفّر آلاف الصفوف وانتظارًا بلا مقابل. */
+    const [pay, ex] = detail === "arrears"
+      ? [{ rows: [] as any[], error: null }, { rows: [] as any[], error: null }]
+      : await Promise.all([
+          fetchAll("payments", "*", "paid_on"),
+          fetchAll("expenses", "*", "spent_on"),
+        ]);
     setLoading(false);
     if (pay.error) { setErr(pay.error); return; }
 
@@ -184,16 +188,22 @@ export default function OwnerStatementModal({ properties, issuer, onClose, db }:
               </div>
             </div>
             {from > to && <p className="text-xs text-late mt-1">شهر البداية بعد شهر النهاية.</p>}
+            {detail === "arrears" && <p className="text-[11px] text-muted mt-1">الفترة لا تؤثّر على كشف المتأخرات — يُحسب على وضع الوحدات اليوم.</p>}
             <div className="mt-3">
               <label className="block text-sm font-semibold mb-1">مستوى التفصيل</label>
               <div className="inline-flex border border-line rounded-lg p-0.5 text-xs">
                 <button type="button" onClick={() => setDetail("full")} className={`px-3 py-1.5 rounded-md ${detail === "full" ? "bg-deep text-goldSoft" : "text-muted"}`}>شامل</button>
                 <button type="button" onClick={() => setDetail("brief")} className={`px-3 py-1.5 rounded-md ${detail === "brief" ? "bg-deep text-goldSoft" : "text-muted"}`}>مختصر</button>
+                {/* ورقة سؤالها واحد: مَن عليه مبلغ وكم؟ الكشف الشامل يُغرقها
+                    في دفعات ومصروفات ووحدات منتظمة لا تحتاج قرارًا. */}
+                <button type="button" onClick={() => setDetail("arrears")} className={`px-3 py-1.5 rounded-md ${detail === "arrears" ? "bg-deep text-goldSoft" : "text-muted"}`}>المتأخرات فقط</button>
               </div>
               <p className="text-[11px] text-muted mt-1">
                 {detail === "full"
                   ? "الشامل: ملخص العقارات + جدول وحدات كل عقار (المستأجر، الإيجار، الحالة، المتأخر، نهاية العقد) + الدفعات والمصروفات."
-                  : "المختصر: ملخص العقارات وصافي كل عقار والدفعات والمصروفات — بلا جدول الوحدات."}
+                  : detail === "brief"
+                  ? "المختصر: ملخص العقارات وصافي كل عقار والدفعات والمصروفات — بلا جدول الوحدات."
+                  : "المتأخرات فقط: الوحدات التي عليها متأخر أو استحقاق قائم — باسم المستأجر وجواله والمبلغ وتاريخه ومدة التأخر. بلا محصَّل ولا مصروفات ولا صافي، والوحدات المنتظمة والشاغرة لا تظهر."}
               </p>
             </div>
             {err && <p className="text-sm text-late mt-2">{err}</p>}

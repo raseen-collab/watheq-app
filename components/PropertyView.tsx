@@ -1711,7 +1711,10 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                 litigation: "bg-[#F1F5F9] text-[#334155] border-[#CBD5E1]", vacant: "bg-[#EEF2F7] text-[#475569] border-[#CBD5E1]",
                 ok: "bg-[#E6F4EC] text-[#137a50] border-[#B7DFC7]",
               })[key];
-              const label = (key: RowKey) => ({ incomplete: "بيانات ناقصة", late: "متأخر", partial: "سداد جزئي", due: "مستحق", soon: "قريب", expiring: "ينتهي قريبًا", litigation: "تنفيذ", vacant: "شاغرة", ok: "منتظم" })[key];
+              /* من lib/contract-state لا خريطة محلية: النسخة المحلية كانت تتجاهل
+                 حالة «انتهى العقد»، فالوحدة نفسها تُعرض «ينتهي قريبًا» في الجدول
+                 و«انتهى العقد» في البطاقة — تناقض يراه المكتب بتبديل الترتيب. */
+              const label = (key: RowKey, st: { daysToEnd?: number | null }) => unitStatusLabel(key as any, st);
               return (
                 <div className="border border-line rounded-xl overflow-hidden">
                   {/* كان تمريرًا داخل تمرير الصفحة: مع 60–90 وحدة يصير
@@ -1749,8 +1752,15 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                             <td className={`px-3 ${cellY} whitespace-nowrap tabular-nums`}>
                               {key === "vacant" ? <span className="text-muted">—</span>
                               : st.fullyPaid && st.endDate ? (<>
-                                <div className="text-[#137a50]">ينتهي {arDate(st.endDate)}</div>
-                                <div className="text-[11px] text-muted">{hijriShort(st.endDate)} · القادم مع التجديد</div>
+                                {/* الأخضر و«ينتهي» لعقد انتهى فعلًا يقرأه المكتب
+                                    على أنه سليم — والحقيقة أنه يحتاج قرارًا اليوم. */}
+                                {(st.daysToEnd ?? 0) < 0 ? (<>
+                                  <div className="text-late font-semibold">انتهى {arDate(st.endDate)}</div>
+                                  <div className="text-[11px] text-muted">{hijriShort(st.endDate)} · جدّده أو سجّل الإخلاء</div>
+                                </>) : (<>
+                                  <div className="text-[#137a50]">ينتهي {arDate(st.endDate)}</div>
+                                  <div className="text-[11px] text-muted">{hijriShort(st.endDate)} · القادم مع التجديد</div>
+                                </>)}
                               </>)
                               /* المتأخر: أقدم غير مسدَّد في الماضي — نُسمّيه «متأخر منذ»
                                  ونُظهر القادم الحقيقي تحته. كان التاريخ الماضي يُعرض
@@ -1766,7 +1776,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                                 <div className="text-[11px] text-muted">{hijriShort(st.nextDueDate)}</div>
                               </>) : <span className="text-muted">—</span>}
                             </td>
-                            <td className={`px-3 ${cellY}`}><span className={`inline-block text-[11px] font-semibold px-2.5 py-0.5 rounded-full border ${badge(key)}`}>{key === "ok" && st.fullyPaid ? `✓ مسدَّد ${st.paid}/${t.contract_periods || st.paid}` : label(key)}</span></td>
+                            <td className={`px-3 ${cellY}`}><span className={`inline-block text-[11px] font-semibold px-2.5 py-0.5 rounded-full border ${badge(key)}`}>{key === "ok" && st.fullyPaid ? `✓ مسدَّد ${st.paid}/${t.contract_periods || st.paid}` : label(key, st)}</span></td>
                             <td className={`px-3 ${cellY} text-left tabular-nums whitespace-nowrap ${st.totalOwed > 0 ? "font-bold text-late" : "text-muted"}`}>
                               {st.totalOwed > 0 ? (<>
                                 {sar(st.amountDue)}
@@ -1914,7 +1924,13 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                             {Number(t.rent_amount) > 0 && <span> · {sar(Number(t.rent_amount))} ريال</span>}
                             {st.nextDueDate ? <span className="font-normal text-muted"> · {arDate(st.nextDueDate)}</span> : null}
                           </span>
-                        : key === "expiring" && st.daysToEnd !== null ? <span className="text-[#5B21B6] font-semibold">ينتهي بعد {daysAr(st.daysToEnd)}</span>
+                        : key === "expiring" && st.daysToEnd !== null ? (
+                            /* daysAr تأخذ القيمة المطلقة، فعقد انتهى قبل 723 يومًا
+                               كان يُطبع «ينتهي بعد 723 يومًا» — الإشارة معكوسة. */
+                            st.daysToEnd < 0
+                              ? <span className="text-late font-semibold">انتهى منذ {daysAr(st.daysToEnd)} — يحتاج تجديدًا أو إخلاءً</span>
+                              : <span className="text-[#5B21B6] font-semibold">ينتهي بعد {daysAr(st.daysToEnd)}</span>
+                          )
                         : key === "litigation" ? <span className="text-[#475569]">{t.enforcement_no ? `طلب ${t.enforcement_no}` : "متابعة نظامية"}</span>
                         : st.fullyPaid ? <span className="text-[#137a50] font-semibold">✓ سدّد كامل العقد ({st.paid} من {t.contract_periods || st.paid}){st.endDate ? <span className="font-normal text-muted"> · ينتهي {st.endDate}{st.daysToEnd !== null && st.daysToEnd >= 0 ? ` (بعد ${daysAr(st.daysToEnd)})` : ""} — القسط القادم مع التجديد</span> : null}</span>
                         : st.nextDueDate ? <span className="text-muted">

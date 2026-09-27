@@ -3,10 +3,11 @@ import { complianceState, brokerageEnd, expectedCommission, UI_LEGAL, LEGAL_DISC
 import { KIND_META as L_KIND, OFFER_LABEL, STATUS_META, freshness, pricePerMeter, shortDesc, sortListings, summarize, STALE_DAYS, type Listing } from "./listings";
 import { ownerNet, sumByCategory, catLabel, sumAllExpenses, sumDue, isBillable, PAID_BY, type ExpenseRow } from "./expenses";
 import { unitLabel, typeLabel } from "./domain";
-import { hijriText } from "@/lib/hijri";
+import { hijriText, hijriShort } from "@/lib/hijri";
 import { annualRentRoll } from "./income";
 import { defaultTermPeriods } from "./contracts";
 import { unitStatus, unitStatusLabel, arrearsOf } from "./contract-state";
+import { daysAr } from "./utils";
 
 const sar = (n: number) => {
   const v = Number(n) || 0;
@@ -2098,7 +2099,8 @@ export function ownerConsolidatedStatementHTML(
   sections: OwnerStatementSection[],
   period: { label: string; from: string; to: string },
   issuer: Issuer = {},
-  detail: "full" | "brief" = "full",
+  /** full: كل شيء · brief: بلا سجل الوحدات · arrears: المتأخر والمستحق فقط */
+  detail: "full" | "brief" | "arrears" = "full",
 ) {
   // تعقيم المدخلات (انظر scrub أعلاه)
   ownerName = scrub(ownerName);
@@ -2119,7 +2121,7 @@ export function ownerConsolidatedStatementHTML(
     const vatCollected = vt.inside + vt.onTop;
     const feeVatRate = issuer.vat_number ? (Number(s.property.vat_rate) || 15) : 0;
     const fin = ownerNet(collected + vt.onTop, s.expenses, s.fee_pct, vatCollected, feeVatRate);
-    return { s, units, vacant, due, collected, fin };
+    return { s, units, vacant, due, collected, fin, ten };
   });
 
   /* المالك يقارن «المحصَّل» بشيء: بلا مرجع للفترة يبدو التحصيل كارثيًّا
@@ -2136,6 +2138,92 @@ export function ownerConsolidatedStatementHTML(
     gross: a.gross + (r.fin.grossCollected ?? r.fin.collected), vat: a.vat + (r.fin.vatCollected ?? 0),
   }), { units: 0, vacant: 0, due: 0, collected: 0, expenses: 0, fee: 0, net: 0, gross: 0, vat: 0 });
   const anyFee = rows.some((r) => r.fin.feePct !== null);
+
+  /* ═══════════ وضع «المتأخرات والمستحق فقط» ═══════════
+     صاحب المكتب يرسل للمالك ورقة سؤالها واحد: مَن عليه مبلغ وكم؟ الكشف
+     الشامل يُغرقها في سجل دفعات ومصروفات ووحدات منتظمة لا تحتاج قرارًا.
+     هنا لا تظهر إلا وحدة عليها متأخر أو استحقاق قائم — والباقي سطر واحد. */
+  if (detail === "arrears") {
+    const propRows = rows.map((r) => {
+      /* «المتأخر» و«المستحق» شيئان مختلفان: الأول مبلغ حلّ أجله ولم يُدفع
+         (amountDue)، والثاني قسط قادم قرُب موعده ولم يحلّ بعد — وقيمته
+         الإيجار لا amountDue (وهو صفر قبل الاستحقاق). خلطهما في رقم واحد
+         يجعل المالك يظن أن عليه مبلغًا لم يتأخر أحد فيه. */
+      const owe = r.ten
+        .filter((x) => !x.vacant && (x.st.amountDue > 0 || x.st.status === "soon"))
+        .map((x) => ({
+          ...x, key: unitStatus(x.t, x.st),
+          amount: x.st.amountDue > 0 ? x.st.amountDue : (Number(x.t.rent_amount) || 0),
+          isLate: x.st.amountDue > 0,
+        }))
+        .sort((a, b) => (a.st.daysToNextDue ?? 0) - (b.st.daysToNextDue ?? 0));
+      const late = owe.filter((x) => x.isLate);
+      const lit = owe.filter((x) => (x.t as any)?.litigation);
+      const soon = owe.filter((x) => !x.isLate);
+      const total = owe.reduce((a, x) => a + x.amount, 0);
+      const lateTotal = late.reduce((a, x) => a + x.amount, 0);
+      const litTotal = lit.reduce((a, x) => a + x.amount, 0);
+      return { r, owe, late, soon, lit, total, lateTotal, litTotal };
+    });
+    const G = propRows.reduce((a, x) => ({
+      total: a.total + x.total, lateTotal: a.lateTotal + x.lateTotal,
+      litTotal: a.litTotal + x.litTotal, litN: a.litN + x.lit.length,
+      lateN: a.lateN + x.late.length, soonN: a.soonN + x.soon.length,
+    }), { total: 0, lateTotal: 0, litTotal: 0, litN: 0, lateN: 0, soonN: 0 });
+
+    const unitRow = (x: any, p: any) => {
+      const d = x.st.daysToNextDue;
+      const when = x.isLate && d != null && d < 0
+        ? `<span style="color:#D0453F;font-weight:600">متأخر ${daysAr(d)}</span>`
+        : x.st.upcomingDate ? `يستحق خلال ${daysAr(x.st.daysToUpcoming ?? 0)}` : "—";
+      return `<tr>
+        <td>${x.t.unit || "—"}</td>
+        <td>${x.t.name || "—"}${x.t.phone ? `<div style="font-size:.72rem;color:#5C6B67" dir="ltr">${x.t.phone}</div>` : ""}</td>
+        <td><b>${sar(x.amount)}</b>${x.isLate && x.st.hasPartial ? `<div style="font-size:.72rem;color:#5C6B67">سدّد ${sar(x.st.partial)} جزئيًّا</div>` : ""}${!x.isLate ? `<div style="font-size:.72rem;color:#5C6B67">لم يحلّ بعد</div>` : ""}</td>
+        <td>${(x.isLate ? x.st.nextDueDate : x.st.upcomingDate) ? arDate((x.isLate ? x.st.nextDueDate : x.st.upcomingDate) as string) : "—"}<div style="font-size:.72rem;color:#5C6B67">${(x.isLate ? x.st.nextDueDate : x.st.upcomingDate) ? hijriShort((x.isLate ? x.st.nextDueDate : x.st.upcomingDate) as string) : ""}</div></td>
+        <td>${when}</td>
+        <td>${unitStatusLabel(x.key, x.st)}</td>
+      </tr>`;
+    };
+
+    const body = `
+${header("كشف المتأخرات والمستحق", ownerName)}
+<h1>المتأخرات والمستحق — ${ownerName}</h1>
+<div class="sub">${rows.length} ${rows.length === 1 ? "عقار" : "عقارات"} · ${T.units} وحدة · حتى ${arDate(today())}</div>
+
+<div class="tot">
+  <div><div class="v l" style="font-size:1.35rem">${sar(G.lateTotal)}</div><div class="l"><b>المتأخر (ريال)</b></div></div>
+  <div><div class="v">${sar(Math.round((G.total - G.lateTotal) * 100) / 100)}</div><div class="l">أقساط قرُب موعدها (ريال)</div></div>
+  <div><div class="v">${sar(G.total)}</div><div class="l">إجمالي المطلوب (ريال)</div></div>
+  <div><div class="v">${G.lateN} / ${G.soonN}</div><div class="l">وحدة متأخرة / قرُب قسطها</div></div>
+</div>
+
+${G.litTotal > 0 ? `<div class="sub" style="margin-top:8px">منها <b>${sar(G.litTotal)}</b> ريال على ${G.litN === 1 ? "وحدة واحدة" : `${G.litN} وحدات`} تحت التنفيذ القضائي، و<b>${sar(Math.round((G.lateTotal - G.litTotal) * 100) / 100)}</b> ريال قيد المطالبة.</div>` : ""}
+
+${G.total === 0 ? `<div class="note" style="margin-top:14px">لا توجد متأخرات ولا مستحقات قائمة على وحدات هذه العقارات حتى تاريخه.</div>` : ""}
+
+${propRows.filter((x) => x.owe.length).map((x) => `
+<h2 style="margin-top:20px">${x.r.s.property.name}</h2>
+<div class="sub" style="margin-bottom:6px">${typeLabel(x.r.s.property.property_type)}${x.r.s.property.city ? ` · ${x.r.s.property.city}` : ""} · ${x.r.units} وحدة (${x.r.units - x.r.vacant} مؤجّرة، ${x.r.vacant} شاغرة) · المطلوب <b>${sar(x.total)}</b> ريال</div>
+<div class="scrollx"><table>
+  <thead><tr><th>${unitLabel(x.r.s.property.property_type)}</th><th>المستأجر</th><th>المبلغ</th><th>تاريخ الاستحقاق</th><th>المدة</th><th>الحالة</th></tr></thead>
+  <tbody>
+    ${x.late.map((u: any) => unitRow(u, x.r.s.property)).join("")}
+    ${x.soon.map((u: any) => unitRow(u, x.r.s.property)).join("")}
+    <tr><td colspan="2"><b>إجمالي العقار</b></td><td colspan="4"><b>${sar(x.total)}</b> ريال${x.lateTotal ? ` (منها ${sar(x.lateTotal)} متأخر)` : ""}</td></tr>
+  </tbody>
+</table></div>
+`).join("")}
+
+${propRows.filter((x) => !x.owe.length).length ? `
+<h2 style="margin-top:20px">عقارات بلا متأخرات</h2>
+<div class="sub">${propRows.filter((x) => !x.owe.length).map((x) => `${x.r.s.property.name} (${x.r.units} وحدة)`).join(" · ")}</div>` : ""}
+
+<div class="note">كشف استرشادي بالمتأخرات والمستحقات القائمة حتى ${today()}، مُستخرج من عقود الوحدات ودفعاتها المسجّلة في وثيق. لا يشمل المحصَّل ولا المصروفات ولا صافي المالك — لتلك اطلب الكشف الشامل. الوحدات الشاغرة غير مدرجة.</div>
+<div class="sign"><div>إدارة الأملاك: ${who}<br><br>التوقيع: ________________</div><div>المالك: ${ownerName}<br><br>تاريخ الإصدار: ${today()}</div></div>
+${footer()}`;
+    return SHELL(`المتأخرات والمستحق — ${ownerName}`, body, markOf(issuer));
+  }
 
   const body = `
 ${header("كشف حساب مالك — مجمّع", ownerName)}
