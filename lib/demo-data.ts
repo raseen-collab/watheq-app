@@ -135,7 +135,7 @@ export function buildDemo(today = new Date()): DemoProperty[] {
     }
     props.push({
       name: "مجمع الروضة التجاري السكني", city: "المدينة المنورة", address: "حي الروضة — طريق قباء",
-      property_type: "residential", usage: "mixed", owner_name: "شركة الأمانة العقارية",
+      property_type: "residential", usage: "mixed", owner_name: "عبدالله بن سعد الحربي",
       grace_days: 5, mgmt_fee_pct: 10, vat_enabled: true, vat_rate: 15, vat_inclusive: true,
       soon_days: 14, imminent_days: 5, expiring_days: 60, tenants: t,
       expenses: [
@@ -156,7 +156,7 @@ export function buildDemo(today = new Date()): DemoProperty[] {
     t[4] = { ...t[4], status: "vacated", move_out_date: shift(-45), paid_periods: 2, payment_frequency: "semiannual", contract_start: shift(-380) };
     props.push({
       name: "معارض طريق الملك فهد", city: "المدينة المنورة", address: "طريق الملك فهد — مقابل الحديقة",
-      property_type: "showroom", usage: "commercial", owner_name: "ورثة محمد الأحمدي",
+      property_type: "showroom", usage: "commercial", owner_name: "عبدالله بن سعد الحربي",
       grace_days: 0, mgmt_fee_pct: 5, vat_enabled: true, vat_rate: 15, vat_inclusive: true,  // «غير شاملة» لم يعد يُعرض للإعداد الجديد
       soon_days: 10, imminent_days: 5, expiring_days: 60, tenants: t,
       expenses: [{ spent_on: shift(-14), amount: 5800, category: "maintenance", unit: null, note: "صيانة التكييف المركزي", vendor: "برودة الشمال", billable: true, paid_by: "collections", status: "paid" }],
