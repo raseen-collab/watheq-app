@@ -2,7 +2,7 @@
 import { Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase-client";
-import { CHOSEN_SOURCES, isSignupSource, sourceLabel } from "@/lib/signup-sources";
+import { CHOSEN_SOURCES, isSignupSource, sourceFromReferrer, sourceLabel } from "@/lib/signup-sources";
 
 /**
  * تنظيف وجهة ما بعد الدخول.
@@ -33,6 +33,12 @@ function LoginInner() {
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
   const [source, setSource] = useState("");
+  /**
+   * مصدر مستنتَج من الصفحة السابقة — يُستعمل فقط حين لا يوجد `?src=` ولم
+   * يختر المستخدم شيئًا. لا يُملأ به الحقل الظاهر: جواب الإنسان أولى من
+   * استنتاجنا، ولا يصح أن يجد في القائمة جوابًا لم يكتبه.
+   */
+  const [inferred, setInferred] = useState("");
   const [googleLoading, setGoogleLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -44,6 +50,13 @@ function LoginInner() {
   useEffect(() => {
     const s = searchParams.get("src");
     if (isSignupSource(s)) setSource(s as string);
+    else {
+      /* لا `?src=` في الرابط: من وصل مباشرةً من بحث أو من تويتر يُعرف من
+         `document.referrer`. القادم من watheqapp.com تعود فارغة — سكربت
+         الموقع هناك هو من يمرّر المصدر في الرابط. */
+      const inf = sourceFromReferrer(typeof document === "undefined" ? "" : document.referrer);
+      if (isSignupSource(inf)) setInferred(inf);
+    }
     if (searchParams.get("mode") === "signup") setMode("signup");
     // خطأ عائد من /auth/callback (فشل قوقل أو رفض المستخدم)
     const err = searchParams.get("err");
@@ -83,7 +96,13 @@ function LoginInner() {
         options: {
           /* المصدر يُحمَل في الوجهة: قوقل لا يسمح بحشوه في user_metadata،
              و/auth/callback هو أول موضع تتوفّر فيه جلسة ناجحة ليُثبَّت. */
-          redirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent(next)}${source ? `&src=${encodeURIComponent(source)}` : ""}`,
+          redirectTo: (() => {
+            /* اختيار المستخدم أولًا، ثم الرابط، ثم الاستنتاج من الصفحة السابقة.
+               داخل قوقل تحديدًا لا يوجد اختيار مستخدم أصلًا، فالاستنتاج هو
+               الفرصة الوحيدة لمعرفة القناة. */
+            const s = source || inferred;
+            return `${window.location.origin}/auth/callback?next=${encodeURIComponent(next)}${s ? `&src=${encodeURIComponent(s)}` : ""}`;
+          })(),
           queryParams: { prompt: "select_account" },   // يسمح باختيار الحساب لا الدخول بآخر واحد صامتًا
         },
       });
@@ -120,7 +139,9 @@ function LoginInner() {
       if (mode === "signup") {
         const { data, error } = await supabase.auth.signUp({
           email, password,
-          options: { data: { name, signup_source: source || "skip" } },
+          /* فارغ لا يعني «أرفض الذكر»: القائمة لا تحوي خيار التخطي أصلًا.
+             فإن لم يختر شيئًا، الاستنتاج خيرٌ من «لم يُذكر». */
+          options: { data: { name, signup_source: source || inferred || "skip" } },
         });
         if (error) throw error;
 
