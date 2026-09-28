@@ -108,7 +108,7 @@ function stateOf(r: SubRow): { s: State; label: string; tone: string } {
   return { s: "trial_ended", label: "انتهت التجربة بلا اشتراك", tone: "text-late" };
 }
 
-export default function SubsAdmin({ rows, pays }: { rows: SubRow[]; pays: PayRow[] }) {
+export default function SubsAdmin({ rows, pays, paysFailed }: { rows: SubRow[]; pays: PayRow[]; paysFailed?: boolean }) {
   const [openFor, setOpenFor] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
@@ -189,7 +189,9 @@ export default function SubsAdmin({ rows, pays }: { rows: SubRow[]; pays: PayRow
         <K v={String(nPaid)} l="مشتركون حاليًّا" tone={nPaid ? "text-paid" : undefined} />
         <K v={String(nSoon)} l="ينتهي خلال 14 يومًا" tone={nSoon ? "text-gold" : undefined} />
         <K v={String(nEnded)} l="انتهى ولم يجدّد" tone={nEnded ? "text-late" : undefined} />
-        <K v={sar(revenue)} l="إجمالي المحصَّل (ريال)" />
+        {/* حين يسقط جدول الدفعات، المجموع الحقيقي مجهول لا صفر. وعرض «0»
+            هنا يقول لصاحب المنصة إن أحدًا لم يدفع — وهو أسوأ من لا شيء. */}
+        <K v={paysFailed ? "—" : sar(revenue)} l="إجمالي المحصَّل (ريال)" />
       </div>
 
       {msg && (

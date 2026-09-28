@@ -6,6 +6,7 @@ import SubsBoard from "@/components/SubsBoard";
 import SubsAdmin, { type SubRow, type PayRow } from "@/components/SubsAdmin";
 import { fetchAllRows } from "@/lib/fetch-all";
 import { splitDemo } from "@/lib/real-data";
+import { withClockSkewRetry } from "@/lib/db-retry";
 
 export const dynamic = "force-dynamic";
 
@@ -28,21 +29,29 @@ export default async function AdminSubsPage() {
 
   const db = serviceDb();
 
+  /* انحراف الساعة يضرب هذه الصفحة كما يضرب /admin — ورُصد عليها فعلًا في
+     28 سبتمبر: سقط جدول subscription_payments وحده بـ«JWT issued at future»
+     فظهر «إجمالي المحصَّل 0» و«آخر دفعة —» لكل حساب، بينما الأسماء تُعرض
+     سليمة. وهذا أسوأ من صفحة فارغة: من يسجّل دفعة ثم يرى صفرًا يظنّها لم
+     تُسجَّل فيسجّلها ثانية — تمديد مضاعف وفاتورتا اشتراك لدفعة واحدة.
+     الصفحة تقرأ بمفتاح الخدمة ولا حلقة إعادة تحميل فيها، فإعادة المحاولة
+     هنا هي الفرق بين رقم صحيح ورقم كاذب على صفحة تمسّ المال. */
   const [profRes, payRes, propRes, tenRes, teamRes] = await Promise.all([
-    db.from("profiles")
+    withClockSkewRetry(() => db.from("profiles")
       .select("id,full_name,org_name,account_type,billing_phone,plan,trial_ends_at,subscribed_until,created_at")
       .order("created_at", { ascending: false })
-      .limit(1000),
-    db.from("subscription_payments")
+      .limit(1000)),
+    withClockSkewRetry(() => db.from("subscription_payments")
       .select("id,user_id,invoice_no,months,amount,plan,method,note,paid_at,extended_to")
       .order("paid_at", { ascending: false })
-      .limit(500),
+      .limit(500)),
     /* على دفعات: وحدات المنصة كلها وعقاراتها تتجاوز 1000 (كل حساب جرّب التجربة
        يضيف ~80 وحدة)، وSupabase يقصّ عندها بصمت — فكان «حجم الحساب» الذي تُبنى
        عليه قرارات المتابعة والتسعير ناقصًا */
     fetchAllRows(db, "properties", "id,user_id,is_demo").then((data) => ({ data, error: null as any }), (e) => ({ data: [] as any[], error: e })),
     fetchAllRows(db, "tenants", "id,property_id").then((data) => ({ data, error: null as any }), (e) => ({ data: [] as any[], error: e })),
-    db.from("team_members").select("member_id"),
+    /* سقوط هذه وحدها يُظهر الموظفين كمكاتب مستقلّة في «من أتواصل معه اليوم» */
+    withClockSkewRetry(() => db.from("team_members").select("member_id")),
   ]);
 
   /* حجم كل حساب: الوحدات والعقارات — يُظهر ما يخسره المكتب إن انقطع،
@@ -95,7 +104,7 @@ export default async function AdminSubsPage() {
       <SubsBoard accounts={rows.map((r: any) => ({ ...r, ...sizeOf(r.id) }))} />
 
       <h2 className="font-display font-bold text-deep text-lg mt-8 mb-3">كل الحسابات وسجل التجديدات</h2>
-      <SubsAdmin rows={rows} pays={pays} />
+      <SubsAdmin rows={rows} pays={pays} paysFailed={!!payRes.error} />
     </div>
   );
 }
