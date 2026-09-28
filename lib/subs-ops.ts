@@ -80,12 +80,17 @@ const nDays = (n: number | null): string => {
  * ولماذا في البيئة لا في الشيفرة: رقم الحساب لا يُكتب في مستودع عام.
  * تُضبط في Vercel → Settings → Environment Variables، ثم Redeploy.
  * غير مضبوطة ⇒ لا يظهر شيء ولا تنكسر الرسالة.
+ *
+ * ⚠️ بلا سابقة NEXT_PUBLIC_ عمدًا. لوحة الاشتراكات مكوّن عميل، وأي متغيّر
+ * بتلك السابقة يُحقن في حزمة الجافاسكربت العامة التي تُخدَم لكل زائر —
+ * لا للمدير وحده. فتُقرأ هذه وحدها على الخادم، ويُمرَّر النصّ الناتج
+ * كخاصيّة إلى المكوّن. فلا يصل الآيبان إلا إلى صفحة محميّة بـADMIN_USER_IDS.
  */
 export function bankBlock(): string {
-  const iban = (process.env.NEXT_PUBLIC_WATHEQ_IBAN || "").trim();
+  const iban = (process.env.WATHEQ_IBAN || "").trim();
   if (!iban) return "";
-  const bank = (process.env.NEXT_PUBLIC_WATHEQ_BANK || "").trim();
-  const name = (process.env.NEXT_PUBLIC_WATHEQ_ACCOUNT_NAME || "").trim();
+  const bank = (process.env.WATHEQ_BANK || "").trim();
+  const name = (process.env.WATHEQ_ACCOUNT_NAME || "").trim();
   const L = ["", "", "— بيانات التحويل —"];
   if (name) L.push(`الاسم: ${name}`);
   if (bank) L.push(`البنك: ${bank}`);
@@ -94,10 +99,15 @@ export function bankBlock(): string {
   return L.join("\n");
 }
 
-export function renewalMessage(a: SubAccount, stage: Stage, days: number | null): string {
+/**
+ * @param bankText نصّ بيانات التحويل، تحسبه الصفحة على الخادم بـbankBlock()
+ *   وتمرّره. لا يُقرأ من البيئة هنا: هذه الدالة تعمل في المتصفّح أيضًا،
+ *   وقراءتها هناك تعني حقن الآيبان في حزمة عامة.
+ */
+export function renewalMessage(a: SubAccount, stage: Stage, days: number | null, bankText = ""): string {
   const who = a.org_name || a.full_name || "أستاذ";
   /* بيانات التحويل تُلحق برسائل التجديد وحدها — لا برسالة الاطمئنان. */
-  const bank = bankBlock();
+  const bank = bankText;
   const size = a.units ? `\n(حسابك فيه ${a.units} وحدة${a.properties ? ` في ${a.properties} عقارات` : ""} — كلها محفوظة كما هي.)` : "";
   switch (stage) {
     case "due_soon":
@@ -116,11 +126,11 @@ export function renewalMessage(a: SubAccount, stage: Stage, days: number | null)
 }
 
 /** رابط واتساب جاهز بالرسالة */
-export function renewalWaLink(a: SubAccount, stage: Stage, days: number | null): string | null {
+export function renewalWaLink(a: SubAccount, stage: Stage, days: number | null, bankText = ""): string | null {
   const raw = String(a.billing_phone || "").replace(/\D/g, "");
   if (!raw) return null;
   const intl = raw.startsWith("966") ? raw : raw.startsWith("0") ? "966" + raw.slice(1) : "966" + raw;
-  return `https://wa.me/${intl}?text=${encodeURIComponent(renewalMessage(a, stage, days))}`;
+  return `https://wa.me/${intl}?text=${encodeURIComponent(renewalMessage(a, stage, days, bankText))}`;
 }
 
 /** ملخّص للتنبيه اليومي في تليجرام */

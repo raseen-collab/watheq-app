@@ -7,6 +7,7 @@ import SubsAdmin, { type SubRow, type PayRow } from "@/components/SubsAdmin";
 import { fetchAllRows } from "@/lib/fetch-all";
 import { splitDemo } from "@/lib/real-data";
 import { withClockSkewRetry } from "@/lib/db-retry";
+import { bankBlock } from "@/lib/subs-ops";
 
 export const dynamic = "force-dynamic";
 
@@ -101,7 +102,7 @@ export default async function AdminSubsPage() {
       )}
 
       {/* لوحة التشغيل أولًا: من أتواصل معه اليوم — ثم الجدول الكامل للمراجعة */}
-      <SubsBoard accounts={rows.map((r: any) => ({ ...r, ...sizeOf(r.id) }))} />
+      <SubsBoard accounts={rows.map((r: any) => ({ ...r, ...sizeOf(r.id) }))} bankText={bankBlock()} />
 
       <h2 className="font-display font-bold text-deep text-lg mt-8 mb-3">كل الحسابات وسجل التجديدات</h2>
       <SubsAdmin rows={rows} pays={pays} paysFailed={!!payRes.error} />

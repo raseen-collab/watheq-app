@@ -15,8 +15,10 @@ const sar = (n: number) => Math.round(Number(n) || 0).toLocaleString("en-US");
 const nDays = (n: number | null) =>
   n === null ? "" : n < 0 ? `منذ ${Math.abs(n)} يومًا` : n === 0 ? "اليوم" : n === 1 ? "غدًا" : `${n} أيام`;
 
-export default function SubsBoard({ accounts, onRenew }: {
+export default function SubsBoard({ accounts, onRenew, bankText = "" }: {
   accounts: SubAccount[];
+  /** بيانات التحويل — تُحسب على الخادم فلا تدخل حزمة العميل العامة */
+  bankText?: string;
   /** يسجّل التجديد ويصدر الفاتورة — يُمرَّر من الصفحة */
   onRenew?: (a: SubAccount, months: number) => void;
 }) {
@@ -67,8 +69,8 @@ export default function SubsBoard({ accounts, onRenew }: {
               </h2>
               <div className="space-y-2">
                 {g.map(({ a, days }) => {
-                  const wa = renewalWaLink(a, st, days);
-                  const msg = renewalMessage(a, st, days);
+                  const wa = renewalWaLink(a, st, days, bankText);
+                  const msg = renewalMessage(a, st, days, bankText);
                   return (
                     <div key={a.id} className={`bg-white border rounded-xl p-3 ${st === "expired" ? "border-[#F5C6C2]" : "border-line"}`}>
                       <div className="flex items-start justify-between gap-3 flex-wrap">
