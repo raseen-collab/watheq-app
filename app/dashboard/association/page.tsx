@@ -17,7 +17,9 @@ export default async function AssociationPage() {
 
   // حماية: هل يملك هذا الحساب صلاحية لوحة الجمعيات؟
   const { data: profile, error: profileErr } = await withClockSkewRetry(() =>
-    supabase.from("profiles").select("account_type, role, plan, trial_ends_at, subscribed_until, billing_name, vat_number, cr_number, billing_phone").eq("id", user.id).maybeSingle());
+    /* org_name مطلوب مع billing_name: ترويسة المستند تحمل اسم المكتب، ومن
+       سجّل اسم منشأته ولم يملأ اسم الفوترة كان مستنده يعود بترويسة وثيق. */
+    supabase.from("profiles").select("account_type, role, plan, trial_ends_at, subscribed_until, org_name, billing_name, vat_number, cr_number, billing_phone").eq("id", user.id).maybeSingle());
 
   /**
    * لا تبتلع خطأ الاستعلام — نفس حماية /dashboard الرئيسية.

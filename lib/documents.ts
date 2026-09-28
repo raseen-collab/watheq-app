@@ -212,7 +212,6 @@ const SHELL = (title: string, inner: string, mark: Mark = "none") => `<!DOCTYPE 
   .hd .lg>div:last-child{display:inline-block;vertical-align:middle}
   .seal{width:40px;height:40px;border-radius:10px;background:#0A2C2A;text-align:center;line-height:40px;color:#E7C877;font-weight:700;font-size:1.3rem;box-shadow:inset 0 0 0 2px rgba(231,200,119,.4)}
   .hd .t{font-weight:700;font-size:1.4rem}
-  .hd .s{font-size:.75rem;color:#9FB8B3}
   .hd .meta{display:table-cell;vertical-align:middle;text-align:left;font-size:.8rem;color:#B9CCC7;white-space:nowrap}
   .hd .meta b{color:#E7C877;display:block;font-size:1rem}
   h1{font-size:1.25rem;margin:22px 0 4px;color:#0E3A37}
@@ -459,19 +458,62 @@ function unitsRegisterHTML(p: any, tenants: any[], g: any, issuer: any = {}): st
 /** عتبات العقار مع عتبات المكتب — التعريف في lib/contract-state */
 const winOf = (p: Property, issuer?: Issuer | null) => statusWindows(p as any, issuer as any);
 
-const header = (docTitle: string, docNo: string) => `
+const escH = (s: any) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+/** اسم المكتب كما سجّله: اسم الفوترة أولًا ثم اسم المنشأة */
+const issuerName = (i?: Issuer | null): string =>
+  String((i as any)?.billing_name || (i as any)?.org_name || "").trim();
+
+/**
+ * ترويسة المستند = هوية **المكتب**، لا هوية وثيق.
+ *
+ * كانت ثابتة: ختم «و» واسم «وثيق» في صدر كل مستند تُصدره المكاتب — ومنها
+ * رابط المالك الذي يفتحه مالك العقار وهو لا يعرف وثيق أصلًا، فيصل المستند
+ * وكأن مُصدِره وثيق واسم المكتب سطر في المتن. اشتكى منها مكتب مشترك
+ * (28 سبتمبر 2026) وهو محقّ: المُصدِر هو المكتب، ووثيق الأداة التي أعدّته.
+ *
+ * فإن سجّل المكتب اسمه فهو الترويسة، وأول حرف من اسمه هو الختم. وإن لم
+ * يُسجَّل اسم بعد تبقى ترويسة وثيق كما كانت — فلا يخرج مستند بلا هوية.
+ * وفاتورة الاشتراك تُستثنى: مُصدِرها وثيق فعلًا (تُستدعى بلا issuer).
+ */
+const header = (docTitle: string, docNo: string, issuer?: Issuer | null) => {
+  const name = issuerName(issuer);
+  /* الختم حرف واحد: «مكتب تميز» → «ت» لا «م» */
+  const seal = name ? (name.replace(/^(مكتب|شركة|مؤسسة|وكالة)\s+/, "").trim()[0] || name[0]) : "و";
+  return `
 <div class="hd">
-  <div class="lg"><div class="seal">و</div><div><div class="t">وثيق</div><div class="s">إدارة الأملاك العقارية</div></div></div>
+  <div class="lg"><div class="seal">${escH(seal)}</div><div><div class="t">${escH(name || "وثيق")}</div></div></div>
   <div class="meta">${docTitle}<b>${docNo}</b>التاريخ: ${arDate(today())}</div>
 </div>`;
+};
 
-const footer = () => `
+/**
+ * التذييل: بيانات تواصل **المكتب** لا وثيق.
+ *
+ * كان يضع بريد وثيق ورقمها ورقم وثيقة العمل الحر في مستند يسلّمه المكتب
+ * لمالكه أو مستأجره — أي أننا نضع قناة اتصالنا أمام عميل المكتب. يبقى
+ * سطر إخلاء المسؤولية لأنه يحمي الطرفين، ويُختصر إلى سطر واحد هادئ.
+ * وبلا مكتب (فاتورة اشتراك وثيق) يعود التذييل الأصلي كاملًا.
+ */
+const footer = (issuer?: Issuer | null) => {
+  const name = issuerName(issuer);
+  if (!name) return `
 <div class="ft">
   صدر هذا المستند عبر منصة وثيق — أداة تنظيمية لإدارة الأملاك.<br>
   وثيق لا يقدّم خدمات قانونية أو محاسبية، ولا يستلم أو يحوّل أي مبالغ. هذا المستند للاستخدام الإداري بين الطرفين، ومسؤولية اعتماده على مُصدِره.<br>
   <b>وثيقة عمل حر رقم FL-763162251</b> — وزارة الموارد البشرية والتنمية الاجتماعية<br>
   watheqdocs@gmail.com · تليجرام: ‎+966550165210
 </div>`;
+  const phone = String((issuer as any)?.billing_phone || "").trim();
+  const cr = String((issuer as any)?.cr_number || "").trim();
+  const line = [escH(name), phone ? escH(phone) : "", cr ? `س.ت ${escH(cr)}` : ""].filter(Boolean).join(" · ");
+  return `
+<div class="ft">
+  <b>${line}</b><br>
+  مستند إداري صادر عن ${escH(name)} للاستخدام بين الطرفين، ومسؤولية اعتماده على مُصدِره.<br>
+  أُعدّ عبر منصة وثيق — أداة تنظيمية لا تقدّم خدمات قانونية أو محاسبية، ولا تستلم ولا تحوّل أي مبالغ.
+</div>`;
+};
 
 /** كشف حساب مستأجر — كامل الدفعات والأرصدة */
 /**
@@ -500,7 +542,7 @@ export function statementHTML(t: Tenant, p: Property, issuer: Issuer = {}, payme
   const dueSplit = splitVat(st.amountDue, v);                 // تفصيل الرصيد المستحق
 
   const body = `
-${header(mode === "full" ? "كشف حساب شامل" : "كشف حساب مختصر", `${t.name}`)}
+${header(mode === "full" ? "كشف حساب شامل" : "كشف حساب مختصر", `${t.name}`, issuer)}
 <h1>كشف حساب ${ul} رقم (${t.unit || "—"})</h1>
 <div class="sub">${p.name}${p.address ? ` — ${p.address}` : ""}${p.city ? `، ${p.city}` : ""} · ${typeLabel(p.property_type)}</div>
 
@@ -635,7 +677,7 @@ ${shownPays.length ? `
   <div>المؤجّر / الوكيل: ${who}<br><br>التوقيع: ________________</div>
   <div>المستأجر: ${t.name}<br><br>التوقيع: ________________</div>
 </div>
-${footer()}`;
+${footer(issuer)}`;
   return SHELL(`كشف حساب — ${t.name}`, body, markOf(issuer));
 }
 
@@ -655,7 +697,7 @@ export function invoiceHTML(
   const v = vatOf(p, t);
   const x = splitVat(Number(inv.amount) || 0, v);
   const body = `
-${header(v.enabled && issuer.vat_number ? "فاتورة ضريبية مبسطة" : "فاتورة", inv.invoice_no)}
+${header(v.enabled && issuer.vat_number ? "فاتورة ضريبية مبسطة" : "فاتورة", inv.invoice_no, issuer)}
 <h1>${v.enabled && issuer.vat_number ? "فاتورة ضريبية مبسطة — أجرة" : "فاتورة أجرة"}</h1>
 <div class="sub">${inv.period_label} · ${freqLabel(t.payment_frequency)}</div>
 
@@ -718,7 +760,7 @@ ${v.enabled && issuer.vat_number ? `<div class="note">
   <div>المُصدِر: ${who}<br><br>التوقيع: ________________</div>
   <div>تاريخ الإصدار: ${today()}<br><br>رقم الفاتورة: ${inv.invoice_no}</div>
 </div>
-${footer()}`;
+${footer(issuer)}`;
   return SHELL(`فاتورة ${inv.invoice_no} — ${t.name}`, body, markOf(issuer));
 }
 
@@ -775,7 +817,7 @@ export function quotationHTML(p: Property, q: QuoteInput, issuer: Issuer = {}) {
   const ownerRows = q.charges.filter((c) => c.who === "owner");
 
   const body = `
-${header("عرض سعر", q.quote_no)}
+${header("عرض سعر", q.quote_no, issuer)}
 <h1>عرض سعر تأجير ${ul}</h1>
 <div class="sub">${p.name}${p.city ? ` · ${p.city}` : ""} · ${ul} رقم ${q.unit || "—"}</div>
 
@@ -855,7 +897,7 @@ ${q.notes ? `<h2>ملاحظات إضافية</h2><div class="note">${q.notes}</d
   <div>المؤجّر / وكيله: ${who}<br><br>التوقيع: ________________</div>
   <div>اطّلع المستأجر المحتمل<br><br>التوقيع: ________________</div>
 </div>
-${footer()}`;
+${footer(issuer)}`;
   return SHELL(`عرض سعر ${q.quote_no} — ${q.tenant_name || p.name}`, body, markOf(issuer));
 }
 
@@ -939,7 +981,7 @@ export function propertyStatementHTML(
   const expiringCount = rows.filter((r) => r.st.expiringSoon && !isVacant(r.t)).length;
 
   const body = `
-${header(mode === "full" ? "كشف حساب عقار — شامل" : "كشف حساب عقار", p.name)}
+${header(mode === "full" ? "كشف حساب عقار — شامل" : "كشف حساب عقار", p.name, issuer)}
 <h1>كشف حساب ${p.name}${mode === "full" ? " — شامل" : ""}</h1>
 <div class="sub">${typeLabel(p.property_type)}${p.address ? ` — ${p.address}` : ""}${p.city ? `، ${p.city}` : ""} · ${p.tenants.length} ${ul}${period ? ` · الفترة: ${period.label}` : ""}</div>
 
@@ -1036,7 +1078,7 @@ ${mode === "full" ? `
 
 <div class="note">كشف استرشادي صادر آليًّا من بيانات العقود المسجّلة بتاريخ ${today()}.${mode === "full" ? " المتأخرات والمحصَّل من السجلات المسجّلة في وثيق." : ""}</div>
 <div class="sign"><div>المؤجّر / الوكيل: ${who}<br><br>التوقيع: ________________</div><div>تاريخ الإصدار: ${today()}</div></div>
-${footer()}`;
+${footer(issuer)}`;
   return SHELL(`كشف حساب — ${p.name}`, body, markOf(issuer));
 }
 
@@ -1152,7 +1194,7 @@ export function ownerStatementHTML(
   const received = payments.reduce((x, r) => x + (Number(r.amount) || 0), 0);
 
   const body = `
-${header("كشف حساب مالك", o.name)}
+${header("كشف حساب مالك", o.name, issuer)}
 <h1>كشف حساب الوحدة رقم (${o.unit || "—"})</h1>
 <div class="sub">${a.name} · جمعية ملاك${a.units ? ` · ${a.units} وحدة` : ""}</div>
 
@@ -1206,7 +1248,7 @@ ${payments.length ? `
   <div>إدارة الجمعية: ${who}<br><br>التوقيع: ________________</div>
   <div>المالك: ${o.name}<br><br>التوقيع: ________________</div>
 </div>
-${footer()}`;
+${footer(issuer)}`;
   return SHELL(`كشف حساب — ${o.name}`, body, markOf(issuer));
 }
 
@@ -1224,7 +1266,7 @@ export function associationStatementHTML(a: AssociationDoc, issuer: Issuer = {})
   const pct = rows.length ? Math.round(((rows.length - late.length) / rows.length) * 100) : 0;
 
   const body = `
-${header("كشف حساب جمعية", a.name)}
+${header("كشف حساب جمعية", a.name, issuer)}
 <h1>كشف حساب ${a.name}</h1>
 <div class="sub">جمعية ملاك · ${rows.length} مالك${a.units ? ` من ${a.units} وحدة` : ""} · اشتراك الفترة ${sar(fee)} ريال</div>
 
@@ -1274,7 +1316,7 @@ ${totalDue > 0 ? `<div class="due"><span class="l">إجمالي المستحق �
 
 <div class="note">كشف استرشادي صادر آليًّا من بيانات الجمعية المسجّلة بتاريخ ${today()}. يُصرف من الاشتراكات وفق الموازنة المعتمدة من الجمعية العامة.</div>
 <div class="sign"><div>إدارة الجمعية: ${who}<br><br>التوقيع: ________________</div><div>تاريخ الإصدار: ${today()}</div></div>
-${footer()}`;
+${footer(issuer)}`;
   return SHELL(`كشف حساب — ${a.name}`, body, markOf(issuer));
 }
 
@@ -1324,7 +1366,7 @@ export function budgetHTML(
   const gap = annualTotal - currentAnnual;
 
   const body = `
-${header("موازنة تقديرية", String(budget.year))}
+${header("موازنة تقديرية", String(budget.year), issuer)}
 <h1>الموازنة التقديرية لعام ${budget.year}</h1>
 <div class="sub">${a.name} · جمعية ملاك${units ? ` · ${units} وحدة` : ""}</div>
 
@@ -1405,7 +1447,7 @@ ${budget.notes ? `<div class="note">${String(budget.notes).replace(/</g, "&lt;")
   <div>أعدّها: ${who}<br><br>التوقيع: ________________</div>
   <div>اعتماد رئيس الجمعية<br><br>التوقيع: ________________</div>
 </div>
-${footer()}`;
+${footer(issuer)}`;
   return SHELL(`الموازنة التقديرية ${budget.year} — ${a.name}`, body, markOf(issuer));
 }
 
@@ -1433,7 +1475,7 @@ export function foundingMinutesHTML(
   const fee = Number(d.fee) || Number(a.fee) || 0;
 
   const body = `
-${header("محضر اجتماع", "الجمعية العمومية التأسيسية")}
+${header("محضر اجتماع", "الجمعية العمومية التأسيسية", issuer)}
 <h1>محضر الجمعية العمومية التأسيسية</h1>
 <div class="sub">${a.name}${units ? ` · ${units} وحدة عقارية` : ""}</div>
 
@@ -1504,7 +1546,7 @@ ${header("محضر اجتماع", "الجمعية العمومية التأسي�
   وثيق لا يقدّم خدمات قانونية ولا يمثّل الجمعية أمام أي جهة — راجع النموذج مع مختص مرخّص
   وطابقه مع النظام الأساسي المعتمد قبل تقديمه رسميًّا.
 </div>
-${footer()}`;
+${footer(issuer)}`;
   return SHELL(`محضر تأسيسي — ${a.name}`, body, markOf(issuer));
 }
 
@@ -1536,7 +1578,7 @@ export function moveOutSettlementHTML(
   const vac = vacancyDays(t.move_out_date);
 
   const body = `
-${header("مخالصة إخلاء", t.name)}
+${header("مخالصة إخلاء", t.name, issuer)}
 <h1>مخالصة إخلاء ${ul} رقم (${t.unit || "—"})</h1>
 <div class="sub">${p.name}${p.address ? ` — ${p.address}` : ""}${p.city ? `، ${p.city}` : ""} · ${typeLabel(p.property_type)}</div>
 
@@ -1619,7 +1661,7 @@ ${list.length ? `
   مستند إداري صادر عن إدارة الأملاك لتوثيق التسليم بين الطرفين. وثيق لا يقدّم خدمات قانونية ولا يستلم أي مبالغ —
   راجعه مع مختص مرخّص قبل الاعتماد الرسمي.
 </div>
-${footer()}`;
+${footer(issuer)}`;
   return SHELL(`مخالصة إخلاء — ${t.name}`, body, markOf(issuer));
 }
 
@@ -1659,7 +1701,7 @@ export function renewalMinutesHTML(
   const fund = d.fund_balance !== undefined ? Number(d.fund_balance) || 0 : Number(a.fund_balance) || 0;
 
   const body = `
-${header("محضر اجتماع", "الجمعية العمومية السنوية")}
+${header("محضر اجتماع", "الجمعية العمومية السنوية", issuer)}
 <h1>محضر اجتماع الجمعية العمومية السنوي</h1>
 <div class="sub">${a.name}${units ? ` · ${units} وحدة عقارية` : ""} · الاجتماع السنوي واعتماد موازنة عام ${nextYear}</div>
 
@@ -1742,7 +1784,7 @@ ${header("محضر اجتماع", "الجمعية العمومية السنوي�
   وثيق لا يقدّم خدمات قانونية ولا يمثّل الجمعية أمام أي جهة — طابق النموذج مع النظام الأساسي
   المعتمد ومتطلبات منصة «ملاك» قبل رفعه رسميًّا.
 </div>
-${footer()}`;
+${footer(issuer)}`;
   return SHELL(`محضر الاجتماع السنوي — ${a.name}`, body, markOf(issuer));
 }
 
@@ -1955,7 +1997,7 @@ export function ownerReportHTML(
   const expiring = rows.filter((r) => !r.vacant && r.st.daysToEnd !== null && r.st.daysToEnd >= 0 && r.st.daysToEnd <= 60).length;
 
   const body = `
-${header("تقرير دوري للمالك", p.name)}
+${header("تقرير دوري للمالك", p.name, issuer)}
 <h1>تقرير المالك — ${p.name}</h1>
 <div class="sub">${typeLabel(p.property_type)}${p.address ? ` — ${p.address}` : ""}${p.city ? `، ${p.city}` : ""} · الفترة: <b>${period.label}</b> (${arDate(period.from)} إلى ${arDate(period.to)})</div>
 
@@ -2076,7 +2118,7 @@ ${openingUnits > 0 ? `<div class="note" style="border-inline-start-color:#B8791F
 </div>` : ""}
 <div class="note">تقرير استرشادي صادر آليًّا من سجل الدفعات والمصروفات وبيانات العقود المسجّلة في وثيق بتاريخ ${today()}. الأرقام تعكس ما وثّقه المكتب في النظام.</div>
 <div class="sign"><div>إدارة الأملاك: ${who}<br><br>التوقيع: ________________</div><div>المالك: ____________________<br><br>تاريخ الإصدار: ${today()}</div></div>
-${footer()}`;
+${footer(issuer)}`;
   return SHELL(`تقرير المالك — ${p.name} — ${period.label}`, body, markOf(issuer));
 }
 
@@ -2192,7 +2234,7 @@ export function ownerConsolidatedStatementHTML(
     };
 
     const body = `
-${header("كشف المتأخرات والمستحق", ownerName)}
+${header("كشف المتأخرات والمستحق", ownerName, issuer)}
 <h1>المتأخرات والمستحق — ${ownerName}</h1>
 <div class="sub">${rows.length} ${rows.length === 1 ? "عقار" : "عقارات"} · ${T.units} وحدة · حتى ${arDate(today())}</div>
 
@@ -2226,12 +2268,12 @@ ${propRows.filter((x) => !x.owe.length).length ? `
 
 <div class="note">كشف استرشادي بالمتأخرات والمستحقات القائمة حتى ${today()}، مُستخرج من عقود الوحدات ودفعاتها المسجّلة في وثيق. لا يشمل المحصَّل ولا المصروفات ولا صافي المالك — لتلك اطلب الكشف الشامل. الوحدات الشاغرة غير مدرجة.</div>
 <div class="sign"><div>إدارة الأملاك: ${who}<br><br>التوقيع: ________________</div><div>المالك: ${ownerName}<br><br>تاريخ الإصدار: ${today()}</div></div>
-${footer()}`;
+${footer(issuer)}`;
     return SHELL(`المتأخرات والمستحق — ${ownerName}`, body, markOf(issuer));
   }
 
   const body = `
-${header("كشف حساب مالك — مجمّع", ownerName)}
+${header("كشف حساب مالك — مجمّع", ownerName, issuer)}
 <h1>كشف حساب المالك — ${ownerName}</h1>
 <div class="sub">${rows.length} ${rows.length === 1 ? "عقار" : "عقارات"} · ${T.units} وحدة · الفترة: <b>${period.label}</b> (${arDate(period.from)} إلى ${arDate(period.to)})</div>
 
@@ -2301,7 +2343,7 @@ ${r.s.expenses.length ? `<div class="scrollx" style="margin-top:8px"><table>
 
 <div class="note">كشف استرشادي صادر آليًّا من سجل الدفعات والمصروفات المسجّلة في وثيق بتاريخ ${today()}. الأرقام تعكس ما وثّقه المكتب في النظام، وصافي كل عقار يُحسب بنفس طريقة تقرير العقار المنفرد.</div>
 <div class="sign"><div>إدارة الأملاك: ${who}<br><br>التوقيع: ________________</div><div>المالك: ${ownerName}<br><br>تاريخ الإصدار: ${today()}</div></div>
-${footer()}`;
+${footer(issuer)}`;
   return SHELL(`كشف حساب المالك — ${ownerName} — ${period.label}`, body, markOf(issuer));
 }
 
@@ -2366,7 +2408,7 @@ export function complianceRegisterHTML(items: ComplianceItem[], orgName: string,
   }).join("");
 
   const body = `
-${header("سجل التزامات المكتب", who)}
+${header("سجل التزامات المكتب", who, issuer)}
 <h1>سجل التزامات المكتب العقاري</h1>
 <div class="sub">${who} · تاريخ الإصدار: ${arDate(today())} · ${items.length} بند</div>
 
@@ -2397,7 +2439,7 @@ ${ads.length ? `<div class="scrollx"><table>
 
 <div class="note">${LEGAL_DISCLAIMER}</div>
 <div class="sign"><div>أعدّه: ${who}<br><br>التوقيع: ________________</div><div>تاريخ الإصدار: ${today()}</div></div>
-${footer()}`;
+${footer(issuer)}`;
   return SHELL(`سجل التزامات المكتب — ${who}`, body, markOf(issuer));
 }
 
@@ -2433,7 +2475,7 @@ export function listingsRegisterHTML(items: Listing[], orgName: string, issuer: 
   };
 
   const body = `
-${header("سجل المعروضات", who)}
+${header("سجل المعروضات", who, issuer)}
 <h1>سجل المعروضات</h1>
 <div class="sub">${who} · تاريخ الإصدار: ${arDate(today())} · ${s.total} معروض</div>
 
@@ -2454,7 +2496,7 @@ ${rows.length ? `<div class="scrollx"><table>
 
 <div class="note">سجل داخلي للمكتب صادر آليًّا من وثيق بتاريخ ${today()}. الأسعار والحالات تعكس ما وثّقه المكتب، ولا يُعدّ هذا المستند عرضًا أو إعلانًا عقاريًّا.</div>
 <div class="sign"><div>أعدّه: ${who}<br><br>التوقيع: ________________</div><div>تاريخ الإصدار: ${today()}</div></div>
-${footer()}`;
+${footer(issuer)}`;
   return SHELL(`سجل المعروضات — ${who}`, body, markOf(issuer));
 }
 
@@ -2490,7 +2532,7 @@ export function expensesRegisterHTML(
   const cats = sumByCategory(list as ExpenseRow[]);
 
   const inner = `
-${header("سجل المصروفات", filters.owner ? `مالك: ${filters.owner}` : "كل العقارات")}
+${header("سجل المصروفات", filters.owner ? `مالك: ${filters.owner}` : "كل العقارات", issuer)}
 <h1>سجل المصروفات — ${period.label}</h1>
 <div class="sub">من ${arDateH(period.from)} إلى ${arDateH(period.to)}${filters.owner ? ` · المالك: ${filters.owner}` : ""}${filters.category ? ` · التصنيف: ${catLabel(filters.category)}` : ""} · ${list.length} قيدًا</div>
 
@@ -2536,7 +2578,7 @@ ${Object.entries(byProp).map(([name, items]) => `
   والمستحقة غير المدفوعة معروضة للعلم ولا تُعدّ نقدًا خارجًا بعد.
   سجل استرشادي صادر آليًّا بتاريخ ${today()}.
 </div>`;
-  return SHELL(`سجل المصروفات — ${period.label}`, inner + footer(), markOf(issuer));
+  return SHELL(`سجل المصروفات — ${period.label}`, inner + footer(issuer), markOf(issuer));
 }
 
 /** مجموع بسيط بلا فلترة — داخلي لهذا التقرير */
@@ -2598,7 +2640,7 @@ export function collectionStatementHTML(
   };
 
   const inner = `
-${header(esc(opts?.title || "كشف حساب لعمائر المكتب"), esc(period.label))}
+${header(esc(opts?.title || "كشف حساب لعمائر المكتب"), esc(period.label), issuer)}
 
 <div class="sub" style="margin-bottom:14px">
   تاريخ التحصيل من <b>${arDate(period.from)}</b> إلى <b>${arDate(period.to)}</b>
@@ -2662,7 +2704,7 @@ ${F ? `<div class="box" style="margin-top:16px">
   والمبالغ من الدفعات المسجَّلة في وثيق بتاريخ استلامها.
 </div>
 `;
-  return SHELL(`كشف حساب لعمائر المكتب — ${esc(period.label)}`, inner + footer(), markOf(issuer));
+  return SHELL(`كشف حساب لعمائر المكتب — ${esc(period.label)}`, inner + footer(issuer), markOf(issuer));
 }
 
 /**

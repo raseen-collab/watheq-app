@@ -78,8 +78,8 @@ export default function UnitInvoicesModal({ tenant, property, issuer, onClose, d
 
   return (
     <div className="fixed inset-0 bg-black/40 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4" onClick={onClose}>
-      <div className="bg-card w-full sm:max-w-3xl rounded-t-2xl sm:rounded-2xl max-h-[92vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
-        <div className="sticky top-0 bg-card border-b border-line px-5 py-4 flex items-center justify-between gap-3">
+      <div className="bg-white w-full sm:max-w-3xl rounded-t-2xl sm:rounded-2xl max-h-[92vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+        <div className="sticky top-0 bg-white border-b border-line px-5 py-4 flex items-center justify-between gap-3">
           <div>
             <h3 className="font-bold text-deep">فواتير الوحدة</h3>
             <p className="text-xs text-muted mt-0.5">
@@ -109,7 +109,7 @@ export default function UnitInvoicesModal({ tenant, property, issuer, onClose, d
 
             <div className="overflow-x-auto border border-line rounded-xl">
               <table className="w-full text-sm">
-                <thead className="bg-paper-2 text-muted text-xs">
+                <thead className="bg-paper2 text-muted text-xs">
                   <tr>
                     <th className="text-start px-3 py-2 font-semibold">رقم الفاتورة</th>
                     <th className="text-start px-3 py-2 font-semibold">تاريخ الإصدار</th>
