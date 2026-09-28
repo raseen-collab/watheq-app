@@ -1125,7 +1125,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
 
   async function openInvoice(t: Tenant) {
     if (!active) return;
-    const st = contractState(t, { graceDays: Number(active?.grace_days) || 0 });
+    const st = contractState(t, { graceDays: Number(active?.grace_days) || 0, ...windowsOf(active) });
     /* فارغ = سنة بدورة العقد (كان 12 لكل الدورات: «الدفعة 3 من 12» لعقد ربع سنوي) */
     const total = t.contract_periods || defaultTermPeriods((t.payment_frequency || "monthly") as Frequency);
     const n = Math.min((t.paid_periods || 0) + 1, total);
@@ -1175,7 +1175,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
   /** تذكير ودّي — يوضّح تفاصيل المطالبة وتاريخ استحقاقها */
   function remindLink(t: Tenant) {
     if (!active) return "#";
-    const st = contractState(t, { graceDays: Number(active?.grace_days) || 0 });
+    const st = contractState(t, { graceDays: Number(active?.grace_days) || 0, ...windowsOf(active) });
     const who = active.manager || orgName || "إدارة الأملاك";
     const ul = unitLabel(active.property_type);
     const unit = `${ul} (${t.unit || "—"})`;
@@ -1217,7 +1217,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
   /** إشعار مكتوب — يوضّح المطالبة والمسار النظامي عبر «إيجار» و«ناجز» */
   function makeNotice(t: Tenant) {
     if (!active) return;
-    const st = contractState(t, { graceDays: Number(active?.grace_days) || 0 });
+    const st = contractState(t, { graceDays: Number(active?.grace_days) || 0, ...windowsOf(active) });
     const who = active.manager || orgName || "إدارة الأملاك";
     const ul = unitLabel(active.property_type);
     const v = { enabled: !!active.vat_enabled, rate: Number(active.vat_rate) || 15, inclusive: active.vat_inclusive !== false };

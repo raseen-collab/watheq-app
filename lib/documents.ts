@@ -6,7 +6,7 @@ import { unitLabel, typeLabel } from "./domain";
 import { hijriText, hijriShort } from "@/lib/hijri";
 import { annualRentRoll } from "./income";
 import { defaultTermPeriods } from "./contracts";
-import { unitStatus, unitStatusLabel, arrearsOf } from "./contract-state";
+import { unitStatus, unitStatusLabel, arrearsOf, statusWindows } from "./contract-state";
 import { daysAr } from "./utils";
 
 const sar = (n: number) => {
@@ -183,7 +183,13 @@ type Issuer = { billing_name?: string | null; vat_number?: string | null; cr_num
    *  المستند صالح للاستعمال كاملًا، بلا علامة مائية ولا تقييد. */
   trial?: boolean | null;
   /** true إذا انتهت التجربة ولم يشترك — هنا فقط تعود العلامة المائية. */
-  expired?: boolean | null };
+  expired?: boolean | null;
+  /* عتبات المكتب من الإعدادات: بدونها تُحسب حالات المستند بالافتراضات
+     بينما الشاشة تحسبها بعتبات المكتب — فيقرأ المالك «منتظم» في تقرير
+     مطبوع لوحدة يراها المكتب «تنتهي قريبًا». */
+  due_soon_days?: number | null;
+  due_imminent_days?: number | null;
+  expiring_days?: number | null };
 
 /** ثلاث حالات: مشترك = نظيف · تجربة نشطة = سطر المصدر · انتهت بلا اشتراك = علامة مائية */
 type Mark = "none" | "brand" | "wm";
@@ -387,12 +393,10 @@ export const vatOfPaymentsFor = (p: Property & { tenants?: any[] }, payments: an
  * بطاقات تلتفّ على أي عرض، وتُطبع اثنتين في السطر. لا جوال المستأجر ولا هويته.
  */
 function unitsRegisterHTML(p: any, tenants: any[], g: any, issuer: any = {}): string {
-  /* نوافذ «قريب» و«مستحق» و«ينتهي قريبًا» كاللوحة (windowsOf): العقار ثم المكتب ثم
-     الافتراض — كان التقرير يحسب بالافتراض وحده فيختلف عند من غيّر إعداداته */
-  const win = { ...g,
-    soonDays: Number(p.soon_days) || Number(issuer?.due_soon_days) || undefined,
-    imminentDays: Number(p.imminent_days) || Number(issuer?.due_imminent_days) || undefined,
-    expiringDays: Number(p.expiring_days) || Number(issuer?.expiring_days) || undefined };
+  /* نسخة ثالثة من حلّ العتبات كانت هنا — الآن من lib/contract-state وحده.
+     و`g` تصل محلولةً أصلًا، فنُبقيها إن جاءت كاملة ونحلّها إن لم تكن. */
+  const win = (g && g.soonDays && g.imminentDays && g.expiringDays)
+    ? g : statusWindows(p, issuer);
   const rr = annualRentRoll(tenants);
   const kinds: Record<string, number> = {};
   for (const t of tenants) { const k = t.unit_type ? (UNIT_TYPE_AR[String(t.unit_type)] || "وحدة") : unitLabel(p.property_type); kinds[k] = (kinds[k] || 0) + 1; }
@@ -452,7 +456,8 @@ function unitsRegisterHTML(p: any, tenants: any[], g: any, issuer: any = {}): st
 }
 
 /** فترة السماح الخاصة بالعقار */
-const graceOf = (p: Property) => ({ graceDays: Number(p.grace_days) || 0 });
+/** عتبات العقار مع عتبات المكتب — التعريف في lib/contract-state */
+const winOf = (p: Property, issuer?: Issuer | null) => statusWindows(p as any, issuer as any);
 
 const header = (docTitle: string, docNo: string) => `
 <div class="hd">
@@ -484,7 +489,7 @@ export function statementHTML(t: Tenant, p: Property, issuer: Issuer = {}, payme
   /* الكشف يُرسل للمستأجر: الدفعة المعكوسة وعكسها يسقطان معًا، ولا معرّف
      ولا ملاحظة تشغيلية تخرج. والإجمالي يبقى من الدفتر كاملًا — فهو واحد. */
   const shownPays = visiblePayments(payments as any[]);
-  const st = contractState(t, graceOf(p));
+  const st = contractState(t, winOf(p, issuer));
   const rows = buildSchedule(t);
   const ul = unitLabel(p.property_type);
   const who = issuer.billing_name || p.manager || "إدارة الأملاك";
@@ -881,7 +886,7 @@ export function propertyStatementHTML(
   issuer = scrub(issuer);
   const ul = unitLabel(p.property_type);
   const who = issuer.billing_name || p.manager || "إدارة الأملاك";
-  const rows = p.tenants.map((t) => ({ t, st: contractState(t, graceOf(p)) }));
+  const rows = p.tenants.map((t) => ({ t, st: contractState(t, winOf(p, issuer)) }));
   const totalDue = rows.reduce((s, r) => s + r.st.amountDue, 0);
   /* العمارة المختلطة: كل وحدة بضريبتها — الشقة السكنية معفاة والمحل خاضع */
   const vFor = (t: any) => vatOf(p, t);
@@ -903,7 +908,7 @@ export function propertyStatementHTML(
   /* رقم واحد مجمَّع كان يخالف تقرير المالك لنفس العقار بلا تفسير
      (40,700 هنا مقابل 36,200 هناك). نعرضه مفصَّلًا بمصدر واحد. */
   const stArr = arrearsOf((p.tenants || []).map((t: any) =>
-    ({ t, st: contractState(t, { graceDays: Number(p.grace_days) || 0 }) })));
+    ({ t, st: contractState(t, winOf(p, issuer)) })));
   const arrearsTotal = stArr.grand;
   const collectedInPeriod = (payments || []).reduce((a, x) => a + (Number(x.amount) || 0), 0);
   const soonCount = rows.filter((r) => r.st.status === "soon").length;
@@ -1522,7 +1527,7 @@ export function moveOutSettlementHTML(
   t = scrub(t);
   p = scrub(p);
   issuer = scrub(issuer);
-  const st = contractState(t as any, { graceDays: Number(p.grace_days) || 0 });
+  const st = contractState(t as any, winOf(p, issuer));
   const ul = unitLabel(p.property_type);
   const who = issuer.billing_name || p.manager || "إدارة الأملاك";
   const s = settleDeposit(t as any, st.amountDue);
@@ -1877,7 +1882,7 @@ export function ownerReportHTML(
   extra = scrub(extra);
   const ul = unitLabel(p.property_type);
   const who = issuer.billing_name || p.manager || "إدارة الأملاك";
-  const g = graceOf(p);
+  const g = winOf(p, issuer);
 
   const rows = (p.tenants || []).map((t) => ({ t, st: contractState(t, g), vacant: isVacant(t) }));
   const total = rows.length;
@@ -1902,7 +1907,7 @@ export function ownerReportHTML(
   const feeVatRate = issuer.vat_number ? (Number(p.vat_rate) || 15) : 0;
   /* المالك يجمع عمود «المتأخر» فيخرج رقمًا يخالف بطاقة «المتأخرات القائمة»:
      البطاقة تستبعد الشاغرة والجدول يعرضها. صف الإجمالي يفصلهما صراحةً. */
-  const stRows = (p.tenants || []).map((t: any) => ({ t, cs: contractState(t, graceOf(p)) }));
+  const stRows = (p.tenants || []).map((t: any) => ({ t, cs: contractState(t, winOf(p, issuer)) }));
   const activeOwed = stRows.reduce((a, r) => a + (r.cs.vacant ? 0 : r.cs.amountDue), 0);
   const legacyOwed = stRows.reduce((a, r) => a + (r.cs.vacant ? r.cs.legacyArrears : 0), 0);
   const activeLate = stRows.filter((r) => !r.cs.vacant && r.cs.amountDue > 0).length;
@@ -2110,7 +2115,7 @@ export function ownerConsolidatedStatementHTML(
   const who = issuer.billing_name || "إدارة الأملاك";
 
   const rows = sections.map((s) => {
-    const g = graceOf(s.property);
+    const g = winOf(s.property, issuer);
     const ten = (s.property.tenants || []).map((t) => ({ t, st: contractState(t, g), vacant: isVacant(t) }));
     const units = ten.length;
     const vacant = ten.filter((r) => r.vacant).length;
@@ -2277,7 +2282,7 @@ ${rows.map((r) => `
 <div class="sub" style="margin-bottom:6px">${typeLabel(r.s.property.property_type)}${r.s.property.city ? ` · ${r.s.property.city}` : ""}${r.s.property.address ? ` · ${r.s.property.address}` : ""}${r.s.property.usage ? ` · ${USAGE_AR[String(r.s.property.usage)] || r.s.property.usage}` : ""} · ${r.units} وحدة (${r.units - r.vacant} مؤجّرة، ${r.vacant} شاغرة)</div>
 ${detail === "full" ? `
 <h3 style="font-size:.85rem;margin:10px 0 4px">الوحدات — وصفها وإيجارها وحالتها</h3>
-${unitsRegisterHTML(r.s.property, r.s.property.tenants || [], graceOf(r.s.property), issuer)}` : ""}
+${unitsRegisterHTML(r.s.property, r.s.property.tenants || [], winOf(r.s.property, issuer), issuer)}` : ""}
 ${ownerVisiblePayments(r.s.payments as any[]).length ? `<div class="scrollx"><table>
   <thead><tr><th>التاريخ</th><th>المستأجر</th><th>${unitLabel(r.s.property.property_type)}</th><th>المبلغ</th><th>الطريقة</th></tr></thead>
   <tbody>

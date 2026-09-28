@@ -131,3 +131,58 @@ export function arrearsOf(rows: ArrearsRow[]): Arrears {
   a.grand = r2(a.total + a.carried + a.legacy);
   return a;
 }
+
+/** ============================================================
+ *  نوافذ الحالة — مصدر واحد لعتبات كل مكتب
+ *
+ *  كل مكتب يضبط في الإعدادات: «يستحق قريبًا» و«مستحق» و«ينتهي قريبًا»
+ *  ومهلة السماح، ويستطيع تجاوزها لعقار بعينه. لكن الحل كان محليًّا داخل
+ *  PropertyView وحده، بينما المستندات المولَّدة تُمرّر `graceDays` فقط —
+ *  فتُحسب حالاتها بالعتبات الافتراضية لا بعتبات المكتب.
+ *
+ *  الأثر: مكتب يضبط «ينتهي قريبًا = 90 يومًا» يرى الوحدة حمراء على الشاشة،
+ *  ثم يطبع تقرير المالك فيقرأ «منتظم» للوحدة نفسها. ودليل الحالات يشرح
+ *  عتبةً لا تُطبَّق في نصف المخرجات.
+ *
+ *  الأولوية: إعداد العقار ← إعداد المكتب ← الافتراضي.
+ *  ============================================================ */
+
+export type StatusWindows = {
+  graceDays: number; soonDays: number; imminentDays: number; expiringDays: number;
+};
+
+/** إعدادات المكتب (profiles) — أسماء الأعمدة كما هي في القاعدة */
+export type OfficeDefaults = {
+  due_soon_days?: number | null;
+  due_imminent_days?: number | null;
+  expiring_days?: number | null;
+} | null | undefined;
+
+/** إعدادات العقار (properties) — تتجاوز إعداد المكتب حين تُضبط */
+export type PropertyWindows = {
+  grace_days?: number | null;
+  soon_days?: number | null;
+  imminent_days?: number | null;
+  expiring_days?: number | null;
+} | null | undefined;
+
+const clamp = (v: any, lo: number, hi: number, dflt: number) => {
+  const n = Number(v);
+  return Number.isFinite(n) && n > 0 ? Math.max(lo, Math.min(hi, n)) : dflt;
+};
+
+/**
+ * يحلّ عتبات الحالة لعقارٍ ما. مرّر إعدادات المكتب حين تتوفّر — وبدونها
+ * تُستعمل الافتراضات، وهي نفسها التي يفترضها `contractState`.
+ */
+export function statusWindows(p?: PropertyWindows, office?: OfficeDefaults): StatusWindows {
+  const officeSoon = clamp(office?.due_soon_days, 1, 60, 10);
+  const officeImm = clamp(office?.due_imminent_days, 1, 60, 5);
+  const officeExp = clamp(office?.expiring_days, 1, 180, 60);
+  return {
+    graceDays: clamp(p?.grace_days, 0, 30, 0),
+    soonDays: clamp(p?.soon_days, 1, 60, officeSoon),
+    imminentDays: clamp(p?.imminent_days, 1, 60, officeImm),
+    expiringDays: clamp(p?.expiring_days, 1, 180, officeExp),
+  };
+}

@@ -3,6 +3,7 @@ import { subState } from "@/lib/subscription";
 import * as Sentry from "@sentry/nextjs";
 import { createClient as createAdmin } from "@supabase/supabase-js";
 import { sendTelegram } from "@/lib/telegram";
+import { statusWindows } from "@/lib/contract-state";
 import { contractState } from "@/lib/contracts";
 import { unitLabel } from "@/lib/domain";
 import { complianceDigestLines, type ComplianceItem } from "@/lib/compliance";
@@ -99,7 +100,7 @@ export async function GET(req: Request) {
       const ul = unitLabel(prop.property_type);
       for (const t of prop.tenants || []) {
         // فترة السماح نفسها التي تعتمدها اللوحة — وإلا وصلت رسالة «متأخر» لمستأجر لوحته تقول «فترة سماح»
-        const st = contractState(t, { graceDays: Number(prop.grace_days) || 0, soonDays: Number(prop.soon_days) || p.due_soon_days, imminentDays: Number(prop.imminent_days) || p.due_imminent_days, expiringDays: Number(prop.expiring_days) || p.expiring_days });
+        const st = contractState(t, statusWindows(prop, p));
         /* الوحدة المُخلاة لا تُذكَّر كإيجار متأخر كل صباح — ما عليها دين على من غادر */
         if (st.vacant) {
           if (st.legacyArrears > 0) legacyList.push(`• ${ul} ${esc(t.unit || "—")} (${esc(prop.name)}) — على المستأجر السابق ${esc(t.name)}: <b>${sar(st.legacyArrears)}</b> ريال`);

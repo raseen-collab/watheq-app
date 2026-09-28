@@ -5,6 +5,7 @@
  *  ============================================================ */
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { statusWindows } from "./contract-state";
 import { contractState, renewContract as renewFields, freqShort, applyPayment, defaultTermPeriods, splitVat, unitVatApplies, type Frequency } from "@/lib/contracts";
 import { today as riyadhToday, waNumber } from "@/lib/utils";
 import { annualRentRoll } from "@/lib/income";
@@ -89,7 +90,9 @@ async function enrichedTenants(db: DB, profile: any): Promise<{ properties: any[
   const rows: Enriched[] = [];
   properties.forEach((p: any) => {
     (p.tenants || []).forEach((t: any) => {
-      const st = contractState(t, { graceDays: Number(p.grace_days) || 0, soonDays: Number(p.soon_days) || profile?.due_soon_days, imminentDays: Number(p.imminent_days) || profile?.due_imminent_days });
+      /* العتبات من lib/contract-state: النسخة السابقة هنا أغفلت expiringDays
+         فاختلف «ينتهي قريبًا» بين التقارير والشاشة عند من غيّر الإعداد */
+      const st = contractState(t, statusWindows(p, profile));
       rows.push({ t, propId: p.id, propName: p.name || "عقار", st, key: deriveState(st, t) });
     });
   });
@@ -368,7 +371,7 @@ async function payTenant(db: DB, profile: any, tenantId: string, mode: "one" | "
     .eq("note", "سُجّلت عبر بوت تليجرام").gte("created_at", since).limit(1);
   if (recent && recent.length) return { ok: false, msg: "سُجّلت دفعة لهذا المستأجر قبل لحظات — لم تُسجَّل ثانية. إن كانت دفعة أخرى فعلًا، سجّلها من اللوحة." };
   /* «كامل المتأخر» يسجّل ما عُرض في القائمة، لا قسطًا واحدًا (كان يُعرض 7,500 ويُسجَّل 2,500) */
-  const st = contractState(t, { graceDays: Number(prop.grace_days) || 0 });
+  const st = contractState(t, statusWindows(prop, profile));
   const amount = mode === "all" && (st.amountDue || 0) > 0 ? Math.round((st.amountDue || 0) * 100) / 100 : rent;
   const { data, error } = await db.rpc("watheq_record_payment", {
     p_tenant: tenantId, p_amount: amount, p_method: "other", p_note: "سُجّلت عبر بوت تليجرام",
@@ -457,7 +460,7 @@ export async function buildNotice(db: DB, profile: any, tenantId: string, kind: 
     if (!t.phone) return { ok: false, text: `لا يوجد رقم جوال مسجّل لـ ${esc(t.name || "المستأجر")}.` };
     if (!phoneOk(normalizeSaudi(t.phone))) return { ok: false, text: `رقم جوال ${esc(t.name || "المستأجر")} غير صالح (${esc(t.phone)}) — صحّحه من اللوحة ثم أعد المحاولة.` };
 
-    const st = contractState(t, { graceDays: Number(prop.grace_days) || 0 });
+    const st = contractState(t, statusWindows(prop, profile));
     const unit = t.unit ? `الوحدة (${t.unit})` : "الوحدة";
     const who = signer(profile, prop);
     const digits = normalizeSaudi(t.phone);
@@ -513,7 +516,7 @@ export async function buildReminder(db: DB, profile: any, contractId: string): P
       const { data: prop } = await db.from("properties")
         .select("id,user_id,name,manager,grace_days,property_type,vat_enabled,vat_rate,vat_inclusive").eq("id", t.property_id).maybeSingle();
       if (!prop || String(prop.user_id) !== String(profile.id)) return { ok: false, text: "غير مصرّح." };
-      const st = contractState(t, { graceDays: Number(prop.grace_days) || 0 });
+      const st = contractState(t, statusWindows(prop, profile));
       const ow = owedFor(t, prop, st);
       name = t.name || "المستأجر"; phone = t.phone || "";
       unit = t.unit ? `الوحدة (${t.unit})` : "الوحدة";
