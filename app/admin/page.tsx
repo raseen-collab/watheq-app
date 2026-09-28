@@ -101,6 +101,17 @@ export default async function AdminPage({ searchParams }: { searchParams?: { vie
        future» من الثاني وحده — فلا معنى لإعادة المحاولة هنا. */
     db.auth.admin.listUsers({ perPage: 1000 }),
   ]);
+  /* مقياس انحراف الساعة (schema-v53): يقارن `iat` في رمزك بساعة القاعدة.
+     يُستدعى بجلستك أنت لا بمفتاح الخدمة — مفتاح الخدمة رمز طويل الأمد
+     لا يُقاس به شيء. موجب = الرمز «صادر في المستقبل»، وهو سبب العطل.
+     يفشل بصمت إن لم تُنشأ الدالة بعد: تشخيص لا يجوز أن يُسقط اللوحة. */
+  let skew: number | null = null;
+  try {
+    const { data: probe } = await supabase.rpc("clock_probe");
+    const row = Array.isArray(probe) ? probe[0] : probe;
+    if (row && row.skew_seconds !== null && row.skew_seconds !== undefined) skew = Number(row.skew_seconds);
+  } catch { /* الدالة غير موجودة أو لا صلاحية — لا شيء يُعرض */ }
+
   const profiles = (profilesRes.data || []) as any[];
   const properties = (propsRes.data || []) as any[];
   const tenants = (tenantsRes.data || []) as any[];
@@ -293,6 +304,20 @@ export default async function AdminPage({ searchParams }: { searchParams?: { vie
           <div className="font-semibold mb-1">تعذّر تحميل بعض البيانات — الأرقام المتأثرة تظهر «—» لا رقمًا مُقدَّرًا.</div>
           <div className="text-xs opacity-90">{errors.join(" · ")}</div>
           <div className="text-xs opacity-90 mt-1">أعد تحميل الصفحة؛ فإن تكرر فالعطل في القاعدة لا في اللوحة.</div>
+        </div>
+      )}
+
+      {/* مقياس انحراف الساعة — تشخيص «JWT issued at future».
+          يُعرض فقط حين يكون هناك انحراف فعلًا؛ الصفر لا يستحق سطرًا. */}
+      {skew !== null && skew !== 0 && (
+        <div className={`rounded-xl p-3 text-sm mb-4 border ${skew > 0
+          ? "bg-[#FBF1DF] border-[#EAD9A8] text-[#7a5c12]"
+          : "bg-[#F1F5F9] border-[#CBD5E1] text-[#475569]"}`}>
+          <b>انحراف الساعة: {skew > 0 ? "+" : ""}{skew} ثانية</b>
+          {" — "}
+          {skew > 0
+            ? "رمز جلستك صادر «في المستقبل» بالنسبة لساعة القاعدة. هذا سبب JWT issued at future، وكل ثانية موجبة هنا تعني نافذة رفض بطولها."
+            : "ساعة القاعدة متقدّمة على رمز جلستك — لا يسبّب الرفض، لكنه يؤكّد وجود فارق بين الساعتين."}
         </div>
       )}
 
