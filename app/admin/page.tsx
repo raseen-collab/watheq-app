@@ -295,6 +295,10 @@ export default async function AdminPage({ searchParams }: { searchParams?: { vie
           <Link href="/admin/subs" className="btn btn-ghost text-xs">💳 الاشتراكات</Link>
           <Link href="/admin/help" className="btn btn-ghost text-xs">🛟 مراقب المساعد</Link>
           <a href="https://sentry.io/" target="_blank" rel="noreferrer" className="btn btn-ghost text-xs">🐞 الأخطاء (Sentry)</a>
+          {/* قياس انحراف الساعة — يقارن ترويسة Date في ردّ خادم المصادقة
+              بردّ خادم البيانات في لحظة واحدة، فيُظهر الانحراف الذي يسبّب
+              «JWT issued at future» بلا حاجة لرمز طازج ولا مصادفة. */}
+          <a href="/api/admin/clock?n=12" target="_blank" rel="noreferrer" className="btn btn-ghost text-xs">⏱️ قياس انحراف الساعة</a>
           <Link href="/dashboard" className="btn btn-ghost text-xs">← اللوحة</Link>
         </div>
       </div>
