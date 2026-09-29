@@ -13,7 +13,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { fetchAllRows } from "@/lib/fetch-all";
 import { createClient } from "@/lib/supabase-client";
-import { contractState, isVacant, type Frequency } from "@/lib/contracts";
+import { contractState, isVacant, splitVat, unitVatApplies, type Frequency } from "@/lib/contracts";
 import { annualRentRoll } from "@/lib/income";
 import { sar, waLink, today, daysAr } from "@/lib/utils";
 import { arDate } from "@/lib/documents";
@@ -146,7 +146,25 @@ export default function PortfolioView({ properties, windows, compliance, orgName
   }).sort((a, b) => b.overdue - a.overdue || b.late - a.late || a.p.name.localeCompare(b.p.name, "ar"));
 
   const remind = (p: Property, t: Tenant, st: any) =>
-    waLink(t.phone, `السلام عليكم ${t.name}\n\nتذكير ودّي بأن الدفعة المستحقة عن ${UNIT_AR[p.property_type] || "الوحدة"} ${t.unit || ""} بعقار ${p.name} بمبلغ ${sar(st.amountDue)} ريال لم تصلنا بعد.\nنرجو السداد في أقرب وقت، وإن كان السداد قد تم فنعتذر ونرجو إرسال ما يثبته.\n\nشكرًا لتعاونكم.`);
+    /* (مراجعة 29 سبتمبر 2026) كانت: «الدفعة المستحقة … بمبلغ amountDue» — مفردًا
+       ولو تأخّرت ثلاث دفعات، وبلا الضريبة المضافة فوق الإيجار، وبلا الدين
+       المرحَّل، وبلا توقيع. الآن كتذكير لوحة العقار. */
+    (() => {
+      const v = { enabled: unitVatApplies(t, p), rate: Number((p as any).vat_rate) || 15, inclusive: (p as any).vat_inclusive !== false };
+      const rentOwed = v.enabled ? splitVat(Number(st.amountDue) || 0, v).total : (Number(st.amountDue) || 0);
+      const carried = Math.max(0, Number((t as any).carried_debt) || 0);
+      const n = Number(st.unpaid) || 0;
+      const what = n > 1 ? `${n} دفعات مستحقة` : "الدفعة المستحقة";
+      const who = issuer?.billing_name || orgName || (p as any).manager || "إدارة الأملاك";
+      const L = [
+        `السلام عليكم ${t.name}`, "",
+        `تذكير ودّي بأن ${what} عن ${UNIT_AR[p.property_type] || "الوحدة"} ${t.unit || ""} بعقار ${p.name} بمبلغ ${sar(rentOwed)} ريال${v.enabled ? " (شامل الضريبة)" : ""} لم تصلنا بعد.`,
+        ...(carried > 0 ? [`ويتبقّى عليكم دين مرحَّل من مدة سابقة: ${sar(carried)} ريال — الإجمالي ${sar(Math.round((rentOwed + carried) * 100) / 100)} ريال.`] : []),
+        "نرجو السداد في أقرب وقت، وإن كان السداد قد تم فنعتذر ونرجو إرسال ما يثبته.", "",
+        "شكرًا لتعاونكم،", who,
+      ];
+      return waLink(t.phone, L.join("\n"));
+    })();
 
   const Item = ({ p, t, st, note, tone }: { p: Property; t: Tenant; st: any; note: string; tone?: "late" | "due" | "exp" }) => (
     <div className="flex items-center justify-between gap-3 bg-white text-deep border border-line rounded-lg px-3 py-2 text-sm">

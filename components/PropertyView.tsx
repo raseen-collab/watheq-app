@@ -1201,11 +1201,20 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
   function remindLink(t: Tenant) {
     if (!active) return "#";
     const st = contractState(t, { graceDays: Number(active?.grace_days) || 0, ...windowsOf(active) });
-    const who = active.manager || orgName || "إدارة الأملاك";
+    /* الموقِّع: المكتب لا «مدير العقار» (مراجعة 29 سبتمبر 2026) — ذاك الحقل
+       تكتب فيه مكاتب اسم المالك، فتصل مطالبة المكتب موقّعة باسم المالك.
+       البوت أُصلح بهذا سابقًا (lib/reports.ts: signer) وبقيت هذه الرسالة. */
+    const who = (issuer as any)?.billing_name || orgName || active.manager || "إدارة الأملاك";
     const ul = unitLabel(active.property_type);
     const unit = `${ul} (${t.unit || "—"})`;
     const v = { enabled: !!active.vat_enabled, rate: Number(active.vat_rate) || 15, inclusive: active.vat_inclusive !== false };
-    const one = splitVat(Number(t.rent_amount) || 0, active && unitVatApplies(t, active) ? v : { ...v, enabled: false });
+    const vUnit = active && unitVatApplies(t, active) ? v : { ...v, enabled: false };
+    const one = splitVat(Number(t.rent_amount) || 0, vUnit);
+    /* المطلوب كما في كشف المستأجر: متأخر المدة شاملًا الضريبة المضافة + الدين
+       المرحَّل. كانت الرسالة تذكر «قيمة الدفعة 11,500» ثم «المتبقّي 20,000»
+       لدفعتين متأخرتين، والمطلوب 23,000 — ولا تذكر الدين المرحَّل أبدًا. */
+    const rentOwed = vUnit.enabled ? splitVat(st.amountDue, vUnit).total : st.amountDue;
+    const carried = Math.max(0, Number((t as any).carried_debt) || 0);
 
     const L: string[] = [`السلام عليكم ورحمة الله، ${t.name}`, ""];
 
@@ -1217,12 +1226,17 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       L.push(`تذكير ودّي بأن الدفعة القادمة عن ${unit} بعقار ${active.name} تستحق بتاريخ ${dueTxt}${
         inDays !== null && inDays > 0 ? ` — بعد ${inDays === 1 ? "يوم واحد" : inDays === 2 ? "يومين" : inDays <= 10 ? `${inDays} أيام` : `${inDays} يومًا`}` : inDays === 0 ? " — اليوم" : ""}.`);
       if (one.total) L.push(`• قيمة الدفعة: ${sar(one.total)} ريال${one.vat > 0 ? ` (منها ${sar(one.vat)} ريال ضريبة قيمة مضافة)` : ""}`);
+      if (carried > 0) L.push(`• ويتبقّى عليكم دين مرحَّل من مدة سابقة: ${sar(carried)} ريال`);
     } else {
       L.push(`نودّ تذكيركم بوجود مستحقّات غير مسدَّدة عن ${unit} بعقار ${active.name}، وبيانها:`);
       L.push(`• عدد الدفعات المتأخرة: ${st.unpaid}`);
       if (one.total) L.push(`• قيمة الدفعة: ${sar(one.total)} ريال`);
       if (st.hasPartial) L.push(`• المسدَّد جزئيًّا: ${sar(st.partial)} ريال`);
-      L.push(`• المبلغ المتبقّي: ${sar(st.amountDue)} ريال`);
+      L.push(`• المبلغ المتبقّي${vUnit.enabled ? " (شامل الضريبة)" : ""}: ${sar(rentOwed)} ريال`);
+      if (carried > 0) {
+        L.push(`• دين مرحَّل من مدة سابقة: ${sar(carried)} ريال`);
+        L.push(`• الإجمالي المطلوب: ${sar(Math.round((rentOwed + carried) * 100) / 100)} ريال`);
+      }
       /* «أقرب دفعة مستحقة» كانت تُطلق على تاريخ مضى — والمستأجر يقرؤها
          موعدًا قادمًا. نسمّي الماضي «مستحقّة منذ» والقادم «القادمة». */
       if (st.nextDueDate) L.push(`• مستحقّة منذ: ${arDate(st.nextDueDate)}${t.calendar === "hijri" ? ` (${hijriText(st.nextDueDate)})` : ""}`);
@@ -1243,11 +1257,15 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
   function makeNotice(t: Tenant) {
     if (!active) return;
     const st = contractState(t, { graceDays: Number(active?.grace_days) || 0, ...windowsOf(active) });
-    const who = active.manager || orgName || "إدارة الأملاك";
+    const who = (issuer as any)?.billing_name || orgName || active.manager || "إدارة الأملاك";
     const ul = unitLabel(active.property_type);
     const v = { enabled: !!active.vat_enabled, rate: Number(active.vat_rate) || 15, inclusive: active.vat_inclusive !== false };
     const one = splitVat(Number(t.rent_amount) || 0, active && unitVatApplies(t, active) ? v : { ...v, enabled: false });
     const totalDue = splitVat(st.amountDue, active && unitVatApplies(t, active) ? v : { ...v, enabled: false });
+    /* (مراجعة 29 سبتمبر 2026) المبلغ في الإشعار = totalDue.total لا amountDue.
+       في «مضافة فوق الإيجار» كان يطالب بـ20,000 ثم يقول «ويشمل المبلغ المذكور
+       ضريبة 3,000» — جملة غير صحيحة في مطالبة رسمية، ومبلغ أقل من الحق. */
+    const carriedN = Math.max(0, Number((t as any).carried_debt) || 0);
 
     // نطاق الفترة المتأخرة: من أول دفعة غير مسدَّدة إلى أحدث دفعة استحقّت
     const sch = buildSchedule(t);
@@ -1268,8 +1286,9 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       "",
       `بالإشارة إلى عقد الإيجار المبرم بيننا${t.contract_no ? ` رقم (${t.contract_no})` : ""} (بداية العقد: ${arDate(t.contract_start)}${t.contract_start ? ` — ${hijriText(t.contract_start)}` : ""}، نهايته: ${arDate(st.endDate)}، دورة السداد: ${freqLabel(t.payment_frequency)}${one.total ? `، وقيمة الدفعة ${sar(one.total)} ريال` : ""})؛`,
       "",
-      `نفيدكم بأنه قد ترصَّد بذمّتكم مبلغ (${sar(st.amountDue)}) ريال، قيمة (${st.unpaid}) دفعة مستحقة عن الفترة من (${arDate(fromDate)}) إلى (${arDate(toDate)})${st.hasPartial ? `، بعد خصم مبلغ (${sar(st.partial)}) ريال مسدَّد جزئيًّا` : ""}، ولم يُسدَّد حتى تاريخ هذا الإشعار.`,
+      `نفيدكم بأنه قد ترصَّد بذمّتكم مبلغ (${sar(totalDue.total)}) ريال، قيمة (${st.unpaid}) دفعة مستحقة عن الفترة من (${arDate(fromDate)}) إلى (${arDate(toDate)})${st.hasPartial ? `، بعد خصم مبلغ (${sar(st.partial)}) ريال مسدَّد جزئيًّا` : ""}، ولم يُسدَّد حتى تاريخ هذا الإشعار.`,
       ...(totalDue.vat > 0 ? ["", `ويشمل المبلغ المذكور ضريبة قيمة مضافة قدرها (${sar(totalDue.vat)}) ريال بنسبة (${v.rate}%).`] : []),
+      ...(carriedN > 0 ? ["", `يُضاف إلى ذلك دينٌ مرحَّل من مدة سابقة قدره (${sar(carriedN)}) ريال، ليكون إجمالي المطلوب (${sar(Math.round((totalDue.total + carriedN) * 100) / 100)}) ريال.`] : []),
       "",
       "لذا نأمل المبادرة بسداد المبلغ خلال (5) أيام من تاريخ استلامكم هذا الإشعار، بالوسيلة المتفق عليها في العقد، وتزويدنا بما يفيد السداد.",
       "",
