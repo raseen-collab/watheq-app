@@ -44,7 +44,7 @@ export default function UnitInvoicesModal({ tenant, property, issuer, onClose, d
   async function load() {
     setErr(null);
     const { data, error } = await supabase.from("invoices")
-      .select("id,invoice_no,issue_date,due_date,period_label,amount,status,notes,created_at")
+      .select("*")
       .eq("tenant_id", tenant.id)
       .order("issue_date", { ascending: false })
       .order("invoice_no", { ascending: false })
@@ -55,7 +55,14 @@ export default function UnitInvoicesModal({ tenant, property, issuer, onClose, d
   useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [tenant.id]);
 
   function reprint(v: Invoice) {
-    openDoc(invoiceHTML(tenant as any, property as any, {
+    /* (مراجعة 30 سبتمبر 2026) بإعدادات الضريبة المحفوظة يوم الإصدار إن وُجدت —
+       كان تغيير نسبة العقار أو وضعه لاحقًا يغيّر مبلغ فاتورة صدرت وسُلّمت.
+       الفواتير الأقدم من schema-v56 بلا إعدادات محفوظة فتُطبع كما كانت. */
+    const x = v as any;
+    const snap = x.vat_enabled === true || x.vat_enabled === false;
+    const pAt = snap ? { ...(property as any), vat_enabled: x.vat_enabled, vat_rate: x.vat_rate ?? (property as any)?.vat_rate, vat_inclusive: x.vat_inclusive } : property;
+    const tAt = snap ? { ...(tenant as any), vat_mode: x.vat_enabled ? "on" : "off" } : tenant;
+    openDoc(invoiceHTML(tAt as any, pAt as any, {
       invoice_no: v.invoice_no,
       amount: Number(v.amount) || 0,
       due_date: v.due_date || v.issue_date || "",

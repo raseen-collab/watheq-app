@@ -13,7 +13,7 @@ import { fetchAllRows } from "@/lib/fetch-all";
 import { hijriShort, hijriText, parseHijriInput } from "@/lib/hijri";
 import { sar, waLink, today, WATHEQ_WA, openExternal, daysAr } from "@/lib/utils";
 import { contractState, expectedNext12, buildSchedule, FREQUENCIES, freqLabel, freqShort, derivedEndDate, renewContract, needsRenewal, applyPayment, splitVat, isCommercial, isVacant, settleDeposit, unitVatApplies,
-  vacancyDays, TURNOVER_CHECKLIST, defaultTermPeriods, parseDate, dueWithVat, rentWithVat, withVat, type Frequency } from "@/lib/contracts";
+  vacancyDays, TURNOVER_CHECKLIST, defaultTermPeriods, parseDate, dueWithVat, rentWithVat, withVat, unitVat, type Frequency } from "@/lib/contracts";
 import { PROPERTY_TYPES, typeLabel, unitLabel, typeIcon } from "@/lib/domain";
 import { statementHTML, invoiceHTML, propertyStatementHTML, moveOutSettlementHTML, quotationHTML, ownerReportHTML, DEFAULT_CHARGES, openDoc, type ChargeRow, type OwnerReportPayment } from "@/lib/documents";
 import OwnerStatementModal from "@/components/OwnerStatementModal";
@@ -1194,6 +1194,8 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       tenant_id: t.id, property_id: active.id,
       invoice_no: invoiceNo, due_date: dueDate, period_label: period, amount,
       issue_date: today(), status: "issued",
+      /* إعدادات الضريبة يوم الإصدار — لتُطبع النسخة المعادة كما صدرت (schema-v56) */
+      ...(() => { const v = unitVat(t, active); return { vat_enabled: !!v.enabled, vat_rate: Number(v.rate) || 15, vat_inclusive: v.inclusive !== false }; })(),
     });
     if (insErr) return notify("err", `تعذّر حفظ الفاتورة ${invoiceNo} — لم تُصدر (${insErr.message})`);
 
