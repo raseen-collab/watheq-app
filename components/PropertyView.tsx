@@ -13,7 +13,7 @@ import { fetchAllRows } from "@/lib/fetch-all";
 import { hijriShort, hijriText, parseHijriInput } from "@/lib/hijri";
 import { sar, waLink, today, WATHEQ_WA, openExternal, daysAr } from "@/lib/utils";
 import { contractState, expectedNext12, buildSchedule, FREQUENCIES, freqLabel, freqShort, derivedEndDate, renewContract, needsRenewal, applyPayment, splitVat, isCommercial, isVacant, settleDeposit, unitVatApplies,
-  vacancyDays, TURNOVER_CHECKLIST, defaultTermPeriods, type Frequency } from "@/lib/contracts";
+  vacancyDays, TURNOVER_CHECKLIST, defaultTermPeriods, parseDate, type Frequency } from "@/lib/contracts";
 import { PROPERTY_TYPES, typeLabel, unitLabel, typeIcon } from "@/lib/domain";
 import { statementHTML, invoiceHTML, propertyStatementHTML, moveOutSettlementHTML, quotationHTML, ownerReportHTML, DEFAULT_CHARGES, openDoc, type ChargeRow, type OwnerReportPayment } from "@/lib/documents";
 import OwnerStatementModal from "@/components/OwnerStatementModal";
@@ -717,7 +717,19 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       contract_end: d.contract_start
         ? derivedEndDate(d.contract_start, freq, periods, null, d.calendar === "hijri" ? "hijri" : "gregorian")
         : null,
-      billing_anchor_day: d.contract_start ? new Date(d.contract_start).getDate() : null,
+      /* يوم السداد (مراجعة 29 سبتمبر 2026): من «أول استحقاق» إن أُدخل — هو ما
+         كتبه المكتب صراحةً — لا من بداية العقد. كان عقدٌ يبدأ 1 يناير وأول
+         استحقاقه 20 يناير يُجدوَل على الأول من كل شهر، فيظهر المستأجر «متأخرًا»
+         من يوم 2 إلى 19 وهو لم يتأخر.
+         وعند التعديل بلا «أول استحقاق» وبلا تغيير في البداية، يبقى اليوم المحفوظ:
+         عقدٌ جُدِّد (فصُفِّر أول استحقاقه) لا يفقد يومه بتعديل اسم أو جوال. */
+      billing_anchor_day: (() => {
+        const dayOf = (v?: string | null) => (v ? parseDate(v).getDate() : null);
+        if (d.first_due) return dayOf(d.first_due);
+        const orig: any = id ? tenants.find((x) => x.id === id) : null;
+        if (orig?.billing_anchor_day && orig.contract_start === d.contract_start) return Number(orig.billing_anchor_day);
+        return dayOf(d.contract_start);
+      })(),
       // المرافق: رقما حساب الكهرباء والماء ثابتان للوحدة ويبقيان مع تغيّر المستأجر؛
       // وقراءتا التسليم تُثبتان في مخالصة الإخلاء لاحقًا
       contract_no: (d.contract_no || "").trim() || null,

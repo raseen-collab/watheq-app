@@ -2,7 +2,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase-client";
-import { derivedEndDate, FREQUENCIES, type Frequency } from "@/lib/contracts";
+import { derivedEndDate, FREQUENCIES, parseDate, type Frequency } from "@/lib/contracts";
 import { typeIcon, unitLabel } from "@/lib/domain";
 import { sar, openExternal, today } from "@/lib/utils";
 import { parseHijriInput, hijriShort } from "@/lib/hijri";
@@ -328,7 +328,9 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
         paid_periods: r.paid_periods,
         // يوم المرساة كما يفعل الإدخال اليدوي: يُشتق من البداية عند غيابه،
         // لكن حفظه صراحةً يبقي المواعيد ثابتة لو عُدّل تاريخ البداية لاحقًا
-        billing_anchor_day: r.contract_start ? new Date(r.contract_start).getDate() : null,
+        /* من «أول استحقاق» إن وُجد في الملف، وإلا من البداية — كالإدخال اليدوي */
+        billing_anchor_day: r.first_due ? parseDate(r.first_due).getDate()
+          : r.contract_start ? parseDate(r.contract_start).getDate() : null,
         /* كل ما يُقرأ من الملف يُحفظ. كانت الحمولة 11 حقلًا فقط، فيضيع ما يعرضه
            الرفع في المراجعة: العقد الهجري يُحفظ ميلاديًّا (تنحرف أقساطه 11 يومًا
            كل سنة)، والدين المرحَّل يختفي، و«أول استحقاق» يسقط فتُحسب الأقساط من
