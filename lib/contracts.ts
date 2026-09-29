@@ -579,6 +579,9 @@ export function renewContract(t: {
   rent_amount?: number | null;
   billing_anchor_day?: number | null;
   carried_debt?: number | null;
+  paid_periods?: number | null;
+  partial_amount?: number | null;
+  first_due?: string | null;
 }, opts: { periods?: number | null; newAmount?: number | null; newFrequency?: Frequency | null;
            /** ما يُفعل بمتأخرات العقد المنتهي: ترحيلها دينًا (الافتراضي) أو اعتبارها مسدَّدة */
            arrears?: "carry" | "settled" } = {}) {
@@ -590,18 +593,43 @@ export function renewContract(t: {
   const startISO = st.endDate || isoDate(riyadhNow());
   const periods = opts.periods && opts.periods > 0 ? opts.periods : (t.contract_periods || defaultTermPeriods(freq));
   const amount = opts.newAmount && opts.newAmount > 0 ? opts.newAmount : (Number(t.rent_amount) || 0);
+
+  /* رصيد المدة المنتهية كاملةً — لا ما حلّ منها فقط (مراجعة 29 سبتمبر 2026).
+     كان يُرحَّل st.amountDue وحده: ما حلّ حتى اليوم بعد مهلة السماح. فضاعت
+     ثلاثة مبالغ حقيقية بلا أثر:
+       • قسط لم يحلّ بعد عند التجديد المبكر (شهري 11/12 يُجدَّد قبل الأخير)
+       • قسط حلّ داخل مهلة السماح لحظة التجديد
+       • ما دفعه المستأجر مقدّمًا زيادةً على المدة (يُصفَّر مع paid_periods)
+     الآن: الرصيد = قيمة المدة − ما دُفع لها. موجبٌ يُرحَّل دينًا، وسالبٌ
+     رصيدٌ دائن يُحتسب دفعاتٍ مسدَّدة من المدة الجديدة. */
+  const oldRent = Number(t.rent_amount) || 0;
+  const oldTotal = t.contract_periods && t.contract_periods > 0 ? t.contract_periods : defaultTermPeriods(oldFreq);
+  const oldPaid = Math.max(0, Number(t.paid_periods) || 0);
+  const oldPartial = Math.max(0, Number(t.partial_amount) || 0);
+  const termBalance = Math.round((oldTotal * oldRent - (oldPaid * oldRent + oldPartial)) * 100) / 100;
+  const owedFromTerm = Math.max(0, termBalance);
+  const credit = Math.max(0, -termBalance);
+  const creditPeriods = amount > 0 ? Math.floor(credit / amount) : 0;
+  const creditPartial = amount > 0 ? Math.round((credit - creditPeriods * amount) * 100) / 100 : 0;
+
   return {
     contract_start: startISO,
     contract_end: derivedEndDate(startISO, freq, periods, anchor, (t as any).calendar === "hijri" ? "hijri" : "gregorian"),
     payment_frequency: freq,
     contract_periods: periods,
     rent_amount: amount,
-    paid_periods: 0,   // مدة جديدة تبدأ بصفر دفعات مسدّدة
-    partial_amount: 0, // ولا سداد جزئي معلّق
-    /* متأخرات المدة المنتهية لا تُمحى بالتجديد: تُرحَّل دينًا ظاهرًا، إلا أن
-       يؤكّد المكتب صراحةً أنها سُدّدت. كان تصفيرها يُسقط المبلغ بلا أثر. */
+    /* المدة الجديدة تبدأ بما دفعه المستأجر مقدّمًا — لا بالصفر دائمًا */
+    paid_periods: creditPeriods,
+    partial_amount: creditPartial,
+    /* رصيد المدة المنتهية لا يُمحى بالتجديد: يُرحَّل دينًا ظاهرًا، إلا أن
+       يؤكّد المكتب صراحةً أنه سُوّي. */
     carried_debt: opts.arrears === "settled" ? Math.max(0, Number(t.carried_debt) || 0)
-      : Math.round((Math.max(0, Number(t.carried_debt) || 0) + st.amountDue) * 100) / 100,
+      : Math.round((Math.max(0, Number(t.carried_debt) || 0) + owedFromTerm) * 100) / 100,
+    /* «أول استحقاق» يخصّ المدة الأولى وحدها. تركه بعد التجديد كان يجعل الجدول
+       يبدأ من تاريخه القديم بصفر مسدَّد، فيظهر من سدّد سنته متأخرًا بسنة كاملة
+       (أُعيد إنتاجه: 12/12 مسدَّدة ⟵ «متأخر 36,000»). المدة الجديدة تبدأ من
+       contract_start، ويوم السداد محفوظ في billing_anchor_day. */
+    first_due: null,
     billing_anchor_day: anchor, // ← تثبيت يوم السداد عبر كل التجديدات
     /* إعلان التجديد (schema-v49): القاعدة تبدأ مدة جديدة بهذه العلامة وحدها وتضع
        وقتها بنفسها. كانت تخمّنه من «البداية تقفز + المسدَّد صفر» — فتصحيح بيانات

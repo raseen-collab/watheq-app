@@ -957,17 +957,20 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
      * تضيع مهما حدث بعدها)، ثم: تبقى، أو «استلمتُها» (سداد نقدي في الدفتر)، أو
      * «تنازلتُ عنها» (شطب جزئي بسببه — schema-v48).
      */
-    const before = contractState(t, { graceDays: Number(active.grace_days) || 0, ...windowsOf(active) });
+    /* الرقم المعروض في السؤال هو ما سيُرحَّل فعلًا — من الدالة نفسها، لا
+       حسابٌ موازٍ. كان يعرض متأخر اليوم (contractState) بينما يُرحَّل رصيد
+       المدة كاملة، فيختلف الرقمان عند التجديد المبكر أو داخل مهلة السماح. */
+    const fields = renewContract(t, { periods: opts.periods, newAmount: opts.newAmount, newFrequency: opts.newFrequency, arrears: "carry" });
+    const toSettle = Math.round(((Number((fields as any).carried_debt) || 0) - (Number(t.carried_debt) || 0)) * 100) / 100;
     let fate: "carry" | "paid" | "forgiven" = "carry";
-    if (before.amountDue > 0 && opts.arrears !== "carry") {
-      const keep = confirm(`على ${t.name} متأخرات ${sar(before.amountDue)} ريال من المدة المنتهية.\n\n`
+    if (toSettle > 0 && opts.arrears !== "carry") {
+      const keep = confirm(`على ${t.name} ${sar(toSettle)} ريال متبقية من المدة المنتهية (متأخرة أو لم تحلّ بعد).\n\n`
         + `موافق = تبقى دينًا مرحَّلًا على العقد الجديد حتى تُسدَّد.\n`
         + `إلغاء = سُوّيت (ستُسأل: استلمتَها أم تنازلتَ عنها).`);
-      if (!keep) fate = confirm(`كيف سُوّيت متأخرات ${t.name} (${sar(before.amountDue)} ريال)؟\n\n`
-        + `موافق = استلمتُها — تُسجَّل في الدفتر وتظهر في تقرير المالك.\n`
-        + `إلغاء = تنازلتُ عنها — تُشطب ويُحفظ أثرها.`) ? "paid" : "forgiven";
+      if (!keep) fate = confirm(`كيف سُوّي المتبقي على ${t.name} (${sar(toSettle)} ريال)؟\n\n`
+        + `موافق = استلمتُه — يُسجَّل في الدفتر ويظهر في تقرير المالك.\n`
+        + `إلغاء = تنازلتُ عنه — يُشطب ويُحفظ أثره.`) ? "paid" : "forgiven";
     }
-    const fields = renewContract(t, { periods: opts.periods, newAmount: opts.newAmount, newFrequency: opts.newFrequency, arrears: "carry" });
     const { data: _u3, error } = await supabase.from("tenants").update(fields).eq("id", t.id).select("id");
     if (error) { console.error("Watheq save error:", error); return notify("err", error.message); }
     if (!_u3 || _u3.length === 0) return notify("err", "هذا الإجراء يحتاج صلاحية أعلى — اطلبه من صاحب المكتب.");
