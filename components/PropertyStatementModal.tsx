@@ -13,6 +13,7 @@
 import { useMemo, useState } from "react";
 import DateField from "@/components/DateField";
 import { hijriText } from "@/lib/hijri";
+import { riyadhToday } from "@/lib/utils";
 
 export type StatementPeriod = { from: string; to: string; label: string } | null;
 
@@ -29,7 +30,9 @@ export default function PropertyStatementModal({ propertyName, onClose, onIssue 
   onClose: () => void;
   onIssue: (mode: "brief" | "full", period: StatementPeriod) => void;
 }) {
-  const today = useMemo(() => new Date(), []);
+  /* (30 سبتمبر 2026) يوم الرياض لا يوم الجهاز: مستخدم خارج المملكة أو ليلة أول
+     الشهر كان يفتح النافذة على الشهر الخطأ */
+  const today = useMemo(() => riyadhToday(), []);
   const [preset, setPreset] = useState<"none" | "month" | "quarter" | "half" | "year" | "all" | "custom">("month");
   const [from, setFrom] = useState(iso(new Date(today.getFullYear(), today.getMonth(), 1)));
   const [to, setTo] = useState(iso(today));
@@ -37,7 +40,7 @@ export default function PropertyStatementModal({ propertyName, onClose, onIssue 
 
   function applyPreset(k: typeof preset) {
     setPreset(k);
-    const now = new Date();
+    const now = riyadhToday();
     if (k === "month") { setFrom(iso(new Date(now.getFullYear(), now.getMonth(), 1))); setTo(iso(now)); }
     else if (k === "quarter") { setFrom(iso(new Date(now.getFullYear(), now.getMonth() - 2, 1))); setTo(iso(now)); }
     else if (k === "half") { setFrom(iso(new Date(now.getFullYear(), now.getMonth() - 5, 1))); setTo(iso(now)); }

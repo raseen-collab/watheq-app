@@ -18,6 +18,26 @@ export const dynamic = "force-dynamic";
  */
 const AR_MONTHS = ["يناير","فبراير","مارس","أبريل","مايو","يونيو","يوليو","أغسطس","سبتمبر","أكتوبر","نوفمبر","ديسمبر"];
 
+/**
+ * (30 سبتمبر 2026) ترويسات الأمان لصفحة المالك.
+ *
+ * الصفحة تحمل أسماء مستأجرين وملاحظات كتبها موظفو المكتب. التهريب في
+ * lib/documents.ts هو الخط الأول؛ وهنا الثاني: سياسة CSP لا تسمح إلا بالسكربت
+ * الذي يحمل nonce هذا المستند (زرّا الطباعة والإغلاق) — تُقرأ من وسم meta الذي
+ * وضعه المولّد في الترويسة نفسها، فأي سكربت تسرّب إلى المتن يُحجب. وبلا meta
+ * (مستند لم يمرّ على المولّد) تُمنع السكربتات كلها.
+ */
+const DOC_CSP_RE = /^<!DOCTYPE html><html[^>]*><head><meta charset="UTF-8">\s*<meta http-equiv="Content-Security-Policy" content="([^"<>]+)">/;
+const secHeaders = (html: string): Record<string, string> => {
+  const m = DOC_CSP_RE.exec(html);
+  const csp = m && /script-src 'nonce-[0-9a-z]+'/.test(m[1]) ? m[1]
+    : "default-src 'none'; style-src 'unsafe-inline'; img-src data:; form-action 'self'; base-uri 'none'";
+  return {
+    "content-security-policy": `${csp}; frame-ancestors 'self'`,
+    "x-content-type-options": "nosniff",
+  };
+};
+
 const deny = (msg: string, status = 404) =>
   new Response(
     `<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><title>وثيق</title></head>
@@ -25,7 +45,8 @@ const deny = (msg: string, status = 404) =>
 <div style="text-align:center;max-width:420px;padding:24px"><div style="font-size:2rem">🔒</div>
 <h1 style="font-size:1.1rem">${msg}</h1>
 <p style="font-size:.85rem;color:#5C6B67">اطلب من مكتب إدارة الأملاك رابطًا محدّثًا.</p></div></body></html>`,
-    { status, headers: { "referrer-policy": "no-referrer", "content-type": "text/html; charset=utf-8", "x-robots-tag": "noindex" } },
+    { status, headers: { "referrer-policy": "no-referrer", "content-type": "text/html; charset=utf-8", "x-robots-tag": "noindex",
+      "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'", "x-content-type-options": "nosniff" } },
   );
 
 /* تحميل البيانات يرمي خطأً صريحًا (lib/fetch-all.ts) بدل كشف ناقص؛ المالك
@@ -59,8 +80,12 @@ async function render(_req: Request, { params }: { params: { token: string } }) 
 
   // فترة التقرير: الشهر الحالي حتى اليوم — «حي» يعني أرقام لحظة الفتح.
   // الرابط المجمّع يقبل ?from=YYYY-MM&to=YYYY-MM ليرى المالك أي فترة يشاء.
-  const now = new Date();
+  /* (30 سبتمبر 2026) يوم الرياض لا يوم الخادم (UTC): بين منتصف الليل والثالثة فجرًا
+     كان «الشهر الحالي» و«حتى اليوم» يُحسبان بتاريخ الأمس — وليلة أول الشهر يفتح
+     المالك رابطه على الشهر السابق. */
+  const todayR = today();
   const p2 = (n: number) => String(n).padStart(2, "0");
+  const dayNow = Number(todayR.slice(8, 10));
 
   /**
    * منتقي فترة للمالك داخل الصفحة.
@@ -78,7 +103,7 @@ async function render(_req: Request, { params }: { params: { token: string } }) 
     <span style="font-size:11px;color:#8A8477">الأرقام محدَّثة لحظة الفتح</span>
   </form>
 </div>`;
-  const ymNow = `${now.getFullYear()}-${p2(now.getMonth() + 1)}`;
+  const ymNow = todayR.slice(0, 7);
 
   // ---------- الرابط المجمّع: كل عقارات المالك (schema-v13) ----------
   /* نطاقان مجمَّعان يشتركان في العرض: كل عقارات المالك، أو قائمة مختارة */
@@ -93,7 +118,7 @@ async function render(_req: Request, { params }: { params: { token: string } }) 
     const from = `${fromYm}-01`;
     const [ty, tm] = [Number(toYm.slice(0, 4)), Number(toYm.slice(5, 7))];
     const toFull = `${toYm}-${p2(new Date(ty, tm, 0).getDate())}`;
-    const to = toYm === ymNow ? `${ymNow}-${p2(now.getDate())}` : toFull;
+    const to = toYm === ymNow ? `${ymNow}-${p2(dayNow)}` : toFull;
     const lab = (ym: string) => `${AR_MONTHS[Number(ym.slice(5, 7)) - 1]} ${ym.slice(0, 4)}`;
     const label = (fromYm === toYm ? lab(fromYm) : `${lab(fromYm)} — ${lab(toYm)}`) + (toYm === ymNow ? " (حتى اليوم)" : "");
 
@@ -152,6 +177,7 @@ async function render(_req: Request, { params }: { params: { token: string } }) 
     const withPicker = html.replace("<body>", `<body>${periodPicker(fromYm, toYm)}`);
   return new Response(withPicker, { headers: {
       "referrer-policy": "no-referrer", "content-type": "text/html; charset=utf-8", "x-robots-tag": "noindex, nofollow", "cache-control": "no-store",
+      ...secHeaders(html),
     } });
   }
 
@@ -172,7 +198,7 @@ async function render(_req: Request, { params }: { params: { token: string } }) 
   if (fromYm > toYm) return deny("الفترة غير صحيحة");
   const from = `${fromYm}-01`;
   const [ty2, tm2] = [Number(toYm.slice(0, 4)), Number(toYm.slice(5, 7))];
-  const to = toYm === ymNow ? `${ymNow}-${p2(now.getDate())}` : `${toYm}-${p2(new Date(ty2, tm2, 0).getDate())}`;
+  const to = toYm === ymNow ? `${ymNow}-${p2(dayNow)}` : `${toYm}-${p2(new Date(ty2, tm2, 0).getDate())}`;
   const label = fromYm === toYm
     ? `${AR_MONTHS[Number(fromYm.slice(5, 7)) - 1]} ${fromYm.slice(0, 4)}${toYm === ymNow ? " (حتى اليوم)" : ""}`
     : `${AR_MONTHS[Number(fromYm.slice(5, 7)) - 1]} ${fromYm.slice(0, 4)} — ${AR_MONTHS[Number(toYm.slice(5, 7)) - 1]} ${toYm.slice(0, 4)}`;
@@ -232,6 +258,7 @@ async function render(_req: Request, { params }: { params: { token: string } }) 
       // صفحة سرّية بالرمز: لا فهرسة ولا تخزين وسيط
       "x-robots-tag": "noindex, nofollow",
       "cache-control": "no-store",
+      ...secHeaders(html),
     },
   });
 }

@@ -15,6 +15,7 @@ import { today } from "@/lib/utils";
 import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase-client";
 import { getOffice } from "@/lib/office";
+import { HEADERS, templateRow, tenantTemplateCells } from "@/lib/importParse";
 
 const UNIT_AR: Record<string, string> = { apartment: "شقة", annex: "شقة ملحق", studio: "استديو", room: "غرفة", shop: "محل", office: "مكتب", warehouse: "مستودع", land: "أرض", villa: "فيلا", other: "أخرى" };
 
@@ -97,23 +98,20 @@ export default function ExportData() {
       };
 
       // 1) ورقة تُعاد إلى وثيق كما هي — بنفس أعمدة قالب الرفع وترتيبها
-      add("قالب الرفع", tenants.map((t) => ({
-        "اسم المستأجر": t.name, "رقم الوحدة": t.unit || "", "قيمة الدفعة": t.rent_amount,
-        "دورة السداد": FREQ_AR[t.payment_frequency] || t.payment_frequency || "شهري",
-        "بداية العقد": t.contract_start || "", "عدد الدفعات": t.contract_periods || "",
-        "الجوال": t.phone || "", "رقم الهوية": t.national_id || "",
-        "الدفعات المسدّدة": t.paid_periods || 0, "العقار": pName[t.property_id] || "",
-        "رقم العقد": t.contract_no || "",
-        "نوع الوحدة": UNIT_AR[t.unit_type] || "",
-        "الغرف": t.rooms ?? "", "دورات المياه": t.baths ?? "", "المكيفات": t.acs ?? "", "أول استحقاق": t.first_due || "", "الضريبة": t.vat_mode === "on" ? "تُطبَّق" : t.vat_mode === "off" ? "معفاة" : "تلقائي",
-        "حساب الكهرباء": t.elec_account || "", "حساب الماء": t.water_account || "",
-        /* الأعمدة الثلاثة الأخيرة تُكمل تطابق ورقة «قالب الرفع» مع القالب
-           الرسمي: من صدّر بياناته ثم أعاد رفعها كان يفقد التقويم والدين
-           المرحَّل — أي تعود عقوده الهجرية ميلادية وتختفي ديون سابقة. */
-        "التقويم": t.calendar === "hijri" ? "هجري" : "ميلادي",
-        "مدة العقد (أشهر)": "",
-        "دين مرحَّل": Number(t.carried_debt) || 0,
-      })), [22, 12, 12, 12, 12, 10, 14, 14, 12, 22, 16, 12, 8, 10, 10, 12, 10, 14, 14, 12, 16, 12]);
+      /* الترتيب من HEADERS نفسها (lib/importParse): كانت الورقة تكتب «رقم العقد»
+         مكان «حساب الكهرباء» وما بعده بترتيب آخر، والرفع القديم يقرأ بالموضع —
+         فتعود الضريبة والتقويم وأول استحقاق في خانات غيرها (30 سبتمبر 2026). */
+      {
+        const ws = XLSX.utils.aoa_to_sheet([HEADERS, ...tenants.map((t) => templateRow(tenantTemplateCells(t, pName[t.property_id] || "")))]);
+        /* الجوال والهوية والحسابات نصًّا: إكسل يحذف صفر الجوال من الرقم */
+        const textCols = [6, 7, 10, 11, 12];
+        for (let r = 1; r <= tenants.length; r++) for (const c of textCols) {
+          const cell = ws[XLSX.utils.encode_cell({ r, c })];
+          if (cell && cell.v !== "") { cell.t = "s"; cell.v = String(cell.v); cell.z = "@"; }
+        }
+        ws["!cols"] = [22, 12, 12, 12, 12, 10, 14, 14, 12, 22, 16, 16, 12, 12, 8, 10, 10, 12, 10, 10, 14, 12].map((w) => ({ wch: w }));
+        XLSX.utils.book_append_sheet(wb, ws, "قالب الرفع");
+      }
 
       add("العقارات", props.map((p) => ({
         "العقار": p.name, "النوع": p.property_type || "", "المدينة": p.city || "", "الحي/العنوان": p.address || "",
@@ -223,7 +221,7 @@ export default function ExportData() {
 
       if (assocs.length) {
         const aName: Record<string, string> = {}; assocs.forEach((a) => { aName[a.id] = a.name; });
-        add("جمعيات الملاك", assocs.map((a) => ({ "الجمعية": a.name, "المدينة": a.city || "", "الاشتراك الشهري": a.monthly_fee || "", "عدد الملاك": owners.filter((o) => o.association_id === a.id).length })));
+        add("جمعيات الملاك", assocs.map((a) => ({ "الجمعية": a.name, "المدينة": a.city || "", "الاشتراك الشهري": a.fee ?? a.monthly_fee ?? "", "عدد الملاك": owners.filter((o) => o.association_id === a.id).length })));
         /* أعمدة الملاك الحقيقية: الأشهر المتأخرة والجزئي — كانت الورقة تقرأ paid_periods
            و status (لا وجود لهما في الجدول) فتُصدّر «المسدَّد 0» لكل مالك، ويسقط
            دين الجمعيات من النسخة الاحتياطية. المتأخر بالريال بمعادلة كشف المالك. */

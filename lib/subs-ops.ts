@@ -24,7 +24,8 @@ export type SubAccount = SubProfile & {
 export type Stage = "expired" | "grace" | "due_today" | "due_soon" | "trial_ending" | "ok";
 
 export const STAGE_META: Record<Stage, { label: string; icon: string; rank: number; cls: string }> = {
-  expired:      { label: "انتهى وخرج من السماح", icon: "🔴", rank: 0, cls: "bg-[#FBE9E7] text-[#a5322c] border-[#F5C6C2]" },
+  /* 30 سبتمبر 2026: المرحلة تضمّ المشترك المنتهي والمجرِّب الذي لم يدفع قط — انظر expiredKind */
+  expired:      { label: "انتهى الاشتراك أو التجربة", icon: "🔴", rank: 0, cls: "bg-[#FBE9E7] text-[#a5322c] border-[#F5C6C2]" },
   grace:        { label: "في فترة السماح",       icon: "🟠", rank: 1, cls: "bg-[#FDECD2] text-[#9A4B00] border-[#F5CFA0]" },
   due_today:    { label: "ينتهي اليوم أو غدًا",   icon: "🟡", rank: 2, cls: "bg-[#FBF1DF] text-[#8a5a11] border-[#EAD9A8]" },
   due_soon:     { label: `ينتهي خلال ${SOON_DAYS} أيام`, icon: "🔵", rank: 3, cls: "bg-[#EEF4FB] text-[#2B5C8A] border-[#CFE0F0]" },
@@ -44,6 +45,15 @@ export function stageOf(a: SubAccount): { stage: Stage; days: number | null } {
   }
   if (s.trial && s.trialDaysLeft !== null && s.trialDaysLeft <= 7) return { stage: "trial_ending", days: s.trialDaysLeft };
   return { stage: s.trial ? "ok" : "expired", days: s.trialDaysLeft };
+}
+
+/**
+ * 30 سبتمبر 2026: مرحلة «expired» كانت تُعنوَن «انتهى وخرج من السماح» حتى لمجرِّب
+ * لم يدفع قط — فتبدو تجربة منتهية كأنها مشترك فُقد. التفريق بالباقة المدفوعة:
+ * «sub» اشتراك مدفوع انتهى وتجاوز السماح، «trial» تجربة انتهت بلا اشتراك.
+ */
+export function expiredKind(a: SubAccount): "sub" | "trial" {
+  return subState(a).planPaid ? "sub" : "trial";
 }
 
 /** قائمة العمل: من يحتاج تواصلًا اليوم، مرتَّبًا بالإلحاح */
@@ -117,6 +127,9 @@ export function renewalMessage(a: SubAccount, stage: Stage, days: number | null,
     case "grace":
       return `السلام عليكم ${who}\n\nانتهى اشتراكك، وأنت الحين في فترة السماح — باقي ${nDays(days)} وكل المزايا شغّالة.\nبعدها المستندات تطلع بعلامة «نسخة تجريبية» (بياناتك تبقى كاملة ولا يضيع منها شي).${size}\n\nقل لي وأجدّده لك اليوم.${bank}`;
     case "expired":
+      /* 30 سبتمبر 2026: المجرِّب الذي لم يشترك لا يُقال له «اشتراكك منتهي» */
+      if (expiredKind(a) === "trial")
+        return `السلام عليكم ${who}\n\nانتهت تجربتك المجانية في وثيق، والمستندات صارت تطلع بعلامة «نسخة تجريبية».\nبياناتك كلها محفوظة زي ما هي — يوم تشترك يرجع كل شي في ثانية.${size}\n\nتحب أجهّز لك الاشتراك؟ ولا فيه شي ما ناسبك في النظام؟ قل لي بصراحة وأنا أستفيد.${bank}`;
       return `السلام عليكم ${who}\n\nاشتراكك منتهي من فترة، والمستندات صارت تطلع بعلامة «نسخة تجريبية».\nبياناتك كلها محفوظة زي ما هي — يوم تجدّد يرجع كل شي في ثانية.${size}\n\nتحب نجدّد؟ ولا فيه شي ما ناسبك في النظام؟ قل لي بصراحة وأنا أستفيد.${bank}`;
     case "trial_ending":
       return `السلام عليكم ${who}\n\nتجربتك المجانية تنتهي بعد ${nDays(days)}.${size}\n\nكيف كانت التجربة؟ وإذا فيه شي ناقص قل لي وأضبطه.\nوإن ناسبك النظام أجهّز لك الاشتراك.${bank}`;
@@ -143,7 +156,13 @@ export function subsDigest(accounts: SubAccount[]): string | null {
     `• <b>${esc(x.a.org_name || x.a.full_name || "حساب")}</b>${x.a.units ? ` — ${x.a.units} وحدة` : ""}${x.days !== null ? ` — ${x.stage === "expired" ? nDays(x.days) : `باقٍ ${nDays(x.days)}`}` : ""}`;
 
   const parts: string[] = ["💳 <b>الاشتراكات — تحتاج تواصلًا</b>"];
-  ([["expired", "انتهت وخرجت من السماح"], ["grace", "في فترة السماح"],
+  /* 30 سبتمبر 2026: «انتهى الاشتراك» (دفع ثم خرج من السماح) منفصل عن «انتهت التجربة» (لم يدفع قط) */
+  const exp = group("expired");
+  const expSub = exp.filter((x) => expiredKind(x.a) === "sub");
+  const expTrial = exp.filter((x) => expiredKind(x.a) === "trial");
+  if (expSub.length) parts.push("", `${STAGE_META.expired.icon} <b>انتهى الاشتراك وخرج من السماح (${expSub.length})</b>`, ...expSub.slice(0, 8).map(line));
+  if (expTrial.length) parts.push("", `⚪ <b>انتهت التجربة دون اشتراك (${expTrial.length})</b>`, ...expTrial.slice(0, 8).map(line));
+  ([["grace", "في فترة السماح"],
     ["due_today", "تنتهي اليوم أو غدًا"], ["due_soon", `تنتهي خلال ${SOON_DAYS} أيام`],
     ["trial_ending", "تجارب تنتهي قريبًا"]] as [Stage, string][])
     .forEach(([st, title]) => {

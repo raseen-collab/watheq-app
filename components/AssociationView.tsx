@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase-client";
 import { officeId } from "@/lib/office";
-import { sar, daysLeft, waLink, WATHEQ_WA, today, openExternal, daysAr } from "@/lib/utils";
+import { sar, daysLeft, waLink, WATHEQ_WA, today, openExternal, daysAr, csvCell } from "@/lib/utils";
 import { ownerStatementHTML, associationStatementHTML, budgetHTML, foundingMinutesHTML,
   renewalMinutesHTML, DEFAULT_BUDGET_ITEMS, openDoc, type BudgetItem } from "@/lib/documents";
 import DateField from "@/components/DateField";
@@ -254,9 +254,9 @@ export default function AssociationView({ initial, issuer }: { initial: Associat
       return [o.name, o.unit || "", o.phone || "", o.months_late,
         Math.max(0, o.months_late * fee - (Number(o.partial_amount) || 0)),
         Number(o.partial_amount) || 0, o.last_paid || "", OWNER_META[k].label]
-        .map((v) => `"${String(v ?? "").replace(/"/g, '""')}"`).join(",");
+        .map(csvCell).join(",");   /* csvCell: يمنع حقن المعادلات في Excel (30 سبتمبر 2026) */
     });
-    const csv = "\uFEFF" + [head.join(","), ...lines].join("\r\n");
+    const csv = "\uFEFF" + [head.map(csvCell).join(","), ...lines].join("\r\n");
     const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
     const aEl = document.createElement("a");
     aEl.href = url; aEl.download = `ملاك-${active.name}-${today()}.csv`;

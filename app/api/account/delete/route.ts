@@ -48,10 +48,31 @@ export async function POST(req: Request) {
 
   try {
     // (2) صور المعروضات في التخزين — مجلدها باسم معرّف المستخدم
+    /* 30 سبتمبر 2026: الصور محفوظة في uid/<معرّف المعروض>/… — list(uid) يُرجع
+       المجلدات الفرعية لا الملفات، فكان remove يُمرَّر أسماء مجلدات فلا يُحذف شيء
+       وتبقى صور المستأجرين والعقارات بعد «حذف الحساب». نمشي الشجرة كلها. */
     try {
-      const { data: files } = await db.storage.from("listing-photos").list(uid, { limit: 1000 });
-      const paths = (files || []).map((f) => `${uid}/${f.name}`);
-      if (paths.length) await db.storage.from("listing-photos").remove(paths);
+      const bucket = db.storage.from("listing-photos");
+      const paths: string[] = [];
+      const walk = async (dir: string, depth: number): Promise<void> => {
+        if (depth > 5) return;                                   // حارس ضد شجرة غير متوقعة
+        for (let offset = 0; ; offset += 1000) {
+          const { data: entries, error } = await bucket.list(dir, { limit: 1000, offset });
+          if (error) throw error;
+          for (const f of entries || []) {
+            const full = `${dir}/${f.name}`;
+            // المجلد في Supabase Storage بلا id ولا metadata
+            if (!f.id && !f.metadata) await walk(full, depth + 1);
+            else paths.push(full);
+          }
+          if (!entries || entries.length < 1000) break;
+        }
+      };
+      await walk(uid, 0);
+      for (let i = 0; i < paths.length; i += 1000) {
+        const { error } = await bucket.remove(paths.slice(i, i + 1000));
+        if (error) console.error("account deletion: photo remove failed", uid, error.message);
+      }
     } catch { /* لا صور، أو الحاوية غير موجودة */ }
 
     // (3) الجداول التابعة للعقار/الجمعية أولًا (مفاتيحها إلى الأب)، ثم الأب

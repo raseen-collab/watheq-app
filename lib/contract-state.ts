@@ -51,11 +51,21 @@ export const UNIT_STATUS_LABEL: Record<UnitStatus, string> = {
   vacant: "شاغرة", litigation: "في التنفيذ", late: "متأخر", partial: "سداد جزئي", incomplete: "بيانات ناقصة",
   due: "مستحق", soon: "قريب", expiring: "ينتهي قريبًا", ok: "منتظم",
 };
-export function unitStatus(t: any, st: { incomplete?: boolean; status: string; hasPartial?: boolean; soonTier?: string | null; expiringSoon?: boolean; daysToEnd?: number | null }): UnitStatus {
+/**
+ * (30 سبتمبر 2026) «سداد جزئي» فقط حين يكون المتأخر الوحيد هو القسط المسدَّد جزئيًّا.
+ * كان أي جزئي يحوّل الوحدة من «متأخر» إلى «سداد جزئي»: مستأجر عليه ثلاثة أقساط
+ * دفع 500 من أولها خرج من فلتر «متأخر» بينما إجمالي المتأخر في الرأس يعدّه.
+ * بلا `unpaid` (مستدعٍ قديم) يبقى السلوك السابق.
+ */
+export function isPartialOnly(st: { status?: string; hasPartial?: boolean; unpaid?: number | null }): boolean {
+  if (st.status !== "late" || !st.hasPartial) return false;
+  return st.unpaid == null ? true : Number(st.unpaid) <= 1;
+}
+export function unitStatus(t: any, st: { incomplete?: boolean; status: string; hasPartial?: boolean; unpaid?: number | null; soonTier?: string | null; expiringSoon?: boolean; daysToEnd?: number | null }): UnitStatus {
   if (isVacant(t)) return "vacant";
   if (st.incomplete) return "incomplete";
   if (t?.litigation) return "litigation";
-  if (st.status === "late") return st.hasPartial ? "partial" : "late";
+  if (st.status === "late") return isPartialOnly(st) ? "partial" : "late";
   if (st.status === "soon") return st.soonTier === "near" ? "soon" : "due";
   /* عقد انتهى ولم يُسجَّل إخلاء ولا تجديد: كان «منتظم» أخضر، وفلتر التجديد لا يعدّه */
   if (st.expiringSoon || (st.daysToEnd != null && st.daysToEnd < 0)) return "expiring";

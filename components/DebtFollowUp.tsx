@@ -12,7 +12,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase-client";
-import { contractState } from "@/lib/contracts";
+import { contractState, withVat } from "@/lib/contracts";
 import { waLink, openExternal, daysAr } from "@/lib/utils";
 
 const sar = (n: number) => Math.round(Number(n) || 0).toLocaleString("en-US");
@@ -29,7 +29,10 @@ type Row = {
   debt_note: string | null; status: string | null; property_id: string;
   property_name?: string;
   source?: "unit" | "past"; _legacy?: number; _carried?: number; legacyFlag?: boolean;
+  /** متأخرات الشاغرة قبل الضريبة — بوحدة عدّاد الأقساط التي تسجّل بها watheq_record_payment */
+  _legacyBase?: number;
 };
+const r2 = (n: number) => Math.round((Number(n) || 0) * 100) / 100;
 
 const STATUS: Record<string, { label: string; cls: string; hint: string }> = {
   open:        { label: "مفتوح",            cls: "bg-[#FBE9E7] text-[#a5322c] border-[#F5C6C2]", hint: "لم تبدأ متابعته بعد" },
@@ -78,33 +81,48 @@ export default function DebtFollowUp({ properties, orgName, onClose, db }: {
 
   useEffect(() => {
     let alive = true;
-    supabase.from("tenants")
-      /**
-       * كان يقرأ «carried_debt» وحده فيعطي صفرًا بينما شقة شاغرة عليها
-       * 12,000 موسومة «على المستأجر السابق» — ذاك مبلغ آخر (متأخرات لم
-       * تُرحَّل بعد، تُحسب من حالة العقد لا من عمود). نجلب الشاغرة كذلك
-       * ونحسب متأخراتها هنا.
-       */
-      .select("id,name,unit,phone,carried_debt,debt_since,debt_status,debt_note,status,property_id,rent_amount,payment_frequency,contract_start,contract_periods,paid_periods,partial_amount,calendar,move_out_date")
-      .or("carried_debt.gt.0,status.eq.vacated").limit(5000)
-      .then(({ data, error }: any) => {
+    /**
+     * كان يقرأ «carried_debt» وحده فيعطي صفرًا بينما شقة شاغرة عليها
+     * 12,000 موسومة «على المستأجر السابق» — ذاك مبلغ آخر (متأخرات لم
+     * تُرحَّل بعد، تُحسب من حالة العقد لا من عمود). نجلب الشاغرة كذلك
+     * ونحسب متأخراتها هنا.
+     *
+     * (30 سبتمبر 2026) وبكل ما تحتاجه حالة العقد: بلا first_due وbilling_anchor_day
+     * وcontract_end كانت المتأخرات تُعدّ من بداية العقد (3,000 هنا و5,000 في
+     * صفحة العقار)، وبلا إعدادات ضريبة العقار كانت تُعرض قبل الضريبة في وضع
+     * «مضافة فوق الإيجار» — والصفحة والكشف يطالبان بها شاملة.
+     */
+    const ids = properties.map((p) => p.id);
+    Promise.all([
+      supabase.from("tenants")
+        .select("id,name,unit,phone,carried_debt,debt_since,debt_status,debt_note,status,property_id,rent_amount,payment_frequency,contract_start,contract_end,contract_periods,paid_periods,partial_amount,calendar,move_out_date,first_due,billing_anchor_day,unit_type,vat_mode")
+        .or("carried_debt.gt.0,status.eq.vacated").limit(5000),
+      ids.length
+        ? supabase.from("properties").select("id,vat_enabled,vat_rate,vat_inclusive,property_type").in("id", ids)
+        : Promise.resolve({ data: [], error: null }),
+    ]).then(([{ data, error }, { data: props, error: pErr }]: any) => {
         if (!alive) return;
         if (error) {
           setErr(/column|does not exist/i.test(error.message) ? "شغّل schema-v36 في قاعدة البيانات أولًا." : error.message);
           setRows([]); return;
         }
+        /* بلا إعدادات الضريبة لا نعرض رقمًا قد ينقص الضريبة بصمت */
+        if (pErr) setErr("تعذّر قراءة إعدادات الضريبة للعقارات — المبالغ المعروضة قبل الضريبة: " + pErr.message);
+        const propOf: Record<string, any> = Object.fromEntries((props || []).map((p: any) => [p.id, p]));
         /* لكل صفّ: الدين المرحَّل + متأخرات المستأجر السابق إن كانت شاغرة */
         setRows((data || []).map((x: any) => {
           const carried = Number(x.carried_debt) || 0;
-          let legacy = 0;
+          let legacyBase = 0;
           if (String(x.status) === "vacated") {
-            try { legacy = Math.max(0, contractState(x as any, {}).legacyArrears || 0); } catch { legacy = 0; }
+            try { legacyBase = Math.max(0, contractState(x as any, {}).legacyArrears || 0); } catch { legacyBase = 0; }
           }
-          return { ...x, carried_debt: carried + legacy, _legacy: legacy,
+          /* الدين المرحَّل مخزَّن شاملًا (يُرحَّل كذلك)؛ المتأخرات بوحدة الإيجار فتُضاف ضريبتها */
+          const legacy = r2(withVat(legacyBase, x, propOf[x.property_id]));
+          return { ...x, carried_debt: r2(carried + legacy), _legacy: legacy, _legacyBase: r2(legacyBase),
                    property_name: nameOf[x.property_id] || "—" };
         }).filter((x: any) => Number(x.carried_debt) > 0).map((x: any) => ({
           ...x, source: "unit" as const,
-          _carried: Math.max(0, Number(x.carried_debt) - (Number(x._legacy) || 0)),
+          _carried: r2(Math.max(0, Number(x.carried_debt) - (Number(x._legacy) || 0))),
         })));
         /* الأرشيف (v45) — قبل الترحيل لا جدول، فالخطأ يُتجاهَل */
         supabase.from("past_tenancies")
@@ -126,7 +144,7 @@ export default function DebtFollowUp({ properties, orgName, onClose, db }: {
           });
       });
     return () => { alive = false; };
-  }, [supabase, nameOf]);
+  }, [supabase, nameOf, properties]);
 
   async function save(r: Row) {
     setBusy(true); setErr(null);
@@ -172,7 +190,12 @@ export default function DebtFollowUp({ properties, orgName, onClose, db }: {
     } else {
       /* صفّ وحدة: المتأخرات (أقساط) أولًا ثم الدين المرحَّل */
       const toRent = Math.min(amt, Number(r._legacy) || 0), toCarried = Math.round((amt - toRent) * 100) / 100;
-      if (toRent > 0) ({ error } = await supabase.rpc("watheq_record_payment", { p_tenant: r.id, p_amount: toRent, p_paid_on: on.trim(), p_method: "transfer" }));
+      /* (30 سبتمبر 2026) المتأخرات معروضة شاملة الضريبة، وعدّاد الأقساط بوحدة الإيجار
+         (قبل الضريبة في «مضافة فوق الإيجار») — كما يسجّل زر الاستلام في صفحة العقار.
+         تسجيل المبلغ الشامل كان يقدّم العدّاد بأكثر مما سُدّد. */
+      const leg = Number(r._legacy) || 0, legBase = Number(r._legacyBase ?? r._legacy) || 0;
+      const toRentBase = toRent >= leg - 0.005 ? legBase : (leg > 0 ? r2(toRent * legBase / leg) : 0);
+      if (toRentBase > 0) ({ error } = await supabase.rpc("watheq_record_payment", { p_tenant: r.id, p_amount: toRentBase, p_paid_on: on.trim(), p_method: "transfer" }));
       if (!error && toCarried > 0) {
         ({ error } = await supabase.rpc("watheq_record_carried_payment", { p_tenant: r.id, p_amount: toCarried, p_paid_on: on.trim() }));
         /* (مراجعة 29 سبتمبر 2026) عمليتان منفصلتان: إن سُجّل شقّ الأقساط وفشل شقّ الدين
@@ -189,21 +212,43 @@ export default function DebtFollowUp({ properties, orgName, onClose, db }: {
       ? "تسجيل السداد يحتاج تحديث قاعدة البيانات — شغّل schema-v45 أولًا." : error.message);
     const left = Math.round((r.carried_debt - recorded) * 100) / 100;
     setRows((cur) => (cur || []).map((x) => (x.id === r.id && x.source === r.source
-      ? { ...x, carried_debt: left, _legacy: Math.max(0, (Number(x._legacy) || 0) - recorded),
+      ? { ...x, carried_debt: left,
+          ...(() => { /* ما ذهب للأقساط أولًا ثم للمرحَّل — كما سُجّل فعلًا */
+            const legNow = Number(x._legacy) || 0, toLeg = Math.min(recorded, legNow), legLeft = r2(legNow - toLeg);
+            const baseNow = Number(x._legacyBase ?? legNow) || 0;
+            return { _legacy: legLeft, _legacyBase: legNow > 0 ? r2(baseNow * legLeft / legNow) : 0,
+                     _carried: r2(Math.max(0, (Number(x._carried) || 0) - (recorded - toLeg))) };
+          })(),
           debt_status: left <= 0.005 ? "settled" : x.debt_status } : x)).filter((x) => x.carried_debt > 0.005));
   }
 
+  /**
+   * (30 سبتمبر 2026) الشطب صادق مع ما تشطبه الدالة فعلًا.
+   * watheq_write_off_carried تشطب الدين المرحَّل وحده، بينما كانت الشاشة تُزيل الصفّ
+   * كاملًا — ومعه متأخرات المستأجر السابق التي بقيت في القاعدة وتعود عند التحديث.
+   * ومتأخرات الشاغرة وحدها كانت تُرجع «لا دين مرحَّل». الآن: يُعرض شطب الجزء
+   * المرحَّل بمبلغه، والمتأخرات تُسوّى بمسارها (إعادة تأجير الوحدة ⟵ أرشيف باسمه).
+   */
   async function writeOff(r: Row) {
-    const why = prompt(`شطب ${sar(r.carried_debt)} ريال على ${r.name}\n\nلا يُسجَّل نقد — تنازلٌ عن الدين. اذكر السبب (يُحفظ في السجل):`);
+    const amount = r.source === "past" ? r.carried_debt : r2(Number(r._carried) || 0);
+    if (amount <= 0) return setErr("لا دين مرحَّل على هذه الوحدة — متأخرات المستأجر السابق تُسوّى بإعادة تأجير الوحدة.");
+    const why = prompt(`شطب ${sar(amount)} ريال على ${r.name}${r.source === "unit" && (Number(r._legacy) || 0) > 0
+      ? `\n(الدين المرحَّل وحده — متأخرات المستأجر السابق ${sar(Number(r._legacy))} تبقى)` : ""}\n\nلا يُسجَّل نقد — تنازلٌ عن الدين. اذكر السبب (يُحفظ في السجل):`);
     if (why === null) return;
     if (!why.trim()) return setErr("اذكر سبب الشطب.");
     setBusy(true); setErr(null);
     const { error } = r.source === "past"
       ? await supabase.rpc("watheq_set_past_debt", { p_past: r.id, p_status: "written_off", p_note: why.trim() })
-      : await supabase.rpc("watheq_write_off_carried", { p_tenant: r.id, p_note: why.trim() });
+      /* المبلغ صريحًا (v48): يُشطب ما رآه المكتب بالضبط، لا ما صار في القاعدة بعده */
+      : await supabase.rpc("watheq_write_off_carried", { p_tenant: r.id, p_note: why.trim(), p_amount: amount });
     setBusy(false);
     if (error) return setErr(error.message);
-    setRows((cur) => (cur || []).filter((x) => !(x.id === r.id && x.source === r.source)));
+    setRows((cur) => (cur || []).map((x) => {
+      if (!(x.id === r.id && x.source === r.source)) return x;
+      if (x.source === "past") return { ...x, debt_status: "written_off" };
+      const left = r2(Number(x.carried_debt) - (Number(x._carried) || 0));
+      return { ...x, carried_debt: left, _carried: 0 };
+    }).filter((x) => x.source === "past" ? true : x.carried_debt > 0.005));
   }
 
   const shown = (rows || [])
@@ -333,10 +378,15 @@ export default function DebtFollowUp({ properties, orgName, onClose, db }: {
                           <button className="btn btn-primary text-xs" disabled={busy} onClick={() => recordPayment(r)}>
                             ✔ سجّل سدادًا
                           </button>
-                          {!(r.source === "unit" && (Number(r._legacy) || 0) > 0 && !(Number(r._carried) || 0)) && (
+                          {(r.source === "past" || (Number(r._carried) || 0) > 0) && (
                             <button className="btn btn-ghost text-xs text-late" disabled={busy} onClick={() => writeOff(r)}>
-                              شطب
+                              {r.source === "unit" && (Number(r._legacy) || 0) > 0 ? `شطب المرحَّل (${sar(Number(r._carried))})` : "شطب"}
                             </button>
+                          )}
+                          {r.source === "unit" && (Number(r._legacy) || 0) > 0 && (
+                            <span className="text-[11px] text-muted self-center basis-full">
+                              متأخرات المستأجر السابق ({sar(Number(r._legacy))}) تُسوّى بإعادة تأجير الوحدة: تُؤرشف باسمه، ثم تُحصَّل أو تُشطب من هنا.
+                            </span>
                           )}
                         </div>
                       )}
@@ -348,7 +398,7 @@ export default function DebtFollowUp({ properties, orgName, onClose, db }: {
         </div>
 
         <div className="border-t border-line bg-white px-3 py-2.5 text-[11px] text-muted leading-relaxed">
-          «صفّر الدين» للمسدَّد أو المشطوب — يختفي من هنا ومن بطاقة الوحدة.
+          المسدَّد بالكامل يختفي من هنا تلقائيًّا، والمشطوب يبقى في فلتر «مشطوب» بسببه.
           والدين الذي مضى عليه أكثر من سنة يظهر بالأحمر: فرصة تحصيله تقلّ كلما تأخّرت.
         </div>
       </div>

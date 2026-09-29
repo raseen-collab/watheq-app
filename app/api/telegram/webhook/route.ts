@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import * as Sentry from "@sentry/nextjs";
 import { subState } from "@/lib/subscription";
 import { createClient } from "@supabase/supabase-js";
 import { tgSend, tgEdit, tgAnswer, navButtons, TgKeyboard } from "@/lib/telegram";
@@ -202,7 +203,7 @@ async function showPayList(db: DB, chatId: number, messageId: number, p: any, sc
   const rows = await getUnpaid(db, p, scope);
   if (!rows.length) return tgEdit(chatId, messageId, "لا توجد دفعات غير مسدّدة في هذا القسم ✅", reportButtons(scope));
   const buttons: TgKeyboard = rows.slice(0, 15).map((r) => [
-    { text: `${r.unit} — ${sar(r.amount)} ريال — ${r.due}`, callback_data: `pay:${scope}:${r.id}` },
+    { text: [r.unit, `${sar(r.amount)} ريال`, r.due].filter(Boolean).join(" — "), callback_data: `pay:${scope}:${r.id}` },
   ]);
   buttons.push(backBtn(scope));
   return tgEdit(chatId, messageId, "اختر الدفعة لتسجيلها <b>كمدفوعة</b>:", buttons);
@@ -212,6 +213,15 @@ async function showPayList(db: DB, chatId: number, messageId: number, p: any, sc
 async function confirmPay(db: DB, chatId: number, messageId: number, p: any, scope: string, id: string) {
   const row = (await getUnpaid(db, p, scope)).find((r) => r.id === id);
   if (!row) return tgEdit(chatId, messageId, "لم تُعثر على الدفعة (ربما سُجّلت).", reportButtons(scope));
+  /* 30 سبتمبر 2026: مالك الجمعية لا بطاقة عقد له (contractCard ⇒ null)، فكان الزرّان
+     يعرضان كامل المتأخر بينما التسجيل شهر واحد. للجمعيات زرّ واحد بالاشتراك الفعلي. */
+  if (row.kind === "owner") {
+    const fee = Number(row.fee) || 0;
+    if (fee <= 0) return tgEdit(chatId, messageId, "قيمة الاشتراك الشهري غير محدّدة لهذه الجمعية — اضبطها من اللوحة.", [backBtn(scope)]);
+    return tgEdit(chatId, messageId,
+      `تأكيد تسجيل اشتراك:\n\n<b>${esc(row.unit)}</b> — ${esc(row.tenant)}\nالمتأخر: <b>${sar(row.amount)}</b> ريال\n\nيُسجَّل اشتراك شهر واحد ويُضاف لرصيد الصندوق.`,
+      [[{ text: `✅ اشتراك شهر (${sar(fee)})`, callback_data: `payok:${scope}:${id}:one` }], backBtn(scope)]);
+  }
   /* كان يُعرض «المبلغ: كامل المتأخر» (7,500) ثم يُسجَّل قسط واحد (2,500) — فيظن صاحب
      المكتب أنه سوّى المتأخرات. الآن خياران صريحان بمبلغيهما. */
   const card = await contractCard(db, p, id);
@@ -222,14 +232,15 @@ async function confirmPay(db: DB, chatId: number, messageId: number, p: any, sco
     ...(all > rent + 0.5 ? [[{ text: `✅ كامل المتأخر (${sar(all)})`, callback_data: `payok:${scope}:${id}:all` }]] : []),
     backBtn(scope),
   ];
-  return tgEdit(chatId, messageId, `تأكيد تسجيل دفعة:\n\n<b>${row.unit}</b> — ${row.tenant}\n${scope === "late" ? `المتأخر: <b>${sar(row.amount)}</b> ريال` : `المبلغ: <b>${sar(row.amount)}</b> ريال`} · الاستحقاق: ${row.due}\n\nكم استلمت؟`, buttons);
+  /* 30 سبتمبر 2026: الوحدة واسم المستأجر نصّ حرّ — بلا تهريب يرفض تليجرام التعديل كله */
+  return tgEdit(chatId, messageId, `تأكيد تسجيل دفعة:\n\n<b>${esc(row.unit)}</b> — ${esc(row.tenant)}\n${scope === "late" ? `المتأخر: <b>${sar(row.amount)}</b> ريال` : `المبلغ: <b>${sar(row.amount)}</b> ريال`}${row.due ? ` · الاستحقاق: ${esc(row.due)}` : ""}\n\nكم استلمت؟`, buttons);
 }
 
 /** تنفيذ التسجيل ثم تحديث التقرير */
 async function doPay(db: DB, chatId: number, messageId: number, p: any, scope: string, id: string, mode: string) {
   const res = await markPaid(db, p, id, mode === "all" ? "all" : "one");
   const rep = await buildReport(db, p, scope);
-  const banner = res.ok ? `✅ ${res.msg}` : `⚠️ ${res.msg}`;
+  const banner = res.ok ? `✅ ${esc(res.msg)}` : `⚠️ ${esc(res.msg)}`;
   return tgEdit(chatId, messageId, `${banner}\n\n${rep}`, reportButtons(scope));
 }
 
@@ -287,6 +298,8 @@ async function handleCallback(db: DB, cq: any) {
   const [action, a1, a2, a3] = data.split(":");
   switch (action) {
     case "cmd": {
+      /* 30 سبتمبر 2026: زرّ «⬅︎ القائمة» (cmd:menu) كان يسقط إلى buildReport فيفتح تقرير اليوم */
+      if (a1 === "menu") return tgEdit(chatId, messageId, "اختر من القائمة:", reportButtons("late"));
       const rep = await buildReport(db, p, a1);
       return tgEdit(chatId, messageId, rep, reportButtons(a1));
     }
@@ -327,6 +340,8 @@ export async function POST(req: Request) {
     else if (update.callback_query) await handleCallback(db, update.callback_query);
   } catch (e) {
     console.error("telegram webhook error:", e);
+    // 30 سبتمبر 2026: كان يُبتلع — المكتب يرى زرًّا لا يستجيب ولا نعرف لماذا
+    Sentry.captureException(e, { tags: { job: "telegram-webhook" } });
   }
   return NextResponse.json({ ok: true });
 }
@@ -348,11 +363,11 @@ function statusButtons(): TgKeyboard {
 /** نصّ بطاقة العقد */
 function cardText(c: any): string {
   const s = c.state;
-  const L = [`${s.dot} <b>${escHtml(c.label)}</b>`, `المستأجر: ${escHtml(c.tenant)}`, `الحالة: <b>${s.label}</b>`];
+  const L = [`${s.dot} <b>${escHtml(c.label)}</b>`, `المستأجر: ${escHtml(c.tenant)}`, `الحالة: <b>${escHtml(s.label)}</b>`];
   if (s.key === "arrears") L.push(`المتأخر المتراكم: <b>${sar(s.owed)}</b> ريال`);
-  if (s.key === "due_soon") L.push(s.nextDue ? `الدفعة القادمة: ${s.nextDue}` : "");
-  if (s.key === "expiring" && s.daysToEnd != null) L.push(`ينتهي خلال ${s.daysToEnd} يوم (${s.endDate})`);
-  if (s.key === "active") L.push(s.nextDue ? `الدفعة القادمة: ${s.nextDue}` : "الدفعات منتظمة ✅");
+  if (s.key === "due_soon") L.push(s.nextDue ? `الدفعة القادمة: ${escHtml(s.nextDue)}` : "");
+  if (s.key === "expiring" && s.daysToEnd != null) L.push(`ينتهي خلال ${s.daysToEnd} يوم (${escHtml(s.endDate)})`);
+  if (s.key === "active") L.push(s.nextDue ? `الدفعة القادمة: ${escHtml(s.nextDue)}` : "الدفعات منتظمة ✅");
   if (s.key === "litigation") L.push("⚠️ الإشعارات الودية مجمّدة — تابع طلب التنفيذ في «ناجز».");
   return L.filter(Boolean).join("\n");
 }
@@ -377,13 +392,13 @@ function cardButtons(c: any): TgKeyboard {
 async function showState(db: DB, chatId: number, messageId: number, p: any, key: string) {
   const cards = await contractsInState(db, p, key);
   if (!cards.length) {
-    return tgEdit(chatId, messageId, `لا توجد عقود في حالة «${stateLabel(key as any)}» ✅`, [[{ text: "⬅️ رجوع", callback_data: "back:status" }]]);
+    return tgEdit(chatId, messageId, `لا توجد عقود في حالة «${esc(stateLabel(key as any))}» ✅`, [[{ text: "⬅️ رجوع", callback_data: "back:status" }]]);
   }
   const buttons: TgKeyboard = cards.slice(0, 15).map((c) => [
     { text: `${c.state.dot} ${c.label} — ${c.tenant}`, callback_data: `card:${key}:${c.tenantId}` },
   ]);
   buttons.push([{ text: "⬅️ رجوع", callback_data: "back:status" }]);
-  return tgEdit(chatId, messageId, `عقود «${stateLabel(key as any)}»:`, buttons);
+  return tgEdit(chatId, messageId, `عقود «${esc(stateLabel(key as any))}»:`, buttons);
 }
 
 /** بطاقة عقد واحد */
@@ -460,7 +475,7 @@ async function confirmPayTenant(db: DB, chatId: number, messageId: number, p: an
 async function doPayTenant(db: DB, chatId: number, messageId: number, p: any, tenantId: string, mode: string) {
   const res = await payTenantOldest(db, p, tenantId, mode === "all" ? "all" : "one");
   const c = await contractCard(db, p, tenantId);
-  const banner = res.ok ? `✅ ${res.msg}` : `⚠️ ${res.msg}`;
+  const banner = res.ok ? `✅ ${esc(res.msg)}` : `⚠️ ${esc(res.msg)}`;
   if (!c) return tgEdit(chatId, messageId, banner, statusButtons());
   return tgEdit(chatId, messageId, `${banner}\n\n${cardText(c)}`, cardButtons(c));
 }
@@ -480,7 +495,7 @@ async function confirmRenew(db: DB, chatId: number, messageId: number, p: any, t
 async function doRenew(db: DB, chatId: number, messageId: number, p: any, tenantId: string) {
   const res = await renewContract(db, p, tenantId);
   const c = await contractCard(db, p, tenantId);
-  const banner = res.ok ? `✅ ${res.msg}` : `⚠️ ${res.msg}`;
+  const banner = res.ok ? `✅ ${esc(res.msg)}` : `⚠️ ${esc(res.msg)}`;
   if (!c) return tgEdit(chatId, messageId, banner, statusButtons());
   return tgEdit(chatId, messageId, `${banner}\n\n${cardText(c)}`, cardButtons(c));
 }

@@ -1,116 +1,20 @@
 "use client";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase-client";
-import { derivedEndDate, FREQUENCIES, parseDate, firstDueGap, type Frequency } from "@/lib/contracts";
+import { derivedEndDate, FREQUENCIES, parseDate } from "@/lib/contracts";
 import { typeIcon, unitLabel } from "@/lib/domain";
 import { sar, openExternal, today } from "@/lib/utils";
-import { parseHijriInput, hijriShort } from "@/lib/hijri";
+import { hijriShort } from "@/lib/hijri";
 import { waLink, WATHEQ_WA } from "@/lib/utils";
 
-type Prop = { id: string; name: string; property_type: string | null };
-type Row = {
-  name: string; unit: string; rent_amount: number; phone: string; national_id: string;
-  contract_start: string; payment_frequency: Frequency; contract_periods: number | null;
-  paid_periods: number;
-  elec_account?: string; water_account?: string; contract_no?: string; calendar?: string;
-  unit_type?: string; rooms?: number; baths?: number; acs?: number; first_due?: string; vat_mode?: string; carried_debt?: number;
-  prop_name?: string;
-  prop_id?: string;
-  _error?: string;
-  /** تنبيه لا يمنع الرفع: بداية مستقبلية بلا دفعات — غالبًا موعد الدفعة القادمة لا بداية العقد */
-  _warn?: string;
-  /** «أول استحقاق» يختلف عن بداية العقد — يُسأل عنه المكتب قبل الحفظ (30 سبتمبر 2026) */
-  _due?: string;
-};
+import {
+  HEADERS, NOTE_HEADER, EXAMPLE_MARK, parseCSV, gridFromSheetRows, parseGrid, markExisting, unitKey,
+  type Prop, type Row, type ColumnInfo,
+} from "@/lib/importParse";
 
-// العمود التاسع «الدفعات المسدّدة» اختياري: بدونه يُعدّ العقد لم يُسدَّد منه شيء —
-// وهذا كارثة لمكتب ينقل عقودًا قائمة (عقد من يناير يُرفع في سبتمبر = 8 «متأخرات» وهمية).
-// القوالب القديمة بثمانية أعمدة تبقى تعمل: الغائب = 0.
-const HEADERS = ["اسم المستأجر", "رقم الوحدة", "قيمة الدفعة", "دورة السداد", "بداية العقد", "عدد الدفعات", "الجوال", "رقم الهوية", "الدفعات المسدّدة", "العقار", "حساب الكهرباء", "حساب الماء", "رقم العقد", "نوع الوحدة", "الغرف", "دورات المياه", "المكيفات", "أول استحقاق", "الضريبة", "التقويم", "مدة العقد (أشهر)", "دين مرحَّل"];
-// عمود عاشر اختياري «العقار»: ملف واحد لكل المحفظة بدل ملف لكل عقار — مكتب بـ40
-// عقارًا لا يرفع 40 مرة. الاسم يجب أن يطابق عقارًا موجودًا؛ الصف الفارغ يذهب للعقار المختار.
-
-const FREQ_MAP: Record<string, Frequency> = {
-  "يومي": "daily", "اسبوعي": "weekly", "شهري": "monthly",
-  "ربع سنوي": "quarterly", "كل 3 اشهر": "quarterly", "ربعي": "quarterly", "كل ثلاثة اشهر": "quarterly",
-  /* الثلث السنوي: المكتب يكتبها بصيغ كثيرة — نقبلها كلها */
-  "كل 4 اشهر": "trimester", "كل اربعة اشهر": "trimester", "ثلث سنوي": "trimester",
-  "ثلاث دفعات": "trimester", "3 دفعات": "trimester", "كل ٤ اشهر": "trimester",
-  "نصف سنوي": "semiannual", "كل 6 اشهر": "semiannual", "نصفي": "semiannual", "كل ستة اشهر": "semiannual",
-  "سنوي": "annual", "سنويا": "annual",
-  daily: "daily", weekly: "weekly", monthly: "monthly",
-  quarterly: "quarterly", trimester: "trimester", semiannual: "semiannual", annual: "annual", yearly: "annual",
-};
-
-/**
- * توحيد الكتابة العربية قبل المطابقة. المكتب يكتب «كل 3 أشهر» و«نصف سنوى»
- * و«شهرى» — وأي اختلاف بهمزة أو ألف مقصورة كان يسقط إلى «شهري» بصمت،
- * فيتحوّل عقد ربع سنوي بـ18,000 إلى شهري ويظهر المستأجر متأخرًا بعشرات
- * الآلاف. التوحيد يزيل التشكيل والتطويل ويوحّد الهمزات والياء والتاء.
- */
-function arKey(v: string): string {
-  return String(v || "")
-    .replace(/[\u064B-\u0652\u0640]/g, "")   // تشكيل وتطويل
-    .replace(/[أإآٱ]/g, "ا")
-    .replace(/ى/g, "ي")
-    .replace(/ة/g, "ه")
-    .replace(/[٠-٩]/g, (d) => String("٠١٢٣٤٥٦٧٨٩".indexOf(d)))
-    .replace(/\s+/g, " ")
-    .trim()
-    .toLowerCase();
-}
-const UNIT_TYPE_KEY: Record<string, string> = Object.fromEntries(Object.entries({
-  "شقه": "apartment", "شقة": "apartment", "شقه ملحق": "annex", "ملحق": "annex", "استديو": "studio", "ستوديو": "studio",
-  "غرفه": "room", "محل": "shop", "مكتب": "office", "مستودع": "warehouse", "ارض": "land", "فيلا": "villa",
-}).map(([k, v]) => [k.replace(/[أإآ]/g, "ا").replace(/ة/g, "ه"), v]));
-const FREQ_LOOKUP: Record<string, Frequency> = Object.fromEntries(
-  Object.entries(FREQ_MAP).map(([k, v]) => [arKey(k).replace(/ه$/, "ه"), v]),
-) as Record<string, Frequency>;
-
-/** تحويل الأرقام العربية والتواريخ */
-const toEnDigits = (s: string) => s.replace(/[٠-٩]/g, (d) => String("٠١٢٣٤٥٦٧٨٩".indexOf(d)));
-
-/** هل التاريخ حقيقي فعلًا؟ 2026-02-31 و2026-13-45 يمرّان بالشكل ويفشلان هنا */
-function isRealDate(iso: string): boolean {
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
-  if (!m) return false;
-  const [y, mo, d] = [Number(m[1]), Number(m[2]), Number(m[3])];
-  if (mo < 1 || mo > 12 || d < 1 || y < 1900 || y > 2100) return false;
-  return d <= new Date(y, mo, 0).getDate();
-}
-
-function normalizeDate(v: string): string {
-  const s = toEnDigits(String(v || "").trim());
-  if (!s) return "";
-  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
-  const m = s.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})$/);
-  if (m) return `${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
-  const d = new Date(s);
-  if (isNaN(d.getTime())) return "";
-  const p = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
-}
-
-/** قارئ CSV بسيط يدعم علامات الاقتباس */
-function parseCSV(text: string): string[][] {
-  const rows: string[][] = [];
-  let row: string[] = [], cell = "", q = false;
-  const t = text.replace(/^\uFEFF/, "");
-  for (let i = 0; i < t.length; i++) {
-    const c = t[i];
-    if (q) {
-      if (c === '"' && t[i + 1] === '"') { cell += '"'; i++; }
-      else if (c === '"') q = false;
-      else cell += c;
-    } else if (c === '"') q = true;
-    else if (c === "," || c === ";") { row.push(cell); cell = ""; }
-    else if (c === "\n") { row.push(cell); rows.push(row); row = []; cell = ""; }
-    else if (c !== "\r") cell += c;
-  }
-  if (cell || row.length) { row.push(cell); rows.push(row); }
-  return rows.filter((r) => r.some((x) => String(x).trim()));
-}
+/* التحليل كله في lib/importParse (دوال نقية مختبَرة) — هنا الواجهة والحفظ فقط (30 سبتمبر 2026) */
+const blocked = (r: Row) => !!(r._error || r._exists);
 
 export default function ImportView({ properties }: { properties: Prop[] }) {
   const router = useRouter();
@@ -127,16 +31,23 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
   const [progress, setProgress] = useState(0);
   const [done, setDone] = useState<number | null>(null);
   const [fileName, setFileName] = useState("");
+  /** أي الأعمدة فُهمت وأيها تُجوهل + صفوف الأمثلة المتجاهلة — يظهر سطرًا في المعاينة */
+  const [colInfo, setColInfo] = useState<ColumnInfo | null>(null);
+  const [checking, setChecking] = useState(false);
+  const checkSeq = useRef(0);
 
   const activeProp = properties.find((p) => p.id === propId);
   const ul = unitLabel(activeProp?.property_type);
 
   function downloadTemplate() {
+    /* الأمثلة تحمل علامة «مثال» في عمود الملاحظة فتُتجاهل إن نُسي حذفها —
+       كانت تُرفع مستأجرين حقيقيين باسم «عبدالله الحربي» (30 سبتمبر 2026) */
+    const pad = (r: string[]) => [...r, ...Array(HEADERS.length - r.length).fill(""), EXAMPLE_MARK];
     const sample = [
-      HEADERS,
-      ["عبدالله الحربي", "101", "2500", "شهري", "2026-01-01", "12", "0501234567", "1012345678", "8", ""],
-      ["مؤسسة النور التجارية", "معرض 2", "18000", "كل 3 اشهر", "2026-02-15", "4", "0559876543", "7001234567", "2", ""],
-      ["خالد القحطاني", "أرض A", "60000", "سنوي", "2025-06-01", "3", "0533334444", "", "1", ""],
+      [...HEADERS, NOTE_HEADER],
+      pad(["عبدالله الحربي", "101", "2500", "شهري", "2026-01-01", "12", "0501234567", "1012345678", "8", ""]),
+      pad(["مؤسسة النور التجارية", "معرض 2", "18000", "كل 3 اشهر", "2026-02-15", "4", "0559876543", "7001234567", "2", ""]),
+      pad(["خالد القحطاني", "أرض A", "60000", "سنوي", "2025-06-01", "3", "0533334444", "", "1", ""]),
     ];
     const csv = "\uFEFF" + sample.map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(",")).join("\n");
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
@@ -172,14 +83,8 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
       const rows = XLSX.utils.sheet_to_json(sheet, {
         header: 1, raw: true, defval: "", blankrows: false,
       }) as any[][];
-      const pad = (n: number) => String(n).padStart(2, "0");
-      return rows.map((r) => r.map((c, i) => {
-        if (c instanceof Date && !isNaN(c.getTime()))
-          return `${c.getFullYear()}-${pad(c.getMonth() + 1)}-${pad(c.getDate())}`;
-        let v = String(c ?? "").trim();
-        if (i === 6 && /^5\d{8}$/.test(v.replace(/\D/g, ""))) v = "0" + v.replace(/\D/g, "");
-        return v;
-      }));
+      // صفر الجوال المفقود يُعاد في المحلّل بعد معرفة عمود الجوال بالاسم لا بالموضع
+      return gridFromSheetRows(rows);
     }
     return parseCSV(await f.text());
   }
@@ -216,115 +121,80 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
     }
     if (!grid.length) return;
 
-    // تخطّي صف العناوين إن وُجد
-    const start = grid[0].some((c) => String(c).includes("اسم") || String(c).toLowerCase().includes("name")) ? 1 : 0;
-
-    const parsed: Row[] = grid.slice(start).map((r) => {
-      const [name, unit, rent, freq, startDate, periods, phone, nid, paid, propName, elecAcc, waterAcc, contractNo, unitTypeTxt, roomsTxt, bathsTxt, acsTxt, firstDueTxt, vatTxt, calTxt, monthsTxt, carriedTxt] = r.map((x) => String(x ?? "").trim());
-      const rentN = Number(toEnDigits(rent).replace(/[^\d.]/g, "")) || 0;
-      const fk = arKey(freq);
-      const frequency: Frequency = FREQ_LOOKUP[fk] || "monthly";
-      const freqUnknown = !!freq.trim() && !FREQ_LOOKUP[fk];
-      /* المكاتب السعودية تكتب العقود بالهجري. نجرّب الهجري أولًا (السنة
-         1300–1600 تحسمه بلا لبس) ثم الميلادي — فيقبل الملف الصيغتين معًا. */
-      const hijriStart = parseHijriInput(startDate);
-      const cs = hijriStart || normalizeDate(startDate);
-      // كُتب التاريخ بالهجري؟ إذن العقد هجري وأقساطه تُحسب بالأشهر الهجرية
-      /* التقويم: العمود الصريح يتقدّم على الاكتشاف — مكتب قد يكتب تواريخه
-         ميلادية بينما عقوده هجرية، فيحدّده هنا ولا نخمّن نيابةً عنه. */
-      const calTxtN = arKey(calTxt || "");
-      const calendar = /هجري|hijri/i.test(calTxtN) ? "hijri"
-        : /ميلادي|gregorian/i.test(calTxtN) ? "gregorian"
-        : hijriStart ? "hijri" : "gregorian";
-      /* «مدة العقد بالأشهر» بديل مريح عن «عدد الدفعات»: عقد سنتين نصف سنوي
-         = 4 دفعات، وحسابها بيد المكتب مصدر خطأ. العمود الصريح يتقدّم. */
-      const PER_YEAR: Record<string, number> = { daily: 365, weekly: 52, monthly: 12, quarterly: 4, trimester: 3, semiannual: 2, annual: 1 };
-      const monthsN = Number(toEnDigits(String(monthsTxt || "").replace(/[^\d.]/g, ""))) || 0;
-      const prFromMonths = monthsN > 0 ? Math.max(1, Math.round(monthsN * (PER_YEAR[frequency] || 12) / 12)) : null;
-      const pr = Number(toEnDigits(periods)) || prFromMonths;
-      const pd = Math.max(0, Math.floor(Number(toEnDigits(paid)) || 0));
-      let err = "";
-      if (!name) err = "الاسم مفقود";
-      else if (!rentN) err = "قيمة الدفعة مفقودة";
-      else if (startDate && !cs) err = "تاريخ غير مفهوم";
-      // لا نمرّر تاريخًا مستحيلًا (2026-13-45): كان يُحفظ كما هو ويفسد كل الحسابات
-      else if (cs && !isRealDate(cs)) err = `تاريخ غير صحيح: ${startDate}`;
-      else if (freqUnknown) err = `دورة سداد غير معروفة: «${freq.trim()}» — استخدم القائمة المنسدلة في القالب`;
-      else if (!freq.trim()) err = "دورة السداد مفقودة";
-      else if (pr && pd > pr) err = "الدفعات المسدّدة أكثر من عدد دفعات العقد";
-      const norm = (x: string) => x.replace(/\s+/g, " ").trim();
-      const target = propName ? properties.find((p) => norm(p.name) === norm(propName)) : undefined;
-      if (propName && !target && !err) err = `العقار «${propName}» غير موجود — أنشئه أولًا أو صحّح الاسم`;
-      return {
-        name, unit, rent_amount: rentN, phone: toEnDigits(phone), national_id: toEnDigits(nid),
-        contract_start: cs, payment_frequency: frequency, contract_periods: pr, paid_periods: pd,
-        elec_account: (elecAcc || "").trim() || undefined, water_account: (waterAcc || "").trim() || undefined,
-        contract_no: (contractNo || "").trim() || undefined, calendar,
-        unit_type: UNIT_TYPE_KEY[arKey(unitTypeTxt)] || undefined,
-        rooms: roomsTxt ? Number(toEnDigits(roomsTxt)) || 0 : undefined,
-        baths: bathsTxt ? Number(toEnDigits(bathsTxt)) || 0 : undefined,
-        acs: acsTxt ? Number(toEnDigits(acsTxt)) || 0 : undefined,
-        first_due: firstDueTxt ? (parseHijriInput(firstDueTxt) || normalizeDate(firstDueTxt) || undefined) : undefined,
-        vat_mode: /معف|بدون|off/i.test(vatTxt || "") ? "off" : /تطبق|تُطبَّق|نعم|on/i.test(vatTxt || "") ? "on" : undefined,
-        carried_debt: carriedTxt ? Math.max(0, Number(toEnDigits(String(carriedTxt).replace(/[^\d.]/g, ""))) || 0) : undefined,
-        prop_name: propName || undefined, prop_id: target?.id,
-        _error: err || undefined,
-        /* بيانات المكاتب: 11% من العقود أُدخلت ببداية مستقبلية وعدّاد صفر — «موعد
-           الدفعة القادمة» في خانة «بداية العقد». لا يُمنع (العقد الجديد مشروع)
-           لكن يُنبَّه قبل الرفع، حين يكون التصحيح في الملف نفسه أسهل. */
-        _warn: !err && cs && cs > today() && !(pd > 0)
-          ? "البداية بعد اليوم ولا دفعات — إن كان العقد ساريًا من قبل فاكتب بدايته الفعلية من العقد وعدد الدفعات المسدَّدة، لا موعد الدفعة القادمة"
-          : undefined,
-      };
-    });
-    /* «أول استحقاق» يختلف عن البداية: مكتبان كتباه لمستأجرين يدفعون يوم بداية العقد،
-       فانزاح يوم الدفع الشهري. نصف الأثر لكل صفّ ونطلب قرارًا صريحًا قبل الحفظ. */
-    parsed.forEach((r) => {
-      if (r._error) return;
-      const g = firstDueGap(r.contract_start, r.first_due);
-      if (!g) return;
-      r._due = `أول استحقاق ${r.first_due} — ${g.days > 0 ? `بعد ${g.days} يومًا` : `قبل ${-g.days} يومًا`} من البداية`
-        + (g.dueDay !== g.startDay ? `، يوم الدفع ${g.dueDay} بدل ${g.startDay}` : "");
-    });
-    /**
-     * تكرار داخل الملف نفسه: 160 صفًّا مكتوبة يدويًّا فيها عادةً وحدة مكرّرة.
-     * نعلّمها قبل الحفظ لا بعده — الاكتشاف بعد الرفع يعني بحثًا يدويًّا في اللوحة.
-     */
-    const seenInFile = new Map<string, number>();
-    parsed.forEach((r) => {
-      const k = `${(r.prop_name || "").trim()}|${(r.unit || "").trim()}`;
-      if (!r.unit) return;
-      seenInFile.set(k, (seenInFile.get(k) || 0) + 1);
-    });
-    parsed.forEach((r) => {
-      if (r._error || !r.unit) return;
-      const k = `${(r.prop_name || "").trim()}|${(r.unit || "").trim()}`;
-      if ((seenInFile.get(k) || 0) > 1) r._error = `رقم الوحدة «${r.unit}» مكرّر في الملف`;
-    });
+    const { rows: parsed, info } = parseGrid(grid, properties, today());
+    setColInfo(info);
     setRows(parsed); setFutureOk(false); setDueChoice(null);   // ملف جديد = سؤال جديد
+    checkExisting(parsed, propId);
+  }
+
+  /**
+   * الوحدات الموجودة أصلًا في العقار الهدف تُعلَّم في المعاينة قبل الحفظ —
+   * برقم الوحدة وحده لا (الوحدة + الاسم): من صحّح إملاء اسم وأعاد الرفع كان
+   * يضاعف الوحدة (30 سبتمبر 2026). يُعاد الفحص إن غيّر العقار المختار.
+   */
+  async function checkExisting(list: Row[], selPid: string) {
+    const seq = ++checkSeq.current;
+    const pids = Array.from(new Set(list.filter((r) => !r._error && r.unit).map((r) => r.prop_id || selPid).filter(Boolean)));
+    if (!pids.length) { setRows(markExisting(list, selPid, new Set(), () => "")); return; }
+    setChecking(true);
+    try {
+      const existing = await fetchExistingUnits(pids);
+      if (seq !== checkSeq.current) return;   // ملف أحدث أو عقار آخر اختير في الأثناء
+      const pName = (id: string) => properties.find((p) => p.id === id)?.name || "العقار";
+      setRows(markExisting(list, selPid, existing, pName));
+    } catch (e) {
+      console.warn("existing units check failed", e);   // الفحص يُعاد وقت الحفظ على أي حال
+    } finally { if (seq === checkSeq.current) setChecking(false); }
+  }
+
+  /** مفاتيح `${property_id}|${unitKey}` للوحدات الموجودة — على صفحات 1000 (Supabase يقصّ بصمت) */
+  async function fetchExistingUnits(pids: string[]): Promise<Set<string>> {
+    const out = new Set<string>();
+    for (let i = 0; ; i += 1000) {
+      const { data, error } = await supabase.from("tenants").select("property_id, unit")
+        .in("property_id", pids).order("id", { ascending: true }).range(i, i + 999);
+      if (error) throw error;
+      (data || []).forEach((t: any) => { if (t.unit) out.add(`${t.property_id}|${unitKey(t.unit)}`); });
+      if (!data || data.length < 1000) break;
+    }
+    return out;
   }
 
   async function importRows() {
-    const valid0 = rows.filter((r) => !r._error);
+    const valid0 = rows.filter((r) => !blocked(r));
     if (!valid0.length) return alert("لا توجد صفوف صالحة");
     // كل صف يذهب لعقاره المذكور في الملف، وإلا للعقار المختار في القائمة
     const groups = new Map<string, Row[]>();
     for (const r of valid0) {
       const pid = r.prop_id || propId;
       if (!pid) return alert("اختر العقار أولًا — أو اكتب اسم العقار في عمود «العقار» لكل صف");
-      groups.set(pid, [...(groups.get(pid) || []), r]);
+      /* push لا نسخ المصفوفة كل صف: النسخ كان O(n²) على ملف 2000 صف (30 سبتمبر 2026) */
+      const g = groups.get(pid);
+      if (g) g.push(r); else groups.set(pid, [r]);
     }
     setBusy(true);
     const key = (u: string, n: string) => `${(u || "").trim()}|${(n || "").trim()}`;
     let inserted = 0, skipped = 0;
+    /* فحص أخير وقت الحفظ: المعاينة قد تكون قديمة (زميل أضاف وحدة، أو رفعٌ سابق نجح) */
+    let unitsNow: Set<string>;
+    try { unitsNow = await fetchExistingUnits(Array.from(groups.keys())); }
+    catch (e: any) { setBusy(false); return alert(`تعذّر التحقق من الوحدات الموجودة: ${e?.message || e}`); }
+    const skippedRows = new Set<Row>();
     for (const [pid, list] of groups) {
       /**
-       * حماية من الرفع المكرر: نفس الملف مرتين = كل الوحدات مكررة. نقارن
-       * (رقم الوحدة + الاسم) مع الموجود في العقار ونتخطى المطابق — لا حذف ولا دمج.
+       * حماية من الرفع المكرر: نفس الملف مرتين = كل الوحدات مكررة. الوحدة ذات
+       * الرقم تُطابَق برقمها وحده (30 سبتمبر 2026)؛ وبلا رقم وحدة نطابق الاسم كما كان.
        */
-      const { data: existing } = await supabase.from("tenants").select("unit, name").eq("property_id", pid).limit(1000);
+      const noUnit = list.some((r) => !r.unit);
+      const { data: existing } = noUnit
+        ? await supabase.from("tenants").select("unit, name").eq("property_id", pid).limit(1000)
+        : { data: [] as any[] };
       const seen = new Set((existing || []).map((t: any) => key(t.unit, t.name)));
-      const fresh = list.filter((r) => !seen.has(key(r.unit, r.name)));
+      const fresh = list.filter((r) => {
+        const dup = r.unit ? unitsNow.has(`${pid}|${unitKey(r.unit)}`) : seen.has(key(r.unit, r.name));
+        if (dup) skippedRows.add(r);
+        return !dup;
+      });
       skipped += list.length - fresh.length;
       if (!fresh.length) continue;
       const payload = fresh.map((r) => ({
@@ -383,18 +253,25 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
     setBusy(false);
     /* الصفوف التي بها خطأ لم تُرفع: تبقى على الشاشة وتُذكر — كانت الشاشة تُمسح
        كلها فلا يعرف المكتب أيّها سقط */
-    const left = rows.filter((r) => r._error);
-    const leftMsg = left.length ? `\n\n⚠️ لم تُرفع ${left.length} ${left.length === 1 ? "وحدة" : "وحدات"} بها مشكلة — بقيت أمامك في الجدول: صحّحها في الملف وارفعها وحدها.` : "";
+    const left = rows.filter((r) => blocked(r) || skippedRows.has(r)).map((r) => skippedRows.has(r) && !r._exists
+      ? { ...r, _exists: `الوحدة «${r.unit || r.name}» موجودة أصلًا — تُخطّيت` } : r);
+    const leftMsg = left.length ? `\n\n⚠️ لم تُرفع ${left.length} ${left.length === 1 ? "وحدة" : "وحدات"} بها مشكلة أو موجودة أصلًا — بقيت أمامك في الجدول: صحّحها في الملف وارفعها وحدها.` : "";
     if (!inserted) return alert(`كل الصفوف (${skipped}) موجودة أصلًا — لم يُضف شيء.${leftMsg}`);
     if (skipped || left.length) alert(`أُضيفت ${inserted} وحدة${skipped ? `، وتُخطّيت ${skipped} موجودة أصلًا` : ""}.${leftMsg}`);
     setDone(inserted); setRows(left);
     router.refresh();
   }
 
-  const validCount = rows.filter((r) => !r._error).length;
-  const errorCount = rows.length - validCount;
-  const warnCount = rows.filter((r) => !r._error && r._warn).length;
-  const dueCount = rows.filter((r) => !r._error && r._due).length;
+  /* عدّ بمرور واحد — 2000 صف تُعاد رسمها مع كل تغيير */
+  let validCount = 0, warnCount = 0, dueCount = 0, existsCount = 0;
+  for (const r of rows) {
+    if (r._exists && !r._error) existsCount++;
+    if (blocked(r)) continue;
+    validCount++;
+    if (r._warn) warnCount++;
+    if (r._due) dueCount++;
+  }
+  const errorCount = rows.length - validCount - existsCount;
 
   return (
     <div className="max-w-4xl mx-auto">
@@ -447,7 +324,7 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
 
           <div className="bg-white border border-line rounded-2xl p-5 mb-5">
             <label className="block text-sm font-semibold mb-2">العقار الذي ستُضاف إليه الوحدات</label>
-            <select className="fld mb-4" value={propId} onChange={(e) => setPropId(e.target.value)}>
+            <select className="fld mb-4" value={propId} onChange={(e) => { setPropId(e.target.value); if (rows.length) checkExisting(rows, e.target.value); }}>
               {properties.map((p) => <option key={p.id} value={p.id}>{typeIcon(p.property_type)} {p.name}</option>)}
             </select>
 
@@ -475,10 +352,22 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
                   <div className="text-sm text-muted">
                     <span className="text-paid font-semibold">{validCount} صالحة</span>
                     {errorCount > 0 && <> · <span className="text-late font-semibold">{errorCount} بها مشكلة</span></>}
+                    {existsCount > 0 && <> · <span className="text-late font-semibold">{existsCount} موجودة أصلًا في العقار — لن تُرفع</span></>}
+                    {checking && <> · <span>جارٍ فحص الوحدات الموجودة…</span></>}
                     {warnCount > 0 && <> · <span className="text-[#8a5a11] font-semibold">{warnCount} بدايتها بعد اليوم — تحقّق منها</span></>}
                   </div>
+                  {colInfo && (
+                    /* ما فهمناه من الملف ظاهرًا: عمود بعنوان غير معروف كان يُقرأ بموضعه بصمت (30 سبتمبر 2026) */
+                    <div className="text-[11.5px] text-muted mt-1 leading-relaxed">
+                      {colInfo.mode === "headers"
+                        ? <>الأعمدة المقروءة بالعنوان ({colInfo.recognized.length}): {colInfo.recognized.join("، ")}
+                            {colInfo.ignored.length > 0 && <> · <b className="text-[#8a5a11]">تُجوهل ({colInfo.ignored.length}): {colInfo.ignored.join("، ")}</b></>}</>
+                        : <>لم نجد عناوين معروفة — قُرئت الأعمدة بترتيب القالب: {HEADERS.slice(0, 9).join("، ")}…</>}
+                      {colInfo.examples > 0 && <> · <b>تم تجاهل {colInfo.examples} صفوف أمثلة</b> (المعلَّمة «مثال»)</>}
+                    </div>
+                  )}
                 </div>
-                <button onClick={importRows} disabled={busy || !validCount || (warnCount > 0 && !futureOk) || (dueCount > 0 && !dueChoice)} className="btn btn-gold text-sm disabled:opacity-40"
+                <button onClick={importRows} disabled={busy || checking || !validCount || (warnCount > 0 && !futureOk) || (dueCount > 0 && !dueChoice)} className="btn btn-gold text-sm disabled:opacity-40"
                   title={(warnCount > 0 && !futureOk) || (dueCount > 0 && !dueChoice) ? "قرّر أولًا في التنبيهات أدناه" : undefined}>
                   {busy ? (progress ? `جارٍ الحفظ… ${progress}` : "جارٍ الحفظ…") : `حفظ ${validCount} وحدة`}
                 </button>
@@ -522,15 +411,15 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
                   </thead>
                   <tbody>
                     {rows.map((r, i) => (
-                      <tr key={i} className={`border-t border-line ${r._error ? "bg-[#FBE9E7]" : r._warn ? "bg-[#FFF6E5]" : ""}`}>
+                      <tr key={i} className={`border-t border-line ${blocked(r) ? "bg-[#FBE9E7]" : r._warn ? "bg-[#FFF6E5]" : ""}`}>
                         <td className="p-2 font-medium">{r.name || "—"}{r.prop_name && <div className="text-[11px] text-muted">🏢 {r.prop_name}</div>}</td>
                         <td className="p-2">{r.unit || "—"}</td>
                         <td className="p-2">{sar(r.rent_amount)}</td>
                         <td className="p-2">{FREQUENCIES.find((f) => f.value === r.payment_frequency)?.label}</td>
                         <td className="p-2">{r.contract_start || "—"}{r.contract_start && <div className="text-[11px] text-muted">{hijriShort(r.contract_start)}</div>}
                           {!r._error && r._due && <div className={`text-[11px] font-semibold ${dueChoice === "drop" ? "text-muted line-through" : "text-[#8a5a11]"}`}>⚠ {r._due}</div>}</td>
-                        <td className="p-2">{r._error
-                          ? <span className="text-late font-semibold">{r._error}</span>
+                        <td className="p-2">{r._error || r._exists
+                          ? <span className="text-late font-semibold">{r._error || r._exists}</span>
                           : r._warn
                             ? <span className="text-[#8a5a11] text-[12px] leading-relaxed"><b>⚠ تحقّق:</b> {r._warn}</span>
                             : <span className="text-paid font-semibold">جاهزة</span>}</td>

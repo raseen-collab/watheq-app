@@ -12,6 +12,8 @@ import { requestsDigestLines, type SeekerRequest } from "@/lib/requests";
 import { complianceState } from "@/lib/compliance";
 import { arDate } from "@/lib/documents";
 import { daysAr } from "@/lib/utils";
+import { fetchAllRows } from "@/lib/fetch-all";
+import { tgClip } from "@/lib/reports";
 
 /** تليجرام يقرأ الرسالة كـHTML: اسم فيه < أو & يُسقط الرسالة كلها للحساب. نهرّب النصوص الحرة */
 /** يوم الرياض — نفس أساس بقية النظام */
@@ -23,6 +25,10 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 const sar = (n: number) => (Number(n) || 0).toLocaleString("en-US");
+
+/** نافذة تنبيه شهادة الجمعية — نفس عتبة شريط اللوحة (60 يومًا) */
+const CERT_DAYS = 60;
+const dayDiff = (a: string, b: string) => Math.round((Date.parse(a) - Date.parse(b)) / 86400000);
 
 /**
  * الملخّص الإداري اليومي — يُرسل للمالك عبر تليجرام.
@@ -60,19 +66,19 @@ export async function GET(req: Request) {
     .not("telegram_chat_id", "is", null)
     .eq("notify_enabled", true);
 
-  let sent = 0;
+  let sent = 0, failed = 0;
   /**
    * كل حساب دالة مستقلة، وتُعالَج الحسابات خمسةً خمسة بالتوازي:
    * 40 مكتبًا متسلسلة (استعلام + تليجرام لكل واحد) تقترب من مهلة الستين
    * ثانية؛ بالتوازي تنتهي في ربعها. وخطأ حساب واحد لا يمسّ الباقين.
    */
-  const processProfile = async (p: any): Promise<boolean> => {
+  const processProfile = async (p: any): Promise<"sent" | "skip" | "failed"> => {
    try {
-    if (staffIds.has(String(p.id))) return false;   // موظف — التنبيهات لصاحب المكتب وحده
+    if (staffIds.has(String(p.id))) return "skip";   // موظف — التنبيهات لصاحب المكتب وحده
 
     /* منتهي الاشتراك: أوامر البوت متوقّفة، فلا معنى لإيقاظه بملخّص لا
        يستطيع التصرّف بناءً عليه. والتجربة والسماح يبقيان عاملَين. */
-    if (subState(p as any).kind === "expired") return false;
+    if (subState(p as any).kind === "expired") return "skip";
 
     /* «last_digest_at» كان يُكتب ولا يُقرأ: أي إعادة تشغيل للمهمة (محاولة
        ثانية من Vercel، أو استدعاء يدوي) تُرسل الملخّص مرتين في اليوم نفسه.
@@ -80,13 +86,22 @@ export async function GET(req: Request) {
     const riyadhDay = (d: Date | string) =>
       new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Riyadh", year: "numeric", month: "2-digit", day: "2-digit" })
         .format(typeof d === "string" ? new Date(d) : d);
-    if (p.last_digest_at && riyadhDay(p.last_digest_at) === riyadhDay(new Date())) return false;
+    const t0 = riyadhDay(new Date());
+    if (p.last_digest_at && riyadhDay(p.last_digest_at) === t0) return "skip";
+    /* 30 سبتمبر 2026: «تأخّر اليوم» كان يُسمّي المتأخر فقط إن عمل الملخّص يومَ تأخّره
+       بالضبط — يوم بلا إرسال (فشل تليجرام، أو لا شيء يُبلَّغ) يُسقطه للأبد. الآن:
+       كل من تأخّر بعد آخر ملخّص وصل. بلا ملخّص سابق = اليوم وحده (السلوك القديم).
+       وسقف 31 يومًا حتى لا يُغرق من أعاد تفعيل التنبيهات بعد انقطاع طويل. */
+    const gap = p.last_digest_at ? Math.max(1, Math.min(31, dayDiff(t0, riyadhDay(p.last_digest_at)))) : 1;
     const { data: props } = await db
       .from("properties").select("*, tenants(*)").eq("user_id", p.id)
       .eq("is_demo", false)                                   // التجريبي لا يوقظ أحدًا فجرًا
       // مكتب بمئات الوحدات: بلا هذا الحدّ الصريح قد تُقصّ الوحدات بصمت فيخرج ملخّص ناقص
       .limit(2000, { referencedTable: "tenants" });
-    if (!props?.length) return false;
+    /* 30 سبتمبر 2026: كان يخرج هنا لكل حساب بلا عقارات — فمدير الجمعية لا يصله ملخّص
+       أبدًا. المسار الآن يكمل، وقسم الجمعيات يُبنى أدناه؛ والحساب المزدوج يصله القسمان. */
+    const hoa = await assocDigest(db, p.id, t0);
+    if (!props?.length && !hoa.length) return "skip";
 
     const within = p.notify_days_before ?? 5;
     const dueSoon: string[] = [];
@@ -97,7 +112,7 @@ export async function GET(req: Request) {
     const expiring: string[] = [];
     let totalDue = 0;
 
-    for (const prop of props as any[]) {
+    for (const prop of (props || []) as any[]) {
       const ul = unitLabel(prop.property_type);
       for (const t of prop.tenants || []) {
         // فترة السماح نفسها التي تعتمدها اللوحة — وإلا وصلت رسالة «متأخر» لمستأجر لوحته تقول «فترة سماح»
@@ -116,8 +131,9 @@ export async function GET(req: Request) {
         if (st.status === "late") {
           totalDue += owed;
           lateList.push(`• ${esc(t.name)} — ${ul} ${esc(t.unit || "—")} (${esc(prop.name)}) — <b>${sar(owed)}</b> ريال`);
-          /* «جديد اليوم»: أقدم قسط غير مدفوع تجاوز مهلة السماح اليوم تحديدًا */
-          if (st.daysToNextDue === -((Number(prop.grace_days) || 0) + 1))
+          /* «جديد»: أقدم قسط غير مدفوع تجاوز مهلة السماح بعد آخر ملخّص (0 = اليوم) */
+          const daysLate = st.daysToNextDue === null ? -1 : -st.daysToNextDue - ((Number(prop.grace_days) || 0) + 1);
+          if (daysLate >= 0 && daysLate < gap)
             newLate.push(`• ${esc(t.name)} — ${ul} ${esc(t.unit || "—")} (${esc(prop.name)}) — <b>${sar(owed)}</b> ريال`);
         } else if (st.daysToNextDue !== null && st.daysToNextDue >= 0 && st.daysToNextDue <= within) {
           dueSoon.push(`• ${esc(t.name)} — ${ul} ${esc(t.unit || "—")} — ${sar(withVat(Number(t.rent_amount) || 0, t, prop))} ريال بتاريخ ${arDate(st.nextDueDate)}`);
@@ -183,7 +199,7 @@ export async function GET(req: Request) {
       } catch { /* جدول الطلبات غير منشأ بعد */ }
     } catch { /* الجدول غير منشأ بعد — نتجاهل القسم */ }
 
-    if (!dueSoon.length && !lateList.length && !expiring.length && !compliance.length && !listings.length && !matchLines.length) return false;
+    if (!dueSoon.length && !lateList.length && !expiring.length && !compliance.length && !listings.length && !matchLines.length && !hoa.length) return "skip";
 
     const parts = [`🗂️ <b>ملخّص وثيق اليومي</b>${p.org_name ? ` — ${esc(p.org_name)}` : ""}`, ""];
     // أقصى 12 سطرًا لكل قسم مع ذكر المتبقي — مكتب كبير لا يظن أن القائمة اكتملت
@@ -194,7 +210,7 @@ export async function GET(req: Request) {
        ومعها الجديد. القائمة الكاملة بأمر /late. */
     if (lateList.length) parts.push(
       `🔴 <b>متأخرة: ${lateList.length}</b> — إجمالي ${sar(totalDue)} ريال`,
-      ...(newLate.length ? [`<i>تأخّر اليوم:</i>`, ...newLate.slice(0, 12), ...more(newLate.length)] : [`<i>لا متأخر جديد اليوم.</i>`]),
+      ...(newLate.length ? [gap > 1 ? `<i>تأخّر منذ آخر ملخّص:</i>` : `<i>تأخّر اليوم:</i>`, ...newLate.slice(0, 12), ...more(newLate.length)] : [gap > 1 ? `<i>لا متأخر جديد منذ آخر ملخّص.</i>` : `<i>لا متأخر جديد اليوم.</i>`]),
       `القائمة كاملة: /late`, "");
     if (expiring.length) parts.push(`📄 <b>عقود تنتهي قريبًا (${expiring.length})</b>`, ...expiring.slice(0, 12), ...more(expiring.length), "");
     /* الثابت لا يُكرَّر بالأسماء كل صباح — سطر واحد، والتفاصيل من اللوحة */
@@ -204,27 +220,85 @@ export async function GET(req: Request) {
     if (compliance.length) parts.push(`⚖️ <b>التزامات المكتب (${compliance.length})</b>`, ...compliance.slice(0, 12), "");
     if (listings.length) parts.push(`📋 <b>المعروضات</b>`, ...listings, "");
     if (matchLines.length) parts.push(...matchLines, "");
-    parts.push("", "افتح لوحتك: https://app.watheqapp.com/dashboard/property");
+    if (hoa.length) parts.push(...hoa, "");
+    parts.push("", props?.length
+      ? "افتح لوحتك: https://app.watheqapp.com/dashboard/property"
+      : "افتح لوحتك: https://app.watheqapp.com/dashboard/association");
 
-    const r = await sendTelegram(p.telegram_chat_id as string, parts.join("\n"));
+    /* حد تليجرام 4096: القصّ الآمن نفسه المستعمل في تقارير البوت */
+    const r = await sendTelegram(p.telegram_chat_id as string, tgClip(parts.join("\n")));
     if (r.ok) {
       await db.from("profiles").update({ last_digest_at: new Date().toISOString() }).eq("id", p.id);
-      return true;
+      return "sent";
     }
-    return false;
+    /* 30 سبتمبر 2026: كان يُبتلع — tgSend يرسله لـSentry، ونعدّه هنا في JSON */
+    return "failed";
    } catch (e) {
     // حساب واحد بخطأ غير متوقع لا يُسقط ملخّصات الباقين — نسجّل ونكمل
     console.error("digest failed for", p.id, e);
     Sentry.captureException(e, { tags: { job: "digest" }, extra: { profile: p.id } });
-    return false;
+    return "failed";
    }
   };
 
   const list = profiles || [];
   for (let i = 0; i < list.length; i += 5) {
     const results = await Promise.all(list.slice(i, i + 5).map(processProfile));
-    sent += results.filter(Boolean).length;
+    sent += results.filter((x) => x === "sent").length;
+    failed += results.filter((x) => x === "failed").length;
   }
 
-  return NextResponse.json({ ok: true, sent, total: list.length });
+  /* سطر للمدير في تليجرام إن فشل شيء — بلا هذا لا يعرف أحد أن مكتبًا لم يصله ملخّصه */
+  if (failed && process.env.ADMIN_TELEGRAM_CHAT_ID) {
+    await sendTelegram(process.env.ADMIN_TELEGRAM_CHAT_ID,
+      `⚠️ الملخّص اليومي: فشل الإرسال لـ<b>${failed}</b> حساب من ${list.length} (أُرسل ${sent}). التفاصيل في Sentry.`);
+  }
+  if (failed) Sentry.captureMessage(`digest: ${failed} failed of ${list.length}`, { level: "warning", tags: { job: "digest" } });
+
+  return NextResponse.json({ ok: true, sent, failed, total: list.length });
+}
+
+
+/**
+ * قسم جمعيات الملاك في الملخّص اليومي — 30 سبتمبر 2026.
+ * الملّاك المتأخرون (عدد وإجمالي كاللوحة: المتأخر ناقص الجزئي)، والشهادات المنتهية
+ * أولًا ثم ما ينتهي خلال CERT_DAYS، ورصيد الصندوق. لا يُعيد الأسماء كل صباح:
+ * المتأخر القديم بالعدد، والقائمة كاملة بأمر /late.
+ * أي خطأ (جدول غير موجود…) يُرجع قسمًا فارغًا ولا يُسقط الملخّص.
+ */
+async function assocDigest(db: any, userId: string, t0: string): Promise<string[]> {
+  try {
+    const { data: assocs, error } = await db.from("associations")
+      .select("id,name,fee,cert_expiry,fund_balance").eq("user_id", userId);
+    if (error || !assocs?.length) return [];
+    const ids = assocs.map((a: any) => a.id);
+    const byId: Record<string, any> = {};
+    assocs.forEach((a: any) => { byId[a.id] = a; });
+    const late = await fetchAllRows<any>(db, "owners", "id,association_id,months_late,partial_amount",
+      (q) => q.in("association_id", ids).gt("months_late", 0));
+    const owed = late.reduce((s: number, o: any) =>
+      s + Math.max(0, (Number(o.months_late) || 0) * (Number(byId[o.association_id]?.fee) || 0) - (Number(o.partial_amount) || 0)), 0);
+
+    const certs = assocs.filter((a: any) => a.cert_expiry)
+      .map((a: any) => ({ a, d: dayDiff(String(a.cert_expiry).slice(0, 10), t0) }))
+      .filter((x: any) => x.d <= CERT_DAYS)
+      .sort((x: any, y: any) => x.d - y.d);            // المنتهية (سالبة) أولًا
+    /* لا شيء يستدعي فعلًا ⇒ لا قسم: رصيد الصندوق وحده لا يستحق إيقاظ أحد كل صباح */
+    if (!late.length && !certs.length) return [];
+    const fund = assocs.reduce((s: number, a: any) => s + (Number(a.fund_balance) || 0), 0);
+
+    const L: string[] = [`🏗️ <b>جمعيات الملاك (${assocs.length})</b>`];
+    L.push(late.length
+      ? `🔴 ملّاك متأخرون: <b>${late.length}</b> — إجمالي ${sar(owed)} ريال · القائمة: /late`
+      : `✅ لا ملّاك متأخرين.`);
+    certs.slice(0, 12).forEach(({ a, d }: any) => L.push(d < 0
+      ? `⛔ <b>${esc(a.name)}</b> — <b>الشهادة منتهية</b> منذ ${daysAr(-d)} (${arDate(a.cert_expiry)})`
+      : `🪪 ${esc(a.name)} — الشهادة تنتهي ${d === 0 ? "اليوم" : `خلال ${daysAr(d)}`} (${arDate(a.cert_expiry)})`));
+    if (certs.length > 12) L.push(`… و${certs.length - 12} أخرى في اللوحة`);
+    L.push(`💰 رصيد الصناديق: <b>${sar(fund)}</b> ريال`);
+    return L;
+  } catch (e) {
+    Sentry.captureException(e, { tags: { job: "digest-hoa" }, extra: { profile: userId } });
+    return [];
+  }
 }

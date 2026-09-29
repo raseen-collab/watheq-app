@@ -1,5 +1,5 @@
 "use client";
-import { today } from "@/lib/utils";
+import { today, riyadhToday } from "@/lib/utils";
 // ============================================================
 // وثيق — كشف المالك المجمّع: اختر المالك والفترة (من شهر إلى شهر)
 //
@@ -47,7 +47,8 @@ export default function OwnerStatementModal({ properties, issuer, onClose, db }:
   useEffect(() => { setPicked([]); }, [owner]);
   const toggleProp = (id: string) => setPicked((cur) => cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]);
   function preset(kind: "thisMonth" | "quarter" | "half" | "year" | "last12") {
-    const now = new Date(); const p2 = (n: number) => String(n).padStart(2, "0");
+    /* يوم الرياض (30 سبتمبر 2026) — كان يوم الجهاز فيخالف thisMonth() أعلاه */
+    const now = riyadhToday(); const p2 = (n: number) => String(n).padStart(2, "0");
     const ym = (d: Date) => `${d.getFullYear()}-${p2(d.getMonth() + 1)}`;
     if (kind === "thisMonth") { setFrom(ym(now)); setTo(ym(now)); return; }
     if (kind === "year") { setFrom(`${now.getFullYear()}-01`); setTo(ym(now)); return; }

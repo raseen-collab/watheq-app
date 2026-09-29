@@ -73,32 +73,52 @@ export async function recordSubPayment(input: {
   const extended = new Date(startFrom);
   extended.setMonth(extended.getMonth() + months);
 
-  // رقم الفاتورة: WTQ-YYYY-NNNN بترتيب السنة الحالية.
-  // بلا تسلسل قاعدة بيانات — لا يوجد سوى مُصدِر واحد، والتصادم يتطلب ضغطتين
-  // في اللحظة نفسها من الشخص نفسه.
-  const year = now.getFullYear();
-  const { count } = await db
+  // رقم الفاتورة: WTQ-YYYY-NNNN بترتيب السنة (سنة الرياض).
+  /* 30 سبتمبر 2026: كان «عدد صفوف السنة + 1» — حذف صفٍّ واحد يعيد رقمًا صدر،
+     وضغطتان متزامنتان تُعطيان الرقم نفسه. الآن: التالي بعد أعلى رقم صدر فعلًا،
+     ومع تصادم فرادة (23505) نعيد بالرقم التالي. ⚠️ إعادة المحاولة لا تعمل إلا مع
+     فهرس فريد على invoice_no — تنشئه schema-v59 إن لم تكن فيه أرقام مكرَّرة. */
+  const year = riyadhDate(now).slice(0, 4);
+  const prefix = `WTQ-${year}-`;
+  const { data: last } = await db
     .from("subscription_payments")
-    .select("id", { count: "exact", head: true })
-    .gte("paid_at", `${year}-01-01`);
-  const invoiceNo = `WTQ-${year}-${String((count || 0) + 1).padStart(4, "0")}`;
+    .select("invoice_no")
+    .like("invoice_no", `${prefix}%`)
+    .order("invoice_no", { ascending: false })
+    .limit(1);
+  let seq = (Number(String(last?.[0]?.invoice_no || "").slice(prefix.length)) || 0) + 1;
 
-  const { error: ie } = await db.from("subscription_payments").insert({
-    user_id: input.userId,
-    invoice_no: invoiceNo,
-    months,
-    amount,
-    plan,
-    method: input.method || null,
-    note: input.note || null,
-    extended_to: extended.toISOString(),
-  });
-  if (ie) return { ok: false, error: ie.message };
+  let invoiceNo = "";
+  let paymentId: string | null = null;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    invoiceNo = `${prefix}${String(seq).padStart(4, "0")}`;
+    const { data: ins, error: ie } = await db.from("subscription_payments").insert({
+      user_id: input.userId,
+      invoice_no: invoiceNo,
+      months,
+      amount,
+      plan,
+      method: input.method || null,
+      note: input.note || null,
+      extended_to: extended.toISOString(),
+    }).select("id").single();
+    if (!ie) { paymentId = (ins as any)?.id ?? null; break; }
+    if ((ie as any).code === "23505") { seq++; continue; }   // رقم أُخذ للتو — التالي
+    return { ok: false, error: ie.message };
+  }
+  if (!paymentId) return { ok: false, error: "تعذّر حجز رقم فاتورة بعد عدة محاولات — أعد المحاولة." };
 
+  /* تحديث الحساب بعد نجاح الدفعة فقط. فإن فشل نحذف الدفعة (تعويض) لئلا تُعاد
+     المحاولة فتُسجَّل دفعتان لتجديد واحد. الذرّية الكاملة تحتاج دالة SQL واحدة. */
   const patch: Record<string, any> = { subscribed_until: extended.toISOString() };
   if (plan) patch.plan = plan;
   const { error: ue } = await db.from("profiles").update(patch).eq("id", input.userId);
-  if (ue) return { ok: false, error: `سُجّلت الدفعة لكن تعذّر تحديث الحساب: ${ue.message}` };
+  if (ue) {
+    const { error: rb } = await db.from("subscription_payments").delete().eq("id", paymentId);
+    return { ok: false, error: rb
+      ? `سُجّلت الدفعة (${invoiceNo}) لكن تعذّر تحديث الحساب: ${ue.message} — ولم يُتراجع عنها، راجعها يدويًّا.`
+      : `تعذّر تحديث الحساب: ${ue.message} — أُلغيت الدفعة، أعد المحاولة.` };
+  }
 
   revalidatePath("/admin/subs");
   revalidatePath("/admin");

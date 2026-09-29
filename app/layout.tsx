@@ -57,12 +57,18 @@ const fabScroll = `(function(){
 })();`;
 
 /* بكسل إعلانات X (معرّف البكسل: rearl) — يقيس زيارات الحملات المدفوعة.
-   يُحقن مرّة واحدة في <head> فيغطّي كل مسارات التطبيق بما فيها /demo.
-   ملف uwt.js يُحمَّل async فلا يؤخّر رسم الصفحة. */
-const X_PIXEL = `!function(e,t,n,s,u,a){e.twq||(s=e.twq=function(){s.exe?s.exe.apply(s,arguments):s.queue.push(arguments);
+   ملف uwt.js يُحمَّل async فلا يؤخّر رسم الصفحة.
+   30 سبتمبر 2026: كان يُحمَّل في كل المسارات بما فيها /dashboard و/admin
+   و/r/* — أي سكربت طرف ثالث داخل صفحات فيها أسماء مستأجرين ومبالغ.
+   صار قائمة سماح بالمسار: صفحات الدخول والتجربة والأدوات العامة، و/onboarding
+   لأن حدث «تسجيل مكتمل» يُطلق منها. كل انتقال للّوحة تنقّل صلب
+   (window.location.assign) فلا يبقى السكربت محمَّلًا بعد الخروج من هذه الصفحات. */
+const X_PIXEL = `(function(){var p=location.pathname;
+if(!/^\\/(login|demo|onboarding|tools)(\\/|$)/.test(p))return;
+!function(e,t,n,s,u,a){e.twq||(s=e.twq=function(){s.exe?s.exe.apply(s,arguments):s.queue.push(arguments);
 },s.version='1.1',s.queue=[],u=t.createElement(n),u.async=!0,u.src='https://static.ads-twitter.com/uwt.js',
 a=t.getElementsByTagName(n)[0],a.parentNode.insertBefore(u,a))}(window,document,'script');
-twq('config','rearl');`;
+twq('config','rearl');})();`;
 
 const THEME_TOGGLE = `(function(){
 var K="watheq_theme";

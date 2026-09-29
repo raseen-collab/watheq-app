@@ -5,14 +5,13 @@ export const dynamic = "force-dynamic";
 
 /**
  * إعداد لمرّة واحدة:
- *   GET /api/telegram/setup?key=CRON_SECRET
+ *   GET /api/telegram/setup  مع الترويسة  Authorization: Bearer <CRON_SECRET>
+ *   (30 سبتمبر 2026: لا يُقبل السرّ في الرابط — يبقى في سجلات الخادم والمتصفح)
  * يربط الـ webhook بتليجرام ويضبط قائمة الأوامر.
  * أعِد استدعاءه فقط عند تغيير الدومين أو الأوامر.
  */
 export async function GET(req: Request) {
-  const url = new URL(req.url);
-  const key = url.searchParams.get("key");
-  if (!process.env.CRON_SECRET || key !== process.env.CRON_SECRET) {
+  if (!process.env.CRON_SECRET || req.headers.get("authorization") !== `Bearer ${process.env.CRON_SECRET}`) {
     return NextResponse.json({ ok: false, error: "غير مصرّح" }, { status: 401 });
   }
 

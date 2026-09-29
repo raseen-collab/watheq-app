@@ -67,6 +67,21 @@ export function parseDate(v: string | Date): Date {
   return isNaN(d.getTime()) ? startOfDay(riyadhNow()) : startOfDay(d);
 }
 
+/**
+ * (30 سبتمبر 2026) قراءة صارمة لتاريخ YYYY-MM-DD: تاريخ حقيقي أو null.
+ * parseDate تُسقط النص الذي لا يُفهم إلى «اليوم» — مقبول للعرض، خطِر للمال:
+ * تاريخ إخلاء مكتوب «15/07/2026» كان يصير NaN فتُصفَّر متأخرات المستأجر السابق.
+ */
+export function strictDate(v?: string | Date | null): Date | null {
+  if (v instanceof Date) return isNaN(v.getTime()) ? null : startOfDay(v);
+  const s = String(v ?? "").trim().slice(0, 10);
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+  if (!m) return null;
+  const y = Number(m[1]), mo = Number(m[2]) - 1, d = Number(m[3]);
+  const dt = new Date(y, mo, d);
+  return dt.getFullYear() === y && dt.getMonth() === mo && dt.getDate() === d && y >= 1900 && y <= 2100 ? dt : null;
+}
+
 /** كتابة تاريخ بمكوّناته المحلية — البديل الآمن عن toISOString().slice(0,10) */
 export function isoDate(d: Date): string {
   const p = (n: number) => String(n).padStart(2, "0");
@@ -335,12 +350,17 @@ export function contractState(t: {
 }, opts: { graceDays?: number | null; soonDays?: number | null; imminentDays?: number | null; expiringDays?: number | null } = {}): ContractState {
   const anchor = anchorOf(t);
   // الوحدة المُخلاة تتوقّف عن تراكم المتأخرات من تاريخ الإخلاء — لا تبقى "متأخرة" للأبد
-  const vacated = isVacant(t) && !!t.move_out_date;
+  /* (30 سبتمبر 2026) تاريخ الإخلاء يُقرأ صارمًا: «15/07/2026» كان يُعطي NaN فتُحسب
+     متأخرات السابق صفرًا وتُؤرشف الوحدة بلا دين. التاريخ المفقود أو غير الصالح
+     «بيانات ناقصة»، والاحتساب يقف عند آخر تاريخ معروف (نهاية العقد) لا يُصفَّر. */
+  const moveOut = isVacant(t) ? strictDate(t.move_out_date) : null;
+  const vacated = isVacant(t) && !!moveOut;
+  const moveOutBad = isVacant(t) && !moveOut;
   /* مهلة السماح تؤخّر وصف الساكن «متأخرًا» — لا تُسقط القسط عمّن غادر.
      كانت تُطبَّق على المُخلي أيضًا: من خرج بعد 3 أيام من حلول قسطه وسماح
      العقار 5 يُؤرشَف بلا ذلك القسط، فيضيع من الدفاتر. (دراسة 685 احتمالًا
      موسّعة: 49 مستأجرًا مُخليًا، كل فرق = أقساط حلّت في المهلة قبل الخروج.) */
-  const grace = vacated ? 0 : Math.max(0, Math.min(30, Number(opts.graceDays) || 0));
+  const grace = isVacant(t) ? 0 : Math.max(0, Math.min(30, Number(opts.graceDays) || 0));
   // نافذة «يستحق قريبًا» — يختارها كل مكتب (افتراضيًّا 7 أيام)
   const soon = Math.max(1, Math.min(60, Number(opts.soonDays) || 10));
   // «مستحق»: نافذة أقرب داخل «قريب» — إن ضُبطت أكبر من «قريب» تُقصّ إليها
@@ -400,7 +420,18 @@ export function contractState(t: {
   const start = parseDate(schedStart);
   // مرجع الاحتساب: اليوم، أو تاريخ الإخلاء إن كانت الوحدة مُخلاة (أيّهما أسبق)
   const now = riyadhNow();
-  const cutoff = vacated ? new Date(Math.min(Date.parse(String(t.move_out_date)), now.getTime())) : now;
+  /* نهاية العقد تُعدّ من بداية العقد بيومها هي — لا من يوم أول استحقاق. حين
+     يختلف أول الاستحقاق عن البداية فالمرساة المحفوظة يوم الدفع (20) لا يوم
+     البداية (1)، فكانت النهاية المستنتجة تصير يوم 20. (30 سبتمبر 2026) */
+  const startDay0 = parseDate(t.contract_start as string).getDate();
+  const endAnchor0 = t.first_due && String(t.first_due).slice(0, 10) !== String(t.contract_start).slice(0, 10)
+    ? startDay0 : (Number(t.billing_anchor_day) || startDay0);
+  const cutoff = vacated ? new Date(Math.min(moveOut!.getTime(), now.getTime()))
+    : moveOutBad ? (() => {
+        const e = strictDate(t.contract_end) || strictDate(derivedEndDate(t.contract_start as string, freq, t.contract_periods, endAnchor0, cal));
+        return e && e < now ? e : now;
+      })()
+    : now;
   // فترة السماح: تُحتسب الدفعة مستحقّة رسميًّا بعد مرور أيام السماح
   const graceRef = new Date(cutoff); graceRef.setDate(graceRef.getDate() - grace);
   const dueRaw = periodsElapsed(schedStart, freq, graceRef, anchor, cal);
@@ -443,9 +474,8 @@ export function contractState(t: {
 
   // نهاية العقد: يدوية أو مستنتجة
   // نهاية العقد تُعدّ من بداية العقد بيومها هي — لا من يوم أول استحقاق
-  const endAnchor = Number(t.billing_anchor_day) || parseDate(t.contract_start).getDate();
-  const endDate = t.contract_end || derivedEndDate(t.contract_start, freq, t.contract_periods, endAnchor, cal);
-  const daysToEnd = daysBetween(new Date(endDate), today);
+  const endDate = t.contract_end || derivedEndDate(t.contract_start, freq, t.contract_periods, endAnchor0, cal);
+  const daysToEnd = daysBetween(parseDate(endDate), today);
 
   // استُحقّت دفعة فعليًّا لكنها لم تُحتسب متأخرة بعد بفضل السماح
   const inGrace = grace > 0 && dueStrict > due && dueStrict > paid;
@@ -459,7 +489,10 @@ export function contractState(t: {
   let statusLabel = "منتظم";
   if (unpaid > 0) {
     status = "late";
-    statusLabel = hasPartial
+    /* (30 سبتمبر 2026) الجزئي لا يُخفي أقساطًا كاملة متأخرة خلفه */
+    statusLabel = hasPartial && unpaid > 1
+      ? `متأخر ${unpaid} دفعات (إحداها مسدَّدة جزئيًّا) — متبقٍ ${Math.round(amountDue).toLocaleString("en-US")}`
+      : hasPartial
       ? `سداد جزئي — متبقٍ ${Math.round(amountDue).toLocaleString("en-US")}`
       : unpaid === 1 ? "متأخر دفعة واحدة" : `متأخر ${unpaid} دفعات`;
   } else if (inGrace) {
@@ -532,10 +565,13 @@ export function contractState(t: {
     statusLabel = amountDue > 0
       ? `شاغرة — متأخرات على المستأجر السابق ${Math.round(amountDue).toLocaleString("en-US")}`
       : "شاغرة";
+    if (moveOutBad) statusLabel += t.move_out_date
+      ? ` · تاريخ الإخلاء غير صحيح (${String(t.move_out_date).slice(0, 20)}) — صحّحه`
+      : " · تاريخ الإخلاء غير مسجَّل — المتأخرات محسوبة حتى نهاية العقد";
   }
 
   return {
-    due, paid, unpaid, amountDue, grossDue, partial, hasPartial, partialPct, fullyPaid, soonTier, expiringSoon, vacant, legacyArrears, incomplete: false,
+    due, paid, unpaid, amountDue, grossDue, partial, hasPartial, partialPct, fullyPaid, soonTier, expiringSoon, vacant, legacyArrears, incomplete: moveOutBad,
     carriedDebt, totalOwed: r2(amountDue + carriedDebt),
     nextDueDate: nextDueOut, daysToNextDue: daysToNextOut, endDate, daysToEnd: daysToEndOut, status, statusLabel, progress,
     upcomingDate: vacant ? null : upcomingDate, daysToUpcoming: vacant ? null : daysToUpcoming,
@@ -587,8 +623,25 @@ export function buildSchedule(t: {
 }
 
 /**
- * تجديد العقد — يبدأ مدة جديدة تلقائيًّا من تاريخ انتهاء المدة الحالية.
- * يعيد الحقول الجاهزة للحفظ.
+ * (30 سبتمبر 2026) حالة العقد كأن المستأجر أخلى في تاريخ بعينه — لمخالصة الإخلاء.
+ * كانت المخالصة تحسب المتأخر حتى اليوم: إخلاء مؤرَّخ بالأسبوع الماضي يُسقط قسطًا
+ * حلّ بينهما أو يضيف قسطًا لم يحلّ قبل الخروج. التاريخ غير الصالح ⟵ incomplete.
+ */
+export function vacatedStateAt(
+  t: Parameters<typeof contractState>[0], moveOutISO: string,
+  opts: Parameters<typeof contractState>[1] = {},
+): ContractState {
+  return contractState({ ...t, status: "vacated", move_out_date: moveOutISO }, opts);
+}
+
+/** الفجوة غير المفوترة حين تبدأ المدة الجديدة من اليوم لا من نهاية السابقة */
+export type RenewalGap = { from: string; to: string; days: number; periods: number } | null;
+
+/**
+ * تجديد العقد — يبدأ مدة جديدة من تاريخ انتهاء المدة الحالية (الافتراضي)،
+ * أو من اليوم إن طُلب صراحةً (opts.fromToday) لعقد انتهى منذ زمن.
+ * يعيد الحقول الجاهزة للحفظ؛ ومعها `gap` غير قابلة للعدّ (لا تُرسل للقاعدة
+ * ولا تظهر في spread) تصف ما لم يُفوتَر بين نهاية السابقة واليوم.
  */
 export function renewContract(t: {
   contract_start?: string | null;
@@ -601,15 +654,19 @@ export function renewContract(t: {
   paid_periods?: number | null;
   partial_amount?: number | null;
   first_due?: string | null;
+  calendar?: string | null;
 }, opts: { periods?: number | null; newAmount?: number | null; newFrequency?: Frequency | null;
            /** ما يُفعل بمتأخرات العقد المنتهي: ترحيلها دينًا (الافتراضي) أو اعتبارها مسدَّدة */
-           arrears?: "carry" | "settled" } = {}) {
+           arrears?: "carry" | "settled";
+           /** ضريبة الوحدة (unitVat) — في «مضافة فوق الإيجار» يُرحَّل الرصيد شاملًا الضريبة */
+           vat?: VatSettings | null;
+           /** تبدأ المدة الجديدة اليوم لا من نهاية السابقة — وما بينهما لا يُفوتَر (يُعاد في gap) */
+           fromToday?: boolean } = {}) {
   const anchor = anchorOf(t);
   const oldFreq = (t.payment_frequency || "monthly") as Frequency;
   const freq = (opts.newFrequency || oldFreq) as Frequency;
+  const cal = (t.calendar === "hijri" ? "hijri" : "gregorian") as ContractCalendar;
   const st = contractState(t);
-  // المدة الجديدة تبدأ من نهاية الحالية (أو من اليوم إن كانت منتهية منذ زمن)
-  const startISO = st.endDate || isoDate(riyadhNow());
   const periods = opts.periods && opts.periods > 0 ? opts.periods : (t.contract_periods || defaultTermPeriods(freq));
   const amount = opts.newAmount && opts.newAmount > 0 ? opts.newAmount : (Number(t.rent_amount) || 0);
 
@@ -625,15 +682,61 @@ export function renewContract(t: {
   const oldTotal = t.contract_periods && t.contract_periods > 0 ? t.contract_periods : defaultTermPeriods(oldFreq);
   const oldPaid = Math.max(0, Number(t.paid_periods) || 0);
   const oldPartial = Math.max(0, Number(t.partial_amount) || 0);
-  const termBalance = Math.round((oldTotal * oldRent - (oldPaid * oldRent + oldPartial)) * 100) / 100;
-  const owedFromTerm = Math.max(0, termBalance);
+  const termBalance = r2(oldTotal * oldRent - (oldPaid * oldRent + oldPartial));
+  /* (30 سبتمبر 2026) في «مضافة فوق الإيجار» الأقساط بلا ضريبة، والدين المرحَّل
+     يُعرض ويُحصَّل كما هو (arrearsOf لا يضيف عليه ضريبة) — فكان ترحيل 10,000
+     متأخرة يُسقط 1,500 ضريبة من المطالبة إلى الأبد. نرحّله شاملًا. */
+  const owedBase = Math.max(0, termBalance);
+  const owedFromTerm = opts.vat?.enabled && opts.vat?.inclusive === false ? splitVat(owedBase, opts.vat).total : owedBase;
   const credit = Math.max(0, -termBalance);
   const creditPeriods = amount > 0 ? Math.floor(credit / amount) : 0;
-  const creditPartial = amount > 0 ? Math.round((credit - creditPeriods * amount) * 100) / 100 : 0;
+  const creditPartial = amount > 0 ? r2(credit - creditPeriods * amount) : 0;
 
-  return {
+  /* (30 سبتمبر 2026) استمرار الجدول عبر التجديد.
+     كان «أول استحقاق» يُصفَّر والمدة الجديدة تُجدوَل من بداية العقد، فإن كان
+     أول استحقاق غير البداية (عقد 1 أكتوبر وأول دفعة 1 نوفمبر) وقع آخر قسط
+     قديم وأول قسط جديد في اليوم نفسه (فوترة مزدوجة)، أو انزاح يوم الدفع (20←1،
+     وفي الهجري 10←1). الآن: أول استحقاق للمدة الجديدة = الموعد التالي لآخر قسط
+     في الجدول القديم بالمرساة والتقويم نفسيهما — لا تكرار ولا فجوة. */
+  const oldSchedStart = scheduleStart(t);
+  const nextDue = oldSchedStart ? addPeriods(parseDate(oldSchedStart), oldFreq, oldTotal, anchor, cal) : null;
+
+  /* نهاية المدة الجديدة تُعدّ من بدايتها بيوم البداية — لا بيوم الدفع. عقد يبدأ
+     الأول ويدفع يوم 20 كانت نهايته تصير يوم 20. واستثناء واحد: بداية قُصّت
+     لآخر الشهر (31 أغسطس + 6 أشهر = 28 فبراير) تستعيد يومها الأصلي. */
+  const endDayFor = (newStart: Date) => {
+    const lastDay = new Date(newStart.getFullYear(), newStart.getMonth() + 1, 0).getDate();
+    /* بلا «أول استحقاق» مختلف تكون المرساة المحفوظة هي يوم البداية الأصلي (29 فبراير
+       يبقى 29 بعد ثلاثة تجديدات مرّت على 28) */
+    const fdDiffers = !!t.first_due && String(t.first_due).slice(0, 10) !== String(t.contract_start).slice(0, 10);
+    const oldStartDay = Math.max(t.contract_start ? parseDate(t.contract_start).getDate() : 0, fdDiffers ? 0 : Number(anchor) || 0);
+    return newStart.getDate() === lastDay && oldStartDay > lastDay ? Math.min(31, oldStartDay) : newStart.getDate();
+  };
+
+  const todayD = riyadhNow();
+  const todayISO = isoDate(todayD);
+  let startISO: string, firstDue: string | null, payAnchor: number | null, gap: RenewalGap = null;
+  if (opts.fromToday) {
+    /* بداية من اليوم: عقد جديد فعليًّا — يوم الدفع يوم البداية. ما بين نهاية
+       السابقة واليوم لا يُفوتَر، ويُعاد وصفه ليقوله المكتب صراحةً لا صمتًا. */
+    startISO = todayISO; firstDue = null; payAnchor = todayD.getDate();
+    if (nextDue && nextDue < todayD) {
+      let n = 0;
+      while (n < 5000 && addPeriods(nextDue, oldFreq, n, anchor, cal) < todayD) n++;
+      gap = { from: isoDate(nextDue), to: todayISO, days: Math.round((todayD.getTime() - nextDue.getTime()) / 86400000), periods: n };
+    }
+  } else {
+    startISO = st.endDate || todayISO;
+    const fd = nextDue ? isoDate(nextDue) : null;
+    /* أول استحقاق يساوي البداية ⟵ لا حاجة له (null نظيف كما كان) */
+    firstDue = fd && fd !== startISO ? fd : null;
+    payAnchor = anchor;
+  }
+  const endDay = cal === "hijri" ? null : endDayFor(parseDate(startISO));
+
+  const out = {
     contract_start: startISO,
-    contract_end: derivedEndDate(startISO, freq, periods, anchor, (t as any).calendar === "hijri" ? "hijri" : "gregorian"),
+    contract_end: derivedEndDate(startISO, freq, periods, endDay, cal),
     payment_frequency: freq,
     contract_periods: periods,
     rent_amount: amount,
@@ -643,18 +746,18 @@ export function renewContract(t: {
     /* رصيد المدة المنتهية لا يُمحى بالتجديد: يُرحَّل دينًا ظاهرًا، إلا أن
        يؤكّد المكتب صراحةً أنه سُوّي. */
     carried_debt: opts.arrears === "settled" ? Math.max(0, Number(t.carried_debt) || 0)
-      : Math.round((Math.max(0, Number(t.carried_debt) || 0) + owedFromTerm) * 100) / 100,
-    /* «أول استحقاق» يخصّ المدة الأولى وحدها. تركه بعد التجديد كان يجعل الجدول
-       يبدأ من تاريخه القديم بصفر مسدَّد، فيظهر من سدّد سنته متأخرًا بسنة كاملة
-       (أُعيد إنتاجه: 12/12 مسدَّدة ⟵ «متأخر 36,000»). المدة الجديدة تبدأ من
-       contract_start، ويوم السداد محفوظ في billing_anchor_day. */
-    first_due: null,
-    billing_anchor_day: anchor, // ← تثبيت يوم السداد عبر كل التجديدات
+      : r2(Math.max(0, Number(t.carried_debt) || 0) + owedFromTerm),
+    /* «أول استحقاق» القديم لا يبقى (كان يُعيد الجدول لتاريخه القديم بصفر مسدَّد
+       فيظهر من سدّد سنته متأخرًا بسنة)؛ بل يُكتب الموعد التالي في الجدول. */
+    first_due: firstDue,
+    billing_anchor_day: payAnchor, // ← تثبيت يوم السداد عبر كل التجديدات
     /* إعلان التجديد (schema-v49): القاعدة تبدأ مدة جديدة بهذه العلامة وحدها وتضع
        وقتها بنفسها. كانت تخمّنه من «البداية تقفز + المسدَّد صفر» — فتصحيح بيانات
        من نموذج التعديل صار «تجديدًا» ونقل دفعات مسجّلة إلى «العقد السابق». */
     term_started_at: new Date().toISOString(),
   };
+  Object.defineProperty(out, "gap", { value: gap, enumerable: false });
+  return out as typeof out & { readonly gap: RenewalGap };
 }
 
 /** هل العقد يستحق التجديد؟ (منتهٍ أو يقترب) */

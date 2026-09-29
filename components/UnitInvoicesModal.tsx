@@ -71,6 +71,10 @@ export default function UnitInvoicesModal({ tenant, property, issuer, onClose, d
       issue_date: v.issue_date || null,
       status: v.status || null,
       created_at: (v as any).created_at || null,
+      /* (30 سبتمبر 2026) صدرت بضريبة أم بلا ضريبة — لا يتغيّر عنوانها ولا رمزها بتغيّر
+         إعدادات المكتب لاحقًا. الرقم الضريبي واسم البائع غير محفوظَين في الفاتورة
+         (لا أعمدة لهما) فيُطبعان بقيم المكتب الحالية. */
+      vat_snapshot: snap ? !!x.vat_enabled : null,
     }, issuer || {}));
   }
 

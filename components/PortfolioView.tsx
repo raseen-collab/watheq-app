@@ -15,7 +15,8 @@ import { fetchAllRows } from "@/lib/fetch-all";
 import { createClient } from "@/lib/supabase-client";
 import { contractState, isVacant, splitVat, unitVatApplies, dueWithVat, type Frequency } from "@/lib/contracts";
 import { annualRentRoll } from "@/lib/income";
-import { sar, waLink, today, daysAr } from "@/lib/utils";
+import { isPartialOnly } from "@/lib/contract-state";
+import { sar, waLink, today, daysAr, normalizeSearch } from "@/lib/utils";
 import { arDate } from "@/lib/documents";
 import { getOffice } from "@/lib/office";
 import { alertCount, complianceState, KIND_META, type ComplianceItem } from "@/lib/compliance";
@@ -109,7 +110,7 @@ export default function PortfolioView({ properties, windows, compliance, orgName
       T.units++;
       if (isVacant(t)) { T.vacant++; return; }
       if (t.litigation) T.litigation++;
-      else if (st.status === "late") { st.hasPartial ? T.partial++ : T.late++; T.overdue += dueWithVat(st, t, p); }
+      else if (st.status === "late") { isPartialOnly(st) ? T.partial++ : T.late++; T.overdue += dueWithVat(st, t, p); }
       else if (st.status === "soon") { st.soonTier === "near" ? T.soon++ : T.due++; }
       if (st.expiringSoon) T.expiring++;
       T.monthly += (Number(t.rent_amount) || 0) * (PER_MONTH[t.payment_frequency || "monthly"] || 1);
@@ -119,10 +120,12 @@ export default function PortfolioView({ properties, windows, compliance, orgName
   const collectedTotal = monthCollected ? Object.values(monthCollected).reduce((a, b) => a + b, 0) : null;
 
   // ---------- البحث الشامل ----------
-  const needle = q.trim().toLowerCase().replace(/[٠-٩]/g, (d) => String("٠١٢٣٤٥٦٧٨٩".indexOf(d)));
+  /* توحيد الطرفين (30 سبتمبر 2026): كانت الأرقام العربية تُحوَّل في النص المبحوث وحده،
+     و«مني/منى» و«فاطمه/فاطمة» و«احمد/أحمد» لا تتطابق — نفس توحيد صفحة العقار */
+  const needle = normalizeSearch(q);
   const hits = needle.length >= 2 ? rows.filter(({ p, t }) =>
     [t.name, t.unit, t.phone, t.national_id, t.contract_no, t.elec_account, t.water_account, p.name]
-      .some((v) => v && String(v).toLowerCase().includes(needle))) : [];
+      .some((v) => v && normalizeSearch(v).includes(needle))) : [];
 
   const late = rows.filter(({ t, st }) => !isVacant(t) && !t.litigation && st.status === "late").sort((a, b) => dueWithVat(b.st, b.t, b.p) - dueWithVat(a.st, a.t, a.p));
   const due = rows.filter(({ t, st }) => !isVacant(t) && st.status === "soon" && st.soonTier !== "near").sort((a, b) => (a.st.daysToNextDue ?? 0) - (b.st.daysToNextDue ?? 0));

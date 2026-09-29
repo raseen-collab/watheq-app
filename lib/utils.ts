@@ -54,6 +54,53 @@ export function monthsAr(n: number | null | undefined): string {
   return `${x} شهر`;
 }
 
+/**
+ * «عدد + معدود» بالعربية الصحيحة لأي كلمة (30 سبتمبر 2026):
+ * 1 → one («دفعة واحدة») · 2 → two («دفعتان») · 3–10 → «n few» («4 دفعات») · 11+ → «n many» («12 دفعة»).
+ * كان التذكير الجماعي يكتب «4 دفعة». نسخة للعميل من arPlural في lib/reports.ts
+ * (ذاك الملف يجرّ تبعيات الخادم فلا يُستورد في المتصفح).
+ */
+export function countAr(n: number | null | undefined, one: string, two: string, few: string, many = one): string {
+  const x = Math.abs(Math.round(Number(n) || 0));
+  if (x === 1) return one;
+  if (x === 2) return two;
+  const r = x % 100;
+  if (r >= 3 && r <= 10) return `${x} ${few}`;
+  return `${x} ${many}`;
+}
+
+/**
+ * توحيد نص البحث (30 سبتمبر 2026): المكتب يكتب «٠٥٠…» والجوال مخزَّن «050…»،
+ * ويكتب «مني» والاسم «منى»، و«فاطمه» والاسم «فاطمة»، و«احمد» والاسم «أحمد» —
+ * فيقول البحث «لا نتائج» والمستأجر موجود. يُطبَّق على النص المبحوث وعلى المبحوث فيه معًا.
+ */
+export function normalizeSearch(v: unknown): string {
+  return String(v ?? "")
+    .replace(/[٠-٩]/g, (d) => String("٠١٢٣٤٥٦٧٨٩".indexOf(d)))
+    .replace(/[۰-۹]/g, (d) => String("۰۱۲۳۴۵۶۷۸۹".indexOf(d)))
+    .replace(/[ً-ْٰـ]/g, "")   // التشكيل والتطويل
+    .replace(/[أإآٱ]/g, "ا")
+    .replace(/ى/g, "ي")
+    .replace(/ة/g, "ه")
+    .replace(/ؤ/g, "و")
+    .replace(/ئ/g, "ي")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * خلية CSV آمنة (30 سبتمبر 2026): نصّ يبدأ بـ = + - @ (أو Tab/CR) يقرؤه Excel
+ * معادلةً — اسم مستأجر «=HYPERLINK(...)» يُصدَّر فينفّذ عند فتح الملف على جهاز
+ * المالك. نسبقه بفاصلة علوية فيُعرض نصًّا. الأرقام الحقيقية (بما فيها السالبة) تبقى أرقامًا.
+ */
+export function csvCell(v: unknown): string {
+  let s = v === null || v === undefined ? "" : String(v);
+  /* رقم جوال «+9665…» أو سالب «-250» أرقام لا معادلات — لا نشوّهها بفاصلة */
+  if (typeof v !== "number" && /^[=+\-@\t\r]/.test(s) && !/^[+-]?[\d\s().-]+$/.test(s)) s = "'" + s;
+  return `"${s.replace(/"/g, '""')}"`;
+}
+
 export function waLink(phone: string | undefined | null, text: string) {
   return `https://wa.me/${waNumber(phone)}?text=${encodeURIComponent(text)}`;
 }

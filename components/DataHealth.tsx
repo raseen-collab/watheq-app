@@ -25,24 +25,47 @@ export default function DataHealth({ initial }: { initial: any[] }) {
   const [ranAt, setRanAt] = useState<string | null>(null);
   const [sev, setSev] = useState<Severity | "all">("all");
 
+  /* (30 سبتمبر 2026) كان فشل أي استعلام يُبتلع: تبقى البيانات القديمة (أو الفارغة)
+     ويُحدَّث «آخر فحص» وقد تظهر «بياناتك سليمة» — طمأنة كاذبة من فحص لم يجرِ.
+     الآن الفشل يُقال بالعربية، ولا يُحدَّث وقت الفحص، ولا تُعلن السلامة. */
+  const [runErr, setRunErr] = useState<string | null>(null);
+  const [okOnce, setOkOnce] = useState(false);
   async function run() {
-    setBusy(true);
-    const [pr, pa, ex] = await Promise.all([
-      supabase.from("properties").select("*, tenants(*)").eq("is_demo", false).limit(2000, { referencedTable: "tenants" }),
-      /* كل الدفعات والمصروفات على دفعات — فحصٌ على جزء منها يطمئن كذبًا */
-      fetchAllRows(supabase as any, "payments", "id,tenant_id,property_id,amount,paid_on,applies_to,created_at")
-        .then((data) => ({ data, error: null as any })).catch((e) => ({ data: null as any, error: e })),
-      fetchAllRows(supabase as any, "expenses", "id,property_id,amount,spent_on")
-        .then((data) => ({ data, error: null as any })).catch((e) => ({ data: null as any, error: e })),
-    ]);
-    if (!pr.error) setProps(pr.data || []);
-    if (!pa.error) setPays(pa.data || []);
-    if (!ex.error) setExps(ex.data || []);
-    /* الأرشيف (v45): قبل الترحيل لا جدول — فلا فحص ولا خطأ */
-    const pt = await supabase.from("past_tenancies").select("*").limit(5000);
-    setGaps(pt.error ? [] : pastDebtGaps(pt.data || []));
-    setRanAt(new Date().toLocaleString("ar-SA-u-ca-gregory-nu-latn", { timeZone: "Asia/Riyadh", dateStyle: "medium", timeStyle: "short" }));
-    setBusy(false);
+    setBusy(true); setRunErr(null);
+    try {
+      const [pr, pa, ex] = await Promise.all([
+        supabase.from("properties").select("*, tenants(*)").eq("is_demo", false).limit(2000, { referencedTable: "tenants" }),
+        /* كل الدفعات والمصروفات على دفعات — فحصٌ على جزء منها يطمئن كذبًا */
+        fetchAllRows(supabase as any, "payments", "id,tenant_id,property_id,amount,paid_on,applies_to,created_at")
+          .then((data) => ({ data, error: null as any })).catch((e) => ({ data: null as any, error: e })),
+        fetchAllRows(supabase as any, "expenses", "id,property_id,amount,spent_on")
+          .then((data) => ({ data, error: null as any })).catch((e) => ({ data: null as any, error: e })),
+      ]);
+      /* الأرشيف (v45): قبل الترحيل لا جدول — فلا فحص ولا خطأ؛ أي خطأ آخر فشلٌ حقيقي */
+      const pt = await supabase.from("past_tenancies").select("*").limit(5000);
+      const ptMissing = !!pt.error && /does not exist|relation|schema cache/i.test(String(pt.error.message || ""));
+      const failed: string[] = [];
+      if (pr.error) failed.push("العقارات والوحدات");
+      if (pa.error) failed.push("الدفعات");
+      if (ex.error) failed.push("المصروفات");
+      if (pt.error && !ptMissing) failed.push("أرشيف المستأجرين السابقين");
+      if (failed.length) {
+        const why = String((pr.error || pa.error || ex.error || pt.error)?.message || "");
+        setRunErr(`تعذّر قراءة ${failed.join(" و")} — لم يكتمل الفحص، والنتائج المعروضة ليست حكمًا على بياناتك. `
+          + `تحقّق من الاتصال ثم اضغط «إعادة الفحص».${why ? ` (${why})` : ""}`);
+        return;
+      }
+      setProps(pr.data || []);
+      setPays(pa.data || []);
+      setExps(ex.data || []);
+      setGaps(ptMissing ? [] : pastDebtGaps(pt.data || []));
+      setRanAt(new Date().toLocaleString("ar-SA-u-ca-gregory-nu-latn", { timeZone: "Asia/Riyadh", dateStyle: "medium", timeStyle: "short" }));
+      setOkOnce(true);
+    } catch (e: any) {
+      setRunErr(`تعذّر إكمال الفحص — ${e?.message || "خطأ غير معروف"}. لم تُحدَّث النتائج؛ اضغط «إعادة الفحص».`);
+    } finally {
+      setBusy(false);
+    }
   }
   useEffect(() => { void run(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
 
@@ -125,8 +148,18 @@ export default function DataHealth({ initial }: { initial: any[] }) {
         </div>
       )}
 
-      {/* الحصيلة */}
-      {!busy && findings.length === 0 ? (
+      {runErr && (
+        <div role="alert" className="bg-[#FBE9E7] border border-[#F5C6C2] text-[#a5322c] rounded-2xl p-4 mb-4 text-sm leading-relaxed">
+          <b>⚠️ لم يكتمل الفحص.</b> {runErr}
+        </div>
+      )}
+
+      {/* الحصيلة — «سليمة» لا تُعلن إلا بعد فحص ناجح */}
+      {busy && !okOnce ? (
+        <div className="bg-white border border-line rounded-2xl p-10 text-center text-sm text-muted">جارٍ الفحص…</div>
+      ) : !okOnce ? (
+        <div className="bg-white border border-line rounded-2xl p-10 text-center text-sm text-muted">لا نتيجة بعد — الفحص لم يكتمل.</div>
+      ) : !busy && !runErr && findings.length === 0 ? (
         <div className="bg-white border border-line rounded-2xl p-10 text-center">
           <div className="text-4xl mb-2">✅</div>
           <h2 className="font-display font-bold text-deep text-lg mb-1">بياناتك سليمة</h2>

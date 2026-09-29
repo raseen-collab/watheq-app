@@ -10,7 +10,7 @@
 // دوال نقية بلا شبكة: تُستدعى من الصفحة وتُختبر مباشرة.
 // ============================================================
 
-import { contractState, isVacant, unitVatApplies, splitVat, firstDueGap, type Frequency } from "./contracts";
+import { contractState, isVacant, unitVatApplies, splitVat, firstDueGap, strictDate, type Frequency } from "./contracts";
 import { termRentPaidOf } from "./documents";
 
 export type Severity = "critical" | "warn" | "info";
@@ -191,6 +191,12 @@ export function auditOffice(properties: P[], payments: any[] = [], expenses: any
           title: dg.months >= 2 ? `أول استحقاق بعد ${dg.months} شهرًا من بداية العقد` : `يوم الدفع ${dg.dueDay} لا يوم بداية العقد ${dg.startDay}`, ...base,
           why: "«أول استحقاق» يحدّد يوم الدفع الشهري وبداية الجدول. إن كان المستأجر يدفع يوم بداية العقد فالمتأخرات والتنبيهات تُحسب على يوم خاطئ.",
           fix: "تأكّد من المستأجر: إن كان يدفع يوم بداية العقد فامسح «أول استحقاق» من «تعديل البيانات»." });
+      }
+      /* (30 سبتمبر 2026) تاريخ إخلاء غير مقروء (15/07/2026) كان يجعل دين السابق صفرًا بصمت */
+      if (vac && t.move_out_date && !strictDate(t.move_out_date)) {
+        push({ severity: "warn", title: "تاريخ إخلاء غير صالح", ...base,
+          why: "لا يُحسب دين المستأجر السابق بدقة، وإعادة التأجير متوقفة حتى يُصحَّح.",
+          fix: "افتح «تعديل البيانات» واكتب تاريخ الإخلاء من التقويم." });
       }
       /* شاغرة سُجّلت ابتداءً (بلا عقد سابق) لا تحتاج تاريخ إخلاء —
          لم يُخلِها أحد. الشكوى تخصّ من كان لها عقد وأُخليت. */

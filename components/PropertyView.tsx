@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import Icon from "@/components/Icon";
@@ -11,7 +11,7 @@ import { unitStatus, unitStatusLabel, arrearsOf } from "@/lib/contract-state";
 import type { ComplianceItem } from "@/lib/compliance";
 import { fetchAllRows } from "@/lib/fetch-all";
 import { hijriShort, hijriText, parseHijriInput } from "@/lib/hijri";
-import { sar, waLink, today, WATHEQ_WA, openExternal, daysAr } from "@/lib/utils";
+import { sar, waLink, today, WATHEQ_WA, openExternal, daysAr, countAr, normalizeSearch, csvCell } from "@/lib/utils";
 import { contractState, expectedNext12, buildSchedule, FREQUENCIES, freqLabel, freqShort, derivedEndDate, renewContract, needsRenewal, applyPayment, splitVat, isCommercial, isVacant, settleDeposit, unitVatApplies,
   vacancyDays, TURNOVER_CHECKLIST, defaultTermPeriods, parseDate, dueWithVat, rentWithVat, withVat, unitVat, firstDueGap, type Frequency } from "@/lib/contracts";
 import { PROPERTY_TYPES, typeLabel, unitLabel, typeIcon } from "@/lib/domain";
@@ -125,7 +125,7 @@ function UpcomingLine({ st, rent, imminentDays, due: dueIn }: {
   const soon = d <= imminentDays;
   return (
     <span className="block font-normal text-muted mt-0.5">
-      القادمة {rent > 0 ? <b className="text-ink">{sar(rent)} ريال</b> : null} · {st.upcomingDate}
+      القادمة {rent > 0 ? <b className="text-ink">{sar(rent)} ريال</b> : null} · <bdi dir="ltr" className="whitespace-nowrap">{st.upcomingDate}</bdi>
       {" · "}{d === 0 ? "اليوم" : `بعد ${d} ${d === 1 ? "يوم" : d === 2 ? "يومين" : d <= 10 ? "أيام" : "يومًا"}`}
       {soon && rent > 0 && due > 0 && (
         /* المجموع وحده يُخفي أن جزءًا منه متأخر أصلًا — والمكتب يحتاج أن
@@ -387,13 +387,14 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
 
   // الصفوف المعروضة: بحث ← تصفية ← فرز
   const rows = useMemo(() => {
-    const needle = q.trim().toLowerCase();
+    /* (30 سبتمبر 2026) normalizeSearch: الأرقام العربية وى/ي وة/ه والهمزات — كان «٠٥٥» لا يجد «055» */
+    const needle = normalizeSearch(q);
     let out = allRowsForFilter.filter((r) => {
       if (filter !== "all" && r.key !== filter && !(filter === "soon" && r.key === "due")) return false;
       if (!needle) return true;
       // نفس حقول بحث «النظرة العامة» — لا يجد المستأجر في صفحة ويعجز في أخرى
       return [r.t.name, r.t.unit, r.t.phone, r.t.contract_no, r.t.national_id, r.t.elec_account, r.t.water_account].filter(Boolean)
-        .some((v) => String(v).toLowerCase().includes(needle));
+        .some((v) => normalizeSearch(v).includes(needle));
     });
     out = [...out].sort((a, b) => {
       if (sort === "amount") return b.st.amountDue - a.st.amountDue;
@@ -473,13 +474,55 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
     });
   }
 
+  /**
+   * زرّ ✔ (30 سبتمبر 2026): «استلمتُ ما يُكمل الدفعة الحالية».
+   * كان يسجّل الإيجار كاملًا ولو على الدفعة جزئيٌّ مدفوع — فمستأجر دفع 1,000 من
+   * 3,000 ثم أكمل 2,000 يُسجَّل له 3,000، ويظهر 1,000 زائدًا على الدفعة التالية.
+   * المبلغ بوحدة الإيجار كما يُسجَّل كل سداد (قبل الضريبة في وضع «مضافة»).
+   */
+  function quickPay(t: Tenant, st: ReturnType<typeof contractState>) {
+    const rent = Number(t.rent_amount) || 0;
+    const part = st.hasPartial ? Math.min(rent, Math.max(0, Number(st.partial) || 0)) : 0;
+    const amt = Math.round((rent - part) * 100) / 100;
+    if (!(amt > 0)) return notify("err", `قيمة الدفعة غير محدَّدة — أدخل إيجار ${ul} ${t.unit || t.name} أولًا.`);
+    const vatNote = active && unitVatApplies(t, active) && active.vat_inclusive === false ? " (قبل الضريبة المضافة)" : "";
+    const head = part > 0
+      ? `تسجيل استلام باقي الدفعة الحالية؟\n\n${sar(amt)} ريال${vatNote} = الدفعة ${sar(rent)} − مدفوع منها سابقًا ${sar(part)}`
+      : `تسجيل استلام دفعة كاملة؟\n\n${sar(amt)} ريال${vatNote}`;
+    if (confirm(`${head}\nمن ${t.name} — ${ul} ${t.unit || "—"} — ${active?.name}\n\nتاريخ السداد: اليوم (${today()})\nلمبلغ أو تاريخ مختلف أو مرجع حوالة استعمل «½ جزئي».\n\n(تُسجَّل باسمك في سجل الحركات المالية)`)) recordPayment(t, amt);
+  }
+
   /** التراجع عن آخر دفعة — ذرّي في القاعدة، للمدير فقط، بصف سالب في السجل */
   async function undoPayment(t: Tenant) {
     if (!active) return;
     if (isBusy(`pay:${t.id}`) || isBusy(`undo:${t.id}`)) return;
     return once(`undo:${t.id}`, async () => {
-    const amt = Number(t.rent_amount) || 0;
-    if (!confirm(`التراجع عن آخر دفعة مسجّلة؟\n\n${t.name} — ${ul} ${t.unit || "—"} — ${active.name}\nسيُخصم ${sar(amt)} ريال من المحصَّل ويُسجَّل التراجع باسمك في سجل الحركات المالية.`)) return;
+    /* (30 سبتمبر 2026) التأكيد كان يقول «سيُخصم <الإيجار>» — والدالة تعكس آخر
+       دفعة إيجار حيّة بمبلغها الفعلي (جزئية 500 مثلًا). نقرؤها بقاعدة الدالة
+       نفسها (v44: إيجار موجب، لم يُعكس، ضمن المدة الحالية)؛ وإن تعذّر نصوغ بلا رقم. */
+    let last: { amount: number; paid_on: string } | null = null, known = false;
+    try {
+      const { data: pr, error: pe } = await supabase.from("payments")
+        .select("id, amount, paid_on, created_at, applies_to, reverses")
+        .eq("tenant_id", t.id).order("created_at", { ascending: false }).limit(100);
+      if (!pe && Array.isArray(pr)) {
+        known = true;
+        const since = String((t as any).term_started_at || "");
+        const useSince = !!since && !/infinity/i.test(since);
+        const reversed = new Set(pr.filter((x: any) => x.reverses).map((x: any) => String(x.reverses)));
+        const live = [...pr]
+          .filter((x: any) => Number(x.amount) > 0 && (x.applies_to || "rent") === "rent" && !reversed.has(String(x.id))
+            && (!useSince || String(x.created_at || "") >= since))
+          .sort((a: any, b: any) => String(b.created_at || b.paid_on || "").localeCompare(String(a.created_at || a.paid_on || "")))[0];
+        if (live) last = { amount: Number(live.amount) || 0, paid_on: String(live.paid_on || "").slice(0, 10) };
+      }
+    } catch { /* نصوغ التأكيد بلا رقم */ }
+    const what = last
+      ? `سيُعكس ${sar(last.amount)} ريال (دفعة ${last.paid_on}) ويُخصم من المحصَّل`
+      : known ? "لا دفعة مسجّلة في الدفتر لهذه المدة — سيُصحَّح عدّاد الدفعات وحده بلا أثر نقدي (رصيد افتتاحي)"
+      : "سيُعكس آخر مبلغ إيجار مسجَّل (تجده في «سجل المدفوعات») ويُخصم من المحصَّل";
+    if (!confirm(`التراجع عن آخر دفعة مسجّلة؟\n\n${t.name} — ${ul} ${t.unit || "—"} — ${active.name}\n${what}، ويُسجَّل التراجع باسمك في سجل الحركات المالية.`)) return;
+    const amt = last?.amount || 0;
     const { data, error } = await supabase.rpc("watheq_undo_payment", { p_tenant: t.id });
     if (error) {
       const m = String(error.message || "");
@@ -500,7 +543,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
        كان «|| amt» يُظهر «خُصم 13,000» والدالة لم تخصم شيئًا. */
     notify("ok", r.opening_balance
       ? "صُحّح عدّاد الدفعات — كانت دفعة سُدّدت قبل وثيق، فلا تُسجَّل في الدفتر"
-      : `تم التراجع — خُصم ${sar(r.reversed || amt)} ريال`
+      : ((r.reversed || amt) ? `تم التراجع — خُصم ${sar(r.reversed || amt)} ريال` : "تم التراجع")
         + (r.paid_on ? ` من تحصيل ${r.paid_on}` : "") + " وسُجّل في سجل الحركات المالية");
     });
   }
@@ -545,7 +588,13 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
    */
   function reLet(t: Tenant) {
     const st = contractState(t, { graceDays: Number(active?.grace_days) || 0, ...windowsOf(active) });
-    const debt = Math.round(((st.legacyArrears || 0) + (Number(t.carried_debt) || 0)) * 100) / 100;
+    /* (30 سبتمبر 2026) تاريخ إخلاء غير صالح يجعل المتأخر تقديرًا — لا يُؤرشف دين على تقدير */
+    if (st.incomplete && isVacant(t)) {
+      notify("err", "تاريخ الإخلاء غير صالح أو غير مسجَّل — صحّحه من «تعديل البيانات» قبل إعادة التأجير، حتى يُحسب دين المستأجر السابق صحيحًا.");
+      return;
+    }
+    /* المتأخر في «مضافة فوق الإيجار» قبل الضريبة — يُؤرشف شاملًا لها وإلا ضاعت ضريبته */
+    const debt = Math.round((withVat(st.legacyArrears || 0, t, active) + (Number(t.carried_debt) || 0)) * 100) / 100;
     /**
      * مصير دين السابق: ثلاثة لا اثنان.
      *
@@ -752,6 +801,10 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
     if (id) {
       // إن كانت الوحدة شاغرة فهذا تأجير جديد: تُصفَّر عدّادات المدة السابقة
       const prev = active.tenants.find((x) => x.id === id);
+      /* القيم التي فُتح بها النموذج (30 سبتمبر 2026) — أساس «هل غيّر الموظف العدّادات؟»
+         وأساس حارس التزامن أدناه. بدونها: النموذج المفتوح دقائق يحمل نسخة قديمة. */
+      const init: { paid_periods: number | null; carried_debt: number | null } =
+        (d as any)._init || { paid_periods: prev?.paid_periods ?? null, carried_debt: (prev as any)?.carried_debt ?? null };
       /**
        * تعديل الإيجار وسط عقد فيه دفعات مسجَّلة يُعيد تقييمها كلها بالسعر
        * الجديد: من دفع شهرين بـ5,000 يصير كأنه دفع بـ8,000، فتتغيّر متأخراته
@@ -766,7 +819,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
        * ما يعادله بالدورة الجديدة.
        */
       if (prev && (prev.paid_periods || 0) > 0 && (d.payment_frequency || "monthly") !== (prev.payment_frequency || "monthly")
-          && Number(d.paid_periods) === Number(prev.paid_periods)) {
+          && Number(d.paid_periods) === Number(init.paid_periods)) {
         const MO: Record<string, number> = { monthly: 1, quarterly: 3, trimester: 4, semiannual: 6, annual: 12 };
         const oldM = MO[prev.payment_frequency || "monthly"], newM = MO[d.payment_frequency || "monthly"];
         const months = (prev.paid_periods || 0) * (oldM || 0);
@@ -791,12 +844,14 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
          كان للوحدة دفعات مسجّلة ننبّه، لأن التعديل يفكّ ارتباط العدّاد
          بالسجل ويجعل تقرير المالك يخالف حالة الوحدة. */
       const paidNew = Math.max(0, Math.floor(Number(d.paid_periods) || 0));
-      if (prev && paidNew !== (prev.paid_periods || 0)) {
+      const paidChanged = paidNew !== (Number(init.paid_periods) || 0);
+      const carriedChanged = Math.abs((Number(payload.carried_debt) || 0) - (Number(init.carried_debt) || 0)) > 0.005;
+      if (prev && paidChanged) {
         const { count } = await supabase.from("payments")
           .select("id", { count: "exact", head: true }).eq("tenant_id", id);
         const recorded = Number(count) || 0;
         if (recorded > 0 && !confirm(
-          `تغيير «الدفعات المسدَّدة» من ${prev.paid_periods || 0} إلى ${paidNew}؟\n\n`
+          `تغيير «الدفعات المسدَّدة» من ${Number(init.paid_periods) || 0} إلى ${paidNew}؟\n\n`
           + `على هذه الوحدة ${recorded} دفعة مسجّلة في السجل.\n`
           + `التعديل اليدوي لا يضيف ولا يحذف دفعة — فقد يختلف العدّاد عن سجل المدفوعات وتقرير المالك.\n\n`
           + `للتراجع عن دفعة سُجّلت خطأً استعمل «↩︎ تراجع عن آخر دفعة».\n\nمتابعة؟`
@@ -869,10 +924,40 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
           + `إن كان هذا تجديدًا لعقد جديد: اضغط «إلغاء» واستعمل «تجديد العقد» من قائمة الوحدة — يسألك عن المتأخرات ولا يضيّعها.\n\n`
           + `إن كان تصحيحًا لبيانات أُدخلت خطأً: اضغط «موافق».`)) { setSaving(false); return; }
       }
-      const full: any = { ...payload, paid_periods: paidNew };
-      const { data: _u2, error } = await supabase.from("tenants").update(full).eq("id", id).select("id");
+      /**
+       * كتابة قديمة فوق دفعة زميل (30 سبتمبر 2026).
+       *
+       * كان الحفظ يكتب «الدفعات المسدَّدة» و«الدين المرحَّل» من نسخة النموذج دائمًا:
+       * موظف يفتح التعديل لتصحيح جوال، وزميله يسجّل دفعة في هذه الأثناء (العدّاد
+       * صار 4)، فيحفظ الأول ويُعيد العدّاد 3 — دفعة مستلمة تختفي من الحساب.
+       * الآن: العدّادات المالية لا تُكتب إلا إن غيّرها الموظف فعلًا، وحين تُكتب
+       * يُشترط أن تكون في القاعدة كما فُتح بها النموذج؛ وإلا لا يُكتب شيء.
+       */
+      const { carried_debt: _cdNew, ...base } = payload as any;
+      const full: any = { ...base,
+        ...(paidChanged ? { paid_periods: paidNew } : {}),
+        ...(carriedChanged ? { carried_debt: _cdNew } : {}) };
+      let upd: any = supabase.from("tenants").update(full).eq("id", id);
+      const guard = (col: string, v: any) => { upd = v === null || v === undefined ? upd.is(col, null) : upd.eq(col, v); };
+      if (paidChanged) guard("paid_periods", init.paid_periods);
+      if (carriedChanged) guard("carried_debt", init.carried_debt);
+      const { data: _u2, error } = await upd.select("id");
       if (error) { console.error("Watheq save error:", error); return fail(error.message); }
-      if (!_u2 || _u2.length === 0) return fail("هذا الإجراء يحتاج صلاحية أعلى — اطلبه من صاحب المكتب.");
+      if (!_u2 || _u2.length === 0) {
+        if (paidChanged || carriedChanged) {
+          /* صفر صفوف مع حارس: إمّا تغيّر العدّاد في القاعدة، وإمّا الصلاحيات. نقرأ لنعرف */
+          const { data: cur } = await supabase.from("tenants").select("*").eq("id", id).limit(1);
+          const row = Array.isArray(cur) ? cur[0] : null;
+          if (row && (Number(row.paid_periods) !== Number(init.paid_periods ?? 0) || Math.abs((Number(row.carried_debt) || 0) - (Number(init.carried_debt) || 0)) > 0.005)) {
+            setItems(items.map((pp) => pp.id === active.id
+              ? { ...pp, tenants: pp.tenants.map((x) => (x.id === id ? { ...x, ...row } as Tenant : x)) } : pp));
+            return fail(`لم يُحفظ شيء: سجّل أحد الزملاء دفعة أو عدّل رصيد هذه ${ul} أثناء فتحك النموذج `
+              + `(الدفعات المسدَّدة الآن ${Number(row.paid_periods) || 0}${Number(row.carried_debt) > 0 ? ` · الدين المرحَّل ${sar(row.carried_debt)}` : ""}). `
+              + `أغلق النموذج وافتحه من جديد لترى الأرقام الحالية، ثم أعد تعديلك.`);
+          }
+        }
+        return fail("هذا الإجراء يحتاج صلاحية أعلى — اطلبه من صاحب المكتب.");
+      }
       setItems(items.map((p) => p.id === active.id
         ? { ...p, tenants: p.tenants.map((t) => (t.id === id ? { ...t, ...full } as Tenant : t)) } : p));
     } else {
@@ -975,7 +1060,29 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
     /* الرقم المعروض في السؤال هو ما سيُرحَّل فعلًا — من الدالة نفسها، لا
        حسابٌ موازٍ. كان يعرض متأخر اليوم (contractState) بينما يُرحَّل رصيد
        المدة كاملة، فيختلف الرقمان عند التجديد المبكر أو داخل مهلة السماح. */
-    const fields = renewContract(t, { periods: opts.periods, newAmount: opts.newAmount, newFrequency: opts.newFrequency, arrears: "carry" });
+    /**
+     * التجديد من بيانات طازجة وبحارس (30 سبتمبر 2026).
+     *
+     * كان يحسب من نسخة الشاشة: دفعة سجّلها زميل قبل دقيقة لا تدخل الرصيد
+     * المرحَّل (فيُرحَّل دين دُفع)، ونقرتان على «تأكيد التجديد» أو موظفان معًا
+     * يجدّدان مرتين — سنتان بدل سنة ورصيد مرحَّل مضاعف. الآن نقرأ الصفّ من
+     * القاعدة، ونكتب بشرط أن تكون نهاية المدة ما زالت كما قرأناها.
+     */
+    const { data: freshRows, error: fErr } = await supabase.from("tenants").select("*").eq("id", t.id).limit(1);
+    if (fErr) return notify("err", `تعذّر قراءة العقد قبل التجديد — لم يُجدَّد (${fErr.message}).`);
+    const fresh: Tenant | null = Array.isArray(freshRows) && freshRows[0] ? { ...t, ...freshRows[0] } : null;
+    if (!fresh) return notify("err", "لم يعد هذا العقد موجودًا — حدّث الصفحة.");
+    if (String(fresh.contract_end || "") !== String(t.contract_end || "") || String(fresh.contract_start || "") !== String(t.contract_start || "")) {
+      setItems(items.map((pp) => pp.id === active.id ? { ...pp, tenants: pp.tenants.map((x) => (x.id === t.id ? fresh : x)) } : pp));
+      setRenewing(null);
+      return notify("err", `جُدّد عقد ${t.name} أو عُدّلت مدته للتو من جهاز آخر (ينتهي الآن ${fresh.contract_end || "—"}) — لم يُجدَّد مرة ثانية. راجع الوحدة ثم جدّد إن لزم.`);
+    }
+    /* خارج نافذة التجديد: غالبًا ضغطة على الوحدة الخطأ — نسأل ولا نمنع */
+    if (!needsRenewal(fresh) && !confirm(`عقد ${t.name} لا ينتهي قبل ${contractState(fresh).endDate || "—"} — خارج نافذة التجديد.\n\nالتجديد الآن يبدأ المدة الجديدة من نهاية الحالية ويُرحّل ما لم يُدفع منها دينًا.\n\nالمتابعة على أي حال؟`)) return;
+    /* vat: الرصيد المرحَّل بضريبة الوحدة (lib/contracts يقبله حين يدعمه؛ any ليبني في الحالين) */
+    const renewOpts: any = { periods: opts.periods, newAmount: opts.newAmount, newFrequency: opts.newFrequency, arrears: "carry", vat: unitVat(fresh, active) };
+    const fields = renewContract(fresh, renewOpts);
+    t = fresh;
     const toSettle = Math.round(((Number((fields as any).carried_debt) || 0) - (Number(t.carried_debt) || 0)) * 100) / 100;
     let fate: "carry" | "paid" | "forgiven" = "carry";
     if (toSettle > 0 && opts.arrears !== "carry") {
@@ -986,9 +1093,20 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
         + `موافق = استلمتُه — يُسجَّل في الدفتر ويظهر في تقرير المالك.\n`
         + `إلغاء = تنازلتُ عنه — يُشطب ويُحفظ أثره.`) ? "paid" : "forgiven";
     }
-    const { data: _u3, error } = await supabase.from("tenants").update(fields).eq("id", t.id).select("id");
+    let rq: any = supabase.from("tenants").update(fields).eq("id", t.id);
+    rq = t.contract_end ? rq.eq("contract_end", t.contract_end) : rq.is("contract_end", null);
+    rq = t.contract_start ? rq.eq("contract_start", t.contract_start) : rq.is("contract_start", null);
+    const { data: _u3, error } = await rq.select("id");
     if (error) { console.error("Watheq save error:", error); return notify("err", error.message); }
-    if (!_u3 || _u3.length === 0) return notify("err", "هذا الإجراء يحتاج صلاحية أعلى — اطلبه من صاحب المكتب.");
+    if (!_u3 || _u3.length === 0) {
+      /* صفر صفوف: جدّده غيرنا بين القراءة والكتابة، أو لا صلاحية */
+      const { data: again } = await supabase.from("tenants").select("contract_end").eq("id", t.id).limit(1);
+      if (Array.isArray(again) && again[0] && String(again[0].contract_end || "") !== String(t.contract_end || "")) {
+        setRenewing(null); router.refresh();
+        return notify("err", `جُدّد عقد ${t.name} من جهاز آخر في اللحظة نفسها — لم يُجدَّد مرة ثانية.`);
+      }
+      return notify("err", "هذا الإجراء يحتاج صلاحية أعلى — اطلبه من صاحب المكتب.");
+    }
     /* ما رحّله التجديد فعلًا — هو ما يُسدَّد أو يُشطب، لا رقمٌ محسوب منفصلًا */
     const carriedNow = Number((fields as any).carried_debt) || 0;
     const moved = Math.round((carriedNow - (Number(t.carried_debt) || 0)) * 100) / 100;
@@ -1080,6 +1198,9 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
     else if (ev === "clear-demo") void clearDemo();
   }
 
+  /** دعوة التسجيل في التجربة العامة — DemoClient يستمع لهذا الحدث */
+  const demoJoin = () => window.dispatchEvent(new CustomEvent("watheq:demo-join"));
+
   async function clearDemo(silent = false) {
     /* التجربة العامة بلا حساب: لا شيء يُحذف من خادم — ندعوه للتسجيل */
     if (demo) { window.dispatchEvent(new CustomEvent("watheq:demo-join")); return; }
@@ -1132,9 +1253,9 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
         Number(t.rent_amount) || 0, freqShort(t.payment_frequency),
         t.contract_start || "", st.endDate || "", unitStatusLabel(key as any, st),
         key === "late" || key === "partial" ? dueWithVat(st, t, active) : 0, st.nextDueDate || ""]
-        .map((v) => `"${String(v ?? "").replace(/"/g, '""')}"`).join(",");
+        .map(csvCell).join(",");   /* csvCell: يمنع حقن المعادلات في Excel (30 سبتمبر 2026) */
     });
-    const csv = "\uFEFF" + [head.join(","), ...lines].join("\r\n");
+    const csv = "\uFEFF" + [head.map(csvCell).join(","), ...lines].join("\r\n");
     const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
     const aEl = document.createElement("a");
     aEl.href = url; aEl.download = `${active.name}-${today()}.csv`;
@@ -1326,7 +1447,9 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       else if (st.status === "late") { acc.late++; acc.overdue += dueWithVat(st, t, prop); }
       if (st.incomplete) acc.incomplete++;
       if (st.status === "soon") { if (st.soonTier === "near") acc.soon++; else acc.due++; }
-      if (st.expiringSoon) acc.expiring++;
+      /* القاعدة نفسها لشريحة «تجديد» في صفحة العقار (unitStatus = expiring: يقترب أو انتهى
+         ولا متأخر ولا تنفيذ) — كان الشريط يعدّ expiringSoon وحده فيختلف الرقمان (30 سبتمبر 2026) */
+      if (rowKey(t, st) === "expiring") acc.expiring++;
       acc.monthly += (Number(t.rent_amount) || 0) * PERIODS_PER_MONTH[(t.payment_frequency || "monthly") as Frequency];
     });
     return acc;
@@ -1419,10 +1542,11 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
   /* العدّادات كانت تُحسب من كل الصفوف فتبقى «الكل 2 · مستحق 2» بينما
      البحث لا يُرجع شيئًا — فتبدو الشرائح كاذبة. تُحسب الآن مما يطابق
      البحث، ويبقى الفلتر نفسه خارج الحساب حتى لا تختفي بقية الشرائح. */
-  const qNeedle = q.trim().toLowerCase();
-  const searched = qNeedle.length >= 2
-    ? allRows.filter(({ t }) => [t.name, t.unit, t.phone, t.national_id, t.contract_no]
-        .some((v) => v && String(v).toLowerCase().includes(qNeedle)))
+  /* الحقول والتوحيد نفسها التي تصفّي الصفوف — كانت الشرائح تعدّ بحقول أقل وبلا توحيد (30 سبتمبر 2026) */
+  const qNeedle = normalizeSearch(q);
+  const searched = qNeedle.length >= 1
+    ? allRows.filter(({ t }) => [t.name, t.unit, t.phone, t.national_id, t.contract_no, t.elec_account, t.water_account]
+        .some((v) => v && normalizeSearch(v).includes(qNeedle)))
     : allRows;
   const counts = searched.reduce((acc, r) => { acc[r.key] = (acc[r.key] || 0) + 1; return acc; },
     {} as Record<RowKey, number>);
@@ -1526,7 +1650,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
           {(portfolio.due + portfolio.soon) > 0 && (
             <PortfolioStat v={String(portfolio.due + portfolio.soon)} l={`تستحق خلال ${plural(officeSoon, "يوم واحد", "يومين", "أيام", "يومًا")}`} />
           )}
-          {portfolio.expiring > 0 && <PortfolioStat v={String(portfolio.expiring)} l="عقود تنتهي قريبًا" />}
+          {portfolio.expiring > 0 && <PortfolioStat v={String(portfolio.expiring)} l="عقود للتجديد أو الإخلاء" />}
           {portfolio.overdue === 0 && (portfolio.due + portfolio.soon) === 0 && portfolio.expiring === 0 && (
             <div className="text-xs text-[#9FB8B3]">لا متأخرات ولا استحقاقات قريبة ✓</div>
           )}
@@ -1547,14 +1671,18 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
 {/* مكتب بمئة عقار: قائمة منسدلة بمئة خيار لا يُبحث فيها — وعلى الجوال
             عجلة طويلة. فوق 12 عقارًا نعرض حقل بحث يصفّي القائمة. */}
         {items.length > 12 && (
-          <input className="fld max-w-[150px] text-xs" value={propQ} onChange={(e) => setPropQ(e.target.value)}
-            placeholder={`ابحث في ${items.length} عقارًا…`} />
+          /* (30 سبتمبر 2026) نص قصير ووسم للقارئ الآلي — «ابحث في 14 عقارًا…» كان يُقصّ على 390px */
+          <input className="fld flex-1 min-w-[120px] max-w-full sm:max-w-[170px] text-xs" value={propQ} onChange={(e) => setPropQ(e.target.value)}
+            aria-label={`بحث في ${items.length} عقارًا`} title={`ابحث في ${items.length} عقارًا بالاسم أو المدينة أو المالك`}
+            placeholder="بحث عقار…" />
         )}
-        <select value={p.id} onChange={(e) => setActiveId(e.target.value)} className="fld max-w-[220px] font-semibold text-deep">
+        {/* كان max-w-[220px] يقصّ عدد الوحدات من آخر الخيار على 390px — يأخذ الآن ما بقي من السطر (30 سبتمبر 2026) */}
+        <select value={p.id} onChange={(e) => setActiveId(e.target.value)} aria-label="اختيار العقار"
+          className="fld flex-1 min-w-[170px] max-w-full sm:flex-none sm:max-w-[300px] font-semibold text-deep">
           {(() => {
-            const q = propQ.trim().toLowerCase();
+            const q = normalizeSearch(propQ);
             const list = [...items].sort((a, b) => a.name.localeCompare(b.name, "ar"))
-              .filter((x) => !q || `${x.name} ${x.city || ""} ${x.owner_name || ""}`.toLowerCase().includes(q) || x.id === p.id);
+              .filter((x) => !q || normalizeSearch(`${x.name} ${x.city || ""} ${x.owner_name || ""}`).includes(q) || x.id === p.id);
             return list.map((x) =>
               <option key={x.id} value={x.id}>{typeIcon(x.property_type)} {x.name} · {x.tenants.length}</option>);
           })()}
@@ -1565,14 +1693,17 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
         <button type="button" className="btn btn-ghost text-sm px-3" onClick={refreshNow} disabled={refreshing}
           title="تحديث البيانات من السيرفر (بعد تسجيل دفعة من البوت مثلًا)">{refreshing ? "…" : "↻"}</button>
         {isManager && <button type="button" className="btn btn-ghost text-sm px-3" onClick={() => setModal({ kind: "editProp" })} title="إعدادات هذا العقار">⚙️</button>}
-        {items.length > 1 && <Link href="/dashboard/property/overview" className="btn btn-ghost text-sm" title="كل العقارات في صفحة واحدة">🗂️ نظرة عامة</Link>}
+        {/* التجربة العامة بلا جلسة: الروابط إلى صفحات اللوحة تنتهي في /login —
+            نفتح دعوة التسجيل بدلها كبقية الأفعال المحجوبة في التجربة (30 سبتمبر 2026) */}
+        {items.length > 1 && <Link href="/dashboard/property/overview" className="btn btn-ghost text-sm" title="كل العقارات في صفحة واحدة"
+          onClick={(e) => { if (demo) { e.preventDefault(); demoJoin(); } }}>🗂️ نظرة عامة</Link>}
         {isManager && <button className="btn btn-ghost text-sm" onClick={() => setModal({ kind: "newProp" })}>+ عقار</button>}
       </div>
 
       {expiringSoon && (
         <div className={`flex flex-wrap items-center gap-3 rounded-xl p-3.5 mb-4 border text-sm ${
           (expiringSoon.st.daysToEnd || 0) <= 30 ? "bg-[#FBE9E7] border-[#F5C6C2] text-[#8f2b26]" : "bg-[#FBF1DF] border-[#EBD9AA] text-[#8a5a11]"}`}>
-          <span>عقد {expiringSoon.t.name} ({ul} {expiringSoon.t.unit || "—"}) ينتهي خلال <b>{plural(expiringSoon.st.daysToEnd ?? 0, "يوم واحد", "يومين", "أيام", "يومًا")}</b> ({expiringSoon.st.endDate}). جهّز التجديد أو الإخلاء.</span>
+          <span>عقد {expiringSoon.t.name} ({ul} {expiringSoon.t.unit || "—"}) ينتهي خلال <b>{plural(expiringSoon.st.daysToEnd ?? 0, "يوم واحد", "يومين", "أيام", "يومًا")}</b> (<bdi dir="ltr" className="whitespace-nowrap">{expiringSoon.st.endDate}</bdi>). جهّز التجديد أو الإخلاء.</span>
           <button className="btn btn-ghost text-xs mr-auto" onClick={() => setRenewing(expiringSoon.t)}>تجديد الآن</button>
         </div>
       )}
@@ -1602,7 +1733,8 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
             <Cell t="المحصَّل فعليًّا هذا الشهر" tone="text-[#137a50]"
               v={collectedThisMonth === null ? "…" : sar(Math.round(collectedThisMonth))}
               sub={<>ما قُبض في {mLabel} حتى اليوم</>} />
-            <Cell t="دخل العمارة السنوي" tone="text-deep" v={sar(Math.round(rr.annual))}
+            {/* «دخل العمارة» كان يُكتب لفيلا ومعرض ومستودع — الاسم من نوع العقار (30 سبتمبر 2026) */}
+            <Cell t={`دخل ${({ residential: "العمارة", showroom: "المعرض", office: "المبنى", warehouse: "المستودع", villa: "الفيلا", land: "الأرض" } as Record<string, string>)[p.property_type || "residential"] || "العقار"} السنوي`} tone="text-deep" v={sar(Math.round(rr.annual))}
               sub={<>إيجار سنة لـ{rr.occupied} {units(rr.occupied)} بعقد سارٍ
                 {rr.vacant ? <> · <span className="text-[#9A4B00]">شاغرة {rr.vacant}</span></> : null}
                 {rr.expired ? <> · <span className="text-late">{rr.expired === 1 ? "عقد انتهى ولم يُجدَّد" : `${rr.expired} عقود انتهت ولم تُجدَّد`} ({sar(Math.round(rr.expiredAnnual))} خارج المجموع)</span></> : null}</>} />
@@ -1698,7 +1830,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
               ]} />}
 
               <MenuBtn label={<><Icon name="data" className="me-1.5" />البيانات</>} items={[
-                ...(may("edit_tenants") ? [{ label: "رفع من Excel", href: "/dashboard/property/import" }] : []),
+                ...(may("edit_tenants") ? [demo ? { label: "رفع من Excel", run: demoJoin } : { label: "رفع من Excel", href: "/dashboard/property/import" }] : []),
                 { label: "تصدير CSV", run: exportCSV },
                 ...(may("view_activity") ? [{ label: "سجل الحركات المالية", run: () => setLogOpen(true) }] : []),
               ]} />
@@ -1714,9 +1846,12 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
           {/* شريط التحكّم: بحث · تصفية · فرز */}
           {tenants.length > 0 && (
             <div className="border-b border-line px-4 py-3 flex flex-wrap gap-2 items-center bg-paper">
-              <input className="fld flex-1 min-w-[150px]" value={q} onChange={(e) => setQ(e.target.value)}
-                placeholder={`ابحث بالاسم أو رقم ${ul} أو الجوال أو الهوية أو رقم العقد أو حساب الكهرباء…`} />
-              <select className="fld max-w-[170px]" value={sort} onChange={(e) => setSort(e.target.value as any)}>
+              {/* النص الطويل كان يُقصّ على الجوال فلا يُعرف ما يُبحث به — قصير هنا، والكامل في title (30 سبتمبر 2026) */}
+              <input className="fld flex-1 min-w-[150px] basis-full sm:basis-auto" value={q} onChange={(e) => setQ(e.target.value)} type="search"
+                aria-label={`بحث في الوحدات: الاسم أو رقم ${ul} أو الجوال أو الهوية أو رقم العقد أو حساب الكهرباء`}
+                title={`ابحث بالاسم أو رقم ${ul} أو الجوال أو الهوية أو رقم العقد أو حساب الكهرباء`}
+                placeholder={`ابحث: اسم، ${ul}، جوال، هوية…`} />
+              <select className="fld flex-1 sm:flex-none sm:max-w-[170px]" aria-label="ترتيب الوحدات" value={sort} onChange={(e) => setSort(e.target.value as any)}>
                 <option value="urgent">الأهم أولًا</option>
                 <option value="due">الأقرب استحقاقًا</option>
                 <option value="amount">الأكبر متأخرًا</option>
@@ -1745,7 +1880,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                 لا توجد وحدات بعد.
                 <div className="mt-3 flex gap-2 justify-center">
                   <button className="btn btn-gold text-xs" onClick={() => setModal({ kind: "tenant" })}>+ أضف {ul}</button>
-                  <Link href="/dashboard/property/import" className="btn btn-ghost text-xs">رفع Excel</Link>
+                  <Link href="/dashboard/property/import" className="btn btn-ghost text-xs" onClick={(e) => { if (demo) { e.preventDefault(); demoJoin(); } }}>رفع Excel</Link>
                 </div>
               </div>
             ) : !rows.length ? (
@@ -1765,6 +1900,11 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
               const page = Math.min(tPage, pages - 1);
               const slice = sorted.slice(page * PAGE, page * PAGE + PAGE);
               const totalDue = rows.reduce((a, r) => a + dueWithVat(r.st, r.t, active), 0);
+              /* (30 سبتمبر 2026) رقم التذييل يجمع كل المستحق (والتنفيذ والسابقين) بينما شريحة
+                 «متأخر» أعلى الصفحة تستبعدهما (arrearsOf) — رقمان مختلفان بالاسم نفسه. نسمّيه
+                 «إجمالي المستحق» ونُظهر ما فيه زيادةً على شريحة المتأخر. */
+              const dueLit = rows.filter((r) => r.key === "litigation").reduce((a, r) => a + dueWithVat(r.st, r.t, active), 0);
+              const dueVac = rows.filter((r) => r.key === "vacant").reduce((a, r) => a + dueWithVat(r.st, r.t, active), 0);
               /* «أقرب استحقاق» كان أقدم تاريخ غير مسدَّد — فيُعرض تاريخ مضى
                  عليه سنتان أحيانًا. الآن: أقرب دفعة قادمة فعلًا. */
               const nearest = rows.map((r) => r.st.upcomingDate).filter(Boolean).sort()[0];
@@ -1870,12 +2010,9 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                                 ) : key === "litigation" ? (
                                   <button className="btn btn-ghost text-xs" onClick={() => setEnforcing(t)}>متابعة التنفيذ</button>
                                 ) : (<>
-                                  {canCollect && <QuickBtn title={isBusy(`pay:${t.id}`) ? "جارٍ التسجيل…" : "تأكيد استلام الدفعة كاملة"} cls={`btn-primary ${isBusy(`pay:${t.id}`) ? "opacity-50 pointer-events-none" : ""}`} onClick={() => {
-                                    const amt = Number(t.rent_amount) || 0;
-                                    if (confirm(`تسجيل استلام دفعة كاملة؟\n\n${sar(amt)} ريال من ${t.name} — ${ul} ${t.unit || "—"} — ${active?.name}\n\nتاريخ السداد: اليوم (${today()})\nلتاريخ مختلف أو مرجع حوالة استعمل زر ½.\n\n(تُسجَّل باسمك في سجل الحركات المالية)`)) recordPayment(t, amt);
-                                  }}>&#10004;</QuickBtn>}
+                                  {canCollect && !st.fullyPaid && !((st.daysToEnd ?? 0) < 0 && st.unpaid === 0) && <QuickBtn title={isBusy(`pay:${t.id}`) ? "جارٍ التسجيل…" : st.hasPartial ? "تأكيد استلام باقي الدفعة" : "تأكيد استلام الدفعة كاملة"} cls={`btn-primary ${isBusy(`pay:${t.id}`) ? "opacity-50 pointer-events-none" : ""}`} onClick={() => quickPay(t, st)}>&#10004;</QuickBtn>}
                                   {canCollect && <QuickBtn title="سداد جزئي" cls="btn-ghost" onClick={() => setPaying(t)}>&#189;</QuickBtn>}
-                                  <a href={remindLink(t)} target="_blank" rel="noreferrer" className="btn btn-wa text-xs px-2.5" title="إرسال تذكير واتساب" onClick={(e) => { e.preventDefault(); openExternal(remindLink(t)); }}>&#128172;</a>
+                                  {may("send_reminders") && !st.fullyPaid && !((st.daysToEnd ?? 0) < 0 && st.unpaid === 0) && <a href={remindLink(t)} target="_blank" rel="noreferrer" className="btn btn-wa text-xs px-2.5" title="إرسال تذكير واتساب" onClick={(e) => { e.preventDefault(); openExternal(remindLink(t)); }}>&#128172;</a>}
                                 </>)}
                                 <RowMenu items={[
                                   /* ثلاث مجموعات بترتيب الاستعمال لا بترتيب البناء:
@@ -1917,8 +2054,10 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                           <td className="px-3 py-2 whitespace-nowrap">
                             {/* «المتبقي خلال 12 شهرًا» و«التعاقدي شهريًّا» أزيلا: صيغتان أخريان لدخل العمارة تُقرآن مناقضتين له */}
                           </td>
-                          <td className="px-3 py-2 whitespace-nowrap" colSpan={2}>{nearest ? `أقرب استحقاق: ${nearest}` : "—"}</td>
-                          <td className={`px-3 py-2 text-left font-bold ${totalDue > 0 ? "text-late" : ""}`}>{totalDue > 0 ? <>{sar(totalDue)}<div className="text-[10px] font-normal text-muted">إجمالي المتأخر</div></> : "—"}</td>
+                          <td className="px-3 py-2 whitespace-nowrap" colSpan={2}>{nearest ? <>أقرب استحقاق: <bdi dir="ltr" className="whitespace-nowrap">{nearest}</bdi></> : "—"}</td>
+                          <td className={`px-3 py-2 text-left font-bold ${totalDue > 0 ? "text-late" : ""}`}>{totalDue > 0 ? <>{sar(totalDue)}<div className="text-[10px] font-normal text-muted">إجمالي المستحق</div>
+                            {dueLit > 0 && <div className="text-[10px] font-normal text-muted whitespace-nowrap">منه تحت التنفيذ {sar(dueLit)}</div>}
+                            {dueVac > 0 && <div className="text-[10px] font-normal text-muted whitespace-nowrap">منه على سابقين {sar(dueVac)}</div>}</> : "—"}</td>
                           <td></td>
                         </tr>
                       </tfoot>
@@ -1972,6 +2111,10 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                         </span>
                       )}
                     </div>
+                    {/* الدين المرحَّل كان يظهر في الجدول وحده — البطاقة تُخفيه فيُطالَب المستأجر بأقل مما عليه (30 سبتمبر 2026) */}
+                    {st.carriedDebt > 0 && (
+                      <div className="text-[11px] font-semibold text-[#9A4B00] mt-0.5 tabular-nums">+ {sar(st.carriedDebt)} دين مرحَّل</div>
+                    )}
                     <div className="text-xs mt-1 tabular-nums">
                       {key === "vacant" ? (() => { const v = vacancyDays(t.move_out_date); return (
                           <span className="text-[#475569] font-semibold">شاغرة{v !== null ? ` منذ ${daysAr(v)}` : ""}</span>
@@ -1985,7 +2128,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                             <UpcomingLine st={st} rent={rentWithVat(t, active)} due={dueWithVat(st, t, active)} imminentDays={windowsOf(active).imminentDays} />
                           </span>
                         : key === "late" ? <span className="text-late font-semibold">
-                            {st.unpaid} {st.unpaid === 1 ? "دفعة" : "دفعات"} متأخرة{st.nextDueDate ? <span className="font-normal"> منذ {arDate(st.nextDueDate)}</span> : null}
+                            {/* «11 دفعات» — العدّ العربي الصحيح (30 سبتمبر 2026) */}{st.unpaid === 1 ? "دفعة واحدة متأخرة" : st.unpaid === 2 ? "دفعتان متأخرتان" : `${countAr(st.unpaid, "", "", "دفعات", "دفعة")} متأخرة`}{st.nextDueDate ? <span className="font-normal"> منذ {arDate(st.nextDueDate)}</span> : null}
                             <UpcomingLine st={st} rent={rentWithVat(t, active)} due={dueWithVat(st, t, active)} imminentDays={windowsOf(active).imminentDays} />
                           </span>
                         : key === "due" ? <span className="text-[#9A4B00] font-semibold">
@@ -2002,52 +2145,79 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                               : <span className="text-[#5B21B6] font-semibold">ينتهي بعد {daysAr(st.daysToEnd)}</span>
                           )
                         : key === "litigation" ? <span className="text-[#475569]">{t.enforcement_no ? `طلب ${t.enforcement_no}` : "متابعة نظامية"}</span>
-                        : st.fullyPaid ? <span className="text-[#137a50] font-semibold">✓ سدّد كامل العقد ({st.paid} من {t.contract_periods || st.paid}){st.endDate ? <span className="font-normal text-muted"> · ينتهي {st.endDate}{st.daysToEnd !== null && st.daysToEnd >= 0 ? ` (بعد ${daysAr(st.daysToEnd)})` : ""} — القسط القادم مع التجديد</span> : null}</span>
+                        : st.fullyPaid ? <span className="text-[#137a50] font-semibold">✓ سدّد كامل العقد ({st.paid} من {t.contract_periods || st.paid}){st.endDate ? <span className="font-normal text-muted"> · ينتهي <bdi dir="ltr" className="whitespace-nowrap">{st.endDate}</bdi>{st.daysToEnd !== null && st.daysToEnd >= 0 ? ` (بعد ${daysAr(st.daysToEnd)})` : ""} — القسط القادم مع التجديد</span> : null}</span>
                         : st.nextDueDate ? <span className="text-muted">
-                            القادمة {st.upcomingDate || st.nextDueDate}{` · ${hijriShort(st.upcomingDate || st.nextDueDate || "")}`}
+                            {/* bdi: التاريخ اللاتيني وسط سطر عربي ينقلب ترتيبه عند الالتفاف (30 سبتمبر 2026) */}
+                            القادمة <bdi dir="ltr" className="whitespace-nowrap">{st.upcomingDate || st.nextDueDate}</bdi>{` · ${hijriShort(st.upcomingDate || st.nextDueDate || "")}`}
                             {Number(t.rent_amount) > 0 && <span> · {sar(rentWithVat(t, active))} ريال</span>}
                           </span> : null}
                     </div>
                   </div>
                 </div>
 
-                {/* إجراء رئيسي + قائمة المزيد */}
+                {/**
+                  * إجراء رئيسي واحد + قائمة المزيد (30 سبتمبر 2026).
+                  *
+                  * كانت بطاقة الجوال تحمل ستة أزرار (كامل · جزئي · تذكير · اتصال ·
+                  * فاتورة · إشعار · تجديد) لكل وحدة — حتى المنتظمة ومن سدّد عقده كله —
+                  * فتلتفّ في ثلاثة أسطر ويُضغط «كامل» لمن لا يدين بشيء. الآن: زرّ واحد
+                  * بحسب الحالة (متأخر ← ✔ استلام · مستحق ← ✔ · منتظم ← لا شيء)، والبقية
+                  * في ⋯ على الجوال وظاهرة على الشاشة الأوسع. وكل زرّ بصلاحية الجدول نفسها.
+                  */}
+                {(() => {
+                  const closed = st.fullyPaid || ((st.daysToEnd ?? 0) < 0 && st.unpaid === 0);
+                  const canPay = canCollect && !closed;
+                  const canRemind = may("send_reminders") && !closed;
+                  const primaryPay = canPay && (key === "late" || key === "partial" || key === "due");
+                  const primaryRenew = !primaryPay && key === "expiring" && needsRenewal(t) && may("renew_contracts");
+                  const primaryEdit = key === "incomplete" && may("edit_tenants");
+                  const wide = "max-sm:!hidden";   // ثانوي: ظاهر على الشاشة الأوسع، وفي ⋯ على الجوال (! لأن .btn يفرض inline-flex فيغلب hidden)
+                  const tel = t.phone ? `tel:${String(t.phone).replace(/[^0-9+]/g, "")}` : null;
+                  return (
                 <div className="flex flex-wrap gap-1.5 justify-stretch sm:justify-end mt-2.5 items-center [&>*]:flex-1 sm:[&>*]:flex-none [&>*]:justify-center">
                   {key === "vacant" ? (
                     <>
-                      <button type="button" className="btn btn-primary text-xs" onClick={() => reLet(t)}>🔑 تأجير جديد</button>
-                      <button type="button" className="btn btn-ghost text-xs" onClick={() => openSettlement(t)}>📄 مخالصة الإخلاء</button>
-                      <button type="button" className="btn btn-ghost text-xs" onClick={() => setTurnover(t)}>تعديل بيانات الإخلاء</button>
+                      {may("edit_tenants") && <button type="button" className="btn btn-primary text-xs" onClick={() => reLet(t)}>🔑 تأجير جديد</button>}
+                      <button type="button" className={`btn btn-ghost text-xs ${wide}`} onClick={() => openSettlement(t)}>📄 مخالصة الإخلاء</button>
+                      {may("move_out") && <button type="button" className={`btn btn-ghost text-xs ${wide}`} onClick={() => setTurnover(t)}>تعديل بيانات الإخلاء</button>}
                     </>
                   ) : key === "litigation" ? (
                     <>
                       <button className="btn btn-ghost text-xs" onClick={() => setEnforcing(t)}>متابعة التنفيذ</button>
-                      <button className="btn btn-ghost text-xs" onClick={() => { if (confirm("إلغاء رفع العقد للتنفيذ؟ ستعود الإشعارات الودية.")) patchTenant(t.id, { litigation: false }); }}>إلغاء الرفع</button>
+                      {isManager && <button className={`btn btn-ghost text-xs ${wide}`} onClick={() => { if (confirm("إلغاء رفع العقد للتنفيذ؟ ستعود الإشعارات الودية.")) patchTenant(t.id, { litigation: false }); }}>إلغاء الرفع</button>}
                     </>
                   ) : (
                     <>
-                      <QuickBtn title="تأكيد استلام الدفعة كاملة" cls="btn-primary" onClick={() => {
-                        /* دفعة بضغطة واحدة بلا تأكيد = أخطاء لا تُكتشف إلا في كشف المالك. نسمّي المبلغ والمستأجر والوحدة قبل التسجيل */
-                        const amt = Number(t.rent_amount) || 0;
-                        if (confirm(`تسجيل استلام دفعة كاملة؟\n\n${sar(amt)} ريال من ${t.name} — ${ul} ${t.unit || "—"} — ${active?.name}\n\nتاريخ السداد: اليوم (${today()})\nلتاريخ مختلف أو مرجع حوالة استعمل زر ½.\n\n(تُسجَّل باسمك في سجل الحركات المالية)`)) recordPayment(t, amt);
-                      /* في البطاقات نكتب الفعل نصًّا: «½» غامضة تمامًا على
-                         الجوال حيث لا تلميح عند اللمس. وفي الجدول يبقى الرمز
-                         لضيق العمود. */
-                      }}><span className="whitespace-nowrap">&#10004; كامل</span></QuickBtn>
-                      <QuickBtn title="سداد جزئي" cls="btn-ghost" onClick={() => setPaying(t)}><span className="whitespace-nowrap">&#189; جزئي</span></QuickBtn>
-                      <a href={remindLink(t)} target="_blank" rel="noreferrer" className="btn btn-wa text-xs px-2.5" title="إرسال تذكير واتساب" onClick={(e) => { e.preventDefault(); openExternal(remindLink(t)); }}><span className="whitespace-nowrap">&#128172; تذكير</span></a>
-                      {t.phone && <a href={`tel:${String(t.phone).replace(/[^0-9+]/g, "")}`} className="btn btn-ghost text-xs px-2.5 sm:hidden" title="اتصال مباشر">&#128222;</a>}
-                      {/* كان 📄 أبيضَ على خلفية بيضاء فيكاد يختفي — الإيموجي لا يرث لون
-                          النص. الأيقونة ترثه فتظهر في الوضعين. */}
-                      <QuickBtn title="إصدار فاتورة" cls="btn-ghost" onClick={() => openInvoice(t)}>
+                      {primaryPay && (
+                        <QuickBtn title={st.hasPartial ? "تأكيد استلام باقي الدفعة" : "تأكيد استلام الدفعة"} cls={`btn-primary ${isBusy(`pay:${t.id}`) ? "opacity-50 pointer-events-none" : ""}`}
+                          onClick={() => quickPay(t, st)}>
+                          <span className="whitespace-nowrap">&#10004; {key === "due" ? "استلام" : st.hasPartial ? "استلام الباقي" : "استلام"}</span>
+                        </QuickBtn>
+                      )}
+                      {primaryRenew && <button className="btn text-xs" style={{ background: "#0E3A37", color: "#F6F1E4" }} onClick={() => setRenewing(t)}>تجديد</button>}
+                      {primaryEdit && <button className="btn btn-gold text-xs" onClick={() => setModal({ kind: "tenant", id: t.id })}>إكمال البيانات</button>}
+                      {/* الثانوي — على الشاشة الأوسع فقط؛ على الجوال كله في ⋯ */}
+                      {canPay && !primaryPay && (
+                        <QuickBtn title="تأكيد استلام الدفعة" cls={`btn-primary ${wide}`} onClick={() => quickPay(t, st)}><span className="whitespace-nowrap">&#10004; استلام</span></QuickBtn>
+                      )}
+                      {canCollect && <span className={wide}><QuickBtn title="سداد جزئي" cls="btn-ghost" onClick={() => setPaying(t)}><span className="whitespace-nowrap">&#189; جزئي</span></QuickBtn></span>}
+                      {canRemind && <a href={remindLink(t)} target="_blank" rel="noreferrer" className={`btn btn-wa text-xs px-2.5 ${wide}`} title="إرسال تذكير واتساب" onClick={(e) => { e.preventDefault(); openExternal(remindLink(t)); }}><span className="whitespace-nowrap">&#128172; تذكير</span></a>}
+                      {/* كان 📄 أبيضَ على خلفية بيضاء فيكاد يختفي — الأيقونة ترث لون النص. */}
+                      {may("issue_invoices") && <span className={wide}><QuickBtn title="إصدار فاتورة" cls="btn-ghost" onClick={() => openInvoice(t)}>
                         <span className="whitespace-nowrap"><Icon name="doc" /> فاتورة</span>
-                      </QuickBtn>
-                      {st.unpaid > 0 && <button className="btn btn-gold text-xs" onClick={() => makeNotice(t)}>نموذج إشعار</button>}
-                      {needsRenewal(t) && <button className="btn text-xs" style={{ background: "#0E3A37", color: "#F6F1E4" }} onClick={() => setRenewing(t)}>تجديد</button>}
+                      </QuickBtn></span>}
+                      {st.unpaid > 0 && may("send_reminders") && <button className={`btn btn-gold text-xs ${wide}`} onClick={() => makeNotice(t)}>نموذج إشعار</button>}
+                      {!primaryRenew && needsRenewal(t) && may("renew_contracts") && <button className={`btn text-xs ${wide}`} style={{ background: "#0E3A37", color: "#F6F1E4" }} onClick={() => setRenewing(t)}>تجديد</button>}
                     </>
                   )}
                   <RowMenu
                     items={[
+                      /* على الجوال: ما خرج من البطاقة يعيش هنا أولًا — لا يضيع إجراء */
+                      ...(key !== "vacant" && key !== "litigation" && (canPay || canCollect || canRemind || tel) ? [{ sep: "💰 تحصيل" } as any] : []),
+                      ...(key !== "vacant" && key !== "litigation" && canPay && !primaryPay ? [{ label: "✔ تأكيد استلام الدفعة", run: () => quickPay(t, st) }] : []),
+                      ...(key !== "vacant" && key !== "litigation" && canCollect ? [{ label: "½ تسجيل مبلغ (جزئي أو بتاريخ آخر)", run: () => setPaying(t) }] : []),
+                      ...(key !== "vacant" && key !== "litigation" && canRemind ? [{ label: "💬 تذكير واتساب", run: () => openExternal(remindLink(t)) }] : []),
+                      ...(tel && key !== "vacant" ? [{ label: "📞 اتصال", run: () => { window.location.href = tel; } }] : []),
 /* نفس ترتيب الجدول حرفيًّا: المستخدم لا يتعلّم قائمتين */
                       { sep: "📄 مستندات" } as any,
                       { label: "كشف حساب شامل", run: () => openStatement(t, "full") },
@@ -2067,12 +2237,16 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                       ...(may("edit_tenants") ? [{ label: "تعديل البيانات", run: () => setModal({ kind: "tenant", id: t.id }) }] : []),
                       ...(needsRenewal(t) && may("renew_contracts") ? [{ label: "تجديد العقد", run: () => setRenewing(t) }] : []),
                       ...(may("move_out") && !isVacant(t) ? [{ label: "إنهاء العقد وإخلاء", run: () => setTurnover(t) }] : []),
+                      ...(may("move_out") && isVacant(t) ? [{ label: "تعديل بيانات الإخلاء", run: () => setTurnover(t) }] : []),
+                      ...(isManager && t.litigation ? [{ label: "إلغاء الرفع للتنفيذ", run: () => { if (confirm("إلغاء رفع العقد للتنفيذ؟ ستعود الإشعارات الودية.")) patchTenant(t.id, { litigation: false }); } }] : []),
                       ...(isManager && !t.litigation && st.unpaid > 0 ? [{ label: "رفع للتنفيذ القضائي", run: () => setEnforcing(t) }] : []),
                       ...(may("undo_actions") && (t.paid_periods || 0) > 0 ? [{ label: "↩︎ تراجع عن آخر دفعة", run: () => undoPayment(t), danger: true }] : []),
                       ...(may("undo_actions") ? [{ label: "🗑 حذف الوحدة", run: () => deleteTenant(t.id), danger: true }] : []),
                     ]}
                   />
                 </div>
+                  );
+                })()}
               </div>
             ))}
 
@@ -2104,20 +2278,27 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                 const soon = !n.done_at && n.due_date === t0;
                 return (
                   <div key={n.id} className={`flex items-start gap-2.5 py-2.5 border-b border-dashed border-line last:border-0 text-sm ${n.done_at ? "opacity-55" : ""}`}>
-                    <button className={`mt-0.5 w-4 h-4 rounded border shrink-0 grid place-items-center text-[10px] ${n.done_at ? "bg-[#137a50] border-[#137a50] text-white" : "border-line hover:border-deep"}`}
-                      title={n.done_at ? "إعادة فتح" : "تمّت"} onClick={() => toggleNote(n)}>{n.done_at ? "✓" : ""}</button>
+                    {/* مساحة لمس 44px حول المربع الصغير (30 سبتمبر 2026) */}
+                    <button className="-m-3 p-3 shrink-0 grid place-items-center" aria-label={n.done_at ? "إعادة فتح المهمة" : "تعليم المهمة كمنجزة"}
+                      title={n.done_at ? "إعادة فتح" : "تمّت"} onClick={() => toggleNote(n)}>
+                      <span className={`mt-0.5 w-4 h-4 rounded border grid place-items-center text-[10px] ${n.done_at ? "bg-[#137a50] border-[#137a50] text-white" : "border-line hover:border-deep"}`}>{n.done_at ? "✓" : ""}</span>
+                    </button>
                     <span className="text-xs font-semibold w-24 shrink-0 tabular-nums">
+                      {/* التاريخ في bdi باتجاه يساري: «متأخرة · 2026-09-28» كان ينقلب ترتيبه عند الالتفاف */}
                       {n.due_date ? (
                         <span className={late ? "text-late" : soon ? "text-[#9A4B00]" : "text-[#8a5a11]"}>
-                          {late ? "متأخرة · " : soon ? "اليوم · " : ""}{n.due_date}
+                          {late ? "متأخرة · " : soon ? "اليوم · " : ""}<bdi dir="ltr" className="whitespace-nowrap">{n.due_date}</bdi>
                         </span>
-                      ) : <span className="text-muted">{n.note_date}</span>}
+                      ) : <span className="text-muted"><bdi dir="ltr" className="whitespace-nowrap">{n.note_date}</bdi></span>}
                     </span>
                     <span className={`flex-1 text-[#33413d] ${n.done_at ? "line-through" : ""}`}>
                       {n.kind && n.kind !== "other" && <span className="me-1">{NOTE_KINDS[n.kind]?.icon}</span>}
                       {n.text}
                     </span>
-                    <button className="text-muted opacity-60 hover:opacity-100 hover:text-late text-xs" onClick={() => deleteNote(n.id)}>حذف</button>
+                    {/* كان «حذف» نصًّا صغيرًا يحذف بنقرة بلا سؤال — ملاصق للنص فيُلمس خطأً (30 سبتمبر 2026) */}
+                    <button className="text-muted opacity-70 hover:opacity-100 hover:text-late text-xs min-h-[44px] min-w-[44px] -my-2.5 px-2 shrink-0"
+                      aria-label={`حذف الملاحظة: ${n.text.slice(0, 40)}`}
+                      onClick={() => { if (confirm(`حذف هذه الملاحظة نهائيًّا؟\n\n«${n.text.slice(0, 120)}»`)) deleteNote(n.id); }}>حذف</button>
                   </div>
                 );
               };
@@ -2194,6 +2375,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
         onSubmit={async (no, order) => {   /* تُغلق بعد نجاح الحفظ — كانت تُغلق فورًا فيضيع ما كُتب إن فشل */
           if (await patchTenant(enforcing.id, { litigation: true, enforcement_no: no || null, enforcement_order: order || null })) setEnforcing(null); }} />}
       {paying && <PaymentModal tenant={paying} unitWord={ul} onClose={() => setPaying(null)}
+        st={contractState(paying, { graceDays: Number(active?.grace_days) || 0, ...windowsOf(active) })}
         onSubmit={(amt, method, note, paidOn, reference) => { recordPayment(paying, amt, method, note, paidOn, reference); setPaying(null); }} />}
       {turnover && <TurnoverModal key={turnover.id} tenant={turnover} unitWord={ul} onClose={() => setTurnover(null)}
         vat={active ? { enabled: unitVatApplies(turnover, active), rate: Number(active.vat_rate) || 15, inclusive: active.vat_inclusive !== false } : undefined}
@@ -2250,8 +2432,10 @@ const METHODS: { v: string; l: string }[] = [
 ];
 export const methodLabel = (v?: string | null) => METHODS.find((m) => m.v === v)?.l || "أخرى";
 
-function PaymentModal({ tenant, unitWord, onClose, onSubmit }: {
+function PaymentModal({ tenant, unitWord, onClose, onSubmit, st }: {
   tenant: Tenant; unitWord: string; onClose: () => void;
+  /** حالة العقد — لتقول المعاينة على أي دفعة يقع المبلغ (30 سبتمبر 2026) */
+  st?: ReturnType<typeof contractState>;
   onSubmit: (amount: number, method: string, note?: string, paidOn?: string, reference?: string) => void;
 }) {
   const rent = Number(tenant.rent_amount) || 0;
@@ -2267,6 +2451,10 @@ function PaymentModal({ tenant, unitWord, onClose, onSubmit }: {
   const pool = already + amt;
   const completed = rent > 0 ? Math.floor(pool / rent) : 0;
   const leftover = rent > 0 ? +(pool - completed * rent).toFixed(2) : 0;
+  /* المبلغ يقع على أقدم دفعة غير مسدَّدة أولًا — كانت المعاينة تقول «ستكتمل دفعة»
+     و«جزئي على الدفعة التالية» كأن المستأجر منتظم، وعليه ثلاث متأخرة. */
+  const lateN = Math.max(0, Number(st?.unpaid) || 0);
+  const lateDue = Math.max(0, Number(st?.amountDue) || 0);
 
   return (
     <Shell onClose={onClose}>
@@ -2279,6 +2467,10 @@ function PaymentModal({ tenant, unitWord, onClose, onSubmit }: {
           <div className="flex justify-between mt-1"><span className="text-muted">مدفوع جزئيًّا سابقًا</span>
             <b className="tabular-nums text-[#9A5B00]">{sar(already)} ريال</b></div>
         )}
+        {lateN > 0 && (
+          <div className="flex justify-between mt-1"><span className="text-muted">متأخر الآن: {countAr(lateN, "دفعة واحدة", "دفعتان", "دفعات", "دفعة")}</span>
+            <b className="tabular-nums text-late">{sar(lateDue)} ريال</b></div>
+        )}
       </div>
 
       <Field label="المبلغ المستلم (ريال)">
@@ -2289,6 +2481,7 @@ function PaymentModal({ tenant, unitWord, onClose, onSubmit }: {
           <button className="btn btn-ghost text-xs" onClick={() => setAmount(String(remaining))}>إكمال الدفعة ({sar(remaining)})</button>
         )}
         <button className="btn btn-ghost text-xs" onClick={() => setAmount(String(rent))}>دفعة كاملة ({sar(rent)})</button>
+        {lateN > 1 && lateDue > 0 && <button className="btn btn-ghost text-xs" onClick={() => setAmount(String(lateDue))}>كل المتأخر ({sar(lateDue)})</button>}
         <button className="btn btn-ghost text-xs" onClick={() => setAmount(String(Math.round(rent / 2)))}>نصف الدفعة</button>
       </div>
 
@@ -2316,8 +2509,9 @@ function PaymentModal({ tenant, unitWord, onClose, onSubmit }: {
 
       {amt > 0 && (
         <div className="bg-[#E6F4EC] border border-[#B7DFC7] rounded-xl p-3 mt-4 text-xs text-[#137a50] leading-relaxed">
-          {completed > 0 && <div>ستكتمل <b>{completed}</b> دفعة.</div>}
-          {leftover > 0 && <div>ويتبقّى <b>{sar(leftover)} ريال</b> مسجّلة كسداد جزئي على الدفعة التالية.</div>}
+          {lateN > 0 && <div>يُطبَّق على أقدم دفعة متأخرة أولًا{st?.nextDueDate ? <> (المستحقة <bdi dir="ltr" className="whitespace-nowrap">{st.nextDueDate}</bdi>)</> : null}.</div>}
+          {completed > 0 && <div>ستكتمل <b>{countAr(completed, "دفعة واحدة", "دفعتان", "دفعات", "دفعة")}</b>{lateN > 0 ? (completed >= lateN ? " — وتُغطّى كل المتأخرات" : ` — ويبقى متأخرًا ${countAr(lateN - completed, "دفعة واحدة", "دفعتان", "دفعات", "دفعة")}`) : ""}.</div>}
+          {leftover > 0 && <div>ويتبقّى <b>{sar(leftover)} ريال</b> مسجّلة كسداد جزئي على {lateN > completed ? "الدفعة المتأخرة التالية" : "الدفعة القادمة"}.</div>}
           {completed === 0 && leftover > 0 && <div>لن تكتمل دفعة — يُسجَّل المبلغ جزئيًّا فقط.</div>}
         </div>
       )}
@@ -2351,7 +2545,11 @@ function TurnoverModal({ tenant, unitWord, onClose, onSubmit, vat }: {
       : TURNOVER_CHECKLIST.map((x) => ({ ...x, note: "" }))
   );
   const set = (k: string, v: any) => setD({ ...d, [k]: v });
-  const st = contractState(tenant as any, {});
+  /* (30 سبتمبر 2026) المتأخر حتى تاريخ الإخلاء المكتوب لا حتى اليوم: كان
+     contractState(tenant, {}) — فإخلاء بأثر رجعي (خرج قبل شهرين ويُسجَّل اليوم)
+     يخصم من التأمين أقساطًا بعد خروجه. نحسب الوحدة كأنها أُخليت في ذلك اليوم
+     (الحساب نفسه يسقط مهلة السماح للمُخلي ولا يتجاوز اليوم). */
+  const st = contractState({ ...tenant, status: "vacated", move_out_date: d.move_out_date || today() } as any, {});
   /* ما يُخصم من التأمين = كل ما على المستأجر (مراجعة 29 سبتمبر 2026): متأخر
      المدة شاملًا الضريبة المضافة + الدين المرحَّل. كان يُخصم متأخر المدة وحده
      قبل الضريبة، فمستأجرٌ عليه دين مرحَّل 5,000 وتأمينه 3,000 تخرج مخالصته
@@ -2406,7 +2604,7 @@ function TurnoverModal({ tenant, unitWord, onClose, onSubmit, vat }: {
         <div className="font-semibold mb-1.5">تسوية التأمين</div>
         <div className="text-xs leading-relaxed space-y-0.5">
           <div>التأمين: <b className="tabular-nums">{sar(s.deposit)}</b> ريال</div>
-          <div>يُخصم إيجار متأخر{vat?.enabled ? " (شامل الضريبة)" : ""}: <b className="tabular-nums">{sar(rentOwed)}</b> ريال</div>
+          <div>يُخصم إيجار متأخر حتى <bdi dir="ltr" className="whitespace-nowrap">{d.move_out_date || today()}</bdi>{vat?.enabled ? " (شامل الضريبة)" : ""}: <b className="tabular-nums">{sar(rentOwed)}</b> ريال</div>
           {carriedOwed > 0 && <div>ويُخصم دين مرحَّل من مدة سابقة: <b className="tabular-nums">{sar(carriedOwed)}</b> ريال</div>}
           <div>يُخصم تلفيات: <b className="tabular-nums">{sar(s.deductions)}</b> ريال</div>
           <div className="pt-1 font-semibold">
@@ -2613,29 +2811,9 @@ function MenuBtn({ label, items, badge = 0 }: {
   badge?: number;
 }) {
   const [open, setOpen] = useState(false);
-  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
   const ref = useRef<HTMLButtonElement | null>(null);
-  useEffect(() => {
-    if (!open) return;
-    const r = ref.current?.getBoundingClientRect();
-    if (r) {
-      const H = Math.min(items.length * 34 + 16, 340);
-      const W = 210;                       // عرض القائمة الأدنى
-      const below = window.innerHeight - r.bottom;
-      /* على الجوال يقع الزر قرب الحافة، فتخرج القائمة خارج الشاشة ويُقصّ نصفها.
-         نحاذيها بيمين الزر ونقصّها داخل حدود النافذة. */
-      const left = Math.min(Math.max(8, r.right - W), window.innerWidth - W - 8);
-      setPos({ top: below > H + 12 ? r.bottom + 4 : Math.max(8, r.top - H - 4), left: Math.max(8, left) });
-    }
-    const close = () => setOpen(false);
-    /* Escape سلوك متوقَّع في كل تطبيق ويب — وكان لا يفعل شيئًا،
-       والقائمة تُغلق بالنقر خارجها فقط وقد لا يكتشفه المستخدم. */
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") { setOpen(false); ref.current?.focus(); } };
-    window.addEventListener("scroll", close, true);
-    window.addEventListener("resize", close);
-    window.addEventListener("keydown", onKey);
-    return () => { window.removeEventListener("scroll", close, true); window.removeEventListener("resize", close); window.removeEventListener("keydown", onKey); };
-  }, [open, items.length]);
+  /* القياس الفعلي والانقلاب والتمرير الداخلي — كقائمة الصف (30 سبتمبر 2026) */
+  const { menuRef, style } = useFloatingMenu(open, setOpen, ref, 210);
   if (!items.length) return null;
   return (
     <>
@@ -2643,18 +2821,18 @@ function MenuBtn({ label, items, badge = 0 }: {
         {label} <span className="opacity-60">▾</span>
         {badge > 0 && <span className="mr-1 inline-grid place-items-center min-w-[18px] h-4 px-1 rounded-full bg-[#FBE9E7] text-[#a5322c] text-[.62rem] font-bold">{badge}</span>}
       </button>
-      {open && pos && (
+      {open && (
         <>
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div style={{ top: pos.top, left: pos.left }}
+          <div ref={menuRef} style={style} role="menu"
             className="fixed z-50 min-w-[210px] max-w-[calc(100vw-16px)] bg-white border border-line rounded-xl shadow-lg py-1">
             {items.map((it, i) => it.sep ? (
               <div key={i} className="px-3.5 pt-2.5 pb-1 text-[10px] font-bold text-muted tracking-wide border-t border-line/70 first:border-0 first:pt-1">{it.sep}</div>
             ) : it.href ? (
-              <Link key={i} href={it.href} className="block px-3.5 py-2 text-xs font-semibold text-deep hover:bg-paper2">{it.label}</Link>
+              <Link key={i} href={it.href} role="menuitem" className="block px-3.5 py-2 [@media(pointer:coarse)]:min-h-[44px] [@media(pointer:coarse)]:py-3 text-xs font-semibold text-deep hover:bg-paper2">{it.label}</Link>
             ) : (
-              <button key={i} type="button" onClick={() => { setOpen(false); it.run?.(); }}
-                className="block w-full text-right px-3.5 py-2 text-xs font-semibold text-deep hover:bg-paper2">{it.label}</button>
+              <button key={i} type="button" role="menuitem" onClick={() => { setOpen(false); it.run?.(); }}
+                className="block w-full text-right px-3.5 py-2 [@media(pointer:coarse)]:min-h-[44px] text-xs font-semibold text-deep hover:bg-paper2">{it.label}</button>
             ))}
           </div>
         </>
@@ -2663,59 +2841,88 @@ function MenuBtn({ label, items, badge = 0 }: {
   );
 }
 
-function RowMenu({ items }: { items: { label?: string; run?: () => void; danger?: boolean; sep?: string }[] }) {
-  const [open, setOpen] = useState(false);
-  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
-  const btnRef = useRef<HTMLButtonElement | null>(null);
-
-  /**
-   * القائمة تُثبَّت بإحداثيات الشاشة لا داخل الصف.
-   *
-   * جدول الوحدات له تمرير رأسي (لتثبيت الترويسة)، وأي قائمة منسدلة داخله
-   * يقصّها إطاره — فصفوف أسفل الشاشة تفتح قائمة نصفها مخفي. بالتثبيت على
-   * الشاشة تخرج من الإطار، وتنقلب للأعلى إن ضاق ما تحتها.
-   */
+/**
+ * موضع القائمة المنبثقة من ارتفاعها الفعلي لا من تقدير (30 سبتمبر 2026).
+ *
+ * كان الارتفاع يُقدَّر «عدد البنود × 30» بسقف 320 — وقائمة الوحدة فيها ثلاثة
+ * عناوين وأحد عشر بندًا، فتخرج عن شاشة الجوال (844px) من أسفلها ولا يُوصل
+ * لـ«حذف الوحدة» ولا «التراجع». الآن: تُرسم مخفية، يُقاس ارتفاعها، ثم تُفتح
+ * تحت الزر أو فوقه حيث تتّسع، وإن لم تتّسع في أيٍّ منهما تأخذ الشاشة ناقص
+ * الهوامش وتُمرَّر داخلها. التمرير داخل القائمة لا يغلقها — كان يغلقها.
+ */
+function useFloatingMenu(open: boolean, setOpen: (v: boolean) => void, anchor: React.RefObject<HTMLElement>, minW: number) {
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const [pos, setPos] = useState<{ top: number; left: number; maxH: number } | null>(null);
   function place() {
-    const r = btnRef.current?.getBoundingClientRect();
+    const r = anchor.current?.getBoundingClientRect();
     if (!r) return;
-    const H = Math.min(items.length * 30 + 24, 320);
-    const W = 190;
-    const below = window.innerHeight - r.bottom;
-    const top = below > H + 12 ? r.bottom + 4 : Math.max(8, r.top - H - 4);
-    /* داخل حدود الشاشة دائمًا — على الجوال كانت تُقصّ من الحافة */
-    const left = Math.min(Math.max(8, r.right - W), window.innerWidth - W - 8);
-    setPos({ top, left: Math.max(8, left) });
+    const M = 8;
+    const vh = window.visualViewport?.height || window.innerHeight;
+    const vw = window.innerWidth;
+    const m = menuRef.current;
+    const natural = m ? m.scrollHeight : 320;
+    const W = Math.max(minW, m?.offsetWidth || minW);
+    const below = vh - r.bottom - M - 4, above = r.top - M - 4;
+    let top: number, maxH: number;
+    if (natural <= below) { top = r.bottom + 4; maxH = below; }
+    else if (natural <= above) { top = r.top - 4 - natural; maxH = above; }
+    else { maxH = vh - 2 * M; top = Math.max(M, vh - M - Math.min(natural, maxH)); }
+    const left = Math.min(Math.max(M, r.right - W), vw - W - M);
+    setPos({ top, left: Math.max(M, left), maxH });
   }
-  useEffect(() => {
-    if (!open) return;
+  useLayoutEffect(() => {
+    if (!open) { setPos(null); return; }
     place();
-    const close = () => setOpen(false);
-    window.addEventListener("resize", close);
-    window.addEventListener("scroll", close, true);   // التمرير يغلقها بدل أن تطير
-    return () => { window.removeEventListener("resize", close); window.removeEventListener("scroll", close, true); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
+  useEffect(() => {
+    if (!open) return;
+    const onScroll = (e: Event) => {
+      /* تمرير داخل القائمة نفسها ليس سببًا لإغلاقها */
+      if (menuRef.current && e.target instanceof Node && menuRef.current.contains(e.target)) return;
+      setOpen(false);
+    };
+    const onResize = () => place();
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") { setOpen(false); anchor.current?.focus(); } };
+    window.addEventListener("scroll", onScroll, true);
+    window.addEventListener("resize", onResize);
+    window.addEventListener("keydown", onKey);
+    return () => { window.removeEventListener("scroll", onScroll, true); window.removeEventListener("resize", onResize); window.removeEventListener("keydown", onKey); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+  /* قبل القياس: مرسومة خارج النظر لتُقاس — لا وميض في موضع خاطئ */
+  const style: React.CSSProperties = pos
+    ? { top: pos.top, left: pos.left, maxHeight: pos.maxH, overflowY: "auto", overscrollBehavior: "contain" }
+    : { top: 0, left: 0, visibility: "hidden" };
+  return { menuRef, style };
+}
+
+function RowMenu({ items }: { items: { label?: string; run?: () => void; danger?: boolean; sep?: string }[] }) {
+  const [open, setOpen] = useState(false);
+  const btnRef = useRef<HTMLButtonElement | null>(null);
+  const { menuRef, style } = useFloatingMenu(open, setOpen, btnRef, 190);
 
   if (!items.length) return null;
   return (
     <div className="relative">
-      <button ref={btnRef} type="button" onClick={() => setOpen((v) => !v)} aria-label="إجراءات أخرى"
+      <button ref={btnRef} type="button" onClick={() => setOpen((v) => !v)} aria-label="إجراءات أخرى" aria-haspopup="menu" aria-expanded={open}
         className="btn btn-ghost text-xs px-2.5" title="المزيد">⋯</button>
-      {open && pos && (
+      {open && (
         <>
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div style={{ top: pos.top, left: pos.left }}
-            className="fixed z-50 min-w-[190px] max-w-[calc(100vw-16px)] max-h-[70vh] overflow-y-auto bg-white border border-line rounded-xl shadow-lg py-1">
+          <div ref={menuRef} role="menu" style={style}
+            className="fixed z-50 min-w-[190px] max-w-[calc(100vw-16px)] bg-white border border-line rounded-xl shadow-lg py-1">
             {items.map((it, i) => it.sep ? (
               /* لا نعرض عنوان قسم لا عناصر بعده — يحدث مع الموظف محدود الصلاحيات */
-              items.slice(i + 1).findIndex((x) => !x.sep) === -1 ? null : (
+              items.slice(i + 1).findIndex((x) => !x.sep) === -1 || items[i + 1]?.sep ? null : (
               /* عنوان قسم: تسع خيارات متساوية تُقرأ ببطء — التقسيم يجعل العين تقفز */
               <div key={i} className="px-3.5 pt-2 pb-1 text-[10px] font-bold text-muted border-t border-line first:border-0 first:pt-1">{it.sep}</div>
               )
             ) : (
-              <button key={i} type="button"
+              /* 44px على شاشات اللمس — كانت 28px فيلمس الإبهام البند المجاور (30 سبتمبر 2026) */
+              <button key={i} type="button" role="menuitem"
                 onClick={() => { setOpen(false); it.run?.(); }}
-                className={`block w-full text-right px-3.5 py-1.5 text-xs font-semibold hover:bg-paper2 transition ${it.danger ? "text-late" : "text-deep"}`}>
+                className={`block w-full text-right px-3.5 py-1.5 [@media(pointer:coarse)]:min-h-[44px] [@media(pointer:coarse)]:py-2.5 text-xs font-semibold hover:bg-paper2 transition ${it.danger ? "text-late" : "text-deep"}`}>
                 {it.label}
               </button>
             ))}
@@ -2744,26 +2951,28 @@ function AddNote({ onAdd, unitWord }: {
   return (
     <div className="border border-line rounded-xl p-3 mb-3 bg-paper">
       <div className="flex gap-2 mb-2">
-        <input className="fld" value={t} onChange={(e) => setT(e.target.value)}
+        <input className="fld" value={t} onChange={(e) => setT(e.target.value)} aria-label="نص الملاحظة أو المهمة"
           placeholder={`ما الذي حدث أو يجب عمله؟ (تسريب في ${unitWord} 12 · تجديد رخصة · دهان السلالم)`}
           onKeyDown={(e) => { if (e.key === "Enter") submit(); }} />
         <button className="btn btn-primary text-sm shrink-0" onClick={submit}>حفظ</button>
       </div>
       <div className="flex flex-wrap items-center gap-2">
-        <div className="flex gap-1">
+        <div className="flex flex-wrap gap-1">
           {Object.entries(NOTE_KINDS).map(([k, v]) => (
-            <button key={k} type="button" onClick={() => setKind(k)}
-              className={`text-[11px] px-2 py-1 rounded-full border ${kind === k ? "bg-deep text-goldSoft border-deep" : "border-line text-muted hover:text-deep"}`}>
+            <button key={k} type="button" onClick={() => setKind(k)} aria-pressed={kind === k}
+              className={`text-[11px] px-2 py-1 rounded-full border whitespace-nowrap ${kind === k ? "bg-deep text-goldSoft border-deep" : "border-line text-muted hover:text-deep"}`}>
               {v.icon} {v.label}
             </button>
           ))}
         </div>
         {/* كان حقل تاريخ خامًا يعرض dd/mm/yyyy بالإنجليزية وسط واجهة عربية
             تعرض التواريخ بالهجري. DateField يعطي التقويمين بمسمّياتهما. */}
-        <label className="flex items-center gap-1.5 text-[11px] text-muted ms-auto">
-          ذكّرني في
+        {/* كان <label> يلفّ الحقل كله فيرتبط بزرّ «ميلادي» (أول عنصر فيه) لا بخانة التاريخ —
+            الآن يرتبط بالخانة نفسها بمعرّفها (30 سبتمبر 2026) */}
+        <div className="flex items-center gap-1.5 text-[11px] text-muted ms-auto">
+          <label htmlFor="note-due">ذكّرني في</label>
           <span className="w-44"><DateField id="note-due" value={due} onChange={(v) => setDue(v)} /></span>
-        </label>
+        </div>
       </div>
       <p className="text-[10px] text-muted mt-1.5">
         بموعد: تصير مهمة تظهر على العقار وفي ملخّص تليجرام حتى تُغلق · بلا موعد: ملاحظة في السجل فقط.
@@ -2784,10 +2993,41 @@ function Field({ label, hint, children }: { label: React.ReactNode; hint?: strin
   );
 }
 
+/**
+ * إطار النوافذ (30 سبتمبر 2026).
+ *
+ * كانت لمسة على الخلفية تُغلق النافذة — ونموذج الوحدة خمسة عشر حقلًا على
+ * الجوال، فلمسة بجانب الحقل تمحو كل ما كُتب بلا سؤال. الآن:
+ *  • تتبّع «متّسخ» عامّ: أي كتابة أو اختيار داخل النافذة (input/change) يعلّمها.
+ *  • الخلفية تُغلق النافذة النظيفة وحدها؛ والمتّسخة تسأل أولًا.
+ *  • زرّ ✕ ظاهر في الزاوية، وEscape يُغلق — وكلاهما يسأل إن كان فيها إدخال.
+ * أزرار «إلغاء» داخل النماذج قرار صريح فتبقى كما هي.
+ */
 function Shell({ children, onClose, wide }: { children: React.ReactNode; onClose: () => void; wide?: boolean }) {
+  const dirty = useRef(false);
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
+  const tryClose = () => {
+    if (dirty.current && !confirm("لديك إدخال لم يُحفظ في هذه النافذة.\n\nإغلاقها وتجاهل ما أدخلته؟")) return;
+    closeRef.current();
+  };
+  const tryCloseRef = useRef(tryClose);
+  tryCloseRef.current = tryClose;
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") { e.stopPropagation(); tryCloseRef.current(); } };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4" onClick={onClose}>
-      <div className={`w-full ${wide ? "max-w-2xl" : "max-w-md"} bg-white rounded-2xl shadow-xl p-6 max-h-[90vh] overflow-auto`} onClick={(e) => e.stopPropagation()}>
+    <div className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4" onClick={(e) => { if (e.target === e.currentTarget) tryClose(); }}>
+      <div role="dialog" aria-modal="true"
+        className={`relative w-full ${wide ? "max-w-2xl" : "max-w-md"} bg-white rounded-2xl shadow-xl p-6 pt-11 max-h-[90vh] overflow-auto`}
+        onInput={() => { dirty.current = true; }} onChange={() => { dirty.current = true; }}>
+        {/* لاصق أعلى النافذة: في نموذج طويل يبقى ظاهرًا بعد التمرير */}
+        <div className="sticky -top-9 h-0 -mt-9 mb-9 z-10">
+          <button type="button" onClick={tryClose} aria-label="إغلاق" title="إغلاق (Esc)"
+            className="absolute top-0 -left-4 w-11 h-11 grid place-items-center rounded-full bg-white/90 text-muted hover:text-deep hover:bg-paper2 text-lg leading-none">✕</button>
+        </div>
         {children}
       </div>
     </div>
@@ -2947,6 +3187,8 @@ function TenantModal({ open, initial, unitWord, error, saving, onClose, onSubmit
   saving?: boolean;
 }) {
   const [d, setD] = useState<any>(initial || { payment_frequency: "monthly", contract_start: today() });
+  /* لقطة العدّادات لحظة الفتح — يقارن بها الحفظ ويحرس بها التزامن (30 سبتمبر 2026) */
+  const [init0] = useState(() => initial ? { paid_periods: initial.paid_periods ?? null, carried_debt: (initial as any).carried_debt ?? null } : null);
   /* «عقد جديد يبدأ لاحقًا» — يؤكّده المكتب مرة فيختفي التنبيه */
   const [startIsNew, setStartIsNew] = useState(false);
   /**
@@ -3319,7 +3561,7 @@ function TenantModal({ open, initial, unitWord, error, saving, onClose, onSubmit
             if (futureStartQ && !confirm(`بداية العقد ${arDate(startISO)} بعد اليوم، ولا دفعات مسدَّدة.\n\n`
               + `موافق = عقد جديد يبدأ في هذا التاريخ — احفظ.\n`
               + `إلغاء = عقد ساري من قبل — سأكتب بدايته الفعلية وآخر دفعة سُدّدت.`)) return;
-            onSubmit(d);
+            onSubmit(init0 ? { ...d, _init: init0 } : d);
           }}>حفظ</button>
       </div>
       {String(d.status) !== "vacated" && !(d.name || "").trim() && (
@@ -3735,7 +3977,7 @@ function PortfolioStat({ v, l, tone }: { v: string; l: string; tone?: "warn" }) 
 
 function RenewModal({ tenant, unitWord, onClose, onRenew }: {
   tenant: Tenant; unitWord: string; onClose: () => void;
-  onRenew: (o: { periods: number; newAmount: number | null; newFrequency: Frequency }) => void;
+  onRenew: (o: { periods: number; newAmount: number | null; newFrequency: Frequency }) => void | Promise<unknown>;
 }) {
   const cur = contractState(tenant);
   const curFreq = (tenant.payment_frequency || "monthly") as Frequency;
@@ -3835,7 +4077,8 @@ function RenewModal({ tenant, unitWord, onClose, onRenew }: {
       <div className="flex gap-2 mt-5">
         <button type="button" className="btn btn-ghost flex-1 justify-center" onClick={onClose}>إلغاء</button>
         <button className="btn btn-gold flex-1 justify-center" disabled={busy || !Number(periods)}
-          onClick={() => { setBusy(true); onRenew({ periods: Number(periods), newAmount: Number(amount) || null, newFrequency: freq }); }}>
+          /* يعود الزرّ إن توقّف التجديد (إلغاء سؤال أو خطأ) — كان يبقى «...» معطّلًا */
+          onClick={() => { setBusy(true); Promise.resolve(onRenew({ periods: Number(periods), newAmount: Number(amount) || null, newFrequency: freq })).finally(() => setBusy(false)); }}>
           {busy ? "..." : "تأكيد التجديد"}
         </button>
       </div>
@@ -3895,7 +4138,7 @@ function RemindAllModal({ rows, unitWord, linkOf, onClose, demo = false, dueOf =
               <div className="flex items-center gap-3">
                 <div className="min-w-0 flex-1">
                   <div className="font-semibold truncate text-sm">{t.name}</div>
-                  <div className="text-xs text-muted">{unitWord} {t.unit || "—"} · {st.unpaid} دفعة · {sar(dueOf({ t, st } as Row))} ريال</div>
+                  <div className="text-xs text-muted">{unitWord} {t.unit || "—"} · {countAr(st.unpaid, "دفعة واحدة", "دفعتان", "دفعات", "دفعة")} · {sar(dueOf({ t, st } as Row))} ريال</div>
                 </div>
                 <button type="button" className="btn btn-wa text-xs" onClick={() => setShown(shown === t.id ? null : t.id)}>
                   {shown === t.id ? "إخفاء" : "عرض الرسالة"}
@@ -3930,7 +4173,7 @@ function RemindAllModal({ rows, unitWord, linkOf, onClose, demo = false, dueOf =
             <div key={t.id} className={`flex items-center gap-3 rounded-xl border p-3 ${sent[t.id] ? "border-[#B7DFC7] bg-[#F2FAF5]" : "border-line bg-paper"}`}>
               <div className="min-w-0 flex-1">
                 <div className="font-semibold truncate text-sm">{t.name}</div>
-                <div className="text-xs text-muted">{unitWord} {t.unit || "—"} · {st.unpaid} دفعة · {sar(dueOf({ t, st } as Row))} ريال</div>
+                <div className="text-xs text-muted">{unitWord} {t.unit || "—"} · {countAr(st.unpaid, "دفعة واحدة", "دفعتان", "دفعات", "دفعة")} · {sar(dueOf({ t, st } as Row))} ريال</div>
               </div>
               {sent[t.id] && <span className="text-xs font-bold text-paid">✓ أُرسل</span>}
               <a href={linkOf(t)} target="_blank" rel="noreferrer" className="btn btn-wa text-xs"

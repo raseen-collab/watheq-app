@@ -9,12 +9,25 @@ import { CHOSEN_SOURCES, isSignupSource, sourceFromReferrer, sourceLabel } from 
  * يقبل المسارات الداخلية فقط — يمنع `?next=https://…` من نقل المستخدم
  * إلى موقع خارجي بعد تسجيل دخول ناجح (ثغرة إعادة توجيه مفتوحة).
  */
+/** أصل وهمي ثابت للتحليل فقط — نفس النتيجة على الخادم والمتصفح */
+const BASE = "https://watheq.invalid";
 function safeNext(raw: string | null): string {
   if (!raw) return "/dashboard";
-  if (!raw.startsWith("/")) return "/dashboard";   // روابط مطلقة أو نسبية غريبة
-  if (raw.startsWith("//")) return "/dashboard";   // //evil.com يُقرأ كنطاق خارجي
-  if (raw.startsWith("/\\")) return "/dashboard";
-  return raw;
+  // 30 سبتمبر 2026: "/\t/evil.com" كان يمرّ — المتصفح يحذف الـTab فيصير
+  // "//evil.com". نرفض أي محرف تحكّم أو شرطة مائلة عكسية أصلًا.
+  if (/[\u0000-\u001F\u007F-\u009F\\]/.test(raw)) return "/dashboard";
+  if (!raw.startsWith("/") || raw.startsWith("//")) return "/dashboard";
+  try {
+    // الحَكَم الأخير هو محلّل URL نفسه: يجب أن يبقى على نفس الأصل، والمسار
+    // الناتج بعد التطبيع (مثل "/.//evil.com") لا يبدأ بـ"//".
+    const u = new URL(raw, BASE);
+    if (u.origin !== new URL(BASE).origin) return "/dashboard";
+    const out = u.pathname + u.search + u.hash;
+    if (!out.startsWith("/") || out.startsWith("//")) return "/dashboard";
+    return out;
+  } catch {
+    return "/dashboard";
+  }
 }
 
 export default function LoginPage() {

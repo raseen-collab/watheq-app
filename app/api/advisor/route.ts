@@ -50,22 +50,45 @@ export async function POST(req: Request) {
   }
 
   // ---------- 3) الحصّة اليومية ----------
-  const { count } = await db
-    .from("advisor_log")
-    .select("id", { count: "exact", head: true })
-    .eq("user_id", user.id).eq("asked_on", today);
+  /* 30 سبتمبر 2026: كان «عُدّ ثم اسأل ثم سجّل» — طلبان متزامنان يريان العدد نفسه
+     فيتجاوزان الحد (وكل تجاوز استدعاء نموذج مدفوع). الآن نحجز الخانة أولًا: نُدرج
+     سطر السجل، ثم نعدّ، فإن تجاوز العددُ الحدَّ حذفنا سطرنا ورفضنا. التزامن الأسوأ
+     يرفض الطلبين معًا — تحفّظ مقبول — ولا يمرّ طلب فوق الحد أبدًا. بلا SQL جديد. */
   const limit = advisorLimit(profile);
-  if ((count || 0) >= limit) {
-    return NextResponse.json({
-      ok: false, quota: true,
-      error: `بلغت حدّك اليومي (${limit} أسئلة). يتجدّد غدًا — وبإمكانك رفع الحد بالترقية لباقة أعلى.`,
-    }, { status: 429 });
-  }
+  const quotaError = () => NextResponse.json({
+    ok: false, quota: true,
+    error: `بلغت حدّك اليومي (${limit} أسئلة). يتجدّد غدًا — وبإمكانك رفع الحد بالترقية لباقة أعلى.`,
+  }, { status: 429 });
 
+  const countToday = async () => {
+    const { count } = await db
+      .from("advisor_log")
+      .select("id", { count: "exact", head: true })
+      .eq("user_id", user.id).eq("asked_on", today);
+    return count || 0;
+  };
+  // فحص مبدئي رخيص: من استنفد حصته لا يُدرج له سطر أصلًا
+  if ((await countToday()) >= limit) return quotaError();
+
+  const { data: reserved, error: resErr } = await db.from("advisor_log")
+    .insert({ user_id: user.id, asked_on: today, question, answer: "", risk: "pending", answered: false })
+    .select("id").single();
+  /* إن رُفض الحجز (قيد على عمود risk مثلًا في جدول أُنشئ يدويًّا) لا نعطّل المستشار:
+     نعود للسلوك السابق — الفحص المبدئي أعلاه ثم إدراج عند الإنهاء — ونسجّل الخطأ. */
+  if (resErr) console.error("Watheq advisor reserve error (fallback to insert):", resErr);
+  const reservedId: string | null = (reserved as any)?.id ?? null;
+  let count = await countToday();                  // يشمل سطرنا إن حُجز
+  if (reservedId && count > limit) {
+    await db.from("advisor_log").delete().eq("id", reservedId);
+    return quotaError();
+  }
+  if (!reservedId) count += 1;                     // لحساب «المتبقي» بعد هذا السؤال
+
+  /* يُكمل السطر المحجوز بدل إدراج سطر ثانٍ */
   const log = async (answer: string, risk: string, answered: boolean) => {
-    const { error } = await db.from("advisor_log").insert({
-      user_id: user.id, asked_on: today, question, answer, risk, answered,
-    });
+    const { error } = reservedId
+      ? await db.from("advisor_log").update({ answer, risk, answered }).eq("id", reservedId)
+      : await db.from("advisor_log").insert({ user_id: user.id, asked_on: today, question, answer, risk, answered });
     if (error) console.error("Watheq advisor log error:", error);
   };
 
@@ -84,6 +107,7 @@ export async function POST(req: Request) {
   // ---------- 5) استدعاء النموذج ----------
   const key = process.env.ANTHROPIC_API_KEY;
   if (!key) {
+    if (reservedId) await db.from("advisor_log").delete().eq("id", reservedId);   // لم يُسأل شيء — لا يُحتسب
     return NextResponse.json({ ok: false, error: "المستشار غير مفعّل حاليًّا." }, { status: 503 });
   }
 
@@ -125,7 +149,7 @@ export async function POST(req: Request) {
     await log(answer, "normal", true);
     return NextResponse.json({
       ok: true, answer, disclaimer: DISCLAIMER, risk: "normal",
-      remaining: Math.max(0, limit - (count || 0) - 1),
+      remaining: Math.max(0, limit - count),
     });
   } catch (e: any) {
     console.error("Watheq advisor error:", e);

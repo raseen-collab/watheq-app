@@ -3,6 +3,8 @@
  *  متوافقة مع الكود القديم: sendTelegram لا تزال موجودة.
  *  ============================================================ */
 
+import * as Sentry from "@sentry/nextjs";
+
 const BOT_TOKEN = () => process.env.TELEGRAM_BOT_TOKEN || "";
 const api = (method: string) => `https://api.telegram.org/bot${BOT_TOKEN()}/${method}`;
 
@@ -20,12 +22,26 @@ async function call(method: string, payload: Record<string, any>) {
       body: JSON.stringify(payload),
     });
     const data = await res.json();
-    return data?.ok
-      ? { ok: true, result: data.result }
-      : { ok: false, error: data?.description || "فشل الطلب" };
+    if (data?.ok) return { ok: true, result: data.result };
+    return reportFail(method, data?.description || "فشل الطلب");
   } catch (e: any) {
-    return { ok: false, error: String(e?.message || e) };
+    return reportFail(method, String(e?.message || e));
   }
+}
+
+/**
+ * 30 سبتمبر 2026: كل فشل إرسال كان يُبتلع بصمت — رسالة مرفوضة لوسم HTML مكسور
+ * أو محادثة حظرت البوت لا يعرف بها أحد. نرسله لـSentry (بلا نص الرسالة: فيه
+ * أسماء ومبالغ). «message is not modified» ليس عطلًا: نقرة على زرّ بنفس المحتوى.
+ */
+function reportFail(method: string, error: string) {
+  if (!/message is not modified/i.test(error)) {
+    console.error(`telegram ${method} failed:`, error);
+    try {
+      Sentry.captureMessage(`telegram ${method} failed: ${error.slice(0, 200)}`, { level: "warning", tags: { telegram_method: method } });
+    } catch { /* المراقبة لا تُسقط الإرسال */ }
+  }
+  return { ok: false, error };
 }
 
 /** إرسال رسالة جديدة (مع أزرار اختيارية) */

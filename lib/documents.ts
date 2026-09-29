@@ -6,8 +6,8 @@ import { unitLabel, typeLabel } from "./domain";
 import { hijriText, hijriShort } from "@/lib/hijri";
 import { annualRentRoll } from "./income";
 import { defaultTermPeriods } from "./contracts";
-import { unitStatus, unitStatusLabel, arrearsOf, statusWindows } from "./contract-state";
-import { daysAr, monthsAr } from "./utils";
+import { unitStatus, unitStatusLabel, arrearsOf, statusWindows, isPartialOnly } from "./contract-state";
+import { daysAr, monthsAr, today as riyadhTodayISO } from "./utils";
 
 const sar = (n: number) => {
   const v = Number(n) || 0;
@@ -23,8 +23,12 @@ const sar = (n: number) => {
  * المالك — فأي وسم في اسم مستأجر يصير سكربتًا يعمل عند من يفتح الصفحة.
  * نُهرّب < > & " في كل حقل نصي (عميقًا) ونترك الأرقام والتواريخ كما هي.
  */
+/* (30 سبتمبر 2026) لا يُهرِّب مرتين: كانت & تُهرَّب دائمًا، فالنصّ الذي يمرّ على
+   scrub مرتين (دالة تعقّم ثم تستدعي أخرى تعقّم، أو esc محلي بعده) يخرج
+   «شركة أ &amp;amp; ب». & التي تبدأ كيانًا مكتملًا تُترك كما هي. والفاصلة
+   العليا تُهرَّب أيضًا لأن بعض القيم تدخل سمات HTML. */
 function scrub<T>(v: T): T {
-  if (typeof v === "string") return v.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;") as any;
+  if (typeof v === "string") return escH(v) as any;
   if (Array.isArray(v)) return v.map(scrub) as any;
   if (v && typeof v === "object" && !(v instanceof Date)) {
     const o: any = {};
@@ -59,10 +63,63 @@ export function arDateH(v?: string | null): string {
 }
 
 
-const today = () => {
-  const d = new Date(), p = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+/* (30 سبتمبر 2026) «اليوم» بتوقيت الرياض: كان بتوقيت الجهاز/الخادم، فرابط المالك
+   (خادم UTC) بين منتصف الليل والثالثة فجرًا يطبع تاريخ الأمس في الترويسة. */
+const today = () => riyadhTodayISO();
+
+/** وقت لحظةٍ ما بتوقيت الرياض «14:05» — لوقت إصدار الفاتورة */
+const riyadhTime = (v?: string | Date | null): string => {
+  const d = v ? new Date(v) : new Date();
+  if (isNaN(d.getTime())) return "";
+  try { return new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Riyadh", hour: "2-digit", minute: "2-digit", hour12: false }).format(d); }
+  catch { return ""; }
 };
+
+/**
+ * العدد مع المعدود بالعربية (30 سبتمبر 2026): كانت المستندات تكتب «5 شقة»
+ * و«1 غرف · 2 دورات مياه · 1 مكيف» و«3 عملية» — أول ما تقع عليه عين المالك.
+ * 1 → «شقة واحدة» · 2 → «شقتان» · 3–10 → «3 شقق» · 11–99 → «11 شقة / 11 محلًا» · 100 → «100 شقة».
+ */
+const NOUNS: Record<string, [one: string, two: string, few: string, many: string]> = {
+  "شقة": ["شقة واحدة", "شقتان", "شقق", "شقة"],
+  "شقة ملحق": ["شقة ملحق واحدة", "شقتا ملحق", "شقق ملحق", "شقة ملحق"],
+  "وحدة": ["وحدة واحدة", "وحدتان", "وحدات", "وحدة"],
+  "محل": ["محل واحد", "محلان", "محلات", "محلًا"],
+  "معرض": ["معرض واحد", "معرضان", "معارض", "معرضًا"],
+  "فيلا": ["فيلا واحدة", "فيلتان", "فلل", "فيلا"],
+  "مكتب": ["مكتب واحد", "مكتبان", "مكاتب", "مكتبًا"],
+  "مستودع": ["مستودع واحد", "مستودعان", "مستودعات", "مستودعًا"],
+  "استديو": ["استديو واحد", "استديوهان", "استديوهات", "استديو"],
+  "غرفة": ["غرفة واحدة", "غرفتان", "غرف", "غرفة"],
+  "أرض": ["أرض واحدة", "أرضان", "أراضٍ", "أرضًا"],
+  "قطعة": ["قطعة واحدة", "قطعتان", "قطع", "قطعة"],
+  "دورة مياه": ["دورة مياه واحدة", "دورتا مياه", "دورات مياه", "دورة مياه"],
+  "مكيف": ["مكيف واحد", "مكيفان", "مكيفات", "مكيفًا"],
+  "عملية": ["عملية واحدة", "عمليتان", "عمليات", "عملية"],
+  "دفعة": ["دفعة واحدة", "دفعتان", "دفعات", "دفعة"],
+  "عقار": ["عقار واحد", "عقاران", "عقارات", "عقارًا"],
+  "عقد": ["عقد واحد", "عقدان", "عقود", "عقدًا"],
+  "مالك": ["مالك واحد", "مالكان", "ملّاك", "مالكًا"],
+  "بند": ["بند واحد", "بندان", "بنود", "بندًا"],
+  "قيد": ["قيد واحد", "قيدان", "قيود", "قيدًا"],
+  "معروض": ["معروض واحد", "معروضان", "معروضات", "معروضًا"],
+};
+/** genitive: بعد حرف جر («على وحدتين» لا «على وحدتان») */
+function countAr(n: number | null | undefined, noun: string, genitive = false): string {
+  const f = NOUNS[noun];
+  const x = Math.abs(Math.round(Number(n) || 0));
+  if (!f) return `${x} ${noun}`;
+  if (x === 1) return f[0];
+  if (x === 2) return genitive ? f[1].replace(/تان$/, "تين").replace(/ان$/, "ين").replace(/^(\S+)تا /, "$1تي ") : f[1];
+  const r = x % 100;
+  if (r >= 3 && r <= 10) return `${x} ${f[2]}`;
+  if (r >= 11) return `${x} ${f[3]}`;
+  /* 0 و100 و101…: تمييز مجرور مفرد بلا تنوين النصب */
+  return `${x} ${f[3].replace(/ًا$/, "")}`;
+}
+/** «منذ/خلال N يوم» بلا «0 يوم»: الصفر هو «اليوم» */
+const daysOrToday = (n: number | null | undefined, nominative = false) =>
+  Math.round(Math.abs(Number(n) || 0)) === 0 ? "اليوم" : daysAr(n, nominative);
 
 type Tenant = {
   status?: string | null;
@@ -97,8 +154,12 @@ const USAGE_AR: Record<string, string> = { families: "سكني — عوائل", 
 /** وصف الوحدة في المستندات: «شقة ملحق رقم 3 — 2 غرف · 1 دورة مياه · 2 مكيف» */
 function unitDesc(t: any, p: any): string {
   const type = t.unit_type ? (UNIT_TYPE_AR[t.unit_type] || "وحدة") : unitLabel(p?.property_type);
-  const specs = [t.rooms ? `${t.rooms} غرف` : "", t.baths ? `${t.baths} دورات مياه` : "", t.acs ? `${t.acs} مكيف` : ""].filter(Boolean).join(" · ");
-  return `${type} رقم (${t.unit || "—"})${specs ? ` — ${specs}` : ""}`;
+  return `${type} رقم (${t.unit || "—"})${unitSpecs(t) ? ` — ${unitSpecs(t)}` : ""}`;
+}
+/** المواصفات بالعدد الصحيح: «غرفتان · دورة مياه واحدة · 3 مكيفات» (كانت «2 غرف · 1 دورات مياه · 1 مكيف») */
+function unitSpecs(t: any): string {
+  return [Number(t?.rooms) > 0 ? countAr(t.rooms, "غرفة") : "", Number(t?.baths) > 0 ? countAr(t.baths, "دورة مياه") : "",
+    Number(t?.acs) > 0 ? countAr(t.acs, "مكيف") : ""].filter(Boolean).join(" · ");
 }
 
 /**
@@ -195,7 +256,41 @@ type Issuer = { billing_name?: string | null; org_name?: string | null; vat_numb
 type Mark = "none" | "brand" | "wm";
 const markOf = (i?: Issuer | null): Mark => (i?.expired ? "wm" : i?.trial ? "brand" : "none");
 
-const SHELL = (title: string, inner: string, mark: Mark = "none") => `<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8">
+/**
+ * سياسة أمان المحتوى داخل المستند نفسه (30 سبتمبر 2026).
+ *
+ * المستند يُكتب في نافذة من أصل التطبيق نفسه (document.write / srcdoc)،
+ * فأي سكربت يتسرّب إليه من اسم مستأجر أو ملاحظة يقرأ جلسة المستخدم. التهريب
+ * هو الخط الأول؛ وهذه السياسة الخط الثاني: لا يعمل إلا سكربت يحمل رمز الـnonce
+ * العشوائي لهذا المستند (أزرار الطباعة ورسم رمز QR) — والرمز يُولَّد عند
+ * الإصدار فلا يعرفه نصّ خُزّن قبله. اخترناها بدل iframe معزول (sandbox):
+ * العزل يمنع زرّ الطباعة في الطبقة البديلة على الآيفون من الوصول إلى الإطار.
+ * رابط المالك العام يُرسل السياسة نفسها ترويسةً أيضًا (app/r/[token]).
+ */
+const NONCE_MARK = "__WQ_NONCE__";
+const newNonce = (): string => {
+  try {
+    const b = new Uint8Array(16);
+    (globalThis as any).crypto.getRandomValues(b);
+    return Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
+  } catch {
+    return Math.random().toString(36).slice(2) + Date.now().toString(36) + Math.random().toString(36).slice(2);
+  }
+};
+export const docCsp = (nonce: string) =>
+  `default-src 'none'; script-src 'nonce-${nonce}'; style-src 'unsafe-inline' https://fonts.googleapis.com; ` +
+  `img-src data: blob:; font-src data: https://fonts.gstatic.com; form-action 'self'; base-uri 'none'`;
+
+const SHELL = (title: string, inner: string, mark: Mark = "none") => {
+  const nonce = newNonce();
+  /* السكربتات الثابتة تحمل nonce="__WQ_NONCE__" ويُستبدل هنا. نصّ المستخدم لا
+     يستطيع إنتاج هذه السمة: علامة " فيه مُهرَّبة دائمًا. */
+  return SHELL_RAW(title, inner, mark).split(`nonce="${NONCE_MARK}"`).join(`nonce="${nonce}"`)
+    .replace(`content="${NONCE_MARK}"`, `content="${docCsp(nonce)}"`);
+};
+const SHELL_RAW = (title: string, inner: string, mark: Mark = "none") => `<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8">
+<meta http-equiv="Content-Security-Policy" content="${NONCE_MARK}">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${title}</title>
 <style>
   @page{size:A4;margin:14mm}
@@ -207,13 +302,14 @@ const SHELL = (title: string, inner: string, mark: Mark = "none") => `<!DOCTYPE 
   @media print{body{padding:0;max-width:none;margin:0}}
   *{box-sizing:border-box}
   .hd{background:#0E3A37;color:#EAF1EE;padding:18px 22px;border-radius:12px;display:table;width:100%;box-sizing:border-box}
-  .hd .lg{display:table-cell;vertical-align:middle;text-align:right;white-space:nowrap}
+  /* (30 سبتمبر 2026) اسم مكتب طويل كان يُقصّ على 375px: nowrap + overflow-x:hidden */
+  .hd .lg{display:table-cell;vertical-align:middle;text-align:right}
   .hd .lg .seal{display:inline-block;vertical-align:middle;margin-inline-end:11px}
   .hd .lg>div:last-child{display:inline-block;vertical-align:middle}
   .seal{width:40px;height:40px;border-radius:10px;background:#0A2C2A;text-align:center;line-height:40px;color:#E7C877;font-weight:700;font-size:1.3rem;box-shadow:inset 0 0 0 2px rgba(231,200,119,.4)}
-  .hd .t{font-weight:700;font-size:1.4rem}
-  .hd .meta{display:table-cell;vertical-align:middle;text-align:left;font-size:.8rem;color:#B9CCC7;white-space:nowrap}
-  .hd .meta b{color:#E7C877;display:block;font-size:1rem}
+  .hd .t{font-weight:700;font-size:1.4rem;overflow-wrap:anywhere}
+  .hd .meta{display:table-cell;vertical-align:middle;text-align:left;font-size:.8rem;color:#B9CCC7}
+  .hd .meta b{color:#E7C877;display:block;font-size:1rem;overflow-wrap:anywhere}
   h1{font-size:1.25rem;margin:22px 0 4px;color:#0E3A37}
   h2{font-size:.95rem;margin:20px 0 8px;color:#0E3A37;font-weight:700;
       border-bottom:1px solid #E4DDCD;padding-bottom:5px}
@@ -225,7 +321,9 @@ const SHELL = (title: string, inner: string, mark: Mark = "none") => `<!DOCTYPE 
   .box .r{display:table;width:100%;font-size:.84rem;padding:3px 0}
   .box .r span{display:table-cell}
   .box .r span:first-child{color:#5C6B67;text-align:right}
-  .box .r span:last-child{font-weight:600;text-align:left;white-space:nowrap;padding-inline-start:10px}
+  .box .r span:last-child{font-weight:600;text-align:left;padding-inline-start:10px;overflow-wrap:anywhere}
+  /* لا يُقسم صندوق أو صفّ بين صفحتين عند الطباعة */
+  .box,.due,.note,.tot,.sign,tr{break-inside:avoid;page-break-inside:avoid}
   table{width:100%;border-collapse:collapse;font-size:.83rem;margin-bottom:16px}
   /* جدول أعرض من الشاشة يُمرَّر بدل أن يُقصّ */
   .scrollx{overflow-x:auto;-webkit-overflow-scrolling:touch;margin-bottom:16px}
@@ -256,6 +354,18 @@ const SHELL = (title: string, inner: string, mark: Mark = "none") => `<!DOCTYPE 
   .noprint .a{background:#0E3A37;color:#F6F1E4}
   .noprint .b{background:#fff;color:#0E3A37;border:1px solid #E4DDCD}
   @media print{.noprint{display:none}}
+  /* الجوال (أقل من 480px): الترويسة والصندوقان المتجاوران والمربّعات تتراكب بدل أن تفيض */
+  @media screen and (max-width:480px){
+    body{padding:10px}
+    .hd,.hd .lg,.hd .meta{display:block}
+    .hd .meta{text-align:right;margin-top:10px}
+    .grid,.sign{display:block}
+    .grid .box,.sign>div{display:block;width:100%;margin-bottom:8px}
+    .tot{display:flex;flex-wrap:wrap;gap:5px}
+    .tot>div{display:block;flex:1 1 42%}
+    .due,.due .l,.due .v{display:block;text-align:right}
+    .due .v{padding:6px 0 0}
+  }
   /* ── سطر المصدر: تجربة نشطة ── */
   .madeby{margin:18px 0 0;padding-top:9px;border-top:1px solid #E4DDCD;
       font-size:.72rem;color:#8C8579;text-align:center;letter-spacing:.2px}
@@ -269,7 +379,8 @@ const SHELL = (title: string, inner: string, mark: Mark = "none") => `<!DOCTYPE 
   .trialbar{background:#FBE9E7;border:1px solid #F5C6C2;color:#8f2b26;border-radius:10px;
       padding:11px 15px;margin:14px 0 0;font-size:.82rem;font-weight:600;line-height:1.75}
 </style></head><body>
-<div class="noprint"><button class="a" onclick="window.print()">🖨️ طباعة / حفظ PDF</button><button class="b" onclick="window.close()">إغلاق</button></div>
+<div class="noprint"><button class="a" id="wq-print" type="button">🖨️ طباعة / حفظ PDF</button><button class="b" id="wq-close" type="button">إغلاق</button></div>
+<script nonce="${NONCE_MARK}">(function(){var p=document.getElementById("wq-print"),c=document.getElementById("wq-close");if(p)p.addEventListener("click",function(){window.print()});if(c)c.addEventListener("click",function(){window.close()});})();</script>
 ${mark === "wm" ? `<div class="wm"><span>نسخة تجريبية — غير معتمدة</span></div>` : ""}
 ${inner}
 ${mark === "brand" ? `<div class="madeby">أُنشئ عبر <b>وثيق</b> · watheqapp.com</div>` : ""}
@@ -330,8 +441,8 @@ function zatcaQrBlock(sellerName: string, vatNo: string, total: number, vat: num
     <div style="font-size:8px;color:#8A8477;max-width:200px;word-break:break-all;margin-top:4px" id="zatca-tlv" title="محتوى رمز الاستجابة السريعة (TLV/Base64) — يُرسم رمزًا عند توفر الاتصال">${tlv}</div>
   </div>
 </div>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"><\/script>
-<script>(function(){
+<script nonce="${NONCE_MARK}" src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"><\/script>
+<script nonce="${NONCE_MARK}">(function(){
   /* حمولة زاتكا تبقى مخفية دائمًا: كانت تظهر نصًّا خامًا طويلًا لو تعذّر
      تحميل مكتبة الرمز (شبكة ضعيفة أو حجب CDN)، فتخرج الفاتورة مشوّهة أمام
      المستأجر. الآن إمّا رمز سليم أو سطر يشرح، ولا شيء بينهما. */
@@ -420,17 +531,26 @@ function unitsRegisterHTML(p: any, tenants: any[], g: any, issuer: any = {}): st
   const rr = annualRentRoll(tenants);
   const kinds: Record<string, number> = {};
   for (const t of tenants) { const k = t.unit_type ? (UNIT_TYPE_AR[String(t.unit_type)] || "وحدة") : unitLabel(p.property_type); kinds[k] = (kinds[k] || 0) + 1; }
-  const kindLine = Object.entries(kinds).map(([k, n]) => `${n} ${k}`).join(" · ");
+  const kindLine = Object.entries(kinds).map(([k, n]) => countAr(n, k)).join(" · ");
+  /* (30 سبتمبر 2026) الدخل السنوي بلا ضريبة: الضريبة أمانة للهيئة لا دخل للمالك،
+     وannualRentRoll يجمع الإيجار المخزَّن (شاملًا الضريبة في وضع «شاملة»). نفس
+     شرط الإدخال: مشغولة بعقد سارٍ. */
+  const annualBase = Math.round(tenants.reduce((a, t) => {
+    if (isVacant(t)) return a;
+    const cs = contractState(t, {});
+    if (cs.daysToEnd !== null && cs.daysToEnd < 0) return a;
+    const per = defaultTermPeriods((t.payment_frequency || "monthly") as any) || 0;
+    return a + splitVat(Number(t.rent_amount) || 0, vatOf(p, t)).base * per;
+  }, 0));
+  const anyVat = tenants.some((t) => vatOf(p, t).enabled);
+  const incomeOf = PROP_THE[String(p.property_type || "")] || "العقار";
   const sorted = [...tenants].sort((a, b) => String(a.unit || "").localeCompare(String(b.unit || ""), "ar", { numeric: true }));
   const KV = (k: string, v: string) => `<div style="display:flex;justify-content:space-between;gap:8px;padding:3px 0;border-top:1px dashed #E3E8E6"><span style="color:#5C6B67">${k}</span><span style="text-align:left">${v}</span></div>`;
   const card = (t: any) => {
     const vac = isVacant(t); const st = contractState(t, win);
     const type = t.unit_type ? (UNIT_TYPE_AR[String(t.unit_type)] || "وحدة") : unitLabel(p.property_type);
-    /* العدد يطابق المعدود: غرفة · غرفتان · 3 غرف · 11 غرفة */
-    const cnt = (n: any, one: string, two: string, few: string, many: string) => {
-      const k = Number(n) || 0; return !k ? "" : k === 1 ? one : k === 2 ? two : k <= 10 ? `${k} ${few}` : `${k} ${many}`; };
-    const desc = [cnt(t.rooms, "غرفة", "غرفتان", "غرف", "غرفة"), cnt(t.baths, "دورة مياه", "دورتا مياه", "دورات مياه", "دورة مياه"),
-      cnt(t.acs, "مكيف", "مكيفان", "مكيفات", "مكيفًا")].filter(Boolean).join(" · ");
+    /* العدد يطابق المعدود: غرفة واحدة · غرفتان · 3 غرف · 11 غرفة (countAr) */
+    const desc = unitSpecs(t);
     const inst = splitVat(Number(t.rent_amount) || 0, vatOf(p, t)).total;
     const perYear = defaultTermPeriods((t.payment_frequency || "monthly") as any) || 0;
     const annual = Math.round(inst * perYear * 100) / 100;
@@ -442,7 +562,8 @@ function unitsRegisterHTML(p: any, tenants: any[], g: any, issuer: any = {}): st
     let body = "";
     if (vac) {
       const vd = vacancyDays(t.move_out_date);
-      body += KV("شاغرة منذ", vd !== null ? `${vd} يومًا${t.move_out_date ? ` (${arDate(t.move_out_date)})` : ""}` : "—");
+      /* «منذ 3 يومًا» → «منذ 3 أيام»، و«منذ 0 يومًا» → «منذ اليوم» */
+      body += KV("شاغرة منذ", vd !== null ? `${daysOrToday(vd)}${t.move_out_date ? ` (${arDate(t.move_out_date)})` : ""}` : "—");
       if (Number(t.rent_amount) > 0) body += KV("آخر إيجار", `${sar(inst)} ${freqLabel(t.payment_frequency)} = <b>${sar(annual)}</b> سنويًّا`);
       const owed = dueIncl({ amountDue: st.legacyArrears || 0 }, vatOf(p, t)) + (Number(t.carried_debt) || 0);
       if (owed > 0) body += KV("على المستأجر السابق", `<b style="color:#a5322c">${sar(owed)}</b>`);
@@ -456,8 +577,10 @@ function unitsRegisterHTML(p: any, tenants: any[], g: any, issuer: any = {}): st
       /* «القادمة» لتاريخ حلّ أو مضى تُقرأ «لم تحن بعد» — فتُسمّى «مستحقة» */
       if (st.upcomingDate) body += KV(st.upcomingDate <= today() ? "مستحقة" : "القادمة", `${arDate(st.upcomingDate)}${hij(st.upcomingDate)} · ${sar(inst)}`);
       const due = dueIncl(st, vatOf(p, t)), car = Number(t.carried_debt) || 0;
+      /* «المتأخر 0 + 4,000 دين مرحَّل» يُقرأ متناقضًا — الصفر لا يُطبع */
       body += KV("المتأخر", due + car > 0
-        ? `<b style="color:#a5322c">${sar(due)}</b>${car > 0 ? ` <span style="color:#9A4B00">+ ${sar(car)} دين مرحَّل</span>` : ""}`
+        ? (due > 0 ? `<b style="color:#a5322c">${sar(due)}</b>${car > 0 ? ` <span style="color:#9A4B00">+ ${sar(car)} دين مرحَّل</span>` : ""}`
+          : `<span style="color:#9A4B00"><b>${sar(car)}</b> دين مرحَّل من مدة سابقة</span>`)
         /* في فترة السماح: مستحق لم يتأخر بعد — كما تقول اللوحة، لا «لا شيء» وحدها */
         : st.inGrace ? `<span style="color:#9A4B00">لا شيء بعد — فترة سماح ${st.graceDaysLeft > 0 ? `(${daysAr(st.graceDaysLeft, true)})` : ""}</span>`
         : `<span style="color:#137a50">لا شيء</span>`);
@@ -470,10 +593,13 @@ function unitsRegisterHTML(p: any, tenants: any[], g: any, issuer: any = {}): st
   return `<div class="box" style="margin-bottom:8px">
     <div class="r"><span>الوحدات</span><span>${Object.keys(kinds).length > 1 ? `<b>${tenants.length}</b> — ${kindLine}` : `<b>${kindLine || tenants.length}</b>`}</span></div>
     <div class="r"><span>مؤجّرة بعقد سارٍ</span><span>${rr.occupied}${rr.vacant ? ` · شاغرة ${rr.vacant}` : ""}${rr.expired ? ` · انتهى عقدها ولم يُجدَّد ${rr.expired}` : ""}</span></div>
-    <div class="r"><span>دخل العمارة السنوي</span><span><b>${sar(Math.round(rr.annual))}</b> ريال <span style="font-size:.72rem;color:#5C6B67">(إيجار سنة بالعقود السارية)</span></span></div>
+    <div class="r"><span>دخل ${incomeOf} السنوي</span><span><b>${sar(annualBase)}</b> ريال <span style="font-size:.72rem;color:#5C6B67">(إيجار سنة بالعقود السارية${anyVat ? "، قبل الضريبة" : ""})</span></span></div>
   </div>
   <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:8px">${sorted.map(card).join("")}</div>`;
 }
+
+/** «دخل العمارة» كان ثابتًا حتى لمعرض أو فيلا — الاسم بنوع العقار */
+const PROP_THE: Record<string, string> = { residential: "العمارة", showroom: "المعرض", office: "المبنى", warehouse: "المستودع", villa: "الفيلا", land: "الأرض" };
 
 /** فترة السماح الخاصة بالعقار */
 /** عتبات العقار مع عتبات المكتب — التعريف في lib/contract-state */
@@ -482,7 +608,10 @@ const winOf = (p: Property, issuer?: Issuer | null) => statusWindows(p as any, i
 /* لا يُهرِّب مرتين (مراجعة 29 سبتمبر 2026): المدخلات تمرّ على scrub أولًا ثم
    تصل هنا، فكان «شركة أ & ب» يُطبع «شركة أ &amp; ب» في رأس كل مستند وتذييله.
    & التي تبدأ كيانًا مكتملًا تُترك؛ غيرها يُهرَّب كما كان. */
-const escH = (s: any) => String(s ?? "").replace(/&(?!(?:amp|lt|gt|quot|#39|#\d+);)/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+function escH(s: any): string {
+  return String(s ?? "").replace(/&(?!(?:amp|lt|gt|quot|#39|#\d+);)/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
 /** عكس scrub — للنصّ الذي يدخل رمز QR لا صفحة HTML */
 const unesc = (s: any) => String(s ?? "").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, "&");
 
@@ -564,8 +693,17 @@ export function statementHTML(t: Tenant, p: Property, issuer: Issuer = {}, payme
   const v = vatOf(p, t);
   const unit = splitVat(Number(t.rent_amount) || 0, v);      // تفصيل الدفعة الواحدة
   const totalContract = unit.total * rows.length;
-  const totalPaid = st.paid * unit.total;
+  /* (30 سبتمبر 2026) السداد الجزئي بالضريبة كبقية الأرقام: في «غير شاملة» كان
+     يُطبع قبل الضريبة (5,000) بجوار دفعات شاملة (11,500)، و«المسدَّد» لا يشمله
+     أصلًا — فالمسدَّد + المتأخر لا يساوي قيمة ما حلّ. */
+  const partialIncl = st.hasPartial ? splitVat(Number(st.partial) || 0, v).total : 0;
+  const totalPaid = Math.round((st.paid * unit.total + partialIncl) * 100) / 100;
   const dueSplit = splitVat(st.amountDue, v);                 // تفصيل الرصيد المستحق
+  /* حالة صفّ الجدول من contractState لا من buildSchedule: الجدول كان يَسِم قسطًا
+     حلّ اليوم (داخل فترة السماح) «متأخرة» والمربّع فوقه يقول «0 متأخرة». القسط
+     متأخر فقط إن كان ضمن ما حلّ بعد السماح (st.due). */
+  const rowStatus = (r: { n: number; status: string }) =>
+    r.status === "late" && r.n > (Number(st.due) || 0) ? "grace" : r.status;
   /* الدين المرحَّل من مدة سابقة: كان غائبًا عن الكشف كله، فيستلم المستأجر
      كشفًا لا يذكر 4,500 عليه. الآن سطرٌ ظاهر، ويدخل الرصيد الإجمالي. */
   const carried = Math.max(0, Number((t as any).carried_debt) || 0);
@@ -610,12 +748,12 @@ ${header(mode === "full" ? "كشف حساب شامل" : "كشف حساب مخت�
   <div class="box">
     <h3>ملخّص مالي</h3>
     <div class="r"><span>إجمالي قيمة العقد</span><span>${sar(totalContract)} ريال</span></div>
-    <div class="r"><span>المسدَّد</span><span>${sar(totalPaid)} ريال</span></div>
+    <div class="r"><span>المسدَّد${v.enabled ? " (شامل الضريبة)" : ""}</span><span>${sar(totalPaid)} ريال</span></div>
     ${/* «غير شاملة»: المتأخر المسجَّل قبل الضريبة، والمستأجر مطالَب بها فوقه.
          كان الكشف يقول «المتأخر 10,000 — منه ضريبة 1,500» والمطالَب به 11,500. */ ""}
     <div class="r"><span>المتأخر${v.enabled ? " (شامل الضريبة)" : ""}</span><span>${sar(v.enabled ? dueSplit.total : st.amountDue)} ريال</span></div>
     ${v.enabled && st.amountDue > 0 ? `<div class="r"><span>منه ضريبة</span><span>${sar(dueSplit.vat)} ريال</span></div>` : ""}
-    ${st.hasPartial ? `<div class="r"><span>مدفوع جزئيًّا</span><span>${sar(st.partial)} ريال</span></div>` : ""}
+    ${st.hasPartial ? `<div class="r"><span>منه سداد جزئي${v.enabled ? " (شامل الضريبة)" : ""}</span><span>${sar(partialIncl)} ريال</span></div>` : ""}
     ${carried > 0 ? `<div class="r"><span>دين مرحَّل من مدة سابقة</span><span>${sar(carried)} ريال</span></div>` : ""}
     ${/* كانت «الدفعة القادمة» تعرض أقدم دفعة غير مسدَّدة — تاريخًا ماضيًا حين
          يكون على المستأجر متبقٍّ من دفعة سابقة. والكشف يُرسل للمستأجر نفسه.
@@ -672,9 +810,10 @@ ${mode === "full" ? `
       <td>${r.n}</td><td>${arDate(r.date)}</td>
       ${v.enabled ? `<td>${sar(x.base)}</td><td>${sar(x.vat)}</td>` : ""}
       <td>${sar(x.total)}</td>
-      <td>${r.status === "paid" ? '<span class="pill p">مسدّدة</span>'
-          : r.status === "partial" ? '<span class="pill u">سداد جزئي</span>'
-          : r.status === "late" ? '<span class="pill l">متأخرة</span>'
+      <td>${rowStatus(r) === "paid" ? '<span class="pill p">مسدّدة</span>'
+          : rowStatus(r) === "partial" ? '<span class="pill u">سداد جزئي</span>'
+          : rowStatus(r) === "late" ? '<span class="pill l">متأخرة</span>'
+          : rowStatus(r) === "grace" ? `<span class="pill u">${st.inGrace ? "مستحقة — فترة سماح" : "مستحقة — لم تتأخر بعد"}</span>`
           : '<span class="pill u">قادمة</span>'}</td>
     </tr>`; }).join("")}
   </tbody>
@@ -690,12 +829,12 @@ ${shownPays.length ? `
       <td>${r.paid_on ? arDate(r.paid_on) : "—"}</td>
       <td>${sar(v.enabled && !v.inclusive ? splitVat(Number(r.amount) || 0, v).total : r.amount)}</td>
       <td>${payMethod(r)}</td>
-      <td>${r.note ? String(r.note).replace(/</g, "&lt;") : "—"}</td>
+      <td>${r.note ? escH(r.note) : "—"}</td>
     </tr>`).join("")}
     <tr style="background:#F3EEE2;font-weight:700">
       <td colspan="2">إجمالي المستلم</td>
       <td>${sar(payments.reduce((a, r) => a + (v.enabled && !v.inclusive ? splitVat(Number(r.amount) || 0, v).total : (Number(r.amount) || 0)), 0))}</td>
-      <td colspan="2">${shownPays.length} عملية</td>
+      <td colspan="2">${countAr(shownPays.length, "عملية")}</td>
     </tr>
   </tbody>
 </table>
@@ -719,7 +858,9 @@ export function invoiceHTML(
   t: Tenant, p: Property,
   inv: { invoice_no: string; amount: number; due_date: string; period_label: string;
          /** عند إعادة الطباعة: تُطبع الفاتورة بتاريخها وحالتها ووقت إصدارها الأصلي */
-         issue_date?: string | null; status?: string | null; created_at?: string | null },
+         issue_date?: string | null; status?: string | null; created_at?: string | null;
+         /** إعادة الطباعة: هل صدرت الفاتورة بضريبة؟ (invoices.vat_enabled المحفوظ) — null للأقدم */
+         vat_snapshot?: boolean | null },
   issuer: Issuer = {}
 ) {
   // تعقيم المدخلات (انظر scrub أعلاه)
@@ -734,11 +875,22 @@ export function invoiceHTML(
   /* الفاتورة الملغاة تُعرض للأرشيف لا للتداول (مراجعة 29 سبتمبر 2026): كان زرّ
      «عرض» على الملغاة يطبعها فاتورةً ضريبية سليمة برمز QR وبلا أي إشارة. */
   const voided = inv.status === "void";
-  const isTax = v.enabled && !!issuer.vat_number;
+  /* (30 سبتمبر 2026) إعادة طباعة فاتورة صدرت بلا ضريبة لا تصير «ضريبية» برمز QR
+     لأن المكتب سجّل رقمه الضريبي لاحقًا. والعكس: فاتورة صدرت ضريبية والرقم
+     الضريبي حُذف من الإعدادات بعدها — لا نطبع تنبيه «الرقم غير مسجَّل» كأنها
+     صدرت خطأً، بل نوضّح أنها نسخة لا يُعاد رسم رمزها. (لا لقطة للرقم الضريبي
+     ولا لاسم البائع في جدول الفواتير — يُطبعان بقيم المكتب الحالية.) */
+  const snapOff = inv.vat_snapshot === false;
+  const snapOnNoVatNo = inv.vat_snapshot === true && v.enabled && !issuer.vat_number;
+  const isTax = v.enabled && !!issuer.vat_number && !snapOff;
+  const reprint = !!inv.issue_date;
+  const issueDay = inv.issue_date || today();
+  /* وقت الإصدار: من created_at المحفوظ، أو لحظة الإصدار الأولى (بلا issue_date) */
+  const issueTime = inv.created_at ? riyadhTime(inv.created_at) : !reprint ? riyadhTime() : "";
   const body = `
-${header(voided ? "فاتورة ملغاة" : isTax ? "فاتورة ضريبية مبسطة" : "فاتورة", inv.invoice_no, issuer, inv.issue_date)}
+${header(voided ? "فاتورة ملغاة" : isTax ? "فاتورة ضريبية مبسطة" : "فاتورة", inv.invoice_no, issuer, issueDay)}
 ${voided ? `<div style="border:3px solid #a5322c;color:#a5322c;text-align:center;font-weight:800;font-size:1.4rem;padding:10px;margin:10px 0;border-radius:10px;letter-spacing:.5px">ملغاة — لا يُعتدّ بها ولا تُحصَّل</div>` : ""}
-<h1>${v.enabled && issuer.vat_number ? "فاتورة ضريبية مبسطة — أجرة" : "فاتورة أجرة"}</h1>
+<h1>${isTax || snapOnNoVatNo ? "فاتورة ضريبية مبسطة — أجرة" : "فاتورة أجرة"}</h1>
 <div class="sub">${inv.period_label} · ${freqLabel(t.payment_frequency)}</div>
 
 <div class="grid">
@@ -759,12 +911,12 @@ ${voided ? `<div style="border:3px solid #a5322c;color:#a5322c;text-align:center
 </div>
 
 <table>
-  <thead><tr><th>البيان</th><th>الفترة</th><th>تاريخ الاستحقاق</th><th>المبلغ قبل الضريبة (ريال)</th></tr></thead>
+  <thead><tr><th>البيان</th><th>الفترة</th><th>تاريخ الاستحقاق</th><th>المبلغ${v.enabled ? " قبل الضريبة" : ""} (ريال)</th></tr></thead>
   <tbody>
     <tr>
       <td>أجرة ${ul} رقم (${t.unit || "—"}) بعقار ${p.name}</td>
       <td>${inv.period_label}</td>
-      <td>${inv.due_date}</td>
+      <td>${inv.due_date ? arDate(inv.due_date) : "—"}</td>
       <td>${sar(x.base)}</td>
     </tr>
   </tbody>
@@ -782,7 +934,11 @@ ${v.enabled ? `<table style="max-width:340px;margin-inline-start:auto">
 
 ${isTax && !voided ? zatcaQrBlock(who, issuer.vat_number!, x.total, x.vat, inv.created_at) : ""}
 
-${v.enabled && !issuer.vat_number ? `<div class="note" style="border-inline-start-color:#D0453F;background:#FBE9E7;color:#a5322c">
+${snapOnNoVatNo && !voided ? `<div class="note">
+  <b>نسخة من فاتورة صدرت ضريبية:</b> الرقم الضريبي غير مسجَّل في إعدادات المكتب حاليًّا، فلا يُعاد رسم رمز الاستجابة السريعة في هذه النسخة.
+  أضِف الرقم الضريبي في الإعدادات لإعادة طباعتها كاملة.
+</div>` : ""}
+${v.enabled && !issuer.vat_number && !snapOnNoVatNo && !voided ? `<div class="note" style="border-inline-start-color:#D0453F;background:#FBE9E7;color:#a5322c">
   <b>تنبيه:</b> الضريبة مفعّلة لكن الرقم الضريبي للمُصدِر غير مسجَّل، لذا صدرت الوثيقة بعنوان «فاتورة» لا «فاتورة ضريبية».
   أضِف الرقم الضريبي في الإعدادات لتصدر فاتورة ضريبية مبسطة برمز QR.
 </div>` : ""}
@@ -791,14 +947,14 @@ ${v.enabled && !issuer.vat_number ? `<div class="note" style="border-inline-star
   فاتورة إدارية صادرة عن المؤجّر لغرض التوثيق بين الطرفين. السداد يتم مباشرةً للمؤجّر بالوسيلة المتفق عليها —
   منصة وثيق لا تستلم ولا تحوّل أي مبالغ.
 </div>
-${v.enabled && issuer.vat_number ? `<div class="note">
+${isTax && !voided ? `<div class="note">
   <b>عن الفوترة الإلكترونية:</b> هذه فاتورة ضريبية مبسطة تتضمن رمز الاستجابة السريعة وفق متطلبات المرحلة الأولى (الإصدار) من نظام الفاتورة الإلكترونية.
   إن كانت منشأتك مشمولة بالمرحلة الثانية (الربط والتكامل مع منصة «فاتورة»)، فوثيق لا يقوم بهذا الربط — أصدر فواتيرك الضريبية من حلّ فوترة مرتبط، واستخدم هذه للتوثيق الإداري.
 </div>` : ""}
 
 <div class="sign">
   <div>المُصدِر: ${who}<br><br>التوقيع: ________________</div>
-  <div>تاريخ الإصدار: ${inv.issue_date || today()}<br><br>رقم الفاتورة: ${inv.invoice_no}</div>
+  <div>تاريخ الإصدار: ${arDate(issueDay)}${issueTime ? ` — الساعة <span dir="ltr">${issueTime}</span>` : ""}<br><br>رقم الفاتورة: ${inv.invoice_no}</div>
 </div>
 ${footer(issuer)}`;
   return SHELL(`${voided ? "فاتورة ملغاة" : "فاتورة"} ${inv.invoice_no} — ${t.name}`, body, markOf(issuer));
@@ -874,8 +1030,8 @@ ${header("عرض سعر", q.quote_no, issuer)}
     <h3>العرض مُقدَّم إلى</h3>
     <div class="r"><span>الاسم</span><span>${q.tenant_name || "—"}</span></div>
     <div class="r"><span>${ul}</span><span>${q.unit || "—"}</span></div>
-    <div class="r"><span>تاريخ الإصدار</span><span>${today()}</span></div>
-    <div class="r"><span>صالح حتى</span><span>${q.valid_until || "—"}</span></div>
+    <div class="r"><span>تاريخ الإصدار</span><span>${arDate(today())}</span></div>
+    <div class="r"><span>صالح حتى</span><span>${arDate(q.valid_until)}</span></div>
   </div>
 </div>
 
@@ -885,7 +1041,7 @@ ${header("عرض سعر", q.quote_no, issuer)}
     <tr><td>إيجار الدفعة الواحدة${v.enabled ? " (قبل الضريبة)" : ""}</td><td style="text-align:left;font-weight:600">${sar(xp.base)} ريال</td></tr>
     <tr><td>دورية السداد</td><td style="text-align:left;font-weight:600">${freqLabel(q.payment_frequency)}</td></tr>
     <tr><td>عدد الدفعات</td><td style="text-align:left;font-weight:600">${periods}</td></tr>
-    <tr><td>تاريخ بداية العقد المقترح</td><td style="text-align:left;font-weight:600">${q.start_date || "—"}</td></tr>
+    <tr><td>تاريخ بداية العقد المقترح</td><td style="text-align:left;font-weight:600">${arDate(q.start_date)}</td></tr>
     <tr><td>مبلغ التأمين المسترد</td><td style="text-align:left;font-weight:600">${sar(q.deposit)} ريال</td></tr>
   </tbody>
 </table>
@@ -924,7 +1080,7 @@ ${header("عرض سعر", q.quote_no, issuer)}
 ${q.notes ? `<h2>ملاحظات إضافية</h2><div class="note">${q.notes}</div>` : ""}
 
 <div class="note">
-  هذا <b>عرض سعر مبدئي غير مُلزم</b>، وصلاحيته تنتهي بتاريخ ${q.valid_until || "—"}. لا يُنشئ هذا المستند
+  هذا <b>عرض سعر مبدئي غير مُلزم</b>، وصلاحيته تنتهي بتاريخ ${arDate(q.valid_until)}. لا يُنشئ هذا المستند
   علاقة إيجارية ولا يقوم مقام العقد.
 </div>
 <div class="note" style="border-inline-start-color:#8a5a11;background:#FBF1DF;color:#8a5a11">
@@ -993,7 +1149,6 @@ export function propertyStatementHTML(
   const stArr = arrearsOf((p.tenants || []).map((t: any) =>
     ({ t, st: contractState(t, winOf(p, issuer)), p })));
   const arrearsTotal = stArr.grand;
-  const collectedInPeriod = (payments || []).reduce((a, x) => a + (Number(x.amount) || 0), 0);
   const soonCount = rows.filter((r) => r.st.status === "soon").length;
   /* أرقام الفترة: تُحسب من الدفعات والمصروفات المسجّلة داخلها فقط —
      لا من الحالة اللحظية، وإلا اختلف الرقم عن تقرير المالك لنفس المدة. */
@@ -1024,14 +1179,17 @@ export function propertyStatementHTML(
   const body = `
 ${header(mode === "full" ? "كشف حساب عقار — شامل" : "كشف حساب عقار", p.name, issuer)}
 <h1>كشف حساب ${p.name}${mode === "full" ? " — شامل" : ""}</h1>
-<div class="sub">${typeLabel(p.property_type)}${p.address ? ` — ${p.address}` : ""}${p.city ? `، ${p.city}` : ""} · ${p.tenants.length} ${ul}${period ? ` · الفترة: ${period.label}` : ""}</div>
+<div class="sub">${typeLabel(p.property_type)}${p.address ? ` — ${p.address}` : ""}${p.city ? `، ${p.city}` : ""} · ${countAr(p.tenants.length, ul)}${period ? ` · الفترة: ${period.label}` : ""}</div>
 
 <div class="tot">
   <div><div class="v">${p.tenants.length}</div><div class="l">إجمالي الوحدات</div></div>
   <div><div class="v g">${Math.max(0, occupied - late)}</div><div class="l">منتظمة</div></div>
   <div><div class="v">${vacantCount}</div><div class="l">شاغرة</div></div>
   <div><div class="v r">${late}</div><div class="l">متأخرة</div></div>
-  <div><div class="v">${sar(totalPaid)}</div><div class="l">المُحصَّل (ريال)</div></div>
+  ${/* (30 سبتمبر 2026) ليس «المُحصَّل»: هو الدفعات المسدَّدة × الإيجار للعقود القائمة
+       الآن (بلا دفعات المستأجرين السابقين ولا التواريخ) — والاسم نفسه في حركة الفترة
+       تحته برقم آخر. */ ""}
+  <div><div class="v">${sar(totalPaid)}</div><div class="l">المسدَّد من العقود الحالية (ريال)</div></div>
 </div>
 
 ${period ? `
@@ -1062,31 +1220,40 @@ ${mode === "full" ? `
     ${stArr.litigation > 0 ? `<div class="r"><span style="padding-inline-start:12px">— تحت التنفيذ القضائي</span><span>${sar(stArr.litigation)} ريال</span></div>` : ""}
     ${stArr.carried > 0 ? `<div class="r"><span style="padding-inline-start:12px">— دين مُرحَّل من مدة سابقة</span><span>${sar(stArr.carried)} ريال</span></div>` : ""}
     ${stArr.legacy > 0 ? `<div class="r"><span style="padding-inline-start:12px">— على مستأجرين سابقين (وحدات شاغرة)</span><span>${sar(stArr.legacy)} ريال</span></div>` : ""}
-    ${period ? `<div class="r"><span>المحصَّل خلال الفترة</span><span><b>${sar(collectedInPeriod)} ريال</b></span></div>` : ""}
+    ${/* الرقم نفسه في مربّع «حركة الفترة» أعلاه (دفعات داخل الفترة فقط) */ ""}
+    ${period ? `<div class="r"><span>المحصَّل خلال الفترة</span><span><b>${sar(periodCollected)} ريال</b></span></div>` : ""}
     ${(p as any).mgmt_fee_pct ? `<div class="r"><span>أتعاب الإدارة</span><span>${(p as any).mgmt_fee_pct}%</span></div>` : ""}
     ${Number(p.grace_days) > 0 ? `<div class="r"><span>فترة السماح</span><span>${daysAr(Number(p.grace_days))}</span></div>` : ""}
     ${p.vat_enabled ? `<div class="r"><span>ضريبة القيمة المضافة</span><span>${Number(p.vat_rate) || 15}% على الوحدات التجارية</span></div>` : ""}
   </div>
 </div>` : ""}
 
-${totalDue > 0 ? `<div class="due"><span class="l">إجمالي الإيجار المتأخر${totalVat > 0 ? ` (منه ضريبة ${sar(totalVat)} ريال)` : ""}</span><span class="v">${sar(totalDue)} ريال</span></div>${stArr.carried > 0 ? `<div class="note">ويُضاف إليه <b>${sar(stArr.carried)}</b> ريال دينًا مُرحَّلًا من مدد سابقة — إجمالي المستحق على العقار <b>${sar(stArr.grand)}</b> ريال.</div>` : ""}` : ""}
+${totalDue > 0 ? `<div class="due"><span class="l">إجمالي الإيجار المتأخر${totalVat > 0 ? ` (منه ضريبة ${sar(totalVat)} ريال)` : ""}</span><span class="v">${sar(totalDue)} ريال</span></div>` : ""}
+${/* (30 سبتمبر 2026) الدين المرحَّل ودين المستأجرين السابقين كانا يُذكران فقط إن
+     وُجد متأخر حالي — عقار كل دينه مرحَّل كان يخرج كشفه بلا أي ذكر له. */
+  stArr.carried + stArr.legacy > 0 ? `<div class="note">${totalDue > 0 ? "ويُضاف إليه" : "لا متأخر على العقود الحالية، لكن على العقار"}
+  ${[stArr.carried > 0 ? `<b>${sar(stArr.carried)}</b> ريال دينًا مُرحَّلًا من مدد سابقة` : "", stArr.legacy > 0 ? `<b>${sar(stArr.legacy)}</b> ريال على مستأجرين سابقين` : ""].filter(Boolean).join(" و")}
+  — إجمالي المستحق على العقار <b>${sar(stArr.grand)}</b> ريال.</div>` : ""}
 
 <table>
   <thead><tr><th>${ul}</th>${mode === "full" ? "<th>النوع والمواصفات</th>" : ""}<th>المستأجر</th>${mode === "full" ? "<th>الجوال</th><th>رقم العقد</th>" : ""}<th>الدفعة</th><th>الدورة</th>${mode === "full" ? "<th>بداية العقد</th><th>نهايته</th>" : ""}<th>القادمة</th><th>المتأخر</th><th>الحالة</th></tr></thead>
   <tbody>
     ${rows.map(({ t, st }) => { const vc = isVacant(t); return `<tr>
       <td><b>${t.unit || "—"}</b></td>
-      ${mode === "full" ? `<td>${t.unit_type ? (UNIT_TYPE_AR[String(t.unit_type)] || "—") : unitLabel(p.property_type)}${(t.rooms || t.baths || t.acs) ? `<div style="font-size:.68rem;color:#5C6B67">${[t.rooms ? `${t.rooms} غرف` : "", t.baths ? `${t.baths} حمام` : "", t.acs ? `${t.acs} مكيف` : ""].filter(Boolean).join(" · ")}</div>` : ""}${(t as any).elec_account ? `<div style="font-size:.65rem;color:#5C6B67" dir="ltr">كهرباء ${(t as any).elec_account}</div>` : ""}</td>` : ""}
+      ${mode === "full" ? `<td>${t.unit_type ? (UNIT_TYPE_AR[String(t.unit_type)] || "—") : unitLabel(p.property_type)}${unitSpecs(t) ? `<div style="font-size:.68rem;color:#5C6B67">${unitSpecs(t)}</div>` : ""}${(t as any).elec_account ? `<div style="font-size:.65rem;color:#5C6B67" dir="ltr">كهرباء ${(t as any).elec_account}</div>` : ""}</td>` : ""}
       <td>${vc ? "<span style='color:#5C6B67'>— شاغرة —</span>" : t.name}</td>
       ${mode === "full" ? `<td dir="ltr">${vc ? "—" : (t.phone || "—")}</td><td dir="ltr">${t.contract_no || "—"}</td>` : ""}
       <td>${vc ? "—" : sar(splitVat(Number(t.rent_amount) || 0, vatOf(p, t)).total)}</td>
       <td>${vc ? "—" : freqLabel(t.payment_frequency)}</td>
       ${mode === "full" ? `<td>${vc ? "—" : arDateH(t.contract_start)}</td><td>${vc ? "—" : arDateH(st.endDate)}</td>` : ""}
-      <td>${vc ? "—" : arDate(st.nextDueDate)}</td>
-      <td>${st.totalOwed ? `${sar(dueIncl(st, vatOf(p, t)))}${st.carriedDebt > 0 ? `<div style="font-size:.62rem;color:#9A4B00">+ ${sar(st.carriedDebt)} دين مرحَّل</div>` : ""}${vc ? '<div style="font-size:.65rem;color:#5C6B67">على المستأجر السابق</div>' : ""}` : "—"}</td>
+      ${/* «القادمة» من upcomingDate: nextDueDate هو أقدم قسط غير مسدَّد — تاريخ ماضٍ للمتأخر */ ""}
+      <td>${vc ? "—" : st.upcomingDate ? arDate(st.upcomingDate) : st.upcomingDate === null ? "—" : arDate(st.nextDueDate)}</td>
+      <td>${st.totalOwed ? `${(() => { const d = dueIncl(vc ? { amountDue: st.legacyArrears } : st, vatOf(p, t)); return d > 0
+        ? `${sar(d)}${st.carriedDebt > 0 ? `<div style="font-size:.62rem;color:#9A4B00">+ ${sar(st.carriedDebt)} دين مرحَّل</div>` : ""}`
+        : `${sar(st.carriedDebt)}<div style="font-size:.62rem;color:#9A4B00">دين مرحَّل</div>`; })()}${vc ? '<div style="font-size:.65rem;color:#5C6B67">على المستأجر السابق</div>' : ""}` : "—"}</td>
       <td>${vc ? '<span class="pill">شاغرة</span>'
           : st.inGrace ? '<span class="pill u">فترة سماح</span>'
-          : st.hasPartial && st.status === "late" ? '<span class="pill u">سداد جزئي</span>'
+          : isPartialOnly(st) && st.status === "late" ? '<span class="pill u">سداد جزئي</span>'
           : st.status === "late" ? '<span class="pill l">متأخر</span>'
           : st.status === "soon" ? '<span class="pill u">يستحق قريبًا</span>'
           : '<span class="pill p">منتظم</span>'}</td>
@@ -1117,8 +1284,8 @@ ${mode === "full" ? `
   </tbody>
 </table>` : ""}
 
-<div class="note">كشف استرشادي صادر آليًّا من بيانات العقود المسجّلة بتاريخ ${today()}.${mode === "full" ? " المتأخرات والمحصَّل من السجلات المسجّلة في وثيق." : ""}</div>
-<div class="sign"><div>المؤجّر / الوكيل: ${who}<br><br>التوقيع: ________________</div><div>تاريخ الإصدار: ${today()}</div></div>
+<div class="note">كشف استرشادي صادر آليًّا من بيانات العقود المسجّلة بتاريخ ${arDate(today())}.${mode === "full" ? " المتأخرات والمحصَّل من السجلات المسجّلة في وثيق." : ""}</div>
+<div class="sign"><div>المؤجّر / الوكيل: ${who}<br><br>التوقيع: ________________</div><div>تاريخ الإصدار: ${arDate(today())}</div></div>
 ${footer(issuer)}`;
   return SHELL(`كشف حساب — ${p.name}`, body, markOf(issuer));
 }
@@ -1140,6 +1307,8 @@ export function openDoc(html: string) {
     if (w && w.document) {
       w.document.write(html);
       w.document.close();
+      /* المستند لا يحتاج مرجعًا إلى نافذة التطبيق — نقطع الطريق احتياطًا */
+      try { (w as any).opener = null; } catch { /* لا شيء */ }
       return;
     }
   } catch {
@@ -1237,14 +1406,14 @@ export function ownerStatementHTML(
   const body = `
 ${header("كشف حساب مالك", o.name, issuer)}
 <h1>كشف حساب الوحدة رقم (${o.unit || "—"})</h1>
-<div class="sub">${a.name} · جمعية ملاك${a.units ? ` · ${a.units} وحدة` : ""}</div>
+<div class="sub">${a.name} · جمعية ملاك${a.units ? ` · ${countAr(a.units, "وحدة")}` : ""}</div>
 
 <div class="grid">
   <div class="box">
     <h3>بيانات الجمعية</h3>
     <div class="r"><span>الاسم</span><span>${a.name}</span></div>
     <div class="r"><span>اشتراك الفترة</span><span>${sar(fee)} ريال</span></div>
-    ${a.cert_expiry ? `<div class="r"><span>انتهاء الشهادة</span><span>${a.cert_expiry}</span></div>` : ""}
+    ${a.cert_expiry ? `<div class="r"><span>انتهاء الشهادة</span><span>${arDate(a.cert_expiry)}</span></div>` : ""}
     ${issuer.billing_phone ? `<div class="r"><span>للتواصل</span><span>${issuer.billing_phone}</span></div>` : ""}
   </div>
   <div class="box">
@@ -1252,7 +1421,7 @@ ${header("كشف حساب مالك", o.name, issuer)}
     <div class="r"><span>الاسم</span><span>${o.name}</span></div>
     <div class="r"><span>الوحدة</span><span>${o.unit || "—"}</span></div>
     ${o.phone ? `<div class="r"><span>الجوال</span><span>${o.phone}</span></div>` : ""}
-    <div class="r"><span>آخر سداد</span><span>${o.last_paid || "—"}</span></div>
+    <div class="r"><span>آخر سداد</span><span>${arDate(o.last_paid)}</span></div>
   </div>
 </div>
 
@@ -1272,10 +1441,10 @@ ${payments.length ? `
   <tbody>
     ${payments.map((r, i) => `<tr>
       <td>${i + 1}</td><td>${r.paid_on ? arDate(r.paid_on) : "—"}</td><td>${sar(r.amount)}</td>
-      <td>${payMethod(r)}</td><td>${r.note ? String(r.note).replace(/</g, "&lt;") : "—"}</td>
+      <td>${payMethod(r)}</td><td>${r.note ? escH(r.note) : "—"}</td>
     </tr>`).join("")}
     <tr style="background:#F3EEE2;font-weight:700">
-      <td colspan="2">إجمالي المستلم</td><td>${sar(received)}</td><td colspan="2">${payments.length} عملية</td>
+      <td colspan="2">إجمالي المستلم</td><td>${sar(received)}</td><td colspan="2">${countAr(payments.length, "عملية")}</td>
     </tr>
   </tbody>
 </table>` : `<div class="note">لا توجد مدفوعات موثّقة في سجل المنصة لهذه الوحدة حتى تاريخه.</div>`}
@@ -1309,7 +1478,7 @@ export function associationStatementHTML(a: AssociationDoc, issuer: Issuer = {})
   const body = `
 ${header("كشف حساب جمعية", a.name, issuer)}
 <h1>كشف حساب ${a.name}</h1>
-<div class="sub">جمعية ملاك · ${rows.length} مالك${a.units ? ` من ${a.units} وحدة` : ""} · اشتراك الفترة ${sar(fee)} ريال</div>
+<div class="sub">جمعية ملاك · ${countAr(rows.length, "مالك")}${a.units ? ` من ${countAr(a.units, "وحدة")}` : ""} · اشتراك الفترة ${sar(fee)} ريال</div>
 
 <div class="tot">
   <div><div class="v">${rows.length}</div><div class="l">إجمالي الملّاك</div></div>
@@ -1327,7 +1496,7 @@ ${header("كشف حساب جمعية", a.name, issuer)}
   </div>
   <div class="box">
     <h3>الوضع النظامي</h3>
-    <div class="r"><span>انتهاء الشهادة</span><span>${a.cert_expiry || "—"}</span></div>
+    <div class="r"><span>انتهاء الشهادة</span><span>${arDate(a.cert_expiry)}</span></div>
     ${issuer.cr_number ? `<div class="r"><span>السجل التجاري</span><span>${issuer.cr_number}</span></div>` : ""}
     ${issuer.billing_phone ? `<div class="r"><span>للتواصل</span><span>${issuer.billing_phone}</span></div>` : ""}
   </div>
@@ -1345,7 +1514,7 @@ ${totalDue > 0 ? `<div class="due"><span class="l">إجمالي المستحق �
         <td>${o.name}</td>
         <td>${m || "—"}</td>
         <td>${d ? sar(d) : "—"}</td>
-        <td>${o.last_paid || "—"}</td>
+        <td>${arDate(o.last_paid)}</td>
         <td>${m >= 3 ? '<span class="pill l">حرج</span>'
             : (Number(o.partial_amount) || 0) > 0 && m > 0 ? '<span class="pill u">سداد جزئي</span>'
             : m > 0 ? '<span class="pill l">متأخر</span>'
@@ -1355,8 +1524,8 @@ ${totalDue > 0 ? `<div class="due"><span class="l">إجمالي المستحق �
   </tbody>
 </table>
 
-<div class="note">كشف استرشادي صادر آليًّا من بيانات الجمعية المسجّلة بتاريخ ${today()}. يُصرف من الاشتراكات وفق الموازنة المعتمدة من الجمعية العامة.</div>
-<div class="sign"><div>إدارة الجمعية: ${who}<br><br>التوقيع: ________________</div><div>تاريخ الإصدار: ${today()}</div></div>
+<div class="note">كشف استرشادي صادر آليًّا من بيانات الجمعية المسجّلة بتاريخ ${arDate(today())}. يُصرف من الاشتراكات وفق الموازنة المعتمدة من الجمعية العامة.</div>
+<div class="sign"><div>إدارة الجمعية: ${who}<br><br>التوقيع: ________________</div><div>تاريخ الإصدار: ${arDate(today())}</div></div>
 ${footer(issuer)}`;
   return SHELL(`كشف حساب — ${a.name}`, body, markOf(issuer));
 }
@@ -1409,7 +1578,7 @@ export function budgetHTML(
   const body = `
 ${header("موازنة تقديرية", String(budget.year), issuer)}
 <h1>الموازنة التقديرية لعام ${budget.year}</h1>
-<div class="sub">${a.name} · جمعية ملاك${units ? ` · ${units} وحدة` : ""}</div>
+<div class="sub">${a.name} · جمعية ملاك${units ? ` · ${countAr(units, "وحدة")}` : ""}</div>
 
 <div class="note">
   هذه موازنة تقديرية تُعرض على الجمعية العامة لاعتمادها، وعلى أساسها يُحدَّد اشتراك الصيانة.
@@ -1518,12 +1687,12 @@ export function foundingMinutesHTML(
   const body = `
 ${header("محضر اجتماع", "الجمعية العمومية التأسيسية", issuer)}
 <h1>محضر الجمعية العمومية التأسيسية</h1>
-<div class="sub">${a.name}${units ? ` · ${units} وحدة عقارية` : ""}</div>
+<div class="sub">${a.name}${units ? ` · ${countAr(units, "وحدة")}` : ""}</div>
 
 <div class="grid">
   <div class="box">
     <h3>بيانات الاجتماع</h3>
-    <div class="r"><span>التاريخ</span><span>${date}</span></div>
+    <div class="r"><span>التاريخ</span><span>${arDate(date)}</span></div>
     <div class="r"><span>طريقة الانعقاد</span><span>${d.mode || "حضوري"}</span></div>
     ${d.place ? `<div class="r"><span>المكان</span><span>${d.place}</span></div>` : ""}
     <div class="r"><span>عدد الحاضرين</span><span>${att || "—"} من ${units || "—"}</span></div>
@@ -1621,7 +1790,11 @@ export function moveOutSettlementHTML(
   const list = Array.isArray(t.turnover_checklist) ? t.turnover_checklist : [];
   const doneCount = list.filter((x) => x?.done).length;
   const vac = vacancyDays(t.move_out_date);
-
+  /* (30 سبتمبر 2026) قراءة التسليم «0» قيمة حقيقية (عدّاد جديد) لا غياب قراءة —
+     كان الفرق يظهر «—» كلما كانت قراءة التسليم صفرًا. */
+  const hasNum = (x: any) => x !== null && x !== undefined && String(x).trim() !== "" && Number.isFinite(Number(x));
+  const meterCell = (x: any) => (hasNum(x) ? String(x) : "—");
+  const meterDiff = (inV: any, outV: any) => (hasNum(inV) && hasNum(outV) ? sar(Number(outV) - Number(inV)) : "—");
   const body = `
 ${header("مخالصة إخلاء", t.name, issuer)}
 <h1>مخالصة إخلاء ${ul} رقم (${t.unit || "—"})</h1>
@@ -1645,7 +1818,7 @@ ${header("مخالصة إخلاء", t.name, issuer)}
     <div class="r"><span>نهاية العقد</span><span>${arDateH(st.endDate)}</span></div>
     ${t.notice_date ? `<div class="r"><span>تاريخ الإشعار</span><span>${arDate(t.notice_date)}</span></div>` : ""}
     <div class="r"><span>تاريخ الإخلاء الفعلي</span><span>${arDate(t.move_out_date)}</span></div>
-    ${vac !== null ? `<div class="r"><span>أيام الشغور حتى تاريخه</span><span>${vac}</span></div>` : ""}
+    ${vac !== null ? `<div class="r"><span>مدة الشغور حتى تاريخه</span><span>${vac > 0 ? daysAr(vac) : vac === 0 ? "أُخليت اليوم" : "—"}</span></div>` : ""}
   </div>
 </div>
 
@@ -1655,12 +1828,12 @@ ${(t.elec_account || t.water_account) ? `<div class="sub" style="margin-bottom:6
   <thead><tr><th>العدّاد</th><th>عند التسليم</th><th>عند الإخلاء</th><th>الفرق</th></tr></thead>
   <tbody>
     <tr>
-      <td>الكهرباء</td><td>${t.meter_elec_in || "—"}</td><td>${t.meter_elec_out || "—"}</td>
-      <td>${(Number(t.meter_elec_out) && Number(t.meter_elec_in)) ? sar(Number(t.meter_elec_out) - Number(t.meter_elec_in)) : "—"}</td>
+      <td>الكهرباء</td><td>${meterCell(t.meter_elec_in)}</td><td>${meterCell(t.meter_elec_out)}</td>
+      <td>${meterDiff(t.meter_elec_in, t.meter_elec_out)}</td>
     </tr>
     <tr>
-      <td>المياه</td><td>${t.meter_water_in || "—"}</td><td>${t.meter_water_out || "—"}</td>
-      <td>${(Number(t.meter_water_out) && Number(t.meter_water_in)) ? sar(Number(t.meter_water_out) - Number(t.meter_water_in)) : "—"}</td>
+      <td>المياه</td><td>${meterCell(t.meter_water_in)}</td><td>${meterCell(t.meter_water_out)}</td>
+      <td>${meterDiff(t.meter_water_in, t.meter_water_out)}</td>
     </tr>
   </tbody>
 </table>
@@ -1696,7 +1869,14 @@ ${list.length ? `
 
 <div class="note">
   بتوقيع الطرفين على هذه المخالصة، تُعدّ العلاقة الإيجارية منتهية عن ${ul} رقم (${t.unit || "—"})،
-  ويُقرّ كل طرف باستلام مستحقّاته الموضّحة أعلاه، مع بقاء أي التزام لم يُذكر صراحةً خاضعًا لأحكام العقد والأنظمة المعمول بها.
+  ${/* (30 سبتمبر 2026) «يُقرّ كل طرف باستلام مستحقاته» كانت تُطبع حتى والمستأجر
+       مدين بعد استنفاد التأمين — فيوقّع المؤجّر على إبراءٍ لم يقصده. */
+    s.dueFromTenant > 0
+    ? `ويُقرّ المستأجر بأن في ذمّته للمؤجّر مبلغ <b>${sar(s.dueFromTenant)}</b> ريال بعد استنفاد التأمين، يلتزم بسداده، ولا تُعدّ هذه المخالصة إبراءً منه`
+    : s.refund > 0
+      ? `ويلتزم المؤجّر بردّ مبلغ <b>${sar(s.refund)}</b> ريال للمستأجر، ويُقرّ كل طرف بأنه لا مطالبة له على الآخر فيما سُوّي أعلاه بعد ذلك`
+      : "ويُقرّ كل طرف بأنه لا مطالبة له على الآخر فيما سُوّي أعلاه"}،
+  مع بقاء أي التزام لم يُذكر صراحةً خاضعًا لأحكام العقد والأنظمة المعمول بها.
 </div>
 
 <div class="sign">
@@ -1749,12 +1929,12 @@ export function renewalMinutesHTML(
   const body = `
 ${header("محضر اجتماع", "الجمعية العمومية السنوية", issuer)}
 <h1>محضر اجتماع الجمعية العمومية السنوي</h1>
-<div class="sub">${a.name}${units ? ` · ${units} وحدة عقارية` : ""} · الاجتماع السنوي واعتماد موازنة عام ${nextYear}</div>
+<div class="sub">${a.name}${units ? ` · ${countAr(units, "وحدة")}` : ""} · الاجتماع السنوي واعتماد موازنة عام ${nextYear}</div>
 
 <div class="grid">
   <div class="box">
     <h3>بيانات الاجتماع</h3>
-    <div class="r"><span>التاريخ</span><span>${date}</span></div>
+    <div class="r"><span>التاريخ</span><span>${arDate(date)}</span></div>
     <div class="r"><span>طريقة الانعقاد</span><span>${d.mode || "حضوري"}</span></div>
     ${d.place ? `<div class="r"><span>المكان</span><span>${esc(d.place)}</span></div>` : ""}
     <div class="r"><span>عدد الحاضرين</span><span>${att || "—"} من ${units || "—"}</span></div>
@@ -1856,6 +2036,8 @@ export type SubInvoice = {
   /** الرقم الضريبي لوثيق — إن وُجد تُحتسب الضريبة، وإن غاب تُطبع فاتورة بلا ضريبة */
   vat_number?: string | null;
   vat_rate?: number | null;
+  /** تاريخ الإصدار المحفوظ (YYYY-MM-DD) — عند إعادة الطباعة لا يصير تاريخ اليوم */
+  issue_date?: string | null;
 };
 
 /**
@@ -1871,11 +2053,13 @@ export function subscriptionInvoiceHTML(inv: SubInvoice) {
   const base = hasVat ? Math.round((total / (1 + rate / 100)) * 100) / 100 : total;
   const vat = Math.round((total - base) * 100) / 100;
   const paid = inv.paid_at || today();
-
+  /* (30 سبتمبر 2026) تاريخ الإصدار المحفوظ أو تاريخ السداد — كان «اليوم» دائمًا،
+     فإعادة طباعة فاتورة يناير في مارس تحمل تاريخ مارس. */
+  const issued = String(inv.issue_date || inv.paid_at || today()).slice(0, 10);
   const body = `
-${header(hasVat ? "فاتورة ضريبية مبسطة" : "فاتورة اشتراك", inv.invoice_no)}
+${header(hasVat ? "فاتورة ضريبية مبسطة" : "فاتورة اشتراك", inv.invoice_no, null, issued)}
 <h1>${hasVat ? "فاتورة ضريبية مبسطة — اشتراك وثيق" : "فاتورة اشتراك وثيق"}</h1>
-<div class="sub">الفترة: ${inv.from_date} حتى ${inv.to_date} · ${monthsAr(inv.months)}</div>
+<div class="sub">الفترة: ${arDate(inv.from_date)} حتى ${arDate(inv.to_date)} · ${monthsAr(inv.months)}</div>
 
 <div class="grid">
   <div class="box">
@@ -1899,7 +2083,7 @@ ${header(hasVat ? "فاتورة ضريبية مبسطة" : "فاتورة اشت�
   <tbody>
     <tr>
       <td>اشتراك منصة وثيق — ${inv.plan_label}</td>
-      <td>${inv.from_date} → ${inv.to_date}</td>
+      <td>${arDate(inv.from_date)} ← ${arDate(inv.to_date)}</td>
       <td>${monthsAr(inv.months)}</td>
       <td>${sar(base)}</td>
     </tr>
@@ -1916,24 +2100,26 @@ ${hasVat ? `<table style="max-width:340px;margin-inline-start:auto">
 
 <div class="due"><span class="l">الإجمالي المدفوع${hasVat ? " (شامل الضريبة)" : ""}</span><span class="v">${sar(total)} ريال</span></div>
 
-${hasVat ? zatcaQrBlock("وثيق", String(inv.vat_number), total, vat) : ""}
+${hasVat ? zatcaQrBlock("وثيق", String(inv.vat_number), total, vat, inv.paid_at || issued) : ""}
 
 <div class="note">
-  ${methodAr(inv.method) !== "—" ? `وسيلة السداد: <b>${methodAr(inv.method)}</b> · ` : ""}تاريخ السداد: <b>${paid}</b>.
-  يسري الاشتراك حتى <b>${inv.to_date}</b>، وتبقى بيانات الحساب ومستنداته متاحة للمشترك طوال الفترة.
+  ${methodAr(inv.method) !== "—" ? `وسيلة السداد: <b>${methodAr(inv.method)}</b> · ` : ""}تاريخ السداد: <b>${arDate(paid)}</b>.
+  يسري الاشتراك حتى <b>${arDate(inv.to_date)}</b>، وتبقى بيانات الحساب ومستنداته متاحة للمشترك طوال الفترة.
 </div>
 
 ${hasVat ? `<div class="note" style="border-inline-start-color:#D0453F;background:#FBE9E7;color:#a5322c">
-  <b>تنويه:</b> هذا مستند إداري يبيّن احتساب الضريبة، وليس فاتورة إلكترونية معتمدة من هيئة الزكاة والضريبة والدخل
-  (لا يتضمّن رمز الاستجابة السريعة ولا التوقيع الإلكتروني المطلوبين نظامًا).
+  ${/* (30 سبتمبر 2026) الاسم الرسمي «هيئة الزكاة والضريبة والجمارك» منذ 2021؛ وكان
+       التنويه ينفي وجود رمز QR مطبوع في الصفحة نفسها. */ ""}
+  <b>تنويه:</b> فاتورة ضريبية مبسطة وفق متطلبات مرحلة الإصدار، برمز الاستجابة السريعة أعلاه؛
+  ولا تشمل الربط والتكامل مع منصة «فاتورة» لدى هيئة الزكاة والضريبة والجمارك.
 </div>` : `<div class="note">
   <b>لا تشمل هذه الفاتورة ضريبة القيمة المضافة</b> — المُصدِر غير مسجَّل في ضريبة القيمة المضافة،
-  وهي مستند إداري لإثبات السداد وليست فاتورة إلكترونية معتمدة من هيئة الزكاة والضريبة والدخل.
+  وهي مستند إداري لإثبات السداد وليست فاتورة إلكترونية معتمدة من هيئة الزكاة والضريبة والجمارك.
 </div>`}
 
 <div class="sign">
   <div>المُصدِر: وثيق<br><br>التوقيع: ________________</div>
-  <div>تاريخ الإصدار: ${today()}<br><br>رقم الفاتورة: ${inv.invoice_no}</div>
+  <div>تاريخ الإصدار: ${arDate(issued)}<br><br>رقم الفاتورة: ${inv.invoice_no}</div>
 </div>
 ${footer()}`;
   return SHELL(`فاتورة ${inv.invoice_no} — ${inv.to_name}`, body, "none");
@@ -1986,7 +2172,10 @@ export function ownerReportHTML(
   const collected = payments.reduce((s, x) => s + (Number(x.amount) || 0), 0);
   /* المالك يرى ما استُلم فعلًا: العكس يُسقَط مع دفعته، والملاحظات الداخلية تُحذف */
   const shownPays = ownerVisiblePayments(payments as any[]);
-  const exp = extra.expenses || [];
+  /* (30 سبتمبر 2026) مصروفات المكتب الداخلية (billable:false) لا تُعرض للمالك:
+     كانت تظهر في جداول التقرير فيجمعها المالك (1,300) بينما «الحساب الختامي»
+     يخصم القابل للخصم وحده (800) — ثلاثة مجاميع لمصروفات فترة واحدة. */
+  const exp = (extra.expenses || []).filter(isBillable);
   /* الضريبة داخل المقبوض تُستبعد: أمانة للهيئة لا إيراد للمالك.
      ونحسبها لكل دفعة بحسب وحدتها (العمارة المختلطة). */
   const vt = vatOfPayments(p, payments as any[], extra.pastVat);
@@ -2055,9 +2244,9 @@ ${header("تقرير دوري للمالك", p.name, issuer)}
 </div>
 
 ${totalDue > 0 || expiring > 0 ? `<div class="note">${[
-    late ? `${late} ${late === 1 ? "وحدة متأخرة" : "وحدات متأخرة"} بإجمالي ${sar(totalDue)} ريال` : "",
-    arr.litigation > 0 ? `منها <b>${sar(arr.litigation)}</b> ريال على ${arr.litigationCount === 1 ? "وحدة واحدة" : `${arr.litigationCount} وحدات`} تحت التنفيذ القضائي، و<b>${sar(arr.current)}</b> ريال قيد المطالبة` : "",
-    expiring ? `${expiring} ${expiring === 1 ? "عقد ينتهي" : "عقود تنتهي"} خلال 60 يومًا — قرار التجديد مطلوب` : "",
+    late ? `متأخرات على ${countAr(late, "وحدة", true)} بإجمالي ${sar(totalDue)} ريال` : "",
+    arr.litigation > 0 ? `منها <b>${sar(arr.litigation)}</b> ريال على ${countAr(arr.litigationCount, "وحدة", true)} تحت التنفيذ القضائي، و<b>${sar(arr.current)}</b> ريال قيد المطالبة` : "",
+    expiring ? `${expiring === 1 ? "عقد واحد ينتهي" : expiring === 2 ? "عقدان ينتهيان" : `${countAr(expiring, "عقد")} تنتهي`} خلال 60 يومًا — قرار التجديد مطلوب` : "",
   ].filter(Boolean).join(" · ")}</div>` : ""}
 
 ${mode === "full" ? `
@@ -2071,7 +2260,9 @@ ${mode === "full" ? `
   </div>
   <div class="box">
     <div class="r"><span>عدد الوحدات</span><span>${p.tenants.length}</span></div>
-    <div class="r"><span>المحصَّل خلال الفترة</span><span><b style="color:#137a50">${sar(fin.collected)}</b> ريال</span></div>
+    ${/* (30 سبتمبر 2026) المربّع أعلاه «المُحصَّل خلال الفترة» = إجمالي المقبوض (14,500)،
+         وهذا بعد استبعاد الضريبة (13,000) — رقمان مختلفان تحت اسم واحد. */ ""}
+    <div class="r"><span>${(fin.vatCollected || 0) > 0 ? "صافي الإيجار بعد الضريبة" : "المحصَّل خلال الفترة"}</span><span><b style="color:#137a50">${sar(fin.collected)}</b> ريال</span></div>
     <div class="r"><span>المتأخرات القائمة</span><span><b style="color:${totalDue > 0 ? "#a5322c" : "#137a50"}">${sar(totalDue)}</b> ريال</span></div>
     ${arr.litigation > 0 ? `<div class="r"><span style="padding-inline-start:12px">— قيد المطالبة</span><span>${sar(arr.current)} ريال</span></div>
     <div class="r"><span style="padding-inline-start:12px">— تحت التنفيذ القضائي</span><span>${sar(arr.litigation)} ريال</span></div>` : ""}
@@ -2096,7 +2287,7 @@ ${(fin.feeExceedsCollected || (fin.feePct !== null && fin.feePct >= 30)) ? `
 <h2>الوحدات — وصفها وإيجارها وحالتها في نهاية الفترة</h2>
 ${unitsRegisterHTML(p, p.tenants || [], g, issuer)}
 <div class="box" style="margin-top:8px">
-  <div class="r"><span><b>إجمالي المتأخر</b> <span style="font-size:.72rem;color:#5C6B67">(${activeLate} وحدة متأخرة${vacantOwing ? ` · ${vacantOwing} شاغرة عليها دين سابق` : ""})</span></span>
+  <div class="r"><span><b>إجمالي المتأخر</b> <span style="font-size:.72rem;color:#5C6B67">(${activeLate ? `متأخرات على ${countAr(activeLate, "وحدة", true)}` : "لا وحدات متأخرة"}${vacantOwing ? ` · شاغرة عليها دين سابق: ${vacantOwing}` : ""})</span></span>
     <span><b>${sar(activeOwed)}</b>${legacyOwed > 0 ? ` <span style="font-size:.72rem;color:#5C6B67">+ ${sar(legacyOwed)} على مستأجرين سابقين</span>` : ""}</span></div>
 </div>
 
@@ -2110,7 +2301,7 @@ ${shownPays.length ? `<div class="scrollx"><table>
       <td>${x.unit || "—"}</td>
       <td><b>${sar(x.amount)}</b></td>
       <td>${payMethod(x)}</td>
-      <td>${x.note ? String(x.note) : "—"}</td>
+      <td>${x.note ? escH(x.note) : "—"}</td>
     </tr>`).join("")}
     <tr><td colspan="3"><b>الإجمالي</b></td><td><b>${sar(collected)}</b></td><td colspan="2">—</td></tr>
   </tbody>
@@ -2126,7 +2317,7 @@ ${exp.length ? `<div class="scrollx"><table>
       <td>${catLabel(x.category)}</td>
       <td>${x.unit || "—"}</td>
       <td><b>${sar(Number(x.amount) || 0)}</b></td>
-      <td>${x.note ? String(x.note) : "—"}</td>
+      <td>${x.note ? escH(x.note) : "—"}</td>
     </tr>`).join("")}
     <tr><td colspan="3"><b>إجمالي المصروفات</b></td><td><b>${sar(fin.expenses)}</b></td><td>${sumByCategory(exp).map((c) => `${c.label} ${sar(c.total)}`).join(" · ") || "—"}</td></tr>
   </tbody>
@@ -2152,18 +2343,18 @@ ${mode === "full" && exp.length ? `
   <thead><tr><th>التاريخ</th><th>${unitLabel(p.property_type)}</th><th>التصنيف</th><th>المبلغ</th><th>ملاحظة</th></tr></thead>
   <tbody>
     ${exp.slice().sort((a, b) => String(a.spent_on).localeCompare(String(b.spent_on)))
-      .map((e) => `<tr><td>${arDate(e.spent_on)}</td><td>${(e as any).unit || "—"}</td><td>${catLabel(e.category)}</td><td>${sar(e.amount)}</td><td>${(e as any).note || "—"}</td></tr>`).join("")}
+      .map((e) => `<tr><td>${arDate(e.spent_on)}</td><td>${(e as any).unit || "—"}</td><td>${catLabel(e.category)}</td><td>${sar(e.amount)}</td><td>${(e as any).note ? escH((e as any).note) : "—"}</td></tr>`).join("")}
     <tr><td colspan="3"><b>الإجمالي</b></td><td colspan="2"><b>${sar(exp.reduce((a, e) => a + (Number(e.amount) || 0), 0))}</b></td></tr>
   </tbody>
 </table></div>` : ""}
 
 ${openingUnits > 0 ? `<div class="note" style="border-inline-start-color:#B8791F;background:#FDF6E3">
   <b>عن المحصَّل:</b> يشمل الدفعات المسجَّلة في وثيق بتاريخ استلامها فقط.
-  ${openingUnits === 1 ? "وحدة واحدة" : `${openingUnits} وحدات`} فيها دفعات سُدّدت قبل بدء التسجيل
+  ${countAr(openingUnits, "وحدة")} فيها دفعات سُدّدت قبل بدء التسجيل
   (نحو ${sar(Math.round(openingAmount))} ريال) — حالتها محسوبة صحيحًا في الجدول، لكنها لا تظهر ضمن المحصَّل أعلاه.
 </div>` : ""}
-<div class="note">تقرير استرشادي صادر آليًّا من سجل الدفعات والمصروفات وبيانات العقود المسجّلة في وثيق بتاريخ ${today()}. الأرقام تعكس ما وثّقه المكتب في النظام.</div>
-<div class="sign"><div>إدارة الأملاك: ${who}<br><br>التوقيع: ________________</div><div>المالك: ____________________<br><br>تاريخ الإصدار: ${today()}</div></div>
+<div class="note">تقرير استرشادي صادر آليًّا من سجل الدفعات والمصروفات وبيانات العقود المسجّلة في وثيق بتاريخ ${arDate(today())}. الأرقام تعكس ما وثّقه المكتب في النظام.</div>
+<div class="sign"><div>إدارة الأملاك: ${who}<br><br>التوقيع: ________________</div><div>المالك: ____________________<br><br>تاريخ الإصدار: ${arDate(today())}</div></div>
 ${footer(issuer)}`;
   return SHELL(`تقرير المالك — ${p.name} — ${period.label}`, body, markOf(issuer));
 }
@@ -2200,7 +2391,12 @@ export function ownerConsolidatedStatementHTML(
   sections = scrub(sections);
   period = scrub(period);
   issuer = scrub(issuer);
-  const who = issuer.billing_name || "إدارة الأملاك";
+  /* (30 سبتمبر 2026) كبقية المستندات: اسم الفوترة ثم اسم المنشأة — كان مكتب بلا
+     اسم فوترة يوقّع كشف مالكه «إدارة الأملاك» والترويسة تحمل اسمه. */
+  const who = issuer.billing_name || issuer.org_name || "إدارة الأملاك";
+  /* مصروفات المكتب الداخلية (billable:false) لا تظهر للمالك في أي جدول — وإلا جمعها
+     المالك فخرج بمجموع يخالف «المصروفات» المخصومة من صافيه. */
+  sections = sections.map((s) => ({ ...s, expenses: (s.expenses || []).filter(isBillable) }));
 
   const rows = sections.map((s) => {
     const g = winOf(s.property, issuer);
@@ -2214,7 +2410,10 @@ export function ownerConsolidatedStatementHTML(
     const vatCollected = vt.inside + vt.onTop;
     const feeVatRate = issuer.vat_number ? (Number(s.property.vat_rate) || 15) : 0;
     const fin = ownerNet(collected + vt.onTop, s.expenses, s.fee_pct, vatCollected, feeVatRate);
-    return { s, units, vacant, due, collected, fin, ten };
+    /* الدين المرحَّل (كل الوحدات) ودين المستأجرين السابقين — لسطر المتأخرات */
+    const carried = ten.reduce((a, r) => a + (Number(r.st.carriedDebt) || 0), 0);
+    const legacy = ten.reduce((a, r) => a + (r.vacant ? dueIncl({ amountDue: r.st.legacyArrears }, vatOf(s.property, r.t)) : 0), 0);
+    return { s, units, vacant, due, collected, fin, ten, vt, carried, legacy };
   });
 
   /* المالك يقارن «المحصَّل» بشيء: بلا مرجع للفترة يبدو التحصيل كارثيًّا
@@ -2229,7 +2428,8 @@ export function ownerConsolidatedStatementHTML(
     collected: a.collected + r.fin.collected, expenses: a.expenses + r.fin.expenses,
     fee: a.fee + r.fin.fee, net: a.net + r.fin.net,
     gross: a.gross + (r.fin.grossCollected ?? r.fin.collected), vat: a.vat + (r.fin.vatCollected ?? 0),
-  }), { units: 0, vacant: 0, due: 0, collected: 0, expenses: 0, fee: 0, net: 0, gross: 0, vat: 0 });
+    carried: a.carried + r.carried, legacy: a.legacy + r.legacy,
+  }), { units: 0, vacant: 0, due: 0, collected: 0, expenses: 0, fee: 0, net: 0, gross: 0, vat: 0, carried: 0, legacy: 0 });
   const anyFee = rows.some((r) => r.fin.feePct !== null);
 
   /* ═══════════ وضع «المتأخرات والمستحق فقط» ═══════════
@@ -2242,62 +2442,86 @@ export function ownerConsolidatedStatementHTML(
          (amountDue)، والثاني قسط قادم قرُب موعده ولم يحلّ بعد — وقيمته
          الإيجار لا amountDue (وهو صفر قبل الاستحقاق). خلطهما في رقم واحد
          يجعل المالك يظن أن عليه مبلغًا لم يتأخر أحد فيه. */
+      /* (30 سبتمبر 2026) الدين المرحَّل ودين المستأجر السابق كانا خارج هذا الكشف كليًّا:
+         وحدة عليها 4,000 مرحَّلة ولا متأخر حالي لا تظهر، والإجمالي ينقصها — والمالك
+         يرى الرقم نفسه في تقرير العقار. الآن: المرحَّل يُضاف لمبلغ وحدته، والشاغرة
+         المدينة صفٌّ باسم «على المستأجر السابق». */
       const owe = r.ten
-        .filter((x) => !x.vacant && (x.st.amountDue > 0 || x.st.status === "soon"))
-        .map((x) => ({
-          ...x, key: unitStatus(x.t, x.st),
-          amount: x.st.amountDue > 0 ? dueIncl(x.st, vatOf(r.s.property, x.t)) : splitVat(Number(x.t.rent_amount) || 0, vatOf(r.s.property, x.t)).total,
-          isLate: x.st.amountDue > 0,
-        }))
+        .filter((x) => x.vacant
+          ? (Number(x.st.legacyArrears) || 0) + (Number(x.st.carriedDebt) || 0) > 0
+          : (x.st.amountDue > 0 || x.st.status === "soon" || (Number(x.st.carriedDebt) || 0) > 0))
+        .map((x) => {
+          const v = vatOf(r.s.property, x.t);
+          const carried = Number(x.st.carriedDebt) || 0;
+          const legacy = x.vacant ? dueIncl({ amountDue: x.st.legacyArrears }, v) : 0;
+          const lateAmt = x.vacant ? 0 : x.st.amountDue > 0 ? dueIncl(x.st, v) : 0;
+          const soonAmt = !x.vacant && x.st.amountDue <= 0 && x.st.status === "soon" ? splitVat(Number(x.t.rent_amount) || 0, v).total : 0;
+          return {
+            ...x, key: unitStatus(x.t, x.st), carried, legacy, lateAmt, soonAmt,
+            amount: Math.round((lateAmt + soonAmt + carried + legacy) * 100) / 100,
+            /* «متأخر» = عليه مبلغ حلّ فعلًا: متأخر المدة أو مرحَّل أو دين سابق */
+            isLate: lateAmt + carried + legacy > 0,
+          };
+        })
         .sort((a, b) => (a.st.daysToNextDue ?? 0) - (b.st.daysToNextDue ?? 0));
       const late = owe.filter((x) => x.isLate);
-      const lit = owe.filter((x) => (x.t as any)?.litigation);
+      const lit = owe.filter((x) => (x.t as any)?.litigation && !x.vacant);
       const soon = owe.filter((x) => !x.isLate);
       const total = owe.reduce((a, x) => a + x.amount, 0);
-      const lateTotal = late.reduce((a, x) => a + x.amount, 0);
-      const litTotal = lit.reduce((a, x) => a + x.amount, 0);
-      return { r, owe, late, soon, lit, total, lateTotal, litTotal };
+      /* المتأخر = ما حلّ فعلًا (بلا قسط قادم لوحدة عليها مرحَّل) */
+      const lateTotal = owe.reduce((a, x) => a + x.lateAmt + x.carried + x.legacy, 0);
+      const litTotal = lit.reduce((a, x) => a + x.lateAmt, 0);
+      const carriedTotal = owe.reduce((a, x) => a + x.carried, 0);
+      const legacyTotal = owe.reduce((a, x) => a + x.legacy, 0);
+      return { r, owe, late, soon, lit, total, lateTotal, litTotal, carriedTotal, legacyTotal };
     });
     const G = propRows.reduce((a, x) => ({
       total: a.total + x.total, lateTotal: a.lateTotal + x.lateTotal,
       litTotal: a.litTotal + x.litTotal, litN: a.litN + x.lit.length,
       lateN: a.lateN + x.late.length, soonN: a.soonN + x.soon.length,
-    }), { total: 0, lateTotal: 0, litTotal: 0, litN: 0, lateN: 0, soonN: 0 });
+      carried: a.carried + x.carriedTotal, legacy: a.legacy + x.legacyTotal,
+    }), { total: 0, lateTotal: 0, litTotal: 0, litN: 0, lateN: 0, soonN: 0, carried: 0, legacy: 0 });
 
     const unitRow = (x: any, p: any) => {
       const d = x.st.daysToNextDue;
-      const when = x.isLate && d != null && d < 0
+      const when = x.vacant ? `<span style="color:#9A4B00">دين سابق</span>`
+        : x.lateAmt > 0 && d != null && d < 0
         ? `<span style="color:#D0453F;font-weight:600">متأخر ${daysAr(d)}</span>`
-        : x.st.upcomingDate ? `يستحق خلال ${daysAr(x.st.daysToUpcoming ?? 0)}` : "—";
+        : x.st.upcomingDate ? ((x.st.daysToUpcoming ?? 0) <= 0 ? "يستحق اليوم" : `يستحق خلال ${daysAr(x.st.daysToUpcoming)}`) : "—";
+      /* تاريخ ما حلّ للمتأخر، وتاريخ القسط القادم لغيره؛ والشاغرة بلا تاريخ */
+      const dueOn: string | null = x.vacant ? null : x.lateAmt > 0 ? (x.st.nextDueDate || null) : (x.st.upcomingDate || null);
+      const sub = (t: string) => `<div style="font-size:.72rem;color:#5C6B67">${t}</div>`;
       return `<tr>
         <td>${x.t.unit || "—"}</td>
-        <td>${x.t.name || "—"}${x.t.phone ? `<div style="font-size:.72rem;color:#5C6B67" dir="ltr">${x.t.phone}</div>` : ""}</td>
-        <td><b>${sar(x.amount)}</b>${x.isLate && x.st.hasPartial ? `<div style="font-size:.72rem;color:#5C6B67">سدّد ${sar(x.st.partial)} جزئيًّا</div>` : ""}${!x.isLate ? `<div style="font-size:.72rem;color:#5C6B67">لم يحلّ بعد</div>` : ""}</td>
-        <td>${(x.isLate ? x.st.nextDueDate : x.st.upcomingDate) ? arDate((x.isLate ? x.st.nextDueDate : x.st.upcomingDate) as string) : "—"}<div style="font-size:.72rem;color:#5C6B67">${(x.isLate ? x.st.nextDueDate : x.st.upcomingDate) ? hijriShort((x.isLate ? x.st.nextDueDate : x.st.upcomingDate) as string) : ""}</div></td>
+        <td>${x.vacant ? `<span style="color:#5C6B67">— شاغرة —</span>${sub("على المستأجر السابق")}` : `${x.t.name || "—"}${x.t.phone ? `<div style="font-size:.72rem;color:#5C6B67" dir="ltr">${x.t.phone}</div>` : ""}`}</td>
+        <td><b>${sar(x.amount)}</b>${x.lateAmt > 0 && x.st.hasPartial ? sub(`سدّد ${sar(x.st.partial)} جزئيًّا`) : ""}${x.soonAmt > 0 ? sub(`${x.carried > 0 ? `منه ${sar(x.soonAmt)} ` : ""}لم يحلّ بعد`) : ""}${x.carried > 0 && (x.lateAmt > 0 || x.soonAmt > 0 || x.legacy > 0) ? sub(`منه ${sar(x.carried)} دين مرحَّل`) : x.carried > 0 ? sub("دين مرحَّل من مدة سابقة") : ""}</td>
+        <td>${dueOn ? `${arDate(dueOn)}<div style="font-size:.72rem;color:#5C6B67">${hijriShort(dueOn)}</div>` : "—"}</td>
         <td>${when}</td>
-        <td>${unitStatusLabel(x.key, x.st)}</td>
+        <td>${x.vacant ? "شاغرة — دين سابق" : x.lateAmt <= 0 && x.soonAmt <= 0 ? "دين مرحَّل" : unitStatusLabel(x.key, x.st)}</td>
       </tr>`;
     };
 
     const body = `
 ${header("كشف المتأخرات والمستحق", ownerName, issuer)}
 <h1>المتأخرات والمستحق — ${ownerName}</h1>
-<div class="sub">${rows.length} ${rows.length === 1 ? "عقار" : "عقارات"} · ${T.units} وحدة · حتى ${arDate(today())}</div>
+<div class="sub">${countAr(rows.length, "عقار")} · ${countAr(T.units, "وحدة")} · حتى ${arDate(today())}</div>
 
 <div class="tot">
-  <div><div class="v l" style="font-size:1.35rem">${sar(G.lateTotal)}</div><div class="l"><b>المتأخر (ريال)</b></div></div>
+  ${/* كان class="v l" فيأخذ خطّ التسمية الرمادي الصغير — المتأخر أحمر ظاهر */ ""}
+  <div><div class="v r" style="font-size:1.35rem">${sar(G.lateTotal)}</div><div class="l"><b>المتأخر (ريال)</b></div></div>
   <div><div class="v">${sar(Math.round((G.total - G.lateTotal) * 100) / 100)}</div><div class="l">أقساط قرُب موعدها (ريال)</div></div>
   <div><div class="v">${sar(G.total)}</div><div class="l">إجمالي المطلوب (ريال)</div></div>
   <div><div class="v">${G.lateN} / ${G.soonN}</div><div class="l">وحدة متأخرة / قرُب قسطها</div></div>
 </div>
 
-${G.litTotal > 0 ? `<div class="sub" style="margin-top:8px">منها <b>${sar(G.litTotal)}</b> ريال على ${G.litN === 1 ? "وحدة واحدة" : `${G.litN} وحدات`} تحت التنفيذ القضائي، و<b>${sar(Math.round((G.lateTotal - G.litTotal) * 100) / 100)}</b> ريال قيد المطالبة.</div>` : ""}
+${G.carried + G.legacy > 0 ? `<div class="sub" style="margin-top:8px">المتأخر يشمل ${[G.carried > 0 ? `<b>${sar(G.carried)}</b> ريال دينًا مُرحَّلًا من مدد سابقة` : "", G.legacy > 0 ? `<b>${sar(G.legacy)}</b> ريال على مستأجرين سابقين (وحدات شاغرة)` : ""].filter(Boolean).join(" و")}.</div>` : ""}
+${G.litTotal > 0 ? `<div class="sub" style="margin-top:8px">منها <b>${sar(G.litTotal)}</b> ريال على ${countAr(G.litN, "وحدة", true)} تحت التنفيذ القضائي، و<b>${sar(Math.round((G.lateTotal - G.litTotal) * 100) / 100)}</b> ريال قيد المطالبة.</div>` : ""}
 
 ${G.total === 0 ? `<div class="note" style="margin-top:14px">لا توجد متأخرات ولا مستحقات قائمة على وحدات هذه العقارات حتى تاريخه.</div>` : ""}
 
 ${propRows.filter((x) => x.owe.length).map((x) => `
 <h2 style="margin-top:20px">${x.r.s.property.name}</h2>
-<div class="sub" style="margin-bottom:6px">${typeLabel(x.r.s.property.property_type)}${x.r.s.property.city ? ` · ${x.r.s.property.city}` : ""} · ${x.r.units} وحدة (${x.r.units - x.r.vacant} مؤجّرة، ${x.r.vacant} شاغرة) · المطلوب <b>${sar(x.total)}</b> ريال</div>
+<div class="sub" style="margin-bottom:6px">${typeLabel(x.r.s.property.property_type)}${x.r.s.property.city ? ` · ${x.r.s.property.city}` : ""} · ${countAr(x.r.units, "وحدة")} (${x.r.units - x.r.vacant} مؤجّرة، ${x.r.vacant} شاغرة) · المطلوب <b>${sar(x.total)}</b> ريال</div>
 <div class="scrollx"><table>
   <thead><tr><th>${unitLabel(x.r.s.property.property_type)}</th><th>المستأجر</th><th>المبلغ</th><th>تاريخ الاستحقاق</th><th>المدة</th><th>الحالة</th></tr></thead>
   <tbody>
@@ -2310,10 +2534,10 @@ ${propRows.filter((x) => x.owe.length).map((x) => `
 
 ${propRows.filter((x) => !x.owe.length).length ? `
 <h2 style="margin-top:20px">عقارات بلا متأخرات</h2>
-<div class="sub">${propRows.filter((x) => !x.owe.length).map((x) => `${x.r.s.property.name} (${x.r.units} وحدة)`).join(" · ")}</div>` : ""}
+<div class="sub">${propRows.filter((x) => !x.owe.length).map((x) => `${x.r.s.property.name} (${countAr(x.r.units, "وحدة")})`).join(" · ")}</div>` : ""}
 
-<div class="note">كشف استرشادي بالمتأخرات والمستحقات القائمة حتى ${today()}، مُستخرج من عقود الوحدات ودفعاتها المسجّلة في وثيق. لا يشمل المحصَّل ولا المصروفات ولا صافي المالك — لتلك اطلب الكشف الشامل. الوحدات الشاغرة غير مدرجة.</div>
-<div class="sign"><div>إدارة الأملاك: ${who}<br><br>التوقيع: ________________</div><div>المالك: ${ownerName}<br><br>تاريخ الإصدار: ${today()}</div></div>
+<div class="note">كشف استرشادي بالمتأخرات والمستحقات القائمة حتى ${arDate(today())}، مُستخرج من عقود الوحدات ودفعاتها المسجّلة في وثيق، شاملًا الديون المرحَّلة من مدد سابقة. لا يشمل المحصَّل ولا المصروفات ولا صافي المالك — لتلك اطلب الكشف الشامل. الوحدات الشاغرة لا تُدرج إلا إن بقي دين على مستأجرها السابق.</div>
+<div class="sign"><div>إدارة الأملاك: ${who}<br><br>التوقيع: ________________</div><div>المالك: ${ownerName}<br><br>تاريخ الإصدار: ${arDate(today())}</div></div>
 ${footer(issuer)}`;
     return SHELL(`المتأخرات والمستحق — ${ownerName}`, body, markOf(issuer));
   }
@@ -2321,7 +2545,7 @@ ${footer(issuer)}`;
   const body = `
 ${header("كشف حساب مالك — مجمّع", ownerName, issuer)}
 <h1>كشف حساب المالك — ${ownerName}</h1>
-<div class="sub">${rows.length} ${rows.length === 1 ? "عقار" : "عقارات"} · ${T.units} وحدة · الفترة: <b>${period.label}</b> (${arDate(period.from)} إلى ${arDate(period.to)})</div>
+<div class="sub">${countAr(rows.length, "عقار")} · ${countAr(T.units, "وحدة")} · الفترة: <b>${period.label}</b> (${arDate(period.from)} إلى ${arDate(period.to)})</div>
 
 <div class="tot">
   <div><div class="v g">${sar(T.collected)}</div><div class="l">المُحصَّل للمالك (ريال)</div></div>
@@ -2336,16 +2560,17 @@ ${ownerPaidAll > 0.005 ? `<div class="note" style="border-inline-start-color:#B8
 
 <div class="box" style="margin:12px 0 6px">
   <!-- حقائق لا تقديرات: المستند يُسلَّم للمالك كبيان حساب -->
-  <div class="r"><span>المُحصَّل خلال الفترة</span><span><b style="color:#137a50">${sar(T.collected)}</b> ريال من ${rows.length} ${rows.length === 1 ? "عقار" : "عقارات"}</span></div>
   ${T.vat > 0 ? `<div class="r"><span>إجمالي المقبوض من المستأجرين</span><span>${sar(T.gross)} ريال — منه ${sar(T.vat)} ضريبة تُورَّد للهيئة</span></div>` : ""}
+  <div class="r"><span>${T.vat > 0 ? "صافي الإيجار للمالك بعد الضريبة" : "المُحصَّل خلال الفترة"}</span><span><b style="color:#137a50">${sar(T.collected)}</b> ريال من ${countAr(rows.length, "عقار")}</span></div>
   <div class="r"><span>المتأخرات القائمة</span><span><b style="color:${T.due > 0 ? "#a5322c" : "#137a50"}">${sar(T.due)}</b> ريال — تراكمية لكل المدد لا الفترة</span></div>
+  ${T.carried + T.legacy > 0 ? `<div class="r"><span style="padding-inline-start:12px">— ويُضاف إليها</span><span>${[T.carried > 0 ? `${sar(T.carried)} دين مرحَّل` : "", T.legacy > 0 ? `${sar(T.legacy)} على مستأجرين سابقين` : ""].filter(Boolean).join(" · ")}</span></div>` : ""}
 </div>
 <div class="note" style="margin-bottom:12px">
   المُحصَّل والمصروفات والأتعاب عن <b>الفترة المحددة وحدها</b>؛ أما «المتأخرات القائمة» فرقم تراكمي لكامل العقود — فلا يُقارن بها مباشرة.
 </div>
 <h2>ملخص العقارات</h2>
 <div class="scrollx"><table>
-  <thead><tr><th>العقار</th><th>الوحدات</th><th>شاغرة</th><th>المُحصَّل</th><th>المصروفات</th>${anyFee ? "<th>الأتعاب</th>" : ""}<th>الصافي</th><th>متأخرات قائمة<div style="font-size:.62rem;font-weight:400;opacity:.8">كل المدد لا الفترة</div></th></tr></thead>
+  <thead><tr><th>العقار</th><th>الوحدات</th><th>شاغرة</th><th>${T.vat > 0 ? "صافي الإيجار" : "المُحصَّل"}</th><th>المصروفات</th>${anyFee ? "<th>الأتعاب</th>" : ""}<th>الصافي</th><th>متأخرات قائمة<div style="font-size:.62rem;font-weight:400;opacity:.8">كل المدد لا الفترة</div></th></tr></thead>
   <tbody>
     ${rows.map((r) => `<tr>
       <td><b>${r.s.property.name}</b><div style="font-size:.72rem;color:#5C6B67">${typeLabel(r.s.property.property_type)}${r.s.property.city ? ` · ${r.s.property.city}` : ""}</div></td>
@@ -2367,7 +2592,7 @@ ${ownerPaidAll > 0.005 ? `<div class="note" style="border-inline-start-color:#B8
 
 ${rows.map((r) => `
 <h2 style="margin-top:22px">${r.s.property.name} — التفصيل</h2>
-<div class="sub" style="margin-bottom:6px">${typeLabel(r.s.property.property_type)}${r.s.property.city ? ` · ${r.s.property.city}` : ""}${r.s.property.address ? ` · ${r.s.property.address}` : ""}${r.s.property.usage ? ` · ${USAGE_AR[String(r.s.property.usage)] || r.s.property.usage}` : ""} · ${r.units} وحدة (${r.units - r.vacant} مؤجّرة، ${r.vacant} شاغرة)</div>
+<div class="sub" style="margin-bottom:6px">${typeLabel(r.s.property.property_type)}${r.s.property.city ? ` · ${r.s.property.city}` : ""}${r.s.property.address ? ` · ${r.s.property.address}` : ""}${r.s.property.usage ? ` · ${USAGE_AR[String(r.s.property.usage)] || r.s.property.usage}` : ""} · ${countAr(r.units, "وحدة")} (${r.units - r.vacant} مؤجّرة، ${r.vacant} شاغرة)</div>
 ${detail === "full" ? `
 <h3 style="font-size:.85rem;margin:10px 0 4px">الوحدات — وصفها وإيجارها وحالتها</h3>
 ${unitsRegisterHTML(r.s.property, r.s.property.tenants || [], winOf(r.s.property, issuer), issuer)}` : ""}
@@ -2375,20 +2600,26 @@ ${ownerVisiblePayments(r.s.payments as any[]).length ? `<div class="scrollx"><ta
   <thead><tr><th>التاريخ</th><th>المستأجر</th><th>${unitLabel(r.s.property.property_type)}</th><th>المبلغ</th><th>الطريقة</th></tr></thead>
   <tbody>
     ${ownerVisiblePayments(r.s.payments as any[]).map((x: any) => `<tr><td>${arDate(x.paid_on)}</td><td>${x.tenant_name || "—"}</td><td>${x.unit || "—"}</td><td><b>${sar(x.amount)}</b></td><td>${payMethod(x)}</td></tr>`).join("")}
-    <tr><td colspan="3"><b>إجمالي المُحصَّل</b></td><td colspan="2"><b>${sar(r.fin.collected)}</b></td></tr>
+    ${/* (30 سبتمبر 2026) الإجمالي مجموع الصفوف نفسها: كان صافي الإيجار بعد الضريبة
+         (13,000) تحت صفّين مجموعهما 14,500، فيجمع المالك بيده ويجد فرقًا بلا تفسير.
+         الضريبة وصافي المالك سطران مسمّيان تحته. */ ""}
+    <tr><td colspan="3"><b>إجمالي الدفعات المستلمة</b></td><td colspan="2"><b>${sar(r.collected)}</b></td></tr>
+    ${r.vt.onTop > 0 ? `<tr><td colspan="3">(+) ضريبة دُفعت فوق الإيجار</td><td colspan="2">${sar(r.vt.onTop)}</td></tr>` : ""}
+    ${(r.fin.vatCollected || 0) > 0 ? `<tr><td colspan="3">(−) ضريبة القيمة المضافة <span style="font-size:.72rem;color:#5C6B67">(تُورَّد للهيئة)</span></td><td colspan="2">${sar(r.fin.vatCollected || 0)}</td></tr>
+    <tr><td colspan="3"><b>صافي الإيجار للمالك</b></td><td colspan="2"><b>${sar(r.fin.collected)}</b></td></tr>` : ""}
   </tbody>
 </table></div>` : `<div class="sub">لا دفعات مسجّلة لهذا العقار خلال الفترة.</div>`}
 ${r.s.expenses.length ? `<div class="scrollx" style="margin-top:8px"><table>
   <thead><tr><th>التاريخ</th><th>التصنيف</th><th>${unitLabel(r.s.property.property_type)}</th><th>المبلغ</th><th>ملاحظة</th></tr></thead>
   <tbody>
-    ${r.s.expenses.map((x) => `<tr><td>${arDate(x.spent_on)}</td><td>${catLabel(x.category)}</td><td>${x.unit || "—"}</td><td><b>${sar(Number(x.amount) || 0)}</b></td><td>${x.note ? String(x.note) : "—"}</td></tr>`).join("")}
+    ${r.s.expenses.map((x) => `<tr><td>${arDate(x.spent_on)}</td><td>${catLabel(x.category)}</td><td>${x.unit || "—"}</td><td><b>${sar(Number(x.amount) || 0)}</b></td><td>${x.note ? escH(x.note) : "—"}</td></tr>`).join("")}
     <tr><td colspan="3"><b>إجمالي المصروفات</b></td><td colspan="2"><b>${sar(r.fin.expenses)}</b></td></tr>
   </tbody>
 </table></div>` : ""}
 `).join("")}
 
-<div class="note">كشف استرشادي صادر آليًّا من سجل الدفعات والمصروفات المسجّلة في وثيق بتاريخ ${today()}. الأرقام تعكس ما وثّقه المكتب في النظام، وصافي كل عقار يُحسب بنفس طريقة تقرير العقار المنفرد.</div>
-<div class="sign"><div>إدارة الأملاك: ${who}<br><br>التوقيع: ________________</div><div>المالك: ${ownerName}<br><br>تاريخ الإصدار: ${today()}</div></div>
+<div class="note">كشف استرشادي صادر آليًّا من سجل الدفعات والمصروفات المسجّلة في وثيق بتاريخ ${arDate(today())}. الأرقام تعكس ما وثّقه المكتب في النظام، وصافي كل عقار يُحسب بنفس طريقة تقرير العقار المنفرد.</div>
+<div class="sign"><div>إدارة الأملاك: ${who}<br><br>التوقيع: ________________</div><div>المالك: ${ownerName}<br><br>تاريخ الإصدار: ${arDate(today())}</div></div>
 ${footer(issuer)}`;
   return SHELL(`كشف حساب المالك — ${ownerName} — ${period.label}`, body, markOf(issuer));
 }
@@ -2456,7 +2687,7 @@ export function complianceRegisterHTML(items: ComplianceItem[], orgName: string,
   const body = `
 ${header("سجل التزامات المكتب", who, issuer)}
 <h1>سجل التزامات المكتب العقاري</h1>
-<div class="sub">${who} · تاريخ الإصدار: ${arDate(today())} · ${items.length} بند</div>
+<div class="sub">${who} · تاريخ الإصدار: ${arDate(today())} · ${countAr(items.length, "بند")}</div>
 
 <h2>🪪 رخصة فال</h2>
 ${fal.length ? `<div class="scrollx"><table>
@@ -2484,7 +2715,7 @@ ${ads.length ? `<div class="scrollx"><table>
 </table>
 
 <div class="note">${LEGAL_DISCLAIMER}</div>
-<div class="sign"><div>أعدّه: ${who}<br><br>التوقيع: ________________</div><div>تاريخ الإصدار: ${today()}</div></div>
+<div class="sign"><div>أعدّه: ${who}<br><br>التوقيع: ________________</div><div>تاريخ الإصدار: ${arDate(today())}</div></div>
 ${footer(issuer)}`;
   return SHELL(`سجل التزامات المكتب — ${who}`, body, markOf(issuer));
 }
@@ -2523,7 +2754,7 @@ export function listingsRegisterHTML(items: Listing[], orgName: string, issuer: 
   const body = `
 ${header("سجل المعروضات", who, issuer)}
 <h1>سجل المعروضات</h1>
-<div class="sub">${who} · تاريخ الإصدار: ${arDate(today())} · ${s.total} معروض</div>
+<div class="sub">${who} · تاريخ الإصدار: ${arDate(today())} · ${countAr(s.total, "معروض")}</div>
 
 <div class="tot">
   <div><div class="v">${s.total}</div><div class="l">إجمالي المعروضات</div></div>
@@ -2532,7 +2763,7 @@ ${header("سجل المعروضات", who, issuer)}
   <div><div class="v${s.stale ? " r" : ""}">${s.stale}</div><div class="l">يحتاج تأكيد توفر</div></div>
 </div>
 
-${s.stale > 0 ? `<div class="note">${s.stale} ${s.stale === 1 ? "معروض لم يُؤكَّد توفره" : "معروضًا لم تُؤكَّد توفراتها"} منذ ${STALE_DAYS} يومًا أو أكثر — تأكّد من المالك قبل عرضها على أي عميل.</div>` : ""}
+${s.stale > 0 ? `<div class="note">${s.stale === 1 ? "معروض واحد لم يُؤكَّد توفره" : `${countAr(s.stale, "معروض")} لم يُؤكَّد توفرها`} منذ ${daysAr(STALE_DAYS)} أو أكثر — تأكّد من المالك قبل عرضها على أي عميل.</div>` : ""}
 
 <h2>المعروضات</h2>
 ${rows.length ? `<div class="scrollx"><table>
@@ -2540,8 +2771,8 @@ ${rows.length ? `<div class="scrollx"><table>
   <tbody>${rows.map(line).join("")}</tbody>
 </table></div>` : `<div class="sub">لا معروضات مسجّلة بعد.</div>`}
 
-<div class="note">سجل داخلي للمكتب صادر آليًّا من وثيق بتاريخ ${today()}. الأسعار والحالات تعكس ما وثّقه المكتب، ولا يُعدّ هذا المستند عرضًا أو إعلانًا عقاريًّا.</div>
-<div class="sign"><div>أعدّه: ${who}<br><br>التوقيع: ________________</div><div>تاريخ الإصدار: ${today()}</div></div>
+<div class="note">سجل داخلي للمكتب صادر آليًّا من وثيق بتاريخ ${arDate(today())}. الأسعار والحالات تعكس ما وثّقه المكتب، ولا يُعدّ هذا المستند عرضًا أو إعلانًا عقاريًّا.</div>
+<div class="sign"><div>أعدّه: ${who}<br><br>التوقيع: ________________</div><div>تاريخ الإصدار: ${arDate(today())}</div></div>
 ${footer(issuer)}`;
   return SHELL(`سجل المعروضات — ${who}`, body, markOf(issuer));
 }
@@ -2580,7 +2811,7 @@ export function expensesRegisterHTML(
   const inner = `
 ${header("سجل المصروفات", filters.owner ? `مالك: ${filters.owner}` : "كل العقارات", issuer)}
 <h1>سجل المصروفات — ${period.label}</h1>
-<div class="sub">من ${arDateH(period.from)} إلى ${arDateH(period.to)}${filters.owner ? ` · المالك: ${filters.owner}` : ""}${filters.category ? ` · التصنيف: ${catLabel(filters.category)}` : ""} · ${list.length} قيدًا</div>
+<div class="sub">من ${arDateH(period.from)} إلى ${arDateH(period.to)}${filters.owner ? ` · المالك: ${filters.owner}` : ""}${filters.category ? ` · التصنيف: ${catLabel(filters.category)}` : ""} · ${countAr(list.length, "قيد")}</div>
 
 <div class="tot">
   <div><div class="v">${sar(total)}</div><div class="l">إجمالي المصروفات (ريال)</div></div>
@@ -2613,7 +2844,7 @@ ${Object.entries(byProp).map(([name, items]) => `
       <td><b>${sar(e.amount)}</b></td>
       <td>${isBillable(e) ? "المالك" : "<span style='color:#5C6B67'>المكتب</span>"}${e.paid_by ? `<div style="font-size:.65rem;color:#5C6B67">${PAID_BY[String(e.paid_by)] || ""}</div>` : ""}</td>
       <td>${e.status === "due" ? '<span class="pill u">مستحقة</span>' : '<span class="pill p">مدفوعة</span>'}</td>
-      <td>${e.note || "—"}</td>
+      <td>${e.note ? escH(e.note) : "—"}</td>
     </tr>`).join("")}
     <tr><td colspan="5"><b>مجموع ${name}</b></td><td colspan="4"><b>${sar(sumExpensesLocal(items))} ريال</b></td></tr>
   </tbody>
@@ -2622,7 +2853,7 @@ ${Object.entries(byProp).map(([name, items]) => `
 <div class="note">
   «تُخصم من المالك» تدخل في حساب صافيه في تقرير المالك، و«على المكتب» لا تدخل.
   والمستحقة غير المدفوعة معروضة للعلم ولا تُعدّ نقدًا خارجًا بعد.
-  سجل استرشادي صادر آليًّا بتاريخ ${today()}.
+  سجل استرشادي صادر آليًّا بتاريخ ${arDate(today())}.
 </div>`;
   return SHELL(`سجل المصروفات — ${period.label}`, inner + footer(issuer), markOf(issuer));
 }
@@ -2669,7 +2900,8 @@ export function collectionStatementHTML(
   /* تعقيم ما يدخل المستند من نصّ مستخدم — كانت هذه الدالة تُدخله خامًا */
   rows = scrub(rows); expenses = scrub(expenses); issuer = scrub(issuer);
   const round2 = (n: number) => Math.round(n * 100) / 100;
-  const esc = (v: any) => String(v ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  /* (30 سبتمبر 2026) esc بعد scrub كان يُهرِّب مرتين («أ &amp;amp; ب») — escH لا يُكرِّر */
+  const esc = (v: any) => escH(v);
   const sorted = [...(rows || [])].sort((a, b) => String(a.paid_on).localeCompare(String(b.paid_on)));
   const collected = round2(sorted.reduce((a, x) => a + (Number(x.amount) || 0), 0));
   const exp = (expenses || []).filter((e) => Number(e.amount) > 0);
@@ -2681,8 +2913,8 @@ export function collectionStatementHTML(
   const both = (iso: string, cal?: string | null) => {
     if (!iso) return "—";
     return String(cal) === "hijri"
-      ? `${hijriText(iso)}<div style="font-size:.62rem;color:#5C6B67">${iso}</div>`
-      : `${iso}<div style="font-size:.62rem;color:#5C6B67">${hijriText(iso)}</div>`;
+      ? `${hijriText(iso)}<div style="font-size:.62rem;color:#5C6B67">${arDate(iso)}</div>`
+      : `${arDate(iso)}<div style="font-size:.62rem;color:#5C6B67">${hijriText(iso)}</div>`;
   };
 
   const inner = `
@@ -2690,7 +2922,7 @@ ${header(esc(opts?.title || "كشف حساب لعمائر المكتب"), esc(pe
 
 <div class="sub" style="margin-bottom:14px">
   تاريخ التحصيل من <b>${arDate(period.from)}</b> إلى <b>${arDate(period.to)}</b>
-  · ${sorted.length} ${sorted.length === 1 ? "عملية" : "عملية"} تحصيل
+  · ${sorted.length ? `${countAr(sorted.length, "عملية")} تحصيل` : "لا عمليات تحصيل"}
 </div>
 
 ${sorted.length ? `<div class="scrollx"><table>

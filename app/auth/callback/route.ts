@@ -15,18 +15,29 @@ export const dynamic = "force-dynamic";
  * فتنتقل إلى موقع خارجي **بعد** دخول ناجح فتظن أنه جزء من وثيق.
  * (نفس الحماية المطبَّقة في صفحة الدخول)
  */
-function safeNext(raw: string | null): string {
+function safeNext(raw: string | null, BASE: string): string {
   if (!raw) return "/dashboard";
-  if (!raw.startsWith("/")) return "/dashboard";
-  if (raw.startsWith("//")) return "/dashboard";   // //evil.com يُقرأ كنطاق خارجي
-  if (raw.startsWith("/\\")) return "/dashboard";
-  return raw;
+  // 30 سبتمبر 2026: "/\t/evil.com" كان يمرّ — المتصفح يحذف الـTab فيصير
+  // "//evil.com". نرفض أي محرف تحكّم أو شرطة مائلة عكسية أصلًا.
+  if (/[\u0000-\u001F\u007F-\u009F\\]/.test(raw)) return "/dashboard";
+  if (!raw.startsWith("/") || raw.startsWith("//")) return "/dashboard";
+  try {
+    // الحَكَم الأخير هو محلّل URL نفسه: يجب أن يبقى على نفس الأصل، والمسار
+    // الناتج بعد التطبيع (مثل "/.//evil.com") لا يبدأ بـ"//".
+    const u = new URL(raw, BASE);
+    if (u.origin !== new URL(BASE).origin) return "/dashboard";
+    const out = u.pathname + u.search + u.hash;
+    if (!out.startsWith("/") || out.startsWith("//")) return "/dashboard";
+    return out;
+  } catch {
+    return "/dashboard";
+  }
 }
 
 export async function GET(request: Request) {
   const url = new URL(request.url);
   const code = url.searchParams.get("code");
-  const next = safeNext(url.searchParams.get("next"));
+  const next = safeNext(url.searchParams.get("next"), url.origin);
 
   // قوقل يعيد الخطأ في المعاملات لا كاستثناء
   const oauthError = url.searchParams.get("error_description") || url.searchParams.get("error");

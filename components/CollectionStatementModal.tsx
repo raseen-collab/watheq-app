@@ -15,7 +15,7 @@
 import {useEffect, useMemo, useState} from "react";
 import { createClient } from "@/lib/supabase-client";
 import { fetchAllRows } from "@/lib/fetch-all";
-import { collectionStatementHTML, pastVatOf, openDoc } from "@/lib/documents";
+import { collectionStatementHTML, pastVatOf, openDoc, arDate } from "@/lib/documents";
 import { buildCollection } from "@/lib/collection";
 
 const today = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Riyadh", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
@@ -75,7 +75,8 @@ export default function CollectionStatementModal({ properties, issuer, onClose, 
     const r = RANGES.find((x) => x.k === k)!;
     if (k !== "c") { setFrom(r.from()); setTo(r.to()); }
   }
-  const label = rangeKey === "c" ? `من ${from} إلى ${to}` : RANGES.find((x) => x.k === rangeKey)!.label;
+  /* التاريخ بأسماء الأشهر كبقية المستندات (30 سبتمبر 2026) — كان «من 2026-09-01» */
+  const label = rangeKey === "c" ? `من ${arDate(from)} إلى ${arDate(to)}` : RANGES.find((x) => x.k === rangeKey)!.label;
 
   async function build() {
     setBusy(true); setErr(null);
