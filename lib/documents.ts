@@ -7,7 +7,7 @@ import { hijriText, hijriShort } from "@/lib/hijri";
 import { annualRentRoll } from "./income";
 import { defaultTermPeriods } from "./contracts";
 import { unitStatus, unitStatusLabel, arrearsOf, statusWindows } from "./contract-state";
-import { daysAr } from "./utils";
+import { daysAr, monthsAr } from "./utils";
 
 const sar = (n: number) => {
   const v = Number(n) || 0;
@@ -459,7 +459,7 @@ function unitsRegisterHTML(p: any, tenants: any[], g: any, issuer: any = {}): st
       body += KV("المتأخر", due + car > 0
         ? `<b style="color:#a5322c">${sar(due)}</b>${car > 0 ? ` <span style="color:#9A4B00">+ ${sar(car)} دين مرحَّل</span>` : ""}`
         /* في فترة السماح: مستحق لم يتأخر بعد — كما تقول اللوحة، لا «لا شيء» وحدها */
-        : st.inGrace ? `<span style="color:#9A4B00">لا شيء بعد — فترة سماح ${st.graceDaysLeft > 0 ? `(${st.graceDaysLeft === 1 ? "يوم" : st.graceDaysLeft === 2 ? "يومان" : `${st.graceDaysLeft} أيام`})` : ""}</span>`
+        : st.inGrace ? `<span style="color:#9A4B00">لا شيء بعد — فترة سماح ${st.graceDaysLeft > 0 ? `(${daysAr(st.graceDaysLeft, true)})` : ""}</span>`
         : `<span style="color:#137a50">لا شيء</span>`);
     }
     return `<div style="border:1px solid #D9E2DF;border-radius:10px;padding:8px 10px;break-inside:avoid;page-break-inside:avoid">
@@ -1064,7 +1064,7 @@ ${mode === "full" ? `
     ${stArr.legacy > 0 ? `<div class="r"><span style="padding-inline-start:12px">— على مستأجرين سابقين (وحدات شاغرة)</span><span>${sar(stArr.legacy)} ريال</span></div>` : ""}
     ${period ? `<div class="r"><span>المحصَّل خلال الفترة</span><span><b>${sar(collectedInPeriod)} ريال</b></span></div>` : ""}
     ${(p as any).mgmt_fee_pct ? `<div class="r"><span>أتعاب الإدارة</span><span>${(p as any).mgmt_fee_pct}%</span></div>` : ""}
-    ${Number(p.grace_days) > 0 ? `<div class="r"><span>فترة السماح</span><span>${p.grace_days} أيام</span></div>` : ""}
+    ${Number(p.grace_days) > 0 ? `<div class="r"><span>فترة السماح</span><span>${daysAr(Number(p.grace_days))}</span></div>` : ""}
     ${p.vat_enabled ? `<div class="r"><span>ضريبة القيمة المضافة</span><span>${Number(p.vat_rate) || 15}% على الوحدات التجارية</span></div>` : ""}
   </div>
 </div>` : ""}
@@ -1875,7 +1875,7 @@ export function subscriptionInvoiceHTML(inv: SubInvoice) {
   const body = `
 ${header(hasVat ? "فاتورة ضريبية مبسطة" : "فاتورة اشتراك", inv.invoice_no)}
 <h1>${hasVat ? "فاتورة ضريبية مبسطة — اشتراك وثيق" : "فاتورة اشتراك وثيق"}</h1>
-<div class="sub">الفترة: ${inv.from_date} حتى ${inv.to_date} · ${inv.months} ${inv.months === 1 ? "شهر" : "شهرًا"}</div>
+<div class="sub">الفترة: ${inv.from_date} حتى ${inv.to_date} · ${monthsAr(inv.months)}</div>
 
 <div class="grid">
   <div class="box">
@@ -1900,7 +1900,7 @@ ${header(hasVat ? "فاتورة ضريبية مبسطة" : "فاتورة اشت�
     <tr>
       <td>اشتراك منصة وثيق — ${inv.plan_label}</td>
       <td>${inv.from_date} → ${inv.to_date}</td>
-      <td>${inv.months} ${inv.months === 1 ? "شهر" : "شهرًا"}</td>
+      <td>${monthsAr(inv.months)}</td>
       <td>${sar(base)}</td>
     </tr>
   </tbody>
@@ -2079,7 +2079,7 @@ ${mode === "full" ? `
     ${arr.legacy > 0 ? `<div class="r"><span>على مستأجرين سابقين (وحدات شاغرة)</span><span><b style="color:#9A4B00">${sar(arr.legacy)}</b> ريال</span></div>` : ""}
     ${arr.grand !== arr.total ? `<div class="r"><span><b>إجمالي المستحق على العقار</b></span><span><b style="color:${arr.grand > 0 ? "#a5322c" : "#137a50"}">${sar(arr.grand)}</b> ريال</span></div>` : ""}
     ${extra.fee_pct ? `<div class="r"><span>أتعاب الإدارة</span><span>${extra.fee_pct}%</span></div>` : ""}
-    ${Number(p.grace_days) > 0 ? `<div class="r"><span>فترة السماح</span><span>${p.grace_days} أيام</span></div>` : ""}
+    ${Number(p.grace_days) > 0 ? `<div class="r"><span>فترة السماح</span><span>${daysAr(Number(p.grace_days))}</span></div>` : ""}
   </div>
 </div>` : ""}
 

@@ -42,6 +42,18 @@ export function daysAr(n: number | null | undefined, nominative = false): string
   return `${x} يوم`;
 }
 
+/** «عدد + شهر»: شهر واحد · شهرين · 3–10 أشهر · 11–99 شهرًا · 100 شهر.
+ *  كانت فاتورة الاشتراك تكتب «2 شهرًا» و«6 شهرًا». */
+export function monthsAr(n: number | null | undefined): string {
+  const x = Math.abs(Math.round(Number(n) || 0));
+  if (x === 1) return "شهر واحد";
+  if (x === 2) return "شهرين";
+  const r = x % 100;
+  if (r >= 3 && r <= 10) return `${x} أشهر`;
+  if (r >= 11) return `${x} شهرًا`;
+  return `${x} شهر`;
+}
+
 export function waLink(phone: string | undefined | null, text: string) {
   return `https://wa.me/${waNumber(phone)}?text=${encodeURIComponent(text)}`;
 }

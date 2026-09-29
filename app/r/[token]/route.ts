@@ -109,7 +109,8 @@ async function render(_req: Request, { params }: { params: { token: string } }) 
     const fetchAll = async (table: string, select: string, dateCol: string) => {
       const out: any[] = [];
       for (let i = 0; ; i += 1000) {
-        const { data } = await db.from(table).select(select).in("property_id", ids)
+        /* الحصر بالمكتب أيضًا: صفّ كتبه مكتبٌ آخر بمعرّف عقار هذا المكتب لا يظهر للمالك */
+        const { data } = await db.from(table).select(select).in("property_id", ids).eq("user_id", link.user_id)
           .gte(dateCol, from).lte(dateCol, to).order(dateCol, { ascending: true }).order("id", { ascending: true }).range(i, i + 999);
         out.push(...(data || []));
         if (!data || data.length < 1000 || out.length > 50000) break;
@@ -125,7 +126,7 @@ async function render(_req: Request, { params }: { params: { token: string } }) 
     /* إعدادات الضريبة للمستأجرين السابقين — لضريبة دفعاتهم */
     let pastVat: PastVat | undefined;
     try {
-      const { data: pastRows } = await db.from("past_tenancies").select("id, snapshot").in("property_id", props.map((p: any) => p.id)).limit(5000);
+      const { data: pastRows } = await db.from("past_tenancies").select("id, snapshot").in("property_id", props.map((p: any) => p.id)).eq("user_id", link.user_id).limit(5000);
       pastVat = pastVatOf(pastRows as any);
     } catch { pastVat = undefined; }
     const sections: OwnerStatementSection[] = props.map((p: any) => {
@@ -186,9 +187,9 @@ async function render(_req: Request, { params }: { params: { token: string } }) 
    */
   const [pays, exps, { data: profile }] = await Promise.all([
     fetchAllRows(db as any, "payments", "*",
-      (q) => q.eq("property_id", link.property_id).gte("paid_on", from).lte("paid_on", to).order("paid_on", { ascending: true })),
+      (q) => q.eq("property_id", link.property_id).eq("user_id", link.user_id).gte("paid_on", from).lte("paid_on", to).order("paid_on", { ascending: true })),
     fetchAllRows(db as any, "expenses", "*",
-      (q) => q.eq("property_id", link.property_id).gte("spent_on", from).lte("spent_on", to).order("spent_on", { ascending: true })),
+      (q) => q.eq("property_id", link.property_id).eq("user_id", link.user_id).gte("spent_on", from).lte("spent_on", to).order("spent_on", { ascending: true })),
     db.from("profiles").select("org_name, billing_name, vat_number, cr_number, billing_phone, plan, trial_ends_at, subscribed_until, due_soon_days, due_imminent_days, expiring_days")
       .eq("id", link.user_id).maybeSingle(),
   ]);
@@ -204,13 +205,13 @@ async function render(_req: Request, { params }: { params: { token: string } }) 
   let termRentPaid: Record<string, number> | undefined;
   try {
     const allPays = await fetchAllRows(db as any, "payments", "*",
-      (q) => q.eq("property_id", link.property_id).not("tenant_id", "is", null));
+      (q) => q.eq("property_id", link.property_id).eq("user_id", link.user_id).not("tenant_id", "is", null));
     termRentPaid = termRentPaidOf((property as any).tenants || [], (allPays || []) as any);
   } catch { termRentPaid = undefined; }
 
   let pastVat: PastVat | undefined;
   try {
-    const { data: pastRows } = await db.from("past_tenancies").select("id, snapshot").eq("property_id", link.property_id).limit(2000);
+    const { data: pastRows } = await db.from("past_tenancies").select("id, snapshot").eq("property_id", link.property_id).eq("user_id", link.user_id).limit(2000);
     pastVat = pastVatOf(pastRows as any);
   } catch { pastVat = undefined; }
 

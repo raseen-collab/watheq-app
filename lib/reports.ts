@@ -7,7 +7,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { statusWindows } from "./contract-state";
 import { contractState, renewContract as renewFields, freqShort, applyPayment, defaultTermPeriods, splitVat, unitVatApplies, withVat, type Frequency } from "@/lib/contracts";
-import { today as riyadhToday, waNumber } from "@/lib/utils";
+import { today as riyadhToday, waNumber, daysAr } from "@/lib/utils";
 import { annualRentRoll } from "@/lib/income";
 import { fetchAllRows } from "@/lib/fetch-all";
 import { arDate } from "@/lib/documents";
@@ -147,12 +147,12 @@ export async function todayReport(db: DB, profile: any): Promise<string> {
       const soon = rows.filter((r) => r.key === "due_soon")
         .sort((a, b) => (a.st.daysToNextDue || 0) - (b.st.daysToNextDue || 0));
       const win = Number(profile?.due_soon_days) || 10;   /* نافذة «قريب» الفعلية — كانت «7 أيام» ثابتة */
-      if (!soon.length) return tgClip(`📅 <b>استحقاقات قريبة</b>\n\nلا توجد دفعات مستحقة خلال ${win} أيام ✅`);
-      const total = soon.reduce((s, r) => s + (Number(r.t.rent_amount) || 0), 0);
+      if (!soon.length) return tgClip(`📅 <b>استحقاقات قريبة</b>\n\nلا توجد دفعات مستحقة خلال ${daysAr(win)} ✅`);
+      const total = soon.reduce((s, r) => s + withVat(Number(r.t.rent_amount) || 0, r.t, r.p), 0);
       const lines = soon.map((r) =>
-        `• <b>${esc(rowLabel(r))}</b> — ${esc(r.t.name)} — <b>${sar(r.t.rent_amount)}</b> ريال — ${arDate(r.st.nextDueDate)}`
+        `• <b>${esc(rowLabel(r))}</b> — ${esc(r.t.name)} — <b>${sar(withVat(Number(r.t.rent_amount) || 0, r.t, r.p))}</b> ريال — ${arDate(r.st.nextDueDate)}`
       ).join("\n");
-      return tgClip(`📅 <b>استحقاقات قريبة</b> (خلال ${win} أيام)\n\n${capList(lines.split("\n"), soon.length, "دفعة")}\n\n— الإجمالي: <b>${sar(total)}</b> ريال · ${arPlural(soon.length, "دفعة واحدة", "دفعتان", "دفعات", "دفعة")}`);
+      return tgClip(`📅 <b>استحقاقات قريبة</b> (خلال ${daysAr(win)})\n\n${capList(lines.split("\n"), soon.length, "دفعة")}\n\n— الإجمالي: <b>${sar(total)}</b> ريال · ${arPlural(soon.length, "دفعة واحدة", "دفعتان", "دفعات", "دفعة")}`);
     }
     const { assocs, owners } = await assocContext(db, profile);
     const soon = assocs.filter((a: any) => a.cert_expiry && a.cert_expiry >= todayISO());

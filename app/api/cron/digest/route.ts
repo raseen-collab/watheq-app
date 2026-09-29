@@ -11,6 +11,7 @@ import { listingsDigestLines, type Listing } from "@/lib/listings";
 import { requestsDigestLines, type SeekerRequest } from "@/lib/requests";
 import { complianceState } from "@/lib/compliance";
 import { arDate } from "@/lib/documents";
+import { daysAr } from "@/lib/utils";
 
 /** تليجرام يقرأ الرسالة كـHTML: اسم فيه < أو & يُسقط الرسالة كلها للحساب. نهرّب النصوص الحرة */
 /** يوم الرياض — نفس أساس بقية النظام */
@@ -187,7 +188,7 @@ export async function GET(req: Request) {
     const parts = [`🗂️ <b>ملخّص وثيق اليومي</b>${p.org_name ? ` — ${esc(p.org_name)}` : ""}`, ""];
     // أقصى 12 سطرًا لكل قسم مع ذكر المتبقي — مكتب كبير لا يظن أن القائمة اكتملت
     const more = (n: number) => n > 12 ? [`… و${n - 12} أخرى في اللوحة`] : [];
-    if (dueSoon.length) parts.push(`🟡 <b>تستحق خلال ${within} أيام (${dueSoon.length})</b>`, ...dueSoon.slice(0, 12), ...more(dueSoon.length), "");
+    if (dueSoon.length) parts.push(`🟡 <b>تستحق خلال ${daysAr(within)} (${dueSoon.length})</b>`, ...dueSoon.slice(0, 12), ...more(dueSoon.length), "");
     /* المتأخرون: عدد وإجمالي، وبالاسم الجدد اليوم فقط. كانت القائمة كاملة كل صباح —
        فمتأخر منذ شهرين يظهر ستين صباحًا، ويتعلّم صاحب المكتب تجاهل الرسالة كلها
        ومعها الجديد. القائمة الكاملة بأمر /late. */
