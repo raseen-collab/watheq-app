@@ -13,7 +13,7 @@ import { fetchAllRows } from "@/lib/fetch-all";
 import { hijriShort, hijriText, parseHijriInput } from "@/lib/hijri";
 import { sar, waLink, today, WATHEQ_WA, openExternal, daysAr } from "@/lib/utils";
 import { contractState, expectedNext12, buildSchedule, FREQUENCIES, freqLabel, freqShort, derivedEndDate, renewContract, needsRenewal, applyPayment, splitVat, isCommercial, isVacant, settleDeposit, unitVatApplies,
-  vacancyDays, TURNOVER_CHECKLIST, defaultTermPeriods, parseDate, dueWithVat, rentWithVat, withVat, unitVat, type Frequency } from "@/lib/contracts";
+  vacancyDays, TURNOVER_CHECKLIST, defaultTermPeriods, parseDate, dueWithVat, rentWithVat, withVat, unitVat, firstDueGap, type Frequency } from "@/lib/contracts";
 import { PROPERTY_TYPES, typeLabel, unitLabel, typeIcon } from "@/lib/domain";
 import { statementHTML, invoiceHTML, propertyStatementHTML, moveOutSettlementHTML, quotationHTML, ownerReportHTML, DEFAULT_CHARGES, openDoc, type ChargeRow, type OwnerReportPayment } from "@/lib/documents";
 import OwnerStatementModal from "@/components/OwnerStatementModal";
@@ -2980,6 +2980,7 @@ function TenantModal({ open, initial, unitWord, error, saving, onClose, onSubmit
   const futureStartQ = !!startISO && startISO > today() && !(Number(d.paid_periods) > 0)
     && String(d.status) !== "vacated" && !startIsNew && !askOcc;
   const startTooLate = askOcc && occ === "current" && !!startISO && startISO > today();
+  const dueGap = String(d.status) !== "vacated" ? firstDueGap(startISO, d.first_due ? String(d.first_due).slice(0, 10) : null) : null;
   /* جدول الأقساط بالبيانات الحالية — لقائمة «مسدَّد حتى» والمعاينة */
   const sched: { n: number; date: string; status: string }[] = d.contract_start && Number(d.rent_amount) > 0
     ? buildSchedule({ ...d, paid_periods: Number(d.paid_periods) || 0 } as any) : [];
@@ -3205,8 +3206,20 @@ function TenantModal({ open, initial, unitWord, error, saving, onClose, onSubmit
           <Field label="دين مرحَّل (ريال)" hint="متأخرات من عقد سابق أو مستأجر سابق — تظهر في الكشوف ولا تدخل في دفعات العقد الجاري">
             <input className="fld" type="number" min={0} value={d.carried_debt ?? ""} onChange={(e) => setD({ ...d, carried_debt: e.target.value })} placeholder="0" />
           </Field>
-            <Field label="أول تاريخ استحقاق" hint="الافتراضي أن أول دفعة تستحق يوم بداية العقد. املأه فقط إن كان يختلف (يبدأ 1/1 والدفعة الأولى 5/1)">
+            <Field label="أول تاريخ استحقاق" hint="اتركه فارغًا إن كان المستأجر يدفع يوم بداية العقد — وهذا أغلب العقود. املأه فقط إن كانت أول دفعة في يوم آخر (يبدأ 1/1 والدفعة الأولى 5/1)">
               <DateField value={d.first_due || ""} onChange={(v) => setD({ ...d, first_due: v })} />
+              {dueGap && (
+                /* (30 سبتمبر 2026) مكتبان كتبا هنا تاريخًا لمستأجر يدفع يوم بداية العقد،
+                   فانزاح يوم الدفع الشهري كله. نقول الأثر بالأرقام قبل الحفظ. */
+                <div className="mt-2 rounded-lg border border-[#F2D49B] bg-[#FFF6E5] p-2.5 text-[12.5px] leading-relaxed">
+                  <b>انتبه:</b> أول دفعة {dueGap.days > 0 ? `بعد ${daysAr(dueGap.days)}` : `قبل ${daysAr(-dueGap.days)}`} من بداية العقد
+                  {dueGap.months >= 2 ? <> (قرابة <b>{dueGap.months} شهرًا</b>)</> : null}
+                  {dueGap.dueDay !== dueGap.startDay ? <>، ويوم الدفع الشهري سيصير <b>{dueGap.dueDay}</b> بدل {dueGap.startDay}</> : null}.
+                  <div className="mt-1">إن كان المستأجر يدفع يوم بداية العقد:
+                    <button type="button" className="underline underline-offset-4 font-semibold ms-1" onClick={() => setD({ ...d, first_due: "" })}>امسح هذا التاريخ</button>
+                  </div>
+                </div>
+              )}
             </Field>
             {vatEnabled && (
           <Field label="ضريبة القيمة المضافة لهذه الوحدة" hint="العمارة المختلطة: السكني معفى والتجاري خاضع — «تلقائي» يقرّر بحسب نوع الوحدة">
@@ -3296,6 +3309,13 @@ function TenantModal({ open, initial, unitWord, error, saving, onClose, onSubmit
             if (askOcc && !occ) { setLocalErr("اختر أولًا: المستأجر ساكن في الوحدة الآن، أم عقد جديد لم يبدأ؟"); return; }
             if (startTooLate) { setLocalErr(`بداية العقد ${arDate(startISO)} بعد اليوم، والمستأجر ساكن الآن. اكتب تاريخ بداية العقد من إيجار — لا موعد الدفعة القادمة.`); return; }
             setLocalErr(null);
+            /* أول استحقاق يختلف عن البداية: سؤال عند إدخاله أو تغييره فقط — لا في كل
+               حفظ لبيانات راجعها المكتب من قبل. */
+            if (dueGap && d.first_due !== (initial as any)?.first_due && !confirm(
+              `أول استحقاق ${arDate(d.first_due)} يختلف عن بداية العقد ${arDate(d.contract_start)}`
+              + (dueGap.dueDay !== dueGap.startDay ? `، فيصير يوم الدفع الشهري ${dueGap.dueDay} بدل ${dueGap.startDay}` : "") + `.\n\n`
+              + `موافق = نعم، أول دفعة فعلًا في هذا التاريخ.\n`
+              + `إلغاء = سأراجع (إن كان يدفع يوم بداية العقد فامسح «أول استحقاق»).`)) return;
             if (futureStartQ && !confirm(`بداية العقد ${arDate(startISO)} بعد اليوم، ولا دفعات مسدَّدة.\n\n`
               + `موافق = عقد جديد يبدأ في هذا التاريخ — احفظ.\n`
               + `إلغاء = عقد ساري من قبل — سأكتب بدايته الفعلية وآخر دفعة سُدّدت.`)) return;

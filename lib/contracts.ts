@@ -244,6 +244,22 @@ export const anchorOf = (t: { billing_anchor_day?: number | null; contract_start
   Number(t?.billing_anchor_day) || (t?.first_due ? parseDate(t.first_due).getDate() : t?.contract_start ? parseDate(t.contract_start).getDate() : null);
 
 /**
+ * (30 سبتمبر 2026) «أول استحقاق» يختلف عن بداية العقد؟ — مصدر واحد للتنبيه في
+ * النموذج والرفع وفحص البيانات. مكتبان كتبا فيه تاريخًا خاطئًا لمستأجر يدفع يوم
+ * بداية العقد (١٢←٢٣، ٢٣←٢٩، و٣ أغسطس ٢٠٢٦ ← ٢٥ يونيو ٢٠٢٧)، فانزاح يوم الدفع
+ * الشهري كله. null = لا اختلاف أو لا تاريخ.
+ */
+export function firstDueGap(start?: string | null, firstDue?: string | null):
+  { days: number; startDay: number; dueDay: number; months: number } | null {
+  if (!start || !firstDue || String(start).slice(0, 10) === String(firstDue).slice(0, 10)) return null;
+  const s = parseDate(String(start)), f = parseDate(String(firstDue));
+  if (isNaN(s.getTime()) || isNaN(f.getTime())) return null;
+  const days = Math.round((f.getTime() - s.getTime()) / 86400000);
+  const months = (f.getFullYear() - s.getFullYear()) * 12 + (f.getMonth() - s.getMonth());
+  return { days, startDay: s.getDate(), dueDay: f.getDate(), months };
+}
+
+/**
  * بداية جدول الدفعات: أول استحقاق إن حُدّد (العقد يبدأ 1/1 والدفعة الأولى
  * 5/1)، وإلا بداية العقد. كل الدفعات التالية تُعدّ منها.
  */

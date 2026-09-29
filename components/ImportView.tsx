@@ -2,7 +2,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase-client";
-import { derivedEndDate, FREQUENCIES, parseDate, type Frequency } from "@/lib/contracts";
+import { derivedEndDate, FREQUENCIES, parseDate, firstDueGap, type Frequency } from "@/lib/contracts";
 import { typeIcon, unitLabel } from "@/lib/domain";
 import { sar, openExternal, today } from "@/lib/utils";
 import { parseHijriInput, hijriShort } from "@/lib/hijri";
@@ -20,6 +20,8 @@ type Row = {
   _error?: string;
   /** تنبيه لا يمنع الرفع: بداية مستقبلية بلا دفعات — غالبًا موعد الدفعة القادمة لا بداية العقد */
   _warn?: string;
+  /** «أول استحقاق» يختلف عن بداية العقد — يُسأل عنه المكتب قبل الحفظ (30 سبتمبر 2026) */
+  _due?: string;
 };
 
 // العمود التاسع «الدفعات المسدّدة» اختياري: بدونه يُعدّ العقد لم يُسدَّد منه شيء —
@@ -120,6 +122,8 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
      (موعد الدفعة القادمة في خانة البداية) تكرّر 33 مرة عند مكتب واحد. الآن
      لا يُحفظ الملف حتى يقرّر المكتب صراحةً أنها عقود جديدة لم تبدأ. */
   const [futureOk, setFutureOk] = useState(false);
+  /** قرار صفوف «أول استحقاق» المختلف: keep = كما في الملف · drop = يدفعون يوم بداية العقد */
+  const [dueChoice, setDueChoice] = useState<null | "keep" | "drop">(null);
   const [progress, setProgress] = useState(0);
   const [done, setDone] = useState<number | null>(null);
   const [fileName, setFileName] = useState("");
@@ -273,6 +277,15 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
           : undefined,
       };
     });
+    /* «أول استحقاق» يختلف عن البداية: مكتبان كتباه لمستأجرين يدفعون يوم بداية العقد،
+       فانزاح يوم الدفع الشهري. نصف الأثر لكل صفّ ونطلب قرارًا صريحًا قبل الحفظ. */
+    parsed.forEach((r) => {
+      if (r._error) return;
+      const g = firstDueGap(r.contract_start, r.first_due);
+      if (!g) return;
+      r._due = `أول استحقاق ${r.first_due} — ${g.days > 0 ? `بعد ${g.days} يومًا` : `قبل ${-g.days} يومًا`} من البداية`
+        + (g.dueDay !== g.startDay ? `، يوم الدفع ${g.dueDay} بدل ${g.startDay}` : "");
+    });
     /**
      * تكرار داخل الملف نفسه: 160 صفًّا مكتوبة يدويًّا فيها عادةً وحدة مكرّرة.
      * نعلّمها قبل الحفظ لا بعده — الاكتشاف بعد الرفع يعني بحثًا يدويًّا في اللوحة.
@@ -288,7 +301,7 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
       const k = `${(r.prop_name || "").trim()}|${(r.unit || "").trim()}`;
       if ((seenInFile.get(k) || 0) > 1) r._error = `رقم الوحدة «${r.unit}» مكرّر في الملف`;
     });
-    setRows(parsed); setFutureOk(false);   // ملف جديد = سؤال جديد
+    setRows(parsed); setFutureOk(false); setDueChoice(null);   // ملف جديد = سؤال جديد
   }
 
   async function importRows() {
@@ -329,7 +342,7 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
         // يوم المرساة كما يفعل الإدخال اليدوي: يُشتق من البداية عند غيابه،
         // لكن حفظه صراحةً يبقي المواعيد ثابتة لو عُدّل تاريخ البداية لاحقًا
         /* من «أول استحقاق» إن وُجد في الملف، وإلا من البداية — كالإدخال اليدوي */
-        billing_anchor_day: r.first_due ? parseDate(r.first_due).getDate()
+        billing_anchor_day: (r.first_due && !(r._due && dueChoice === "drop")) ? parseDate(r.first_due).getDate()
           : r.contract_start ? parseDate(r.contract_start).getDate() : null,
         /* كل ما يُقرأ من الملف يُحفظ. كانت الحمولة 11 حقلًا فقط، فيضيع ما يعرضه
            الرفع في المراجعة: العقد الهجري يُحفظ ميلاديًّا (تنحرف أقساطه 11 يومًا
@@ -338,7 +351,7 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
         calendar: r.calendar === "hijri" ? "hijri" : "gregorian",
         carried_debt: r.carried_debt && r.carried_debt > 0 ? r.carried_debt : 0,
         ...(r.carried_debt && r.carried_debt > 0 ? { carried_debt_note: "رصيد سابق من ملف الرفع" } : {}),
-        first_due: r.first_due || null,
+        first_due: (r._due && dueChoice === "drop") ? null : (r.first_due || null),
         unit_type: r.unit_type || null, vat_mode: r.vat_mode || null,
         contract_no: r.contract_no || null, elec_account: r.elec_account || null, water_account: r.water_account || null,
         rooms: r.rooms ?? null, baths: r.baths ?? null, acs: r.acs ?? null,
@@ -381,6 +394,7 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
   const validCount = rows.filter((r) => !r._error).length;
   const errorCount = rows.length - validCount;
   const warnCount = rows.filter((r) => !r._error && r._warn).length;
+  const dueCount = rows.filter((r) => !r._error && r._due).length;
 
   return (
     <div className="max-w-4xl mx-auto">
@@ -464,8 +478,8 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
                     {warnCount > 0 && <> · <span className="text-[#8a5a11] font-semibold">{warnCount} بدايتها بعد اليوم — تحقّق منها</span></>}
                   </div>
                 </div>
-                <button onClick={importRows} disabled={busy || !validCount || (warnCount > 0 && !futureOk)} className="btn btn-gold text-sm disabled:opacity-40"
-                  title={warnCount > 0 && !futureOk ? "قرّر أولًا في الصفوف الصفراء أدناه" : undefined}>
+                <button onClick={importRows} disabled={busy || !validCount || (warnCount > 0 && !futureOk) || (dueCount > 0 && !dueChoice)} className="btn btn-gold text-sm disabled:opacity-40"
+                  title={(warnCount > 0 && !futureOk) || (dueCount > 0 && !dueChoice) ? "قرّر أولًا في التنبيهات أدناه" : undefined}>
                   {busy ? (progress ? `جارٍ الحفظ… ${progress}` : "جارٍ الحفظ…") : `حفظ ${validCount} وحدة`}
                 </button>
               </div>
@@ -477,6 +491,20 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
                   <label className="flex items-center gap-2 mt-2 cursor-pointer min-h-[44px]">
                     <input type="checkbox" className="w-4 h-4" checked={futureOk} onChange={(e) => setFutureOk(e.target.checked)} />
                     <span>نعم، هذه {warnCount === 1 ? "الوحدة عقد جديد" : `الـ${warnCount} عقود جديدة`} لم يسكن {warnCount === 1 ? "مستأجره" : "مستأجروها"} بعد</span>
+                  </label>
+                </div>
+              )}
+              {dueCount > 0 && (
+                <div className="mx-4 mb-3 rounded-xl border border-[#F2D49B] bg-[#FFF6E5] p-3 text-[12.5px] leading-relaxed">
+                  <b className="text-deep">{dueCount} {dueCount === 1 ? "وحدة" : "وحدات"} فيها «أول استحقاق» يختلف عن بداية العقد</b> (مُعلَّمة في الجدول).
+                  <div className="mt-1">«أول استحقاق» يغيّر يوم الدفع الشهري كله. أغلب المستأجرين يدفعون يوم بداية العقد — تأكّد قبل الحفظ:</div>
+                  <label className="flex items-center gap-2 mt-2 cursor-pointer min-h-[44px]">
+                    <input type="radio" name="dueChoice" className="w-4 h-4" checked={dueChoice === "drop"} onChange={() => setDueChoice("drop")} />
+                    <span>يدفعون يوم <b>بداية العقد</b> — تجاهل عمود «أول استحقاق» لهذه الوحدات</span>
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer min-h-[44px]">
+                    <input type="radio" name="dueChoice" className="w-4 h-4" checked={dueChoice === "keep"} onChange={() => setDueChoice("keep")} />
+                    <span>أول دفعة فعلًا في التاريخ المكتوب — احفظه كما هو</span>
                   </label>
                 </div>
               )}
@@ -499,7 +527,8 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
                         <td className="p-2">{r.unit || "—"}</td>
                         <td className="p-2">{sar(r.rent_amount)}</td>
                         <td className="p-2">{FREQUENCIES.find((f) => f.value === r.payment_frequency)?.label}</td>
-                        <td className="p-2">{r.contract_start || "—"}{r.contract_start && <div className="text-[11px] text-muted">{hijriShort(r.contract_start)}</div>}</td>
+                        <td className="p-2">{r.contract_start || "—"}{r.contract_start && <div className="text-[11px] text-muted">{hijriShort(r.contract_start)}</div>}
+                          {!r._error && r._due && <div className={`text-[11px] font-semibold ${dueChoice === "drop" ? "text-muted line-through" : "text-[#8a5a11]"}`}>⚠ {r._due}</div>}</td>
                         <td className="p-2">{r._error
                           ? <span className="text-late font-semibold">{r._error}</span>
                           : r._warn

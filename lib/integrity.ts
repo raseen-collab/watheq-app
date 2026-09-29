@@ -10,7 +10,7 @@
 // دوال نقية بلا شبكة: تُستدعى من الصفحة وتُختبر مباشرة.
 // ============================================================
 
-import { contractState, isVacant, unitVatApplies, splitVat, type Frequency } from "./contracts";
+import { contractState, isVacant, unitVatApplies, splitVat, firstDueGap, type Frequency } from "./contracts";
 import { termRentPaidOf } from "./documents";
 
 export type Severity = "critical" | "warn" | "info";
@@ -182,6 +182,15 @@ export function auditOffice(properties: P[], payments: any[] = [], expenses: any
       if (!vac && t.first_due && t.contract_start && String(t.first_due) < String(t.contract_start)) {
         push({ severity: "warn", title: "أول استحقاق قبل بداية العقد", ...base,
           why: "جدول الدفعات سيبدأ قبل سريان العقد.", fix: "امسح «أول استحقاق» أو صحّحه." });
+      }
+      /* (30 سبتمبر 2026) أول استحقاق بعد البداية بيوم يختلف أو بأشهر: وُجد عند مكتبين
+         لمستأجرين يدفعون يوم بداية العقد (١٢←٢٣، ٣ أغسطس ← ٢٥ يونيو التالي). */
+      const dg = !vac ? firstDueGap(t.contract_start, t.first_due) : null;
+      if (dg && dg.days > 0 && (dg.months >= 2 || dg.dueDay !== dg.startDay)) {
+        push({ severity: dg.months >= 2 ? "warn" : "info",
+          title: dg.months >= 2 ? `أول استحقاق بعد ${dg.months} شهرًا من بداية العقد` : `يوم الدفع ${dg.dueDay} لا يوم بداية العقد ${dg.startDay}`, ...base,
+          why: "«أول استحقاق» يحدّد يوم الدفع الشهري وبداية الجدول. إن كان المستأجر يدفع يوم بداية العقد فالمتأخرات والتنبيهات تُحسب على يوم خاطئ.",
+          fix: "تأكّد من المستأجر: إن كان يدفع يوم بداية العقد فامسح «أول استحقاق» من «تعديل البيانات»." });
       }
       /* شاغرة سُجّلت ابتداءً (بلا عقد سابق) لا تحتاج تاريخ إخلاء —
          لم يُخلِها أحد. الشكوى تخصّ من كان لها عقد وأُخليت. */
