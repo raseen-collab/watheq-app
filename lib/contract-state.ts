@@ -1,4 +1,4 @@
-import { isVacant } from "./contracts";
+import { isVacant, withVat } from "./contracts";
 /** ============================================================
  *  وثيق — تسميات وألوان حالات العقد (طبقة عرض فقط)
  *  الحساب الفعلي يتم في lib/contracts.ts (نفس مصدر لوحة التحكّم).
@@ -84,6 +84,8 @@ export function unitStatusLabel(key: UnitStatus, st: { daysToEnd?: number | null
 export type ArrearsRow = {
   t: { litigation?: boolean | null } | any;
   st: { vacant?: boolean; status?: string; amountDue?: number; legacyArrears?: number };
+  /** العقار — إن مُرِّر تُحسب المبالغ شاملة الضريبة (وضع «مضافة فوق الإيجار») */
+  p?: any;
 };
 
 export type Arrears = {
@@ -105,15 +107,15 @@ export type Arrears = {
 export function arrearsOf(rows: ArrearsRow[]): Arrears {
   const a: Arrears = { current: 0, currentCount: 0, litigation: 0, litigationCount: 0,
     legacy: 0, legacyCount: 0, carried: 0, carriedCount: 0, total: 0, totalCount: 0, grand: 0 };
-  for (const { t, st } of rows) {
-    const owed = Number(st?.amountDue) || 0;
+  for (const { t, st, p } of rows) {
+    const owed = withVat(Number(st?.amountDue) || 0, t, p);
     /* الدين المرحَّل محمول على الوحدة لا على المدة، فيُجمع لكل الوحدات
        (مشغولة أو شاغرة أو تحت تنفيذ) — وإلا اختفى من كل مؤشر وبقي
        ظاهرًا في كشف العقار وحده، فيختلف رقمان في مستندين للمالك نفسه. */
     const carried = Number((st as any)?.carriedDebt) || 0;
     if (carried > 0) { a.carried += carried; a.carriedCount++; }
     if (st?.vacant || isVacant(t)) {
-      const leg = Number(st?.legacyArrears) || 0;
+      const leg = withVat(Number(st?.legacyArrears) || 0, t, p);
       if (leg > 0) { a.legacy += leg; a.legacyCount++; }
       continue;
     }

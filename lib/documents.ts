@@ -444,7 +444,7 @@ function unitsRegisterHTML(p: any, tenants: any[], g: any, issuer: any = {}): st
       const vd = vacancyDays(t.move_out_date);
       body += KV("شاغرة منذ", vd !== null ? `${vd} يومًا${t.move_out_date ? ` (${arDate(t.move_out_date)})` : ""}` : "—");
       if (Number(t.rent_amount) > 0) body += KV("آخر إيجار", `${sar(inst)} ${freqLabel(t.payment_frequency)} = <b>${sar(annual)}</b> سنويًّا`);
-      const owed = (st.legacyArrears || 0) + (Number(t.carried_debt) || 0);
+      const owed = dueIncl({ amountDue: st.legacyArrears || 0 }, vatOf(p, t)) + (Number(t.carried_debt) || 0);
       if (owed > 0) body += KV("على المستأجر السابق", `<b style="color:#a5322c">${sar(owed)}</b>`);
     } else {
       const sched = buildSchedule(t as any);
@@ -991,7 +991,7 @@ export function propertyStatementHTML(
   /* رقم واحد مجمَّع كان يخالف تقرير المالك لنفس العقار بلا تفسير
      (40,700 هنا مقابل 36,200 هناك). نعرضه مفصَّلًا بمصدر واحد. */
   const stArr = arrearsOf((p.tenants || []).map((t: any) =>
-    ({ t, st: contractState(t, winOf(p, issuer)) })));
+    ({ t, st: contractState(t, winOf(p, issuer)), p })));
   const arrearsTotal = stArr.grand;
   const collectedInPeriod = (payments || []).reduce((a, x) => a + (Number(x.amount) || 0), 0);
   const soonCount = rows.filter((r) => r.st.status === "soon").length;
@@ -1982,7 +1982,7 @@ export function ownerReportHTML(
   /* التقرير يعرض الإجمالي (حق المالك أن يراه كاملًا)، لكن اللوحة تعرض
      «المتأخر» بلا وحدات التنفيذ. بلا هذا التفصيل يرى المكتب رقمين
      مختلفين ولا يعرف أيهما الصحيح — فنُظهر الشقّين ومجموعهما. */
-  const arr = arrearsOf(rows as any[]);
+  const arr = arrearsOf(rows.map((r) => ({ ...r, p })) as any[]);
   const collected = payments.reduce((s, x) => s + (Number(x.amount) || 0), 0);
   /* المالك يرى ما استُلم فعلًا: العكس يُسقَط مع دفعته، والملاحظات الداخلية تُحذف */
   const shownPays = ownerVisiblePayments(payments as any[]);
@@ -1996,8 +1996,8 @@ export function ownerReportHTML(
   /* المالك يجمع عمود «المتأخر» فيخرج رقمًا يخالف بطاقة «المتأخرات القائمة»:
      البطاقة تستبعد الشاغرة والجدول يعرضها. صف الإجمالي يفصلهما صراحةً. */
   const stRows = (p.tenants || []).map((t: any) => ({ t, cs: contractState(t, winOf(p, issuer)) }));
-  const activeOwed = stRows.reduce((a, r) => a + (r.cs.vacant ? 0 : r.cs.amountDue), 0);
-  const legacyOwed = stRows.reduce((a, r) => a + (r.cs.vacant ? r.cs.legacyArrears : 0), 0);
+  const activeOwed = stRows.reduce((a, r) => a + (r.cs.vacant ? 0 : dueIncl(r.cs, vatOf(p, r.t))), 0);
+  const legacyOwed = stRows.reduce((a, r) => a + (r.cs.vacant ? dueIncl({ amountDue: r.cs.legacyArrears }, vatOf(p, r.t)) : 0), 0);
   const activeLate = stRows.filter((r) => !r.cs.vacant && r.cs.amountDue > 0).length;
   const vacantOwing = stRows.filter((r) => r.cs.vacant && r.cs.legacyArrears > 0).length;
   /* «غير شاملة»: المقبوض فعلًا = المسجَّل + الضريبة التي دُفعت فوقه */

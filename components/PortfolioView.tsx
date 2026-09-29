@@ -13,7 +13,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { fetchAllRows } from "@/lib/fetch-all";
 import { createClient } from "@/lib/supabase-client";
-import { contractState, isVacant, splitVat, unitVatApplies, type Frequency } from "@/lib/contracts";
+import { contractState, isVacant, splitVat, unitVatApplies, dueWithVat, type Frequency } from "@/lib/contracts";
 import { annualRentRoll } from "@/lib/income";
 import { sar, waLink, today, daysAr } from "@/lib/utils";
 import { arDate } from "@/lib/documents";
@@ -105,11 +105,11 @@ export default function PortfolioView({ properties, windows, compliance, orgName
 
   const totals = useMemo(() => {
     const T = { units: 0, vacant: 0, late: 0, overdue: 0, due: 0, soon: 0, expiring: 0, partial: 0, monthly: 0, litigation: 0 };
-    rows.forEach(({ t, st }) => {
+    rows.forEach(({ p, t, st }) => {
       T.units++;
       if (isVacant(t)) { T.vacant++; return; }
       if (t.litigation) T.litigation++;
-      else if (st.status === "late") { st.hasPartial ? T.partial++ : T.late++; T.overdue += st.amountDue; }
+      else if (st.status === "late") { st.hasPartial ? T.partial++ : T.late++; T.overdue += dueWithVat(st, t, p); }
       else if (st.status === "soon") { st.soonTier === "near" ? T.soon++ : T.due++; }
       if (st.expiringSoon) T.expiring++;
       T.monthly += (Number(t.rent_amount) || 0) * (PER_MONTH[t.payment_frequency || "monthly"] || 1);
@@ -124,7 +124,7 @@ export default function PortfolioView({ properties, windows, compliance, orgName
     [t.name, t.unit, t.phone, t.national_id, t.contract_no, t.elec_account, t.water_account, p.name]
       .some((v) => v && String(v).toLowerCase().includes(needle))) : [];
 
-  const late = rows.filter(({ t, st }) => !isVacant(t) && !t.litigation && st.status === "late").sort((a, b) => b.st.amountDue - a.st.amountDue);
+  const late = rows.filter(({ t, st }) => !isVacant(t) && !t.litigation && st.status === "late").sort((a, b) => dueWithVat(b.st, b.t, b.p) - dueWithVat(a.st, a.t, a.p));
   const due = rows.filter(({ t, st }) => !isVacant(t) && st.status === "soon" && st.soonTier !== "near").sort((a, b) => (a.st.daysToNextDue ?? 0) - (b.st.daysToNextDue ?? 0));
   const expiring = rows.filter(({ t, st }) => !isVacant(t) && st.expiringSoon).sort((a, b) => (a.st.daysToEnd ?? 0) - (b.st.daysToEnd ?? 0));
   const vacant = rows.filter(({ t }) => isVacant(t));
@@ -137,7 +137,7 @@ export default function PortfolioView({ properties, windows, compliance, orgName
       late: occ.filter((r) => r.st.status === "late" && !r.t.litigation).length,
       /* نفس قاعدة arrearsOf التي تحسب بها إجماليات الأعلى — كان العمود
          يضمّ وحدات التنفيذ فيخالف الإجمالي فوقه في الصفحة نفسها */
-      overdue: occ.reduce((a, r) => a + (!r.t.litigation && r.st.status === "late" ? r.st.amountDue : 0), 0),
+      overdue: occ.reduce((a, r) => a + (!r.t.litigation && r.st.status === "late" ? dueWithVat(r.st, r.t, r.p) : 0), 0),
       due: occ.filter((r) => r.st.status === "soon").length,
       expiring: occ.filter((r) => r.st.expiringSoon).length,
       monthly: occ.reduce((a, r) => a + (Number(r.t.rent_amount) || 0) * (PER_MONTH[r.t.payment_frequency || "monthly"] || 1), 0),
@@ -299,7 +299,7 @@ export default function PortfolioView({ properties, windows, compliance, orgName
         <div className="font-display font-bold text-goldSoft mb-3">يحتاج إجراء — من كل العقارات</div>
         {!late.length && !due.length && !expiring.length && !vacant.length ? <p className="text-sm opacity-80">لا شيء عاجل في المحفظة كلها.</p> : (
           <div className="grid lg:grid-cols-2 gap-4">
-            {late.length > 0 && <div><div className="text-xs opacity-80 mb-1.5">🔴 متأخرون ({late.length}) — {sar(totals.overdue)} ريال</div><div className="space-y-1.5">{cut("late", late).map(({ p, t, st }) => <Item key={t.id} p={p} t={t} st={st} tone="late" note={`${st.statusLabel} · ${sar(st.amountDue)} ريال`} />)}<More k="late" n={late.length} /></div></div>}
+            {late.length > 0 && <div><div className="text-xs opacity-80 mb-1.5">🔴 متأخرون ({late.length}) — {sar(totals.overdue)} ريال</div><div className="space-y-1.5">{cut("late", late).map(({ p, t, st }) => <Item key={t.id} p={p} t={t} st={st} tone="late" note={`${st.statusLabel} · ${sar(dueWithVat(st, t, p))} ريال`} />)}<More k="late" n={late.length} /></div></div>}
             {due.length > 0 && <div><div className="text-xs opacity-80 mb-1.5">🟠 مستحق خلال {daysAr(windows.imminent)} ({due.length})</div><div className="space-y-1.5">{cut("due", due).map(({ p, t, st }) => <Item key={t.id} p={p} t={t} st={st} tone="due" note={`${st.statusLabel} · ${st.nextDueDate} (${hijriShort(st.nextDueDate || "")})`} />)}<More k="due" n={due.length} /></div></div>}
             {expiring.length > 0 && <div><div className="text-xs opacity-80 mb-1.5">⏳ عقود تنتهي خلال {daysAr(windows.expiring)} ({expiring.length})</div><div className="space-y-1.5">{cut("exp", expiring).map(({ p, t, st }) => <Item key={t.id} p={p} t={t} st={st} tone="exp" note={`ينتهي ${st.endDate} (بعد ${daysAr(st.daysToEnd)})`} />)}<More k="exp" n={expiring.length} /></div></div>}
             {vacant.length > 0 && <div><div className="text-xs opacity-80 mb-1.5">⚪ شاغرة ({vacant.length})</div><div className="space-y-1.5">{cut("vac", vacant).map(({ p, t, st }) => <Item key={t.id} p={p} t={t} st={st} note={t.move_out_date ? `شاغرة منذ ${t.move_out_date}` : "شاغرة"} />)}<More k="vac" n={vacant.length} /></div></div>}

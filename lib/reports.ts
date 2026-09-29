@@ -6,7 +6,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { statusWindows } from "./contract-state";
-import { contractState, renewContract as renewFields, freqShort, applyPayment, defaultTermPeriods, splitVat, unitVatApplies, type Frequency } from "@/lib/contracts";
+import { contractState, renewContract as renewFields, freqShort, applyPayment, defaultTermPeriods, splitVat, unitVatApplies, withVat, type Frequency } from "@/lib/contracts";
 import { today as riyadhToday, waNumber } from "@/lib/utils";
 import { annualRentRoll } from "@/lib/income";
 import { fetchAllRows } from "@/lib/fetch-all";
@@ -77,6 +77,7 @@ async function detectTrack(db: DB, profile: any): Promise<Track> {
 
 type Enriched = {
   t: any;                 // صفّ المستأجر
+  p?: any;                // العقار — لحساب المتأخر شاملًا الضريبة (dueOf)
   propId: string;
   propName: string;
   st: ReturnType<typeof contractState>;
@@ -93,11 +94,15 @@ async function enrichedTenants(db: DB, profile: any): Promise<{ properties: any[
       /* العتبات من lib/contract-state: النسخة السابقة هنا أغفلت expiringDays
          فاختلف «ينتهي قريبًا» بين التقارير والشاشة عند من غيّر الإعداد */
       const st = contractState(t, statusWindows(p, profile));
-      rows.push({ t, propId: p.id, propName: p.name || "عقار", st, key: deriveState(st, t) });
+      rows.push({ t, p, propId: p.id, propName: p.name || "عقار", st, key: deriveState(st, t) });
     });
   });
   return { properties, rows };
 }
+
+/** المتأخر كما يُطالَب به (شاملًا الضريبة في «مضافة فوق الإيجار») — للعرض فقط.
+ *  التسجيل (markPaid) يبقى بوحدة الإيجار المخزَّن لأنها وحدة سجل الدفعات. */
+const dueOf = (r: Enriched) => withVat(r.st.amountDue || 0, r.t, r.p);
 
 const rowLabel = (r: Enriched) => {
   const unit = r.t.unit ? `وحدة ${r.t.unit}` : "";
@@ -163,11 +168,11 @@ export async function lateReport(db: DB, profile: any): Promise<string> {
     if (track === "properties") {
       const { rows } = await enrichedTenants(db, profile);
       const late = rows.filter((r) => r.key === "arrears")
-        .sort((a, b) => (b.st.amountDue || 0) - (a.st.amountDue || 0));
+        .sort((a, b) => dueOf(b) - dueOf(a));
       if (!late.length) return tgClip(`⚠️ <b>المتأخرات</b>\n\nلا توجد متأخرات — ممتاز 👏`);
-      const total = late.reduce((s, r) => s + (r.st.amountDue || 0), 0);
+      const total = late.reduce((s, r) => s + dueOf(r), 0);
       const lines = late.map((r) =>
-        `• <b>${esc(rowLabel(r))}</b> — ${esc(r.t.name)} — متأخر <b>${arPlural(r.st.unpaid, "دفعة واحدة", "دفعتان", "دفعات", "دفعة")}</b> — <b>${sar(r.st.amountDue)}</b> ريال`
+        `• <b>${esc(rowLabel(r))}</b> — ${esc(r.t.name)} — متأخر <b>${arPlural(r.st.unpaid, "دفعة واحدة", "دفعتان", "دفعات", "دفعة")}</b> — <b>${sar(dueOf(r))}</b> ريال`
       ).join("\n");
       return tgClip(`⚠️ <b>المتأخرات</b>\n\n${capList(lines.split("\n"), late.length, "عقد")}\n\n— إجمالي المتأخر: <b>${sar(total)}</b> ريال · ${late.length} عقد`);
     }
@@ -199,7 +204,7 @@ export async function summaryReport(db: DB, profile: any): Promise<string> {
       const rr = annualRentRoll(rows.map((r) => r.t));
       const late = rows.filter((r) => r.key === "arrears");
       const soon = rows.filter((r) => r.key === "due_soon");
-      const overdue = late.reduce((s, r) => s + (r.st.amountDue || 0), 0);
+      const overdue = late.reduce((s, r) => s + dueOf(r), 0);
       /**
        * الدين المرحَّل لا يظهر في /late: المستأجر الحالي الذي سدّد شهره
        * ليس متأخرًا، والشاغرة لا تُدرج أصلًا — فيبقى مالٌ مستحقّ لا يعرف
@@ -300,7 +305,7 @@ export async function statusReport(db: DB, profile: any): Promise<string> {
     const flagged = rows.filter((r) => r.key !== "active")
       .sort((a, b) => STATE_ORDER.indexOf(a.key) - STATE_ORDER.indexOf(b.key)).slice(0, 8);
     const lines = flagged.map((r) => {
-      const extra = r.key === "arrears" ? ` — ${sar(r.st.amountDue)} ريال`
+      const extra = r.key === "arrears" ? ` — ${sar(dueOf(r))} ريال`
         : r.key === "expiring" && r.st.daysToEnd != null ? ` — ينتهي خلال ${r.st.daysToEnd} يوم`
         : (r.key === "due_soon" && r.st.nextDueDate) ? ` — ${arDate(r.st.nextDueDate)}` : "";
       return `${stateMeta(r.key).dot} <b>${esc(rowLabel(r))}</b> — ${esc(r.t.name)}${extra}`;

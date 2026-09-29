@@ -734,6 +734,25 @@ export function unitVatApplies(
   return isCommercial(p?.property_type);
 }
 
+/**
+ * (مراجعة 29 سبتمبر 2026) مصدر واحد لـ«ما يُطالَب به فعلًا» في شاشات المكتب.
+ * amountDue بوحدة الإيجار المخزَّن: في «شاملة» فيه الضريبة أصلًا فلا يتغيّر شيء،
+ * وفي «مضافة فوق الإيجار» هو قبل الضريبة — فكانت اللوحة وتليجرام والملخّص اليومي
+ * تعرض 30,000 لمعرض المطالَب فيه 34,500، والكشف المطبوع يقول 34,500.
+ * بلا عقار (p) يُعاد المبلغ كما هو.
+ */
+export function unitVat(t: any, p: any): VatSettings {
+  return { enabled: !!p && unitVatApplies(t || {}, p), rate: Number(p?.vat_rate) || 15, inclusive: p?.vat_inclusive !== false };
+}
+export function withVat(amount: number, t: any, p: any): number {
+  const a = Number(amount) || 0;
+  if (!p) return a;
+  const v = unitVat(t, p);
+  return v.enabled ? splitVat(a, v).total : a;
+}
+export const dueWithVat = (st: { amountDue?: number | null } | null | undefined, t: any, p: any) => withVat(Number(st?.amountDue) || 0, t, p);
+export const rentWithVat = (t: any, p: any) => withVat(Number(t?.rent_amount) || 0, t, p);
+
 // ============================================================
 // دورة الإخلاء: مخالصة مبلغ التأمين
 // ============================================================

@@ -13,7 +13,7 @@ import { fetchAllRows } from "@/lib/fetch-all";
 import { hijriShort, hijriText, parseHijriInput } from "@/lib/hijri";
 import { sar, waLink, today, WATHEQ_WA, openExternal, daysAr } from "@/lib/utils";
 import { contractState, expectedNext12, buildSchedule, FREQUENCIES, freqLabel, freqShort, derivedEndDate, renewContract, needsRenewal, applyPayment, splitVat, isCommercial, isVacant, settleDeposit, unitVatApplies,
-  vacancyDays, TURNOVER_CHECKLIST, defaultTermPeriods, parseDate, type Frequency } from "@/lib/contracts";
+  vacancyDays, TURNOVER_CHECKLIST, defaultTermPeriods, parseDate, dueWithVat, rentWithVat, withVat, type Frequency } from "@/lib/contracts";
 import { PROPERTY_TYPES, typeLabel, unitLabel, typeIcon } from "@/lib/domain";
 import { statementHTML, invoiceHTML, propertyStatementHTML, moveOutSettlementHTML, quotationHTML, ownerReportHTML, DEFAULT_CHARGES, openDoc, type ChargeRow, type OwnerReportPayment } from "@/lib/documents";
 import OwnerStatementModal from "@/components/OwnerStatementModal";
@@ -114,23 +114,26 @@ function renewalNote(st: ReturnType<typeof contractState>): string {
   return "لا دفعات قادمة في العقد";
 }
 
-function UpcomingLine({ st, rent, imminentDays }: {
+function UpcomingLine({ st, rent, imminentDays, due: dueIn }: {
   st: ReturnType<typeof contractState>; rent: number; imminentDays: number;
+  /** المتأخر شاملًا الضريبة (dueWithVat) — بدونه يُستعمل amountDue كما هو */
+  due?: number;
 }) {
   if (!st.upcomingDate) return null;
+  const due = dueIn ?? st.amountDue;
   const d = st.daysToUpcoming ?? 0;
   const soon = d <= imminentDays;
   return (
     <span className="block font-normal text-muted mt-0.5">
       القادمة {rent > 0 ? <b className="text-ink">{sar(rent)} ريال</b> : null} · {st.upcomingDate}
       {" · "}{d === 0 ? "اليوم" : `بعد ${d} ${d === 1 ? "يوم" : d === 2 ? "يومين" : d <= 10 ? "أيام" : "يومًا"}`}
-      {soon && rent > 0 && st.amountDue > 0 && (
+      {soon && rent > 0 && due > 0 && (
         /* المجموع وحده يُخفي أن جزءًا منه متأخر أصلًا — والمكتب يحتاج أن
            يقول للمستأجر «منها 500 متأخرة من الشهر الماضي». */
         <span className="block text-[#8a5a11] font-semibold">
-          اجمعها معًا: {sar(st.amountDue + rent)} ريال
+          اجمعها معًا: {sar(due + rent)} ريال
           <span className="block font-normal">
-            <span className="text-late font-semibold">{sar(st.amountDue)} متأخرة</span> + {sar(rent)} القادمة
+            <span className="text-late font-semibold">{sar(due)} متأخرة</span> + {sar(rent)} القادمة
           </span>
         </span>
       )}
@@ -1128,7 +1131,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       return [t.name, t.unit || "", t.phone || "", t.national_id || "",
         Number(t.rent_amount) || 0, freqShort(t.payment_frequency),
         t.contract_start || "", st.endDate || "", unitStatusLabel(key as any, st),
-        key === "late" || key === "partial" ? st.amountDue : 0, st.nextDueDate || ""]
+        key === "late" || key === "partial" ? dueWithVat(st, t, active) : 0, st.nextDueDate || ""]
         .map((v) => `"${String(v ?? "").replace(/"/g, '""')}"`).join(",");
     });
     const csv = "\uFEFF" + [head.join(","), ...lines].join("\r\n");
@@ -1314,11 +1317,11 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       acc.units++;
       /* المُخلاة: لا تدخل في الدخل الشهري (لا ساكن يدفع) ولا في عدّاد المتأخرين؛
          ودينها القديم يُجمع على حدة. كانت تُعدّ كأنها مؤجّرة فيرتفع الدخل زورًا. */
-      if (st.vacant) { acc.vacant++; acc.legacy += st.legacyArrears; return; }
+      if (st.vacant) { acc.vacant++; acc.legacy += withVat(st.legacyArrears, t, prop); return; }
       /* التنفيذ القضائي خارج «المتأخر» (قاعدة arrearsOf) ويُعرض مستقلًّا —
          كان الشريط يجمعه فيخالف بطاقة العقار أسفله على الصفحة نفسها */
-      if (t.litigation) { if (st.amountDue > 0) { acc.litigation++; acc.litigationOwed += st.amountDue; } }
-      else if (st.status === "late") { acc.late++; acc.overdue += st.amountDue; }
+      if (t.litigation) { if (st.amountDue > 0) { acc.litigation++; acc.litigationOwed += dueWithVat(st, t, prop); } }
+      else if (st.status === "late") { acc.late++; acc.overdue += dueWithVat(st, t, prop); }
       if (st.incomplete) acc.incomplete++;
       if (st.status === "soon") { if (st.soonTier === "near") acc.soon++; else acc.due++; }
       if (st.expiringSoon) acc.expiring++;
@@ -1423,7 +1426,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
     {} as Record<RowKey, number>);
   const lateRows = allRows.filter((r) => r.key === "late" || r.key === "partial");
   /* مصدر واحد لكل أرقام المتأخر على هذه الصفحة وفي المستندات */
-  const arrears = arrearsOf(allRows as any[]);
+  const arrears = arrearsOf(allRows.map((r) => ({ ...r, p })) as any[]);
   const lateCount = arrears.currentCount;
   // الدخل الشهري المتوقع من الوحدات المؤجّرة فقط — الشاغرة كانت تُحسب فيه كأن فيها ساكنًا
   const overdue = arrears.current;
@@ -1759,7 +1762,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
               const pages = Math.max(1, Math.ceil(sorted.length / PAGE));
               const page = Math.min(tPage, pages - 1);
               const slice = sorted.slice(page * PAGE, page * PAGE + PAGE);
-              const totalDue = rows.reduce((a, r) => a + (r.st.amountDue || 0), 0);
+              const totalDue = rows.reduce((a, r) => a + dueWithVat(r.st, r.t, active), 0);
               /* «أقرب استحقاق» كان أقدم تاريخ غير مسدَّد — فيُعرض تاريخ مضى
                  عليه سنتان أحيانًا. الآن: أقرب دفعة قادمة فعلًا. */
               const nearest = rows.map((r) => r.st.upcomingDate).filter(Boolean).sort()[0];
@@ -1832,7 +1835,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                               : st.nextDueDate && (st.daysToNextDue ?? 0) < 0 ? (<>
                                 <div className="text-late text-xs font-semibold">متأخر منذ {arDate(st.nextDueDate)}</div>
                                 {st.upcomingDate
-                                  ? <div className="text-[11px] text-muted"><UpcomingLine st={st} rent={Number(t.rent_amount) || 0} imminentDays={windowsOf(active).imminentDays} /></div>
+                                  ? <div className="text-[11px] text-muted"><UpcomingLine st={st} rent={rentWithVat(t, active)} due={dueWithVat(st, t, active)} imminentDays={windowsOf(active).imminentDays} /></div>
                                   : st.upcomingDate === null ? <div className="text-[11px] text-muted">{renewalNote(st)}</div> : null}
                               </>)
                               : st.nextDueDate ? (<>
@@ -1843,7 +1846,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                             <td className={`px-3 ${cellY}`}><span className={`inline-block text-[11px] font-semibold px-2.5 py-0.5 rounded-full border ${badge(key)}`}>{key === "ok" && st.fullyPaid ? `✓ مسدَّد ${st.paid}/${t.contract_periods || st.paid}` : label(key, st)}</span></td>
                             <td className={`px-3 ${cellY} text-left tabular-nums whitespace-nowrap ${st.totalOwed > 0 ? "font-bold text-late" : "text-muted"}`}>
                               {st.totalOwed > 0 ? (<>
-                                {sar(st.amountDue)}
+                                {sar(dueWithVat(st, t, active))}
                                 {st.carriedDebt > 0 && <div className="text-[10px] font-normal text-[#9A4B00]">+ {sar(st.carriedDebt)} دين مرحَّل</div>}
                                 {/* الوحدة فارغة والمبلغ على من سكنها قبل الإخلاء — تسميته «المستحق» توهم أن الشاغرة مدينة */}
                                 {key === "vacant" && <div className="text-[10px] font-normal text-muted">على المستأجر السابق</div>}
@@ -1963,7 +1966,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                       <StatusPill k={key} ended={st.daysToEnd !== null && st.daysToEnd < 0} />
                       {(key === "late" || key === "partial") && st.amountDue > 0 && (
                         <span className={`sm:block sm:mt-1 tabular-nums font-bold leading-none ${key === "late" ? "text-late text-lg" : "text-[#9A5B00] text-base"}`}>
-                          {sar(st.amountDue)}<span className="text-[10px] font-normal text-muted"> ريال</span>
+                          {sar(dueWithVat(st, t, active))}<span className="text-[10px] font-normal text-muted"> ريال</span>
                         </span>
                       )}
                     </div>
@@ -1975,18 +1978,18 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                         /* حالة حسن خليل: متبقٍ من دفعة سابقة، والقادمة بعد أيام —
                            كانت البطاقة تذكر المتبقي ولا تذكر متى الدفعة التالية. */
                         : key === "partial" ? <span className="text-[#9A5B00] font-semibold">
-                            متأخر {sar(st.amountDue)} ريال{st.nextDueDate ? <span className="font-normal"> منذ {arDate(st.nextDueDate)}</span> : null}
-                            <span className="block font-normal text-muted">دُفع منها {sar(st.partial)}</span>
-                            <UpcomingLine st={st} rent={Number(t.rent_amount) || 0} imminentDays={windowsOf(active).imminentDays} />
+                            متأخر {sar(dueWithVat(st, t, active))} ريال{st.nextDueDate ? <span className="font-normal"> منذ {arDate(st.nextDueDate)}</span> : null}
+                            <span className="block font-normal text-muted">دُفع منها {sar(withVat(st.partial, t, active))}</span>
+                            <UpcomingLine st={st} rent={rentWithVat(t, active)} due={dueWithVat(st, t, active)} imminentDays={windowsOf(active).imminentDays} />
                           </span>
                         : key === "late" ? <span className="text-late font-semibold">
                             {st.unpaid} {st.unpaid === 1 ? "دفعة" : "دفعات"} متأخرة{st.nextDueDate ? <span className="font-normal"> منذ {arDate(st.nextDueDate)}</span> : null}
-                            <UpcomingLine st={st} rent={Number(t.rent_amount) || 0} imminentDays={windowsOf(active).imminentDays} />
+                            <UpcomingLine st={st} rent={rentWithVat(t, active)} due={dueWithVat(st, t, active)} imminentDays={windowsOf(active).imminentDays} />
                           </span>
                         : key === "due" ? <span className="text-[#9A4B00] font-semibold">
                             {st.statusLabel}
                             {/* «مستحق خلال 4 أيام» بلا مبلغ يجعل المكتب يسأل: كم؟ */}
-                            {Number(t.rent_amount) > 0 && <span> · {sar(Number(t.rent_amount))} ريال</span>}
+                            {Number(t.rent_amount) > 0 && <span> · {sar(rentWithVat(t, active))} ريال</span>}
                             {st.nextDueDate ? <span className="font-normal text-muted"> · {arDate(st.nextDueDate)}</span> : null}
                           </span>
                         : key === "expiring" && st.daysToEnd !== null ? (
@@ -2000,7 +2003,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                         : st.fullyPaid ? <span className="text-[#137a50] font-semibold">✓ سدّد كامل العقد ({st.paid} من {t.contract_periods || st.paid}){st.endDate ? <span className="font-normal text-muted"> · ينتهي {st.endDate}{st.daysToEnd !== null && st.daysToEnd >= 0 ? ` (بعد ${daysAr(st.daysToEnd)})` : ""} — القسط القادم مع التجديد</span> : null}</span>
                         : st.nextDueDate ? <span className="text-muted">
                             القادمة {st.upcomingDate || st.nextDueDate}{` · ${hijriShort(st.upcomingDate || st.nextDueDate || "")}`}
-                            {Number(t.rent_amount) > 0 && <span> · {sar(Number(t.rent_amount))} ريال</span>}
+                            {Number(t.rent_amount) > 0 && <span> · {sar(rentWithVat(t, active))} ريال</span>}
                           </span> : null}
                     </div>
                   </div>
@@ -2152,7 +2155,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
           onClose={() => setModal(null)} onSubmit={(d) => saveProperty(d, active.id)} onDelete={deleteProperty} />
       )}
       {modal?.kind === "tenant" && (
-        <TenantModal open initial={editing} unitWord={ul} error={saveErr} saving={saving} vatEnabled={!!active?.vat_enabled}
+        <TenantModal open initial={editing} unitWord={ul} error={saveErr} saving={saving} vatEnabled={!!active?.vat_enabled} property={active}
           onClose={() => setModal(null)} onSubmit={(d) => saveTenant(d, editing?.id)} />
       )}
 
@@ -2194,7 +2197,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
         vat={active ? { enabled: unitVatApplies(turnover, active), rate: Number(active.vat_rate) || 15, inclusive: active.vat_inclusive !== false } : undefined}
         onSubmit={(d) => saveTurnover(turnover, d)} />}
       {history && <HistoryModal data={history} unitWord={ul} db={db} canEdit={may("undo_actions")} onChanged={() => router.refresh()} onClose={() => setHistory(null)} />}
-      {remindAll && <RemindAllModal rows={lateRows} unitWord={ul} linkOf={remindLink} demo={demo}
+      {remindAll && <RemindAllModal rows={lateRows} unitWord={ul} linkOf={remindLink} demo={demo} dueOf={(r) => dueWithVat(r.st, r.t, active)}
         onClose={() => setRemindAll(false)} />}
       {doc && <DocModal doc={doc} onClose={() => setDoc(null)} />}
     </div>
@@ -2931,8 +2934,10 @@ function PropertyModal({ open, initial, orgName, ownerNames = [], officeSoon = 1
   );
 }
 
-function TenantModal({ open, initial, unitWord, error, saving, onClose, onSubmit, vatEnabled = false }: {
+function TenantModal({ open, initial, unitWord, error, saving, onClose, onSubmit, vatEnabled = false, property = null }: {
   open: boolean; initial?: Tenant; unitWord: string; onClose: () => void; onSubmit: (d: any) => void;
+  /** العقار — ليُعرض المتأخر المستنتَج شاملًا الضريبة في وضع «مضافة فوق الإيجار» */
+  property?: any;
   /** حقل ضريبة الوحدة يظهر فقط لعقار مفعّلة ضريبته — كان يظهر لكل عمارة سكنية */
   vatEnabled?: boolean;
   /** سبب فشل الحفظ — يُعرض بجانب الزر لا في أعلى الصفحة */
@@ -3232,7 +3237,7 @@ function TenantModal({ open, initial, unitWord, error, saving, onClose, onSubmit
             <div className="font-semibold text-deep mb-1.5">استنتاج تلقائي</div>
             <div className="text-muted space-y-1 text-xs leading-relaxed">
               {(preview.daysToNextDue ?? 0) < 0 && preview.amountDue > 0 && (
-                <div>متأخر منذ: <b className="text-late">{arDate(preview.nextDueDate)}</b> · {sar(preview.amountDue)} ريال</div>
+                <div>متأخر منذ: <b className="text-late">{arDate(preview.nextDueDate)}</b> · {sar(withVat(preview.amountDue, d, property))} ريال</div>
               )}
               <div>الدفعة القادمة: <b className="text-ink">{preview.upcomingDate
                 ?? (preview.upcomingDate === null ? "لا دفعات قادمة" : preview.nextDueDate)}</b></div>
@@ -3844,8 +3849,10 @@ function EnforcementModal({ tenant, unitWord, onClose, onSubmit }: {
 }
 
 /** تذكير جماعي — يفتح واتساب لكل متأخر واحدًا تلو الآخر مع تتبّع من أُرسل له */
-function RemindAllModal({ rows, unitWord, linkOf, onClose, demo = false }: {
+function RemindAllModal({ rows, unitWord, linkOf, onClose, demo = false, dueOf = (r) => r.st.amountDue }: {
   rows: Row[]; unitWord: string; linkOf: (t: Tenant) => string; onClose: () => void;
+  /** المتأخر كما في الرسالة نفسها (شاملًا الضريبة) — كانت القائمة تقول 30,000 والرسالة 34,500 */
+  dueOf?: (r: Row) => number;
   /** التجربة: مستأجروها بلا أرقام (عمدًا — لا رقم حقيقي يُراسَل بالخطأ)، فنعرض الرسالة الجاهزة نفسها */
   demo?: boolean;
 }) {
@@ -3866,7 +3873,7 @@ function RemindAllModal({ rows, unitWord, linkOf, onClose, demo = false }: {
               <div className="flex items-center gap-3">
                 <div className="min-w-0 flex-1">
                   <div className="font-semibold truncate text-sm">{t.name}</div>
-                  <div className="text-xs text-muted">{unitWord} {t.unit || "—"} · {st.unpaid} دفعة · {sar(st.amountDue)} ريال</div>
+                  <div className="text-xs text-muted">{unitWord} {t.unit || "—"} · {st.unpaid} دفعة · {sar(dueOf({ t, st } as Row))} ريال</div>
                 </div>
                 <button type="button" className="btn btn-wa text-xs" onClick={() => setShown(shown === t.id ? null : t.id)}>
                   {shown === t.id ? "إخفاء" : "عرض الرسالة"}
@@ -3901,7 +3908,7 @@ function RemindAllModal({ rows, unitWord, linkOf, onClose, demo = false }: {
             <div key={t.id} className={`flex items-center gap-3 rounded-xl border p-3 ${sent[t.id] ? "border-[#B7DFC7] bg-[#F2FAF5]" : "border-line bg-paper"}`}>
               <div className="min-w-0 flex-1">
                 <div className="font-semibold truncate text-sm">{t.name}</div>
-                <div className="text-xs text-muted">{unitWord} {t.unit || "—"} · {st.unpaid} دفعة · {sar(st.amountDue)} ريال</div>
+                <div className="text-xs text-muted">{unitWord} {t.unit || "—"} · {st.unpaid} دفعة · {sar(dueOf({ t, st } as Row))} ريال</div>
               </div>
               {sent[t.id] && <span className="text-xs font-bold text-paid">✓ أُرسل</span>}
               <a href={linkOf(t)} target="_blank" rel="noreferrer" className="btn btn-wa text-xs"

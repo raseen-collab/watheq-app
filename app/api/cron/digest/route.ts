@@ -4,7 +4,7 @@ import * as Sentry from "@sentry/nextjs";
 import { createClient as createAdmin } from "@supabase/supabase-js";
 import { sendTelegram } from "@/lib/telegram";
 import { statusWindows } from "@/lib/contract-state";
-import { contractState } from "@/lib/contracts";
+import { contractState, withVat } from "@/lib/contracts";
 import { unitLabel } from "@/lib/domain";
 import { complianceDigestLines, type ComplianceItem } from "@/lib/compliance";
 import { listingsDigestLines, type Listing } from "@/lib/listings";
@@ -101,23 +101,25 @@ export async function GET(req: Request) {
       for (const t of prop.tenants || []) {
         // فترة السماح نفسها التي تعتمدها اللوحة — وإلا وصلت رسالة «متأخر» لمستأجر لوحته تقول «فترة سماح»
         const st = contractState(t, statusWindows(prop, p));
+        /* المبالغ كما يُطالَب بها — شاملة الضريبة في «مضافة فوق الإيجار» (كاللوحة والكشف) */
+        const owed = withVat(st.amountDue, t, prop), leg = withVat(st.legacyArrears, t, prop);
         /* الوحدة المُخلاة لا تُذكَّر كإيجار متأخر كل صباح — ما عليها دين على من غادر */
         if (st.vacant) {
-          if (st.legacyArrears > 0) legacyList.push(`• ${ul} ${esc(t.unit || "—")} (${esc(prop.name)}) — على المستأجر السابق ${esc(t.name)}: <b>${sar(st.legacyArrears)}</b> ريال`);
+          if (st.legacyArrears > 0) legacyList.push(`• ${ul} ${esc(t.unit || "—")} (${esc(prop.name)}) — على المستأجر السابق ${esc(t.name)}: <b>${sar(leg)}</b> ريال`);
           continue;
         }
         if (t.litigation) {
-          if (st.amountDue > 0) litigationList.push(`• ${esc(t.name)} — ${ul} ${esc(t.unit || "—")} (${esc(prop.name)}) — <b>${sar(st.amountDue)}</b> ريال${t.enforcement_no ? ` — طلب ${esc(String(t.enforcement_no))}` : ""}`);
+          if (st.amountDue > 0) litigationList.push(`• ${esc(t.name)} — ${ul} ${esc(t.unit || "—")} (${esc(prop.name)}) — <b>${sar(owed)}</b> ريال${t.enforcement_no ? ` — طلب ${esc(String(t.enforcement_no))}` : ""}`);
           continue;
         }
         if (st.status === "late") {
-          totalDue += st.amountDue;
-          lateList.push(`• ${esc(t.name)} — ${ul} ${esc(t.unit || "—")} (${esc(prop.name)}) — <b>${sar(st.amountDue)}</b> ريال`);
+          totalDue += owed;
+          lateList.push(`• ${esc(t.name)} — ${ul} ${esc(t.unit || "—")} (${esc(prop.name)}) — <b>${sar(owed)}</b> ريال`);
           /* «جديد اليوم»: أقدم قسط غير مدفوع تجاوز مهلة السماح اليوم تحديدًا */
           if (st.daysToNextDue === -((Number(prop.grace_days) || 0) + 1))
-            newLate.push(`• ${esc(t.name)} — ${ul} ${esc(t.unit || "—")} (${esc(prop.name)}) — <b>${sar(st.amountDue)}</b> ريال`);
+            newLate.push(`• ${esc(t.name)} — ${ul} ${esc(t.unit || "—")} (${esc(prop.name)}) — <b>${sar(owed)}</b> ريال`);
         } else if (st.daysToNextDue !== null && st.daysToNextDue >= 0 && st.daysToNextDue <= within) {
-          dueSoon.push(`• ${esc(t.name)} — ${ul} ${esc(t.unit || "—")} — ${sar(t.rent_amount)} ريال بتاريخ ${arDate(st.nextDueDate)}`);
+          dueSoon.push(`• ${esc(t.name)} — ${ul} ${esc(t.unit || "—")} — ${sar(withVat(Number(t.rent_amount) || 0, t, prop))} ريال بتاريخ ${arDate(st.nextDueDate)}`);
         }
         if (st.expiringSoon) {
           expiring.push(`• ${esc(t.name)} — ${ul} ${esc(t.unit || "—")} — ينتهي خلال ${st.daysToEnd} يومًا (${arDate(st.endDate)})`);
