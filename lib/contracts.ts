@@ -335,7 +335,10 @@ export function contractState(t: {
   const paid = Math.max(0, Number(t.paid_periods) || 0);
   // السداد الجزئي لا يتجاوز قيمة دفعة واحدة
   const partial = Math.min(Math.max(0, Number(t.partial_amount) || 0), rent || Infinity);
-  const today = new Date();
+  /* (مراجعة 29 سبتمبر 2026) كان new Date(): على خادم Vercel (UTC) بين منتصف الليل
+     والثالثة فجرًا بالرياض يكون «اليوم» أمسًا، بينما عدّ الدفعات المستحقة أدناه
+     يستعمل riyadhNow — فتظهر «يستحق اليوم» في تليجرام لدفعة تأخرت يومًا. */
+  const today = riyadhNow();
 
   /**
    * «بيانات ناقصة» تشمل كل ما يمنع حسابًا موثوقًا — لا غياب التاريخ وحده.
@@ -801,6 +804,6 @@ export function vacancyDays(moveOutISO?: string | null): number | null {
   if (!moveOutISO) return null;
   const out = new Date(moveOutISO);
   if (isNaN(out.getTime())) return null;
-  const ms = new Date().setHours(0, 0, 0, 0) - out.setHours(0, 0, 0, 0);
+  const ms = riyadhNow().setHours(0, 0, 0, 0) - out.setHours(0, 0, 0, 0);
   return Math.max(0, Math.round(ms / 86400000));
 }

@@ -17,6 +17,7 @@
 // ============================================================
 
 import { parseDate, isoDate } from "./contracts";
+import { riyadhToday } from "./utils";
 
 export type ComplianceKind = "brokerage" | "ad_license" | "fal_license";
 
@@ -125,7 +126,7 @@ export const ALERT_BEFORE: Record<ComplianceKind, number> = {
 
 /** الحالة الكاملة لبند التزام — دالة نقية تصلح للوحة والبوت والمستندات */
 export function complianceState(it: ComplianceItem, asOf?: Date): ComplianceState {
-  const today = startOfDay(asOf || new Date());
+  const today = startOfDay(asOf || riyadhToday());
   const closed = String(it.status || "active") === "closed";
 
   const isBrokerage = it.kind === "brokerage";
