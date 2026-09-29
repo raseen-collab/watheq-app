@@ -2172,6 +2172,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       {paying && <PaymentModal tenant={paying} unitWord={ul} onClose={() => setPaying(null)}
         onSubmit={(amt, method, note, paidOn, reference) => { recordPayment(paying, amt, method, note, paidOn, reference); setPaying(null); }} />}
       {turnover && <TurnoverModal key={turnover.id} tenant={turnover} unitWord={ul} onClose={() => setTurnover(null)}
+        vat={active ? { enabled: unitVatApplies(turnover, active), rate: Number(active.vat_rate) || 15, inclusive: active.vat_inclusive !== false } : undefined}
         onSubmit={(d) => saveTurnover(turnover, d)} />}
       {history && <HistoryModal data={history} unitWord={ul} db={db} canEdit={may("undo_actions")} onChanged={() => router.refresh()} onClose={() => setHistory(null)} />}
       {remindAll && <RemindAllModal rows={lateRows} unitWord={ul} linkOf={remindLink} demo={demo}
@@ -2306,7 +2307,9 @@ function PaymentModal({ tenant, unitWord, onClose, onSubmit }: {
 }
 
 /** إنهاء العقد والإخلاء — قائمة تحقّق وتسوية تأمين وقراءات عدادات */
-function TurnoverModal({ tenant, unitWord, onClose, onSubmit }: {
+function TurnoverModal({ tenant, unitWord, onClose, onSubmit, vat }: {
+  /** ضريبة الوحدة — المتأخر يُخصم من التأمين كما يُطالَب به، شاملًا الضريبة المضافة */
+  vat?: { enabled: boolean; rate: number; inclusive: boolean };
   tenant: Tenant; unitWord: string; onClose: () => void; onSubmit: (d: any) => void;
 }) {
   const [d, setD] = useState<any>({
@@ -2325,9 +2328,15 @@ function TurnoverModal({ tenant, unitWord, onClose, onSubmit }: {
   );
   const set = (k: string, v: any) => setD({ ...d, [k]: v });
   const st = contractState(tenant as any, {});
+  /* ما يُخصم من التأمين = كل ما على المستأجر (مراجعة 29 سبتمبر 2026): متأخر
+     المدة شاملًا الضريبة المضافة + الدين المرحَّل. كان يُخصم متأخر المدة وحده
+     قبل الضريبة، فمستأجرٌ عليه دين مرحَّل 5,000 وتأمينه 3,000 تخرج مخالصته
+     «يُردّ له 3,000». */
+  const rentOwed = vat?.enabled ? splitVat(st.amountDue, vat).total : st.amountDue;
+  const carriedOwed = Math.max(0, Number((tenant as any).carried_debt) || 0);
   const s = settleDeposit(
     { deposit_amount: Number(d.deposit_amount) || 0, deposit_deductions: Number(d.deposit_deductions) || 0 },
-    st.amountDue
+    Math.round((rentOwed + carriedOwed) * 100) / 100
   );
   const doneCount = list.filter((x) => x.done).length;
 
@@ -2373,7 +2382,8 @@ function TurnoverModal({ tenant, unitWord, onClose, onSubmit }: {
         <div className="font-semibold mb-1.5">تسوية التأمين</div>
         <div className="text-xs leading-relaxed space-y-0.5">
           <div>التأمين: <b className="tabular-nums">{sar(s.deposit)}</b> ريال</div>
-          <div>يُخصم إيجار متأخر: <b className="tabular-nums">{sar(s.outstanding)}</b> ريال</div>
+          <div>يُخصم إيجار متأخر{vat?.enabled ? " (شامل الضريبة)" : ""}: <b className="tabular-nums">{sar(rentOwed)}</b> ريال</div>
+          {carriedOwed > 0 && <div>ويُخصم دين مرحَّل من مدة سابقة: <b className="tabular-nums">{sar(carriedOwed)}</b> ريال</div>}
           <div>يُخصم تلفيات: <b className="tabular-nums">{sar(s.deductions)}</b> ريال</div>
           <div className="pt-1 font-semibold">
             {s.refund > 0

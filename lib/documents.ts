@@ -341,6 +341,16 @@ const vatOf = (p: Property, t?: { unit_type?: string | null; vat_mode?: string |
   rate: Number(p.vat_rate) || 15, inclusive: p.vat_inclusive !== false,
 });
 /**
+ * المتأخر كما يُطالَب به فعلًا — مصدرٌ واحد لكل المستندات (مراجعة 29 سبتمبر 2026).
+ *
+ * amountDue يُحسب من الإيجار المخزَّن. في «شاملة» الإيجار المخزَّن فيه الضريبة،
+ * وفي «مضافة فوق الإيجار» هو قبل الضريبة. فكانت المستندات تطبع 30,000 على
+ * معرضٍ متأخر ثلاث دفعات بـ10,000 والمطالَب به 34,500 — والكشف نفسه يقول في
+ * سطرٍ فوقه «المتأخر (شامل الضريبة) 34,500». لا تغيير في «شاملة» ولا بلا ضريبة.
+ */
+const dueIncl = (st: { amountDue?: number | null }, v: { enabled: boolean; rate: number; inclusive: boolean }) =>
+  v.enabled ? splitVat(Number(st.amountDue) || 0, v).total : (Number(st.amountDue) || 0);
+/**
  * الضريبة في الدفعات المسجَّلة — داخلها أم فوقها.
  *
  * في وضع «شاملة» الدفعة المسجَّلة فيها الضريبة (11,500 = 10,000 + 1,500).
@@ -434,7 +444,7 @@ function unitsRegisterHTML(p: any, tenants: any[], g: any, issuer: any = {}): st
       body += KV("مسدَّد حتى", paidN > 0 ? `دفعة ${arDate(sched[paidN - 1].date)}${hij(sched[paidN - 1].date)} <span style="color:#5C6B67">(${paidN} من ${sched.length})</span>` : "لم تُسدَّد دفعة من هذا العقد");
       /* «القادمة» لتاريخ حلّ أو مضى تُقرأ «لم تحن بعد» — فتُسمّى «مستحقة» */
       if (st.upcomingDate) body += KV(st.upcomingDate <= today() ? "مستحقة" : "القادمة", `${arDate(st.upcomingDate)}${hij(st.upcomingDate)} · ${sar(inst)}`);
-      const due = st.amountDue || 0, car = Number(t.carried_debt) || 0;
+      const due = dueIncl(st, vatOf(p, t)), car = Number(t.carried_debt) || 0;
       body += KV("المتأخر", due + car > 0
         ? `<b style="color:#a5322c">${sar(due)}</b>${car > 0 ? ` <span style="color:#9A4B00">+ ${sar(car)} دين مرحَّل</span>` : ""}`
         /* في فترة السماح: مستحق لم يتأخر بعد — كما تقول اللوحة، لا «لا شيء» وحدها */
@@ -540,6 +550,10 @@ export function statementHTML(t: Tenant, p: Property, issuer: Issuer = {}, payme
   const totalContract = unit.total * rows.length;
   const totalPaid = st.paid * unit.total;
   const dueSplit = splitVat(st.amountDue, v);                 // تفصيل الرصيد المستحق
+  /* الدين المرحَّل من مدة سابقة: كان غائبًا عن الكشف كله، فيستلم المستأجر
+     كشفًا لا يذكر 4,500 عليه. الآن سطرٌ ظاهر، ويدخل الرصيد الإجمالي. */
+  const carried = Math.max(0, Number((t as any).carried_debt) || 0);
+  const balance = Math.round((dueIncl(st, v) + carried) * 100) / 100;
 
   const body = `
 ${header(mode === "full" ? "كشف حساب شامل" : "كشف حساب مختصر", `${t.name}`, issuer)}
@@ -586,6 +600,7 @@ ${header(mode === "full" ? "كشف حساب شامل" : "كشف حساب مخت�
     <div class="r"><span>المتأخر${v.enabled ? " (شامل الضريبة)" : ""}</span><span>${sar(v.enabled ? dueSplit.total : st.amountDue)} ريال</span></div>
     ${v.enabled && st.amountDue > 0 ? `<div class="r"><span>منه ضريبة</span><span>${sar(dueSplit.vat)} ريال</span></div>` : ""}
     ${st.hasPartial ? `<div class="r"><span>مدفوع جزئيًّا</span><span>${sar(st.partial)} ريال</span></div>` : ""}
+    ${carried > 0 ? `<div class="r"><span>دين مرحَّل من مدة سابقة</span><span>${sar(carried)} ريال</span></div>` : ""}
     ${/* كانت «الدفعة القادمة» تعرض أقدم دفعة غير مسدَّدة — تاريخًا ماضيًا حين
          يكون على المستأجر متبقٍّ من دفعة سابقة. والكشف يُرسل للمستأجر نفسه.
          الآن: المتأخر بتاريخه، والقادمة بتاريخها الحقيقي. */
@@ -606,10 +621,12 @@ ${header(mode === "full" ? "كشف حساب شامل" : "كشف حساب مخت�
   <div><div class="v">${rows.length}</div><div class="l">إجمالي الدفعات</div></div>
   <div><div class="v g">${st.paid}</div><div class="l">مسدّدة</div></div>
   <div><div class="v r">${st.unpaid}</div><div class="l">متأخرة</div></div>
-  <div><div class="v">${Math.max(0, rows.length - st.due)}</div><div class="l">قادمة</div></div>
+  ${/* «قادمة» = ما لم يُسدَّد ولم يحلّ. كانت rows − due، فمن سدّد مقدّمًا
+       ظهرت مربّعاته «12 إجمالي · 8 مسدّدة · 0 متأخرة · 8 قادمة» = 16 */ ""}
+  <div><div class="v">${Math.max(0, rows.length - Math.max(st.paid, st.due))}</div><div class="l">قادمة</div></div>
 </div>
 
-${st.amountDue > 0 ? `<div class="due"><span class="l">الرصيد المستحق حتى تاريخه</span><span class="v">${sar(st.amountDue)} ريال</span></div>` : ""}
+${balance > 0 ? `<div class="due"><span class="l">الرصيد المستحق حتى تاريخه${v.enabled ? " (شامل الضريبة)" : ""}</span><span class="v">${sar(balance)} ريال</span></div>` : ""}
 
 ${mode === "full" ? `
 <h1 style="font-size:1rem">بيانات الوحدة</h1>
@@ -929,9 +946,10 @@ export function propertyStatementHTML(
   const ul = unitLabel(p.property_type);
   const who = issuer.billing_name || p.manager || "إدارة الأملاك";
   const rows = p.tenants.map((t) => ({ t, st: contractState(t, winOf(p, issuer)) }));
-  const totalDue = rows.reduce((s, r) => s + r.st.amountDue, 0);
   /* العمارة المختلطة: كل وحدة بضريبتها — الشقة السكنية معفاة والمحل خاضع */
   const vFor = (t: any) => vatOf(p, t);
+  /* شاملًا الضريبة المضافة — كان يطبع «30,000 (منه ضريبة 4,500)» والدين 34,500 */
+  const totalDue = rows.reduce((s, r) => s + dueIncl(r.st, vFor(r.t)), 0);
   const totalPaid = rows.reduce((s, r) => s + r.st.paid * splitVat(Number(r.t.rent_amount) || 0, vFor(r.t)).total, 0);
   const totalVat = rows.reduce((s, r) => s + splitVat(r.st.amountDue, vFor(r.t)).vat, 0);
   // المُخلاة ذات الدين لا تُعدّ «وحدة متأخرة» — دينها على من غادر
@@ -1042,7 +1060,7 @@ ${totalDue > 0 ? `<div class="due"><span class="l">إجمالي الإيجار �
       <td>${vc ? "—" : freqLabel(t.payment_frequency)}</td>
       ${mode === "full" ? `<td>${vc ? "—" : arDateH(t.contract_start)}</td><td>${vc ? "—" : arDateH(st.endDate)}</td>` : ""}
       <td>${vc ? "—" : arDate(st.nextDueDate)}</td>
-      <td>${st.totalOwed ? `${sar(st.amountDue)}${st.carriedDebt > 0 ? `<div style="font-size:.62rem;color:#9A4B00">+ ${sar(st.carriedDebt)} دين مرحَّل</div>` : ""}${vc ? '<div style="font-size:.65rem;color:#5C6B67">على المستأجر السابق</div>' : ""}` : "—"}</td>
+      <td>${st.totalOwed ? `${sar(dueIncl(st, vatOf(p, t)))}${st.carriedDebt > 0 ? `<div style="font-size:.62rem;color:#9A4B00">+ ${sar(st.carriedDebt)} دين مرحَّل</div>` : ""}${vc ? '<div style="font-size:.65rem;color:#5C6B67">على المستأجر السابق</div>' : ""}` : "—"}</td>
       <td>${vc ? '<span class="pill">شاغرة</span>'
           : st.inGrace ? '<span class="pill u">فترة سماح</span>'
           : st.hasPartial && st.status === "late" ? '<span class="pill u">سداد جزئي</span>'
@@ -1572,7 +1590,11 @@ export function moveOutSettlementHTML(
   const st = contractState(t as any, winOf(p, issuer));
   const ul = unitLabel(p.property_type);
   const who = issuer.billing_name || p.manager || "إدارة الأملاك";
-  const s = settleDeposit(t as any, st.amountDue);
+  /* كل ما على المستأجر — متأخر المدة شاملًا الضريبة المضافة + الدين المرحَّل
+     (مراجعة 29 سبتمبر 2026). كان متأخر المدة وحده قبل الضريبة. */
+  const rentOwed = dueIncl(st, vatOf(p, t));
+  const carriedOwed = Math.max(0, Number((t as any).carried_debt) || 0);
+  const s = settleDeposit(t as any, Math.round((rentOwed + carriedOwed) * 100) / 100);
   const list = Array.isArray(t.turnover_checklist) ? t.turnover_checklist : [];
   const doneCount = list.filter((x) => x?.done).length;
   const vac = vacancyDays(t.move_out_date);
@@ -1625,7 +1647,8 @@ ${(t.elec_account || t.water_account) ? `<div class="sub" style="margin-bottom:6
 <table>
   <tbody>
     <tr><td>مبلغ التأمين المستلم</td><td style="text-align:left;font-weight:600">${sar(s.deposit)} ريال</td></tr>
-    <tr><td>يُخصم: إيجار متأخر حتى تاريخ الإخلاء</td><td style="text-align:left;font-weight:600">${sar(s.outstanding)} ريال</td></tr>
+    <tr><td>يُخصم: إيجار متأخر حتى تاريخ الإخلاء${vatOf(p, t).enabled ? " (شامل الضريبة)" : ""}</td><td style="text-align:left;font-weight:600">${sar(rentOwed)} ريال</td></tr>
+    ${carriedOwed > 0 ? `<tr><td>يُخصم: دين مرحَّل من مدة سابقة</td><td style="text-align:left;font-weight:600">${sar(carriedOwed)} ريال</td></tr>` : ""}
     <tr><td>يُخصم: تلفيات وأعمال إصلاح</td><td style="text-align:left;font-weight:600">${sar(s.deductions)} ريال</td></tr>
     ${s.refund > 0
       ? `<tr style="background:#E6F4EC;font-weight:700"><td>المستحق ردّه للمستأجر</td><td style="text-align:left">${sar(s.refund)} ريال</td></tr>`
@@ -1932,7 +1955,7 @@ export function ownerReportHTML(
   const occupied = total - vacant;
   const occupancy = total ? Math.round((occupied / total) * 100) : 0;
   const late = rows.filter((r) => !r.vacant && r.st.status === "late").length;
-  const totalDue = rows.reduce((s, r) => s + (r.vacant ? 0 : r.st.amountDue), 0);
+  const totalDue = rows.reduce((s, r) => s + (r.vacant ? 0 : dueIncl(r.st, vatOf(p, r.t))), 0);
   /* التقرير يعرض الإجمالي (حق المالك أن يراه كاملًا)، لكن اللوحة تعرض
      «المتأخر» بلا وحدات التنفيذ. بلا هذا التفصيل يرى المكتب رقمين
      مختلفين ولا يعرف أيهما الصحيح — فنُظهر الشقّين ومجموعهما. */
@@ -2161,7 +2184,7 @@ export function ownerConsolidatedStatementHTML(
     const ten = (s.property.tenants || []).map((t) => ({ t, st: contractState(t, g), vacant: isVacant(t) }));
     const units = ten.length;
     const vacant = ten.filter((r) => r.vacant).length;
-    const due = ten.reduce((a, r) => a + (r.vacant ? 0 : r.st.amountDue), 0);
+    const due = ten.reduce((a, r) => a + (r.vacant ? 0 : dueIncl(r.st, vatOf(s.property, r.t))), 0);
     const collected = s.payments.reduce((a, x) => a + (Number(x.amount) || 0), 0);
     /* الضريبة المحصَّلة تُستبعد قبل الأتعاب والصافي (أمانة للهيئة) */
     const vt = vatOfPayments(s.property, s.payments as any[], s.pastVat);
@@ -2200,7 +2223,7 @@ export function ownerConsolidatedStatementHTML(
         .filter((x) => !x.vacant && (x.st.amountDue > 0 || x.st.status === "soon"))
         .map((x) => ({
           ...x, key: unitStatus(x.t, x.st),
-          amount: x.st.amountDue > 0 ? x.st.amountDue : (Number(x.t.rent_amount) || 0),
+          amount: x.st.amountDue > 0 ? dueIncl(x.st, vatOf(r.s.property, x.t)) : splitVat(Number(x.t.rent_amount) || 0, vatOf(r.s.property, x.t)).total,
           isLate: x.st.amountDue > 0,
         }))
         .sort((a, b) => (a.st.daysToNextDue ?? 0) - (b.st.daysToNextDue ?? 0));
