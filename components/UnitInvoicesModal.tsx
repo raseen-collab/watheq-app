@@ -44,7 +44,7 @@ export default function UnitInvoicesModal({ tenant, property, issuer, onClose, d
   async function load() {
     setErr(null);
     const { data, error } = await supabase.from("invoices")
-      .select("id,invoice_no,issue_date,due_date,period_label,amount,status,notes")
+      .select("id,invoice_no,issue_date,due_date,period_label,amount,status,notes,created_at")
       .eq("tenant_id", tenant.id)
       .order("issue_date", { ascending: false })
       .order("invoice_no", { ascending: false })
@@ -60,6 +60,10 @@ export default function UnitInvoicesModal({ tenant, property, issuer, onClose, d
       amount: Number(v.amount) || 0,
       due_date: v.due_date || v.issue_date || "",
       period_label: v.period_label || "",
+      /* بتاريخها ووقتها وحالتها الأصلية — لا بتاريخ اليوم */
+      issue_date: v.issue_date || null,
+      status: v.status || null,
+      created_at: (v as any).created_at || null,
     }, issuer || {}));
   }
 

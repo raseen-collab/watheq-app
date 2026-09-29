@@ -178,7 +178,7 @@ function annualExpected(tenants: any[]): number {
 const payMethod = (x: { method?: string | null; amount?: number | null }) =>
   Number(x.amount) < 0 ? "تصحيح" : methodAr(x.method);
 
-type Issuer = { billing_name?: string | null; vat_number?: string | null; cr_number?: string | null; billing_phone?: string | null;
+type Issuer = { billing_name?: string | null; org_name?: string | null; vat_number?: string | null; cr_number?: string | null; billing_phone?: string | null;
   /** true لأي حساب بلا باقة مدفوعة — يُضاف سطر «أُنشئ عبر وثيق» في التذييل فقط.
    *  المستند صالح للاستعمال كاملًا، بلا علامة مائية ولا تقييد. */
   trial?: boolean | null;
@@ -310,8 +310,19 @@ function zatcaTlvBase64(sellerName: string, vatNo: string, isoDateTime: string, 
  * الطباعة؛ وإن تعذّرت الشبكة يبقى نص Base64 ظاهرًا — وهو المحتوى
  * النظامي نفسه، فالفاتورة لا تفقد صلاحيتها بغياب الرسم.
  */
-function zatcaQrBlock(sellerName: string, vatNo: string, total: number, vat: number): string {
-  const tlv = zatcaTlvBase64(sellerName, vatNo, new Date().toISOString(), total, vat);
+function zatcaQrBlock(sellerName: string, vatNo: string, total: number, vat: number, at?: string | null): string {
+  /* (مراجعة 29 سبتمبر 2026)
+     • الاسم يدخل الرمز كما سُجّل لا مُهرَّبًا: «شركة أ & ب» كان يُرمَّز
+       «شركة أ &amp; ب» فلا يطابق الاسم لدى الهيئة.
+     • طول الحقل بايت واحد في TLV: اسمٌ فوق 255 بايت (نحو 128 حرفًا عربيًّا)
+       يُفسد الرمز كله — يُقصّ على حدّ حرفٍ كامل.
+     • الوقت: وقت إصدار الفاتورة الأصلي عند إعادة الطباعة (at)، لا لحظة
+       الطباعة؛ وبلا أجزاء الثانية كأمثلة الهيئة. */
+  let name = unesc(sellerName);
+  const enc = new TextEncoder();
+  while (enc.encode(name).length > 255) name = Array.from(name).slice(0, -1).join("");
+  const when = at && !isNaN(Date.parse(at)) ? new Date(at) : new Date();
+  const tlv = zatcaTlvBase64(name, vatNo, when.toISOString().replace(/\.\d{3}Z$/, "Z"), total, vat);
   return `
 <div style="display:flex;justify-content:flex-end;margin-top:14px">
   <div style="text-align:center">
@@ -468,7 +479,12 @@ function unitsRegisterHTML(p: any, tenants: any[], g: any, issuer: any = {}): st
 /** عتبات العقار مع عتبات المكتب — التعريف في lib/contract-state */
 const winOf = (p: Property, issuer?: Issuer | null) => statusWindows(p as any, issuer as any);
 
-const escH = (s: any) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+/* لا يُهرِّب مرتين (مراجعة 29 سبتمبر 2026): المدخلات تمرّ على scrub أولًا ثم
+   تصل هنا، فكان «شركة أ & ب» يُطبع «شركة أ &amp; ب» في رأس كل مستند وتذييله.
+   & التي تبدأ كيانًا مكتملًا تُترك؛ غيرها يُهرَّب كما كان. */
+const escH = (s: any) => String(s ?? "").replace(/&(?!(?:amp|lt|gt|quot|#39|#\d+);)/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+/** عكس scrub — للنصّ الذي يدخل رمز QR لا صفحة HTML */
+const unesc = (s: any) => String(s ?? "").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, "&");
 
 /** اسم المكتب كما سجّله: اسم الفوترة أولًا ثم اسم المنشأة */
 const issuerName = (i?: Issuer | null): string =>
@@ -486,14 +502,14 @@ const issuerName = (i?: Issuer | null): string =>
  * يُسجَّل اسم بعد تبقى ترويسة وثيق كما كانت — فلا يخرج مستند بلا هوية.
  * وفاتورة الاشتراك تُستثنى: مُصدِرها وثيق فعلًا (تُستدعى بلا issuer).
  */
-const header = (docTitle: string, docNo: string, issuer?: Issuer | null) => {
+const header = (docTitle: string, docNo: string, issuer?: Issuer | null, date?: string | null) => {
   const name = issuerName(issuer);
   /* الختم حرف واحد: «مكتب تميز» → «ت» لا «م» */
   const seal = name ? (name.replace(/^(مكتب|شركة|مؤسسة|وكالة)\s+/, "").trim()[0] || name[0]) : "و";
   return `
 <div class="hd">
   <div class="lg"><div class="seal">${escH(seal)}</div><div><div class="t">${escH(name || "وثيق")}</div></div></div>
-  <div class="meta">${docTitle}<b>${docNo}</b>التاريخ: ${arDate(today())}</div>
+  <div class="meta">${docTitle}<b>${docNo}</b>التاريخ: ${arDate(date || today())}</div>
 </div>`;
 };
 
@@ -544,7 +560,7 @@ export function statementHTML(t: Tenant, p: Property, issuer: Issuer = {}, payme
   const st = contractState(t, winOf(p, issuer));
   const rows = buildSchedule(t);
   const ul = unitLabel(p.property_type);
-  const who = issuer.billing_name || p.manager || "إدارة الأملاك";
+  const who = issuer.billing_name || issuer.org_name || p.manager || "إدارة الأملاك";
   const v = vatOf(p, t);
   const unit = splitVat(Number(t.rent_amount) || 0, v);      // تفصيل الدفعة الواحدة
   const totalContract = unit.total * rows.length;
@@ -701,7 +717,9 @@ ${footer(issuer)}`;
 /** فاتورة دفعة واحدة */
 export function invoiceHTML(
   t: Tenant, p: Property,
-  inv: { invoice_no: string; amount: number; due_date: string; period_label: string },
+  inv: { invoice_no: string; amount: number; due_date: string; period_label: string;
+         /** عند إعادة الطباعة: تُطبع الفاتورة بتاريخها وحالتها ووقت إصدارها الأصلي */
+         issue_date?: string | null; status?: string | null; created_at?: string | null },
   issuer: Issuer = {}
 ) {
   // تعقيم المدخلات (انظر scrub أعلاه)
@@ -710,11 +728,16 @@ export function invoiceHTML(
   inv = scrub(inv);
   issuer = scrub(issuer);
   const ul = unitLabel(p.property_type);
-  const who = issuer.billing_name || p.manager || "إدارة الأملاك";
+  const who = issuer.billing_name || issuer.org_name || p.manager || "إدارة الأملاك";
   const v = vatOf(p, t);
   const x = splitVat(Number(inv.amount) || 0, v);
+  /* الفاتورة الملغاة تُعرض للأرشيف لا للتداول (مراجعة 29 سبتمبر 2026): كان زرّ
+     «عرض» على الملغاة يطبعها فاتورةً ضريبية سليمة برمز QR وبلا أي إشارة. */
+  const voided = inv.status === "void";
+  const isTax = v.enabled && !!issuer.vat_number;
   const body = `
-${header(v.enabled && issuer.vat_number ? "فاتورة ضريبية مبسطة" : "فاتورة", inv.invoice_no, issuer)}
+${header(voided ? "فاتورة ملغاة" : isTax ? "فاتورة ضريبية مبسطة" : "فاتورة", inv.invoice_no, issuer, inv.issue_date)}
+${voided ? `<div style="border:3px solid #a5322c;color:#a5322c;text-align:center;font-weight:800;font-size:1.4rem;padding:10px;margin:10px 0;border-radius:10px;letter-spacing:.5px">ملغاة — لا يُعتدّ بها ولا تُحصَّل</div>` : ""}
 <h1>${v.enabled && issuer.vat_number ? "فاتورة ضريبية مبسطة — أجرة" : "فاتورة أجرة"}</h1>
 <div class="sub">${inv.period_label} · ${freqLabel(t.payment_frequency)}</div>
 
@@ -757,7 +780,7 @@ ${v.enabled ? `<table style="max-width:340px;margin-inline-start:auto">
 
 <div class="due"><span class="l">الإجمالي المستحق${v.enabled ? " (شامل الضريبة)" : ""}</span><span class="v">${sar(x.total)} ريال</span></div>
 
-${v.enabled && issuer.vat_number ? zatcaQrBlock(who, issuer.vat_number, x.total, x.vat) : ""}
+${isTax && !voided ? zatcaQrBlock(who, issuer.vat_number!, x.total, x.vat, inv.created_at) : ""}
 
 ${v.enabled && !issuer.vat_number ? `<div class="note" style="border-inline-start-color:#D0453F;background:#FBE9E7;color:#a5322c">
   <b>تنبيه:</b> الضريبة مفعّلة لكن الرقم الضريبي للمُصدِر غير مسجَّل، لذا صدرت الوثيقة بعنوان «فاتورة» لا «فاتورة ضريبية».
@@ -775,10 +798,10 @@ ${v.enabled && issuer.vat_number ? `<div class="note">
 
 <div class="sign">
   <div>المُصدِر: ${who}<br><br>التوقيع: ________________</div>
-  <div>تاريخ الإصدار: ${today()}<br><br>رقم الفاتورة: ${inv.invoice_no}</div>
+  <div>تاريخ الإصدار: ${inv.issue_date || today()}<br><br>رقم الفاتورة: ${inv.invoice_no}</div>
 </div>
 ${footer(issuer)}`;
-  return SHELL(`فاتورة ${inv.invoice_no} — ${t.name}`, body, markOf(issuer));
+  return SHELL(`${voided ? "فاتورة ملغاة" : "فاتورة"} ${inv.invoice_no} — ${t.name}`, body, markOf(issuer));
 }
 
 /* ═══════════════════ عرض سعر تأجير وحدة ═══════════════════ */
@@ -819,7 +842,7 @@ export function quotationHTML(p: Property, q: QuoteInput, issuer: Issuer = {}) {
   q = scrub(q);
   issuer = scrub(issuer);
   const ul = unitLabel(p.property_type);
-  const who = issuer.billing_name || p.manager || "إدارة الأملاك";
+  const who = issuer.billing_name || issuer.org_name || p.manager || "إدارة الأملاك";
   const v = vatOf(p, { unit_type: q.unit_type, vat_mode: q.vat_mode });
   const periods = Math.max(1, Number(q.contract_periods) || 1);
   const perPeriod = Number(q.rent_amount) || 0;
@@ -944,7 +967,7 @@ export function propertyStatementHTML(
   p = scrub(p);
   issuer = scrub(issuer);
   const ul = unitLabel(p.property_type);
-  const who = issuer.billing_name || p.manager || "إدارة الأملاك";
+  const who = issuer.billing_name || issuer.org_name || p.manager || "إدارة الأملاك";
   const rows = p.tenants.map((t) => ({ t, st: contractState(t, winOf(p, issuer)) }));
   /* العمارة المختلطة: كل وحدة بضريبتها — الشقة السكنية معفاة والمحل خاضع */
   const vFor = (t: any) => vatOf(p, t);
@@ -1589,7 +1612,7 @@ export function moveOutSettlementHTML(
   issuer = scrub(issuer);
   const st = contractState(t as any, winOf(p, issuer));
   const ul = unitLabel(p.property_type);
-  const who = issuer.billing_name || p.manager || "إدارة الأملاك";
+  const who = issuer.billing_name || issuer.org_name || p.manager || "إدارة الأملاك";
   /* كل ما على المستأجر — متأخر المدة شاملًا الضريبة المضافة + الدين المرحَّل
      (مراجعة 29 سبتمبر 2026). كان متأخر المدة وحده قبل الضريبة. */
   const rentOwed = dueIncl(st, vatOf(p, t));
@@ -1946,7 +1969,7 @@ export function ownerReportHTML(
   issuer = scrub(issuer);
   extra = scrub(extra);
   const ul = unitLabel(p.property_type);
-  const who = issuer.billing_name || p.manager || "إدارة الأملاك";
+  const who = issuer.billing_name || issuer.org_name || p.manager || "إدارة الأملاك";
   const g = winOf(p, issuer);
 
   const rows = (p.tenants || []).map((t) => ({ t, st: contractState(t, g), vacant: isVacant(t) }));
