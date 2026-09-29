@@ -166,20 +166,30 @@ export default function DebtFollowUp({ properties, orgName, onClose, db }: {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(on.trim())) return setErr("التاريخ بصيغة 2026-09-21.");
     setBusy(true); setErr(null);
     let error: any = null;
+    let recorded = amt;   // ما سُجِّل فعلًا — يختلف عن amt إن نجح الشقّ الأول وفشل الثاني
     if (r.source === "past") {
       ({ error } = await supabase.rpc("watheq_record_past_payment", { p_past: r.id, p_amount: amt, p_paid_on: on.trim() }));
     } else {
       /* صفّ وحدة: المتأخرات (أقساط) أولًا ثم الدين المرحَّل */
       const toRent = Math.min(amt, Number(r._legacy) || 0), toCarried = Math.round((amt - toRent) * 100) / 100;
       if (toRent > 0) ({ error } = await supabase.rpc("watheq_record_payment", { p_tenant: r.id, p_amount: toRent, p_paid_on: on.trim(), p_method: "transfer" }));
-      if (!error && toCarried > 0) ({ error } = await supabase.rpc("watheq_record_carried_payment", { p_tenant: r.id, p_amount: toCarried, p_paid_on: on.trim() }));
+      if (!error && toCarried > 0) {
+        ({ error } = await supabase.rpc("watheq_record_carried_payment", { p_tenant: r.id, p_amount: toCarried, p_paid_on: on.trim() }));
+        /* (مراجعة 29 سبتمبر 2026) عمليتان منفصلتان: إن سُجّل شقّ الأقساط وفشل شقّ الدين
+           كانت الرسالة خطأً عامًّا والصفّ بلا تحديث — فيعيد المكتب المبلغ كاملًا فتُسجَّل
+           الأقساط مرتين. الآن نقول ما سُجّل بالضبط ونحدّث الصفّ به. */
+        if (error && toRent > 0) {
+          recorded = toRent;
+          setErr(`سُجّل ${sar(toRent)} ريال للأقساط المتأخرة، ولم يُسجَّل ${sar(toCarried)} ريال للدين المرحَّل (${error.message}). سجّل الباقي وحده — لا تُعِد المبلغ كاملًا.`);
+        }
+      }
     }
     setBusy(false);
-    if (error) return setErr(/does not exist|function/i.test(error.message)
+    if (error && recorded === amt) return setErr(/does not exist|function/i.test(error.message)
       ? "تسجيل السداد يحتاج تحديث قاعدة البيانات — شغّل schema-v45 أولًا." : error.message);
-    const left = Math.round((r.carried_debt - amt) * 100) / 100;
+    const left = Math.round((r.carried_debt - recorded) * 100) / 100;
     setRows((cur) => (cur || []).map((x) => (x.id === r.id && x.source === r.source
-      ? { ...x, carried_debt: left, _legacy: Math.max(0, (Number(x._legacy) || 0) - amt),
+      ? { ...x, carried_debt: left, _legacy: Math.max(0, (Number(x._legacy) || 0) - recorded),
           debt_status: left <= 0.005 ? "settled" : x.debt_status } : x)).filter((x) => x.carried_debt > 0.005));
   }
 

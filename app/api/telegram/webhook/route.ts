@@ -54,7 +54,8 @@ const backBtn = (scope: string): TgKeyboard[number] => [{ text: "⬅️ رجوع
 const RECENT_TAPS = new Map<string, number>();
 
 /** ربط حساب بالرمز */
-async function linkAccount(db: DB, chatId: number, code: string, username: string | null) {
+async function linkAccount(db: DB, chatId: number, codeIn: string, username: string | null) {
+  const code = codeIn.toUpperCase();   // الرموز بأحرف كبيرة — من يكتبها بيده قد يصغّرها
   const { data: p } = await db.from("profiles").select("id, telegram_chat_id").eq("telegram_link_code", code).maybeSingle();
   if (!p) return tgSend(chatId, "رمز الربط غير صحيح أو منتهٍ. افتح «الإعدادات» في المنصة واطلب رمزًا جديدًا.");
 
