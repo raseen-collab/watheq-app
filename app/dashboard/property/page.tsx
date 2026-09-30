@@ -3,6 +3,8 @@ import PropertyView from "@/components/PropertyView";
 import { redirect } from "next/navigation";
 import { normalizeAccountType, canAccess } from "@/lib/roles";
 import { issuerMarks } from "@/lib/subscription";
+import { getOfficeContext } from "@/lib/office-context";
+import { limitsFor, productProfile, toWire } from "@/lib/entitlements";
 import { withClockSkewRetry, isClockSkew, isTransient } from "@/lib/db-retry";
 import RetryScreen from "@/components/RetryScreen";
 import { fetchAllRows } from "@/lib/fetch-all";
@@ -67,14 +69,17 @@ export default async function PropertyPage() {
   const properties = (propsRaw || []).map((p: any) => ({ ...p, tenants: byProp[p.id] || [] }));
 
   const { data: { user } } = await supabase.auth.getUser();
-  const { data: profile } = await supabase
-    .from("profiles").select("org_name, billing_name, vat_number, cr_number, billing_phone, plan, trial_ends_at, subscribed_until, due_soon_days, due_imminent_days, expiring_days").eq("id", user!.id).maybeSingle();
+  /* ملف المكتب لا ملف المستخدم: الموظف يُصدر مستندات مكتبه بباقته وهويته */
+  const profile = await getOfficeContext(supabase, user!.id);
+  if (profile.transientError) return <RetryScreen detail={profile.transientError} />;
 
   // ثلاث حالات: مشترك = مستند نظيف · تجربة نشطة = سطر «أُنشئ عبر وثيق» · انتهت بلا اشتراك = علامة مائية
-  const { trial, expired } = issuerMarks(profile);
+  const { trial, expired } = issuerMarks(productProfile(profile, "property"));
+  /* الحدود تُطبَّق في الواجهة حين تُحسب من القاعدة فقط (v67) — وإلا القاعدة وحدها تمنع */
+  const limits = profile.enforced ? toWire(limitsFor(profile, "property")) : undefined;
 
   // ⚖️ التزامات المكتب انتقلت إلى «نظرة عامة» — للمكتب كله لا لعقار واحد.
 
   return <PropertyView dueSoonDays={(profile as any)?.due_soon_days} dueImminentDays={(profile as any)?.due_imminent_days} expiringDays={(profile as any)?.expiring_days} initial={properties} orgName={profile?.org_name || ""}
-    issuer={{ ...(profile || {}), trial, expired }} />;
+    issuer={{ ...(profile || {}), trial, expired }} limits={limits} />;
 }

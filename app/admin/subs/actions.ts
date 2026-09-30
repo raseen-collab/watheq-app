@@ -39,6 +39,8 @@ export async function recordSubPayment(input: {
   months: number;
   amount: number;
   plan: string | null;   // "" أو null = بلا تغيير
+  /** باقة الجمعيات في الحساب المزدوج (v67) — "" أو null = بلا تغيير */
+  hoaPlan?: string | null;
   method: string;
   note: string;
 }): Promise<RecordResult> {
@@ -55,12 +57,13 @@ export async function recordSubPayment(input: {
   if (amount < 0) return { ok: false, error: "المبلغ غير صالح" };
 
   const plan = input.plan && ["basic", "pro", "full"].includes(input.plan) ? input.plan : null;
+  const hoaPlan = input.hoaPlan && ["basic", "pro", "full"].includes(input.hoaPlan) ? input.hoaPlan : null;
 
   const db = serviceDb();
 
   const { data: prof, error: pe } = await db
     .from("profiles")
-    .select("id, subscribed_until, plan")
+    .select("*")   // «*»: hoa_plan وaccount_type (v67) دون كسر ما قبل الترحيل
     .eq("id", input.userId)
     .maybeSingle();
   if (pe) return { ok: false, error: pe.message };
@@ -68,9 +71,14 @@ export async function recordSubPayment(input: {
   /* 30 سبتمبر 2026: سُجّل شهر لحساب باقته ليست مدفوعة و«الباقة: بلا تغيير» —
      فامتدّ subscribed_until وظهر مشتركًا هنا، بينما لوحته تبقى «تجربة» لأن
      subState لا يعدّ الحساب مدفوعًا إلا بباقة مدفوعة. لا دفعة بلا باقة. */
-  if (!plan && !["basic", "pro", "full"].includes(String(prof.plan || "").toLowerCase())) {
+  const paidPl = (v?: string | null) => ["basic", "pro", "full"].includes(String(v || "").toLowerCase());
+  const isBoth = (prof as any).account_type === "both";
+  const propOk = paidPl(plan || (prof as any).plan);
+  const hoaOk = isBoth && paidPl(hoaPlan || (prof as any).hoa_plan);
+  if (!propOk && !hoaOk) {
     return { ok: false, error: "هذا الحساب بلا باقة مدفوعة — اختر الباقة قبل التسجيل، وإلا يبقى في وضع التجربة عند صاحبه." };
   }
+  if (hoaPlan && !isBoth) return { ok: false, error: "باقة الجمعيات المنفصلة للحساب المزدوج فقط." };
 
   // التمديد من تاريخ الانتهاء إن كان ساريًا (فلا يخسر أيامه من جدّد مبكرًا)،
   // ومن اليوم إن كان منتهيًا (فلا يُمدَّد إلى الماضي).
@@ -106,7 +114,7 @@ export async function recordSubPayment(input: {
       amount,
       plan,
       method: input.method || null,
-      note: input.note || null,
+      note: [input.note || "", hoaPlan ? `باقة الجمعيات: ${hoaPlan}` : ""].filter(Boolean).join(" · ") || null,
       extended_to: extended.toISOString(),
     }).select("id").single();
     if (!ie) { paymentId = (ins as any)?.id ?? null; break; }
@@ -119,6 +127,7 @@ export async function recordSubPayment(input: {
      المحاولة فتُسجَّل دفعتان لتجديد واحد. الذرّية الكاملة تحتاج دالة SQL واحدة. */
   const patch: Record<string, any> = { subscribed_until: extended.toISOString() };
   if (plan) patch.plan = plan;
+  if (hoaPlan) patch.hoa_plan = hoaPlan;
   const { error: ue } = await db.from("profiles").update(patch).eq("id", input.userId);
   if (ue) {
     const { error: rb } = await db.from("subscription_payments").delete().eq("id", paymentId);

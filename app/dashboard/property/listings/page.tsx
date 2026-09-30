@@ -3,6 +3,8 @@ import ListingsView from "@/components/ListingsView";
 import { redirect } from "next/navigation";
 import { normalizeAccountType, canAccess } from "@/lib/roles";
 import { issuerMarks } from "@/lib/subscription";
+import { getOfficeContext } from "@/lib/office-context";
+import { productProfile } from "@/lib/entitlements";
 import { withClockSkewRetry, isTransient } from "@/lib/db-retry";
 import RetryScreen from "@/components/RetryScreen";
 
@@ -56,15 +58,17 @@ export default async function ListingsPage() {
   const { data: requests } = await supabase
     .from("seeker_requests").select("*").order("created_at", { ascending: false });
 
-  const { trial, expired } = issuerMarks(profile);
+  /* ملف المكتب لا ملف المستخدم: الموظف يُصدر مستندات مكتبه بباقته وهويته */
+  const office = await getOfficeContext(supabase, user.id);
+  const { trial, expired } = issuerMarks(productProfile(office, "property"));
 
   return (
     <ListingsView
       initial={listings || []}
       brokerages={brokerages || []}
       requests={(requests || []) as any}
-      orgName={profile?.org_name || ""}
-      issuer={{ ...(profile || {}), trial, expired }}
+      orgName={office?.org_name || ""}
+      issuer={{ ...(office || {}), trial, expired }}
     />
   );
 }

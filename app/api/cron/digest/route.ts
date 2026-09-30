@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { subState } from "@/lib/subscription";
+import { allExpired } from "@/lib/entitlements";
 import * as Sentry from "@sentry/nextjs";
 import { createClient as createAdmin } from "@supabase/supabase-js";
 import { sendTelegram } from "@/lib/telegram";
@@ -71,7 +71,9 @@ export async function GET(req: Request) {
 
   const { data: profiles } = await db
     .from("profiles")
-    .select("id, telegram_chat_id, notify_enabled, notify_days_before, due_soon_days, due_imminent_days, expiring_days, org_name, last_digest_at, plan, trial_ends_at, subscribed_until")
+    /* «*» لا قائمة أعمدة: account_type وhoa_plan (v67) يحدّدان انتهاء الحساب المزدوج،
+       وقائمة تذكر hoa_plan تُسقط الملخّص كله إن شُغّل الكود قبل الترحيل */
+    .select("*")
     .not("telegram_chat_id", "is", null)
     .eq("notify_enabled", true);
 
@@ -87,7 +89,7 @@ export async function GET(req: Request) {
 
     /* منتهي الاشتراك: أوامر البوت متوقّفة، فلا معنى لإيقاظه بملخّص لا
        يستطيع التصرّف بناءً عليه. والتجربة والسماح يبقيان عاملَين. */
-    if (subState(p as any).kind === "expired") return "skip";
+    if (allExpired(p as any)) return "skip";
 
     /* «last_digest_at» كان يُكتب ولا يُقرأ: أي إعادة تشغيل للمهمة (محاولة
        ثانية من Vercel، أو استدعاء يدوي) تُرسل الملخّص مرتين في اليوم نفسه.

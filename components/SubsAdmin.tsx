@@ -12,6 +12,8 @@ export type SubRow = {
   account_type: string | null;
   billing_phone: string | null;
   plan: string | null;
+  /** باقة الجمعيات في الحساب المزدوج (v67) */
+  hoa_plan?: string | null;
   trial_ends_at: string | null;
   subscribed_until: string | null;
   created_at: string | null;
@@ -95,8 +97,10 @@ type State = "paid" | "soon" | "ended" | "trial" | "trial_ended";
 
 function stateOf(r: SubRow): { s: State; label: string; tone: string } {
   const sub = daysTo(r.subscribed_until);
-  /* تاريخ اشتراك سارٍ بلا باقة مدفوعة: صاحبه يرى «تجربة» — لا نعرضه مشتركًا هنا */
-  if (sub !== null && sub >= 0 && !["basic", "pro", "full"].includes(String(r.plan || "").toLowerCase())) {
+  /* تاريخ اشتراك سارٍ بلا باقة مدفوعة: صاحبه يرى «تجربة» — لا نعرضه مشتركًا هنا
+     (الحساب المزدوج: يكفي أن تكون إحدى باقتيه مدفوعة) */
+  const paidPl = (v?: string | null) => ["basic", "pro", "full"].includes(String(v || "").toLowerCase());
+  if (sub !== null && sub >= 0 && !paidPl(r.plan) && !(r.account_type === "both" && paidPl(r.hoa_plan))) {
     return { s: "soon", label: `⚠ بلا باقة — يظهر له «تجربة» (بقي ${daysWord(sub)})`, tone: "text-late font-semibold" };
   }
   if (sub !== null && sub >= 0) {
@@ -120,6 +124,7 @@ export default function SubsAdmin({ rows, pays, paysFailed }: { rows: SubRow[]; 
   const [months, setMonths] = useState(1);
   const [amount, setAmount] = useState("");
   const [plan, setPlan] = useState("");
+  const [hoaPlan, setHoaPlan] = useState("");
   const [method, setMethod] = useState("transfer");
   const [note, setNote] = useState("");
 
@@ -137,7 +142,7 @@ export default function SubsAdmin({ rows, pays, paysFailed }: { rows: SubRow[]; 
   const revenue = pays.reduce((s, p) => s + (Number(p.amount) || 0), 0);
 
   function reset() {
-    setMonths(1); setAmount(""); setPlan(""); setMethod("transfer"); setNote("");
+    setMonths(1); setAmount(""); setPlan(""); setHoaPlan(""); setMethod("transfer"); setNote("");
   }
 
   async function submit(r: SubRow) {
@@ -147,6 +152,7 @@ export default function SubsAdmin({ rows, pays, paysFailed }: { rows: SubRow[]; 
       months,
       amount: Number(amount) || 0,
       plan: plan || null,
+      hoaPlan: hoaPlan || null,
       method,
       note,
     });
@@ -167,7 +173,13 @@ export default function SubsAdmin({ rows, pays, paysFailed }: { rows: SubRow[]; 
         to_name: r.full_name || "—",
         to_org: r.org_name,
         to_phone: r.billing_phone,
-        plan_label: planLabel(p.plan || r.plan, r.account_type),
+        /* الحساب المزدوج: باقة الأملاك + باقة الجمعيات (v67) — لا باقة الأملاك وحدها */
+        plan_label: r.account_type === "both"
+          /* ما سُجّل في هذه الدفعة نفسها — لا الباقة الحالية للحساب */
+          ? [p.plan ? planLabel(p.plan, "landlord") : "",
+             (() => { const m = /باقة الجمعيات: (basic|pro|full)/.exec(p.note || ""); return m ? `جمعيات: ${planLabel(m[1], "hoa_manager")}` : ""; })()]
+              .filter(Boolean).join(" + ") || planLabel(r.plan, "landlord")
+          : planLabel(p.plan || r.plan, r.account_type),
         months: p.months,
         amount: Number(p.amount) || 0,
         from_date: riyadhDate(from),
@@ -261,10 +273,14 @@ export default function SubsAdmin({ rows, pays, paysFailed }: { rows: SubRow[]; 
                           ))}
                         </div>
 
-                        <div className="text-xs text-muted mb-2">الباقة</div>
+                        {/* باقات صفحة الأسعار: الأملاك باقتان (المالك/المكتب)، والجمعيات ثلاث.
+                            الحساب المزدوج: باقة لكل جهة (v67) */}
+                        <div className="text-xs text-muted mb-2">{r.account_type === "both" ? "باقة الأملاك" : "الباقة"}
+                          {r.plan ? <span> · الحالية: {planLabel(r.plan, r.account_type === "hoa_manager" ? "hoa_manager" : "landlord")}</span> : <span className="text-late"> · بلا باقة — اخترها</span>}</div>
                         <div className="flex gap-1.5 mb-3 flex-wrap">
-                          {[{ v: "", l: "بلا تغيير" }, { v: "basic", l: planLabel("basic", r.account_type) },
-                            { v: "pro", l: planLabel("pro", r.account_type) }, { v: "full", l: planLabel("full", r.account_type) }].map((o) => (
+                          {(r.account_type === "hoa_manager"
+                            ? [{ v: "", l: "بلا تغيير" }, { v: "basic", l: "الأساسية (59)" }, { v: "pro", l: "الاحترافية (99)" }, { v: "full", l: "الشاملة (149)" }]
+                            : [{ v: "", l: "بلا تغيير" }, { v: "basic", l: "باقة المالك (99)" }, { v: "full", l: "باقة المكتب (199)" }]).map((o) => (
                             <button key={o.v} onClick={() => setPlan(o.v)}
                               className={`text-xs rounded-full px-3 py-1.5 border ${
                                 plan === o.v ? "bg-gold text-white border-gold font-semibold"
@@ -273,6 +289,20 @@ export default function SubsAdmin({ rows, pays, paysFailed }: { rows: SubRow[]; 
                             </button>
                           ))}
                         </div>
+                        {r.account_type === "both" && (<>
+                          <div className="text-xs text-muted mb-2">باقة الجمعيات
+                            {r.hoa_plan ? <span> · الحالية: {planLabel(r.hoa_plan, "hoa_manager")}</span> : <span> · بلا باقة</span>}</div>
+                          <div className="flex gap-1.5 mb-3 flex-wrap">
+                            {[{ v: "", l: "بلا تغيير" }, { v: "basic", l: "الأساسية (59)" }, { v: "pro", l: "الاحترافية (99)" }, { v: "full", l: "الشاملة (149)" }].map((o) => (
+                              <button key={o.v} onClick={() => setHoaPlan(o.v)}
+                                className={`text-xs rounded-full px-3 py-1.5 border ${
+                                  hoaPlan === o.v ? "bg-gold text-white border-gold font-semibold"
+                                                  : "bg-white text-deep border-line"}`}>
+                                {o.l}
+                              </button>
+                            ))}
+                          </div>
+                        </>)}
 
                         <div className="flex gap-2 mb-3">
                           <input value={amount} onChange={(e) => setAmount(e.target.value)}

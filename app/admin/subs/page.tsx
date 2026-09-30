@@ -40,7 +40,7 @@ export default async function AdminSubsPage() {
      هنا هي الفرق بين رقم صحيح ورقم كاذب على صفحة تمسّ المال. */
   const [profRes, payRes, propRes, tenRes, teamRes] = await Promise.all([
     withClockSkewRetry(() => db.from("profiles")
-      .select("id,full_name,org_name,account_type,billing_phone,plan,trial_ends_at,subscribed_until,created_at")
+      .select("*")   /* «*»: hoa_plan (v67) للحساب المزدوج — وقائمة تذكره تكسر الصفحة قبل الترحيل */
       .order("created_at", { ascending: false })
       .limit(1000)),
     withClockSkewRetry(() => db.from("subscription_payments")

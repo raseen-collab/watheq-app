@@ -1,4 +1,5 @@
 "use client";
+import { LIMIT_MSG, atLimit, type LimitsWire } from "@/lib/entitlements";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
@@ -163,8 +164,10 @@ function plural(n: number, one: string, two: string, few: string, many = one): s
 
 const URGENCY: Record<RowKey, number> = { incomplete: 0, late: 1, partial: 2, due: 3, soon: 4, expiring: 5, litigation: 6, vacant: 7, ok: 8 };
 
-export default function PropertyView({ initial, orgName, issuer, compliance, dueSoonDays, dueImminentDays, expiringDays, db, demo = false }: {
+export default function PropertyView({ initial, orgName, issuer, compliance, dueSoonDays, dueImminentDays, expiringDays, db, demo = false, limits }: {
   initial: Property[]; orgName: string; issuer?: any; compliance?: ComplianceItem[];
+  /** حدود الباقة (v67) — القاعدة تمنع، وهذا ينبّه قبل ملء نموذج سيُرفض */
+  limits?: LimitsWire;
   dueSoonDays?: number | null; dueImminentDays?: number | null; expiringDays?: number | null;
   /** عميل بديل — صفحة التجربة العامة تمرّر قاعدة في الذاكرة بلا خادم */
   db?: any;
@@ -378,6 +381,13 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
     /* الإشعار القابل للتراجع يبقى أطول: زرّ ✔ ينفّذ بنقرة واحدة وهو ملاصق
        لزر السداد الجزئي — فالخطأ وارد، والتراجع كان مدفونًا في قائمة ⋯. */
     setTimeout(() => setToast(null), undo ? 7000 : 3600);
+  }
+
+  /** «+ عقار»: الحساب المنتهي للقراءة فقط، وباقة المالك عقار واحد (التجريبي لا يُحسب) */
+  function openNewProperty() {
+    if (limits?.readOnly) return notify("err", LIMIT_MSG.readOnly);
+    if (atLimit(items.filter((p: any) => !p.is_demo).length, limits?.maxProperties)) return notify("err", LIMIT_MSG.properties);
+    setModal({ kind: "newProp" });
   }
 
   const active = useMemo(() => items.find((p) => p.id === activeId) || null, [items, activeId]);
@@ -1355,6 +1365,8 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
     // ترقيم متسلسل من قاعدة البيانات
     /* رقم الفاتورة الضريبية من القاعدة وحدها. كان الفشل يُسقط إلى «INV-السنة-0001»
        بصمت — فاتورة ضريبية برقم مكرَّر. الآن الفشل يوقف الإصدار ويقول لماذا. */
+    /* المنتهي: الإدراج سيُرفض (v67) بعد حجز رقم — فجوة في تسلسل الفواتير الضريبية */
+    if (limits?.readOnly) return notify("err", LIMIT_MSG.readOnly);
     const { data, error: invErr } = await supabase.rpc("next_invoice_no", { p_user: await officeId(supabase) });
     if (invErr || typeof data !== "string") {
       notify("err", /not authorized/i.test(invErr?.message || "")
@@ -1556,7 +1568,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
         </div>
 
         <div className="flex gap-2 justify-center flex-wrap">
-          <button className="btn btn-ghost" onClick={() => setModal({ kind: "newProp" })}>+ إضافة عقار</button>
+          <button className="btn btn-ghost" onClick={openNewProperty}>+ إضافة عقار</button>
           <Link href="/dashboard/property/import" className="btn btn-ghost">رفع من ملف Excel</Link>
         </div>
 
@@ -1752,7 +1764,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
             نفتح دعوة التسجيل بدلها كبقية الأفعال المحجوبة في التجربة (30 سبتمبر 2026) */}
         {items.length > 1 && <Link href="/dashboard/property/overview" className="btn btn-ghost text-sm" title="كل العقارات في صفحة واحدة"
           onClick={(e) => { if (demo) { e.preventDefault(); demoJoin(); } }}>🗂️ نظرة عامة</Link>}
-        {isManager && <button className="btn btn-ghost text-sm" onClick={() => setModal({ kind: "newProp" })}>+ عقار</button>}
+        {isManager && <button className="btn btn-ghost text-sm" onClick={openNewProperty}>+ عقار</button>}
       </div>
 
       {expiringSoon && (

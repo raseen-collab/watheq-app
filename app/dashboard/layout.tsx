@@ -3,6 +3,8 @@ import { redirect } from "next/navigation";
 import DashboardShell from "@/components/DashboardShell";
 import { normalizeAccountType, canSwitch } from "@/lib/roles";
 import { subState } from "@/lib/subscription";
+import { getOfficeContext } from "@/lib/office-context";
+import { productSub } from "@/lib/entitlements";
 import { withClockSkewRetry, isClockSkew } from "@/lib/db-retry";
 import RetryScreen from "@/components/RetryScreen";
 
@@ -49,6 +51,15 @@ export default async function DashboardLayout({ children }: { children: React.Re
   }
   if (!accountType) redirect("/onboarding");
 
+  /* حالة كل منتج من ملف المكتب (v67): في الحساب المزدوج باقتان، والموظف يرى
+     باقة مكتبه. قبل v67 تبقى القراءة القديمة (ملف المستخدم أو watheq_my_office). */
+  const ctx = await getOfficeContext(supabase, user.id);
+  const entProfile = ctx.enforced ? ctx : { ...subProfile, account_type: accountType };
+  const subs = {
+    property: productSub(entProfile, "property"),
+    hoa: productSub(entProfile, "hoa"),
+  };
+
   return (
     <DashboardShell
       userName={name}
@@ -56,6 +67,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
       showSwitcher={canSwitch(accountType)}
       trialEndsAt={subProfile?.trial_ends_at}
       sub={subState(subProfile)}
+      subs={subs}
       isOwner={isOwner}
     >
       {children}

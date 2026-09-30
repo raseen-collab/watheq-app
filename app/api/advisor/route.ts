@@ -1,10 +1,12 @@
 import { today as todayRiyadh } from "@/lib/utils";
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase-server";
+import { getOfficeContext } from "@/lib/office-context";
+import { advisorDailyFor } from "@/lib/entitlements";
 import { createClient as createServiceClient } from "@supabase/supabase-js";
 import {
   buildSystemPrompt, classify, DISCLAIMER,
-  HIGH_RISK_REPLY, OUT_OF_SCOPE_REPLY, advisorLimit,
+  HIGH_RISK_REPLY, OUT_OF_SCOPE_REPLY,
 } from "@/lib/advisor";
 import { noStoreFetch } from "@/lib/no-store-fetch";
 
@@ -55,7 +57,9 @@ export async function POST(req: Request) {
      فيتجاوزان الحد (وكل تجاوز استدعاء نموذج مدفوع). الآن نحجز الخانة أولًا: نُدرج
      سطر السجل، ثم نعدّ، فإن تجاوز العددُ الحدَّ حذفنا سطرنا ورفضنا. التزامن الأسوأ
      يرفض الطلبين معًا — تحفّظ مقبول — ولا يمرّ طلب فوق الحد أبدًا. بلا SQL جديد. */
-  const limit = advisorLimit(profile);
+  /* حصة المكتب لا ملف المستخدم: الموظف يأخذ حصة باقة مكتبه (كان ملفه الفارغ
+     يعطيه 3 أسئلة بعد 30 يومًا من تسجيله ولو كان المكتب على باقة المكتب) */
+  const limit = advisorDailyFor(await getOfficeContext(supabase, user.id));
   const quotaError = () => NextResponse.json({
     ok: false, quota: true,
     error: `بلغت حدّك اليومي (${limit} أسئلة). يتجدّد غدًا — وبإمكانك رفع الحد بالترقية لباقة أعلى.`,

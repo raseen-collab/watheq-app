@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import * as Sentry from "@sentry/nextjs";
-import { subState } from "@/lib/subscription";
+import { allExpired } from "@/lib/entitlements";
 import { createClient } from "@supabase/supabase-js";
 import { tgSend, tgEdit, tgAnswer, navButtons, TgKeyboard } from "@/lib/telegram";
 import {
@@ -112,7 +112,7 @@ async function handleMessage(db: DB, msg: any) {
     if (code) return linkAccount(db, chatId, code, username);
     const p = await findProfileByChat(db, chatId);
     /* المنتهي يرى رسالة التجديد لا قائمةً أزرارها معطّلة */
-    if (p && subState(p as any).kind === "expired") {
+    if (p && allExpired(p as any)) {
       return tgSend(chatId,
         "⏳ <b>اشتراكك في وثيق منتهٍ.</b>\n\nبياناتك محفوظة كما هي، وأوامر البوت متوقّفة حتى التجديد.",
         [[{ text: "💬 تجديد الاشتراك", url: "https://wa.me/966596300591?text=" + encodeURIComponent("أبغى أجدد اشتراكي في وثيق") }]]);
@@ -161,8 +161,8 @@ async function handleMessage(db: DB, msg: any) {
    * kind=trial، فالقطع على «expired» وحدها — وإلا قُطع عن كل مجرِّب.
    * وكذلك فترة السماح تبقى عاملة كاملةً.
    */
-  const sub = subState(p as any);
-  if (sub.kind === "expired") {
+  /* الحساب المزدوج: يتوقّف البوت حين ينتهي المنتجان كلاهما (v67) */
+  if (allExpired(p as any)) {
     return tgSend(chatId,
       "⏳ <b>اشتراكك في وثيق منتهٍ.</b>\n\n"
       + "بياناتك محفوظة كما هي ولم يُحذف منها شيء، لكن تنبيهات البوت وأوامره متوقّفة حتى التجديد.\n\n"
@@ -288,7 +288,7 @@ async function handleCallback(db: DB, cq: any) {
   const p = withTrack(await findProfileByChat(db, chatId));
   if (!p) return tgEdit(chatId, messageId, "حسابك غير مربوط. افتح «الإعدادات» في المنصة.");
   if ((p as any)._isStaff) return tgEdit(chatId, messageId, "تنبيهات وثيق لصاحب المكتب وحده — استعمل اللوحة من المتصفح.");
-  if (subState(p as any).kind === "expired")
+  if (allExpired(p as any))
     return tgEdit(chatId, messageId, "⏳ اشتراكك منتهٍ — أوامر البوت متوقّفة حتى التجديد. بياناتك محفوظة.\n\nللتجديد: +966596300591");
 
   /**

@@ -3,6 +3,8 @@ import { redirect } from "next/navigation";
 import AssociationView from "@/components/AssociationView";
 import { normalizeAccountType, canAccess } from "@/lib/roles";
 import { issuerMarks } from "@/lib/subscription";
+import { getOfficeContext } from "@/lib/office-context";
+import { limitsFor, productProfile, toWire } from "@/lib/entitlements";
 import { withClockSkewRetry, isTransient } from "@/lib/db-retry";
 import RetryScreen from "@/components/RetryScreen";
 
@@ -59,21 +61,28 @@ export default async function AssociationPage() {
     .order("created_at", { ascending: false });
 
   // ثلاث حالات: مشترك = مستند نظيف · تجربة نشطة = سطر «أُنشئ عبر وثيق» · انتهت بلا اشتراك = علامة مائية
-  const { trial, expired } = issuerMarks(profile);
+  /* ملف المكتب لا ملف المستخدم: الموظف يُصدر مستندات مكتبه بباقته وهويته.
+     وباقة الجمعيات: في الحساب المزدوج هي hoa_plan لا plan */
+  const office = await getOfficeContext(supabase, user.id);
+  if (office.transientError) return <RetryScreen detail={office.transientError} />;
+  const { trial, expired } = issuerMarks(productProfile(office, "hoa"));
+  /* الحدود تُطبَّق في الواجهة حين تُحسب من القاعدة فقط (v67) — وإلا القاعدة وحدها تمنع */
+  const limits = office.enforced ? toWire(limitsFor(office, "hoa")) : undefined;
 
   return (
     <AssociationView
       initial={associations || []}
       issuer={{
-        billing_name: profile?.billing_name ?? null,
+        billing_name: office?.billing_name ?? null,
         /* ترويسة مستندات الجمعية والسندات: اسم الفوترة ثم اسم المنشأة — لا بيانات وثيق */
-        org_name: profile?.org_name ?? null,
-        vat_number: profile?.vat_number ?? null,
-        cr_number: profile?.cr_number ?? null,
-        billing_phone: profile?.billing_phone ?? null,
+        org_name: office?.org_name ?? null,
+        vat_number: office?.vat_number ?? null,
+        cr_number: office?.cr_number ?? null,
+        billing_phone: office?.billing_phone ?? null,
         trial,
         expired,
       }}
+      limits={limits}
     />
   );
 }

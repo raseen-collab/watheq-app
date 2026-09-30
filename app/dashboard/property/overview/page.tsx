@@ -4,7 +4,8 @@ import { redirect } from "next/navigation";
 import Link from "next/link";
 import PortfolioView from "@/components/PortfolioView";
 import { issuerMarks } from "@/lib/subscription";
-import { withClockSkewRetry, isTransient } from "@/lib/db-retry";
+import { getOfficeContext } from "@/lib/office-context";
+import { productProfile } from "@/lib/entitlements";
 import RetryScreen from "@/components/RetryScreen";
 
 export const metadata = { title: "نظرة عامة — وثيق" };
@@ -17,9 +18,9 @@ export default async function OverviewPage() {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect("/login");
 
-  const { data: profile, error } = await withClockSkewRetry(() =>
-    supabase.from("profiles").select("org_name, billing_name, vat_number, cr_number, billing_phone, plan, trial_ends_at, subscribed_until, due_soon_days, due_imminent_days, expiring_days").eq("id", user.id).maybeSingle());
-  if (error && isTransient(error.message)) return <RetryScreen detail={error.message} />;
+  /* ملف المكتب لا ملف المستخدم: الموظف يُصدر مستندات مكتبه بباقته وهويته */
+  const profile = await getOfficeContext(supabase, user.id);
+  if (profile.transientError) return <RetryScreen detail={profile.transientError} />;
 
   // الوحدات على دفعات — لا قصّ صامت عند 1000 صف (انظر lib/fetch-all.ts)
   const { data: propsRaw } = await supabase
@@ -33,7 +34,7 @@ export default async function OverviewPage() {
      هنا لا قائمة «مستندات» في صفحة العقار. قبل schema-v6 لا جدول: نمرّر [] */
   const { data: compliance } = await supabase.from("compliance_items").select("*")
     .order("end_date", { ascending: true, nullsFirst: false });
-  const { trial, expired } = issuerMarks(profile);
+  const { trial, expired } = issuerMarks(productProfile(profile, "property"));
 
   const windows = {
     soon: Number((profile as any)?.due_soon_days) || 10,

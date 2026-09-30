@@ -1,4 +1,5 @@
 "use client";
+import { LIMIT_MSG, atLimit, type LimitsWire } from "@/lib/entitlements";
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase-client";
@@ -87,7 +88,11 @@ const ownerKey = (o: Owner): OwnerKey =>
     : "ok";
 const OWNER_URGENCY: Record<OwnerKey, number> = { critical: 0, late: 1, partial: 2, ok: 3 };
 
-export default function AssociationView({ initial, issuer }: { initial: Association[]; issuer?: any }) {
+export default function AssociationView({ initial, issuer, limits }: {
+  initial: Association[]; issuer?: any;
+  /** حدود الباقة (v67) — القاعدة تمنع، وهذا ينبّه قبل ملء نموذج سيُرفض */
+  limits?: LimitsWire;
+}) {
   const supabase = createClient();
   const router = useRouter();
   /** يضمن أن كل جمعية تحمل مصفوفتيها — يمنع انكسار العرض عند صفٍّ جديد */
@@ -163,6 +168,28 @@ export default function AssociationView({ initial, issuer }: { initial: Associat
     if (toastTimer.current) clearTimeout(toastTimer.current);
     setToast({ k, m, pay });
     toastTimer.current = setTimeout(() => setToast(null), pay ? 8000 : 3600);
+  }
+
+  /* ─── حدود الباقة (v67) ─── */
+  /** «+ جمعية»: المنتهي للقراءة فقط، والأساسية/الاحترافية جمعية واحدة (المؤرشفة لا تُحسب) */
+  function openNewAssoc() {
+    if (limits?.readOnly) return notify("err", LIMIT_MSG.readOnly);
+    if (atLimit(items.filter((a: any) => !a.archived_at).length, limits?.maxAssociations)) return notify("err", LIMIT_MSG.associations);
+    setModal("new");
+  }
+  /** كم وحدة بقيت في الباقة لهذه الجمعية (null = بلا حد) */
+  const unitsLeft = (a: Association | null) =>
+    limits?.maxUnitsPerAssociation == null || !a ? null : Math.max(0, limits.maxUnitsPerAssociation - (a.owners || []).length);
+  /** قبل إضافة ملّاك: قراءة فقط؟ أو تجاوز حد الوحدات؟ */
+  function canAddOwners(n: number): boolean {
+    if (limits?.readOnly) { notify("err", LIMIT_MSG.readOnly); return false; }
+    const left = unitsLeft(active);
+    if (left != null && n > left) {
+      const unitsAr = (x: number) => x === 1 ? "وحدة واحدة" : x === 2 ? "وحدتان" : x % 100 >= 3 && x % 100 <= 10 ? `${x} وحدات` : `${x} وحدة`;
+      notify("err", left > 0 ? `${LIMIT_MSG.units} (بقيت ${unitsAr(left)})` : LIMIT_MSG.units);
+      return false;
+    }
+    return true;
   }
   const holdToast = () => { if (toastTimer.current) clearTimeout(toastTimer.current); toastTimer.current = setTimeout(() => setToast(null), 12000); };
   /** آخر رصيد بعد كل دفعة كما أعادته القاعدة — لسطر «الرصيد بعد هذه الدفعة» في السند فقط حين يُعرف */
@@ -461,6 +488,7 @@ export default function AssociationView({ initial, issuer }: { initial: Associat
   /** إضافة ملّاك دفعة واحدة — سطر لكل مالك: الاسم، الوحدة، الجوال */
   async function addOwnersBulk(rows: { name: string; unit: string | null; phone: string | null; months?: number | null }[]) {
     if (!active || !rows.length) return;
+    if (!canAddOwners(rows.length)) return;
     const assocId = active.id;
     const { data, error } = await supabase.from("owners").insert(
       rows.map((r) => ({ association_id: assocId, name: r.name, unit: r.unit, phone: r.phone, months_late: 0 }))
@@ -775,6 +803,7 @@ export default function AssociationView({ initial, issuer }: { initial: Associat
   // ---------- ملّاك ----------
   async function addOwner(name: string, unit: string, phone: string) {
     if (!active || !name.trim()) return;
+    if (!canAddOwners(1)) return;
     const { data, error } = await supabase.from("owners").insert({
       association_id: active.id, name: name.trim(), unit: unit || null, phone: phone || null, months_late: 0,
     }).select("*").single();
@@ -1056,7 +1085,7 @@ export default function AssociationView({ initial, issuer }: { initial: Associat
         <div className="w-12 h-12 rounded-lg bg-deep grid place-items-center text-goldSoft font-bold font-display mx-auto mb-4">و</div>
         <h2 className="font-display text-xl font-bold text-deep mb-2">ابدأ بإضافة جمعيتك</h2>
         <p className="text-muted mb-6">أدر ملّاك جمعيتك، حالات السداد، ورصيد الصندوق من مكان واحد.</p>
-        <button className="btn btn-gold" onClick={() => setModal("new")}>+ إنشاء جمعية</button>
+        <button className="btn btn-gold" onClick={openNewAssoc}>+ إنشاء جمعية</button>
         {modal === "new" && <FormModal open title="جمعية جديدة" onClose={() => setModal(null)} onSubmit={createAssociation} />}
       </div>
     );
@@ -1092,7 +1121,7 @@ export default function AssociationView({ initial, issuer }: { initial: Associat
   /** «المزيد ▾»: على الجوال كل الأزرار الثانوية؛ على الشاشة الواسعة ما لا زرّ له (desk) */
   const moreItems: { label: string; run: () => void; desk?: boolean }[] = [
     { label: "🧾 كشف حساب الجمعية", run: openAssocStatement },
-    { label: "⬇️ تنزيل الملاك CSV", run: exportOwnersCSV },
+    ...(limits?.ownersExport === false ? [] : [{ label: "⬇️ تنزيل الملاك CSV", run: exportOwnersCSV }]),
     { label: "🧾 الصندوق والمصروفات", run: () => setTab("fund") },
     { label: "⚖️ توزيع الرسوم حسب الحصص", run: () => setSharesOpen(true) },
     { label: "📊 الموازنة", run: openBudget },
@@ -1198,12 +1227,12 @@ export default function AssociationView({ initial, issuer }: { initial: Associat
           <span className="hidden sm:inline-flex gap-2">
             <button type="button" className="btn btn-ghost text-sm" onClick={refreshNow} disabled={refreshing}
               title="تحديث البيانات من السيرفر">{refreshing ? "…" : "↻ تحديث"}</button>
-            <button className="btn btn-gold text-sm" onClick={() => setModal("new")}>+ جمعية</button>
+            <button className="btn btn-gold text-sm" onClick={openNewAssoc}>+ جمعية</button>
           </span>
           <div className="sm:hidden">
             <RowMenu label="⋯ المزيد" items={[
               { label: refreshing ? "… جارٍ التحديث" : "↻ تحديث البيانات", run: refreshNow },
-              { label: "+ جمعية جديدة", run: () => setModal("new") },
+              { label: "+ جمعية جديدة", run: openNewAssoc },
               ...(archivedCount > 0 ? [{ label: showArchived ? "إخفاء المؤرشفة" : `عرض المؤرشفة (${archivedCount})`, run: () => setShowArchived((v) => !v) }] : []),
             ]} />
           </div>
@@ -1316,7 +1345,7 @@ export default function AssociationView({ initial, issuer }: { initial: Associat
               <span className="sm:hidden"><RowMenu label="المزيد ▾" items={moreItems} /></span>
               <span className="hidden sm:inline-flex flex-wrap gap-2 items-center">
                 <button type="button" className="btn btn-ghost text-xs" onClick={openAssocStatement}>كشف حساب</button>
-                <button type="button" className="btn btn-ghost text-xs" onClick={exportOwnersCSV} title="تنزيل ملف Excel/CSV بكل الملّاك وحالتهم">⬇️ CSV</button>
+                {limits?.ownersExport !== false && <button type="button" className="btn btn-ghost text-xs" onClick={exportOwnersCSV} title="تنزيل ملف Excel/CSV بكل الملّاك وحالتهم">⬇️ CSV</button>}
                 <button type="button" className="btn btn-ghost text-xs" onClick={() => setSharesOpen(true)}
                   title="حصة كل وحدة ومساحتها، وتوزيع الموازنة عليها">⚖️ توزيع الرسوم حسب الحصص</button>
                 <button type="button" className="btn btn-ghost text-xs" onClick={openBudget}>📊 الموازنة</button>
@@ -1471,6 +1500,14 @@ export default function AssociationView({ initial, issuer }: { initial: Associat
         {/* ملاحظات — على الجوال في تبويب «سجل العمارة»، وعلى الشاشة الواسعة بجانب الملاك */}
         <div className={`bg-white border border-line rounded-2xl shadow-sm ${tab === "log" ? "" : "hidden md:block"}`}>
           <div className="border-b border-line px-5 py-4"><h2 className="font-semibold">سجل العمارة</h2></div>
+          {limits?.buildingLog === false ? (
+            /* الأساسية: سجل العمارة الكامل من مزايا الاحترافية (صفحة الأسعار). خطابات
+               التحصيل تبقى تُوثَّق تلقائيًّا وتظهر في سجل مطالبات كل مالك. */
+            <div className="p-5 text-sm text-muted leading-relaxed">
+              سجل العمارة الكامل (الصيانة، تغيّر الملاك، القرارات) من مزايا <b className="text-deep">الباقة الاحترافية</b>.
+              <div className="text-xs mt-1">خطابات التحصيل تبقى موثّقة تلقائيًّا وتظهر في سجل مطالبات كل مالك.</div>
+            </div>
+          ) : (
           <div className="p-4">
             <AddNote onAdd={addNote} placeholder="أضف ملاحظة (صيانة، تغيّر مالك…)" />
             {notes.length ? notes.map((n) => {
@@ -1491,6 +1528,7 @@ export default function AssociationView({ initial, issuer }: { initial: Associat
               );
             }) : <div className="text-center text-muted py-6 text-sm">لا ملاحظات بعد.</div>}
           </div>
+          )}
         </div>
       </div>
       )}

@@ -4,6 +4,7 @@
  *    فتتطابق أرقام تليجرام مع الشاشة تمامًا. مسار الجمعيات يبقى على months_late.
  *  ============================================================ */
 
+import { productState, LIMIT_MSG } from "./entitlements";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { statusWindows } from "./contract-state";
 import { contractState, renewContract as renewFields, freqShort, applyPayment, defaultTermPeriods, splitVat, unitVatApplies, withVat, type Frequency } from "@/lib/contracts";
@@ -472,6 +473,9 @@ async function payOwner(db: DB, profile: any, ownerId: string, requestKey?: stri
 /** موجّه واحد: يختار المسار الصحيح تلقائيًّا (كان يفشل للجمعيات) */
 async function recordPayment(db: DB, profile: any, id: string, mode: "one" | "all" = "one", requestKey?: string | null): Promise<{ ok: boolean; msg: string }> {
   const track = await detectTrack(db, profile);
+  /* البوت يكتب بمفتاح الخدمة فلا يمرّ بحارس القاعدة (v67) — نطبّق القاعدة نفسها
+     هنا بمنتج المسار: في الحساب المزدوج قد تنتهي جهة وتبقى الأخرى سارية */
+  if (productState(profile, track === "properties" ? "property" : "hoa") === "expired") return { ok: false, msg: LIMIT_MSG.readOnly };
   return track === "properties" ? payTenant(db, profile, id, mode) : payOwner(db, profile, id, requestKey);
 }
 export const markPaid = (db: DB, profile: any, id: string, mode: "one" | "all" = "one", requestKey?: string | null) => recordPayment(db, profile, id, mode, requestKey);
@@ -503,6 +507,7 @@ export async function renewContract(db: DB, profile: any, tenantId: string): Pro
     if (!t) return { ok: false, msg: "العقد غير موجود." };
     const { data: prop } = await db.from("properties").select("id,user_id,property_type,name").eq("id", t.property_id).maybeSingle();
     if (!prop || String(prop.user_id) !== String(profile.id)) return { ok: false, msg: "غير مصرّح." };
+    if (productState(profile, "property") === "expired") return { ok: false, msg: LIMIT_MSG.readOnly };   // v67
     /* (جولة 4) البوت لا يجدّد قبل نهاية العقد بأكثر من 30 يومًا — نفس حارس اللوحة وعتبته.
        حادثة «التميز»: تجديد بعد ستة أسابيع من عقد ستة أشهر صفّر عدّاد الدفعات. */
     const curEnd = contractState(t).endDate;

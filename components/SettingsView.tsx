@@ -15,6 +15,8 @@ export default function SettingsView({ profile }: { profile: any }) {
   const router = useRouter();
   const initial = JSON.stringify({ ...profile, account_type: normalizeAccountType(profile) });
   const [p, setP] = useState<any>({ ...profile, account_type: normalizeAccountType(profile) });
+  /* بعد الاشتراك يُحدِّد نوعُ الحساب أيَّ باقة تسري على أي لوحة، فلا يُغيَّر من هنا (v67) */
+  const typeLocked = !!(profile?.plan || profile?.hoa_plan);
   /* الصفحة بطول خمس شاشات وزرّ الحفظ في آخرها: من يغيّر «نوع الحساب»
      في الأعلى يمرّ بالصفحة كلها ليحفظ. الشريط يظهر عند أول تغيير ويبقى
      في متناول اليد. */
@@ -125,8 +127,9 @@ export default function SettingsView({ profile }: { profile: any }) {
         <p className="text-sm text-muted mb-4">يحدّد اللوحة التي تُفتح لك عند الدخول. اختر «الاثنان معًا» لتحصل على لوحتين وتبدّل بينهما.</p>
         <div className="grid sm:grid-cols-3 gap-3">
           {ACCOUNT_TYPES.map((a) => (
-            <button key={a.value} onClick={() => setP({ ...p, account_type: a.value })}
-              className={`text-right border-2 rounded-xl p-3.5 transition ${
+            <button key={a.value} disabled={typeLocked && a.value !== p.account_type}
+              onClick={() => { if (!typeLocked) setP({ ...p, account_type: a.value }); }}
+              className={`text-right border-2 rounded-xl p-3.5 transition disabled:opacity-50 disabled:cursor-not-allowed ${
                 p.account_type === a.value ? "border-gold bg-[#FBF1DF]" : "border-line hover:border-goldSoft"}`}>
               <div className="text-xl mb-1.5">{a.icon}</div>
               <div className="font-semibold text-sm text-deep leading-snug">{a.short}</div>
@@ -134,6 +137,11 @@ export default function SettingsView({ profile }: { profile: any }) {
             </button>
           ))}
         </div>
+        {typeLocked && (
+          <p className="text-xs text-muted bg-paper2 border border-line rounded-lg p-3 mt-3 leading-relaxed">
+            🔒 نوع الحساب مرتبط بباقتك — لتغييره (مثلًا إضافة لوحة الجمعيات) راسلنا ونغيّره لك مع الباقة المناسبة.
+          </p>
+        )}
         {p.account_type === "both" && (
           <p className="text-xs text-[#137a50] bg-[#E6F4EC] border border-[#B7DFC7] rounded-lg p-3 mt-3 leading-relaxed">
             🔀 الحساب المزدوج مفعّل — يظهر مبدّل اللوحتين في الشريط العلوي.
