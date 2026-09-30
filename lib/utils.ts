@@ -3,8 +3,14 @@ export const sar = (n: number | null | undefined) => (Number(n) || 0).toLocaleSt
 export function daysLeft(iso?: string | null): number | null {
   if (!iso) return null;
   // المرجع يوم الرياض لا يوم الخادم
-  const base = (() => { const f = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Riyadh", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date()); const [y, m, d] = f.split("-").map(Number); return new Date(y, m - 1, d); })();
-  return Math.ceil((new Date(iso).getTime() - base.getTime()) / 86400000);
+  const [by, bm, bd] = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Riyadh", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date()).split("-").map(Number);
+  /* (30 سبتمبر 2026) الفرق بالأيام التقويمية كلها بـUTC: كان التاريخ يُقرأ
+     new Date("2026-10-01") = منتصف ليل UTC ويُطرح منه منتصف ليل محلي، فعلى جهاز
+     بتوقيت الرياض يزيد 3 ساعات ويقرّبها ceil يومًا كاملًا — شهادة تنتهي اليوم
+     تظهر «بقي يوم»، والمنتهية أمس تظهر «0» لا «انتهت». */
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso).trim());
+  const target = m ? Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])) : new Date(iso).getTime();
+  return Math.round((target - Date.UTC(by, bm - 1, bd)) / 86400000);
 }
 
 /**

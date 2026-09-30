@@ -1377,7 +1377,7 @@ function showDocInline(html: string) {
 
 type OwnerRow = {
   id?: string; name: string; unit: string | null; phone: string | null;
-  months_late: number; last_paid: string | null; partial_amount?: number | null;
+  months_late: number; last_paid: string | null; partial_amount?: number | null; prepaid_months?: number | null;
 };
 type AssociationDoc = {
   name: string; units?: number; fee: number;
@@ -1428,16 +1428,19 @@ ${header("كشف حساب مالك", o.name, issuer)}
 <div class="tot">
   <div><div class="v r">${o.months_late || 0}</div><div class="l">فترات متأخرة</div></div>
   <div><div class="v">${sar(fee)}</div><div class="l">اشتراك الفترة (ريال)</div></div>
-  <div><div class="v g">${sar(partial)}</div><div class="l">مدفوع جزئيًّا (ريال)</div></div>
+  ${(Number(o.months_late) || 0) === 0 && (Number(o.prepaid_months) || 0) > 0
+    ? `<div><div class="v g">${Number(o.prepaid_months) || 0}</div><div class="l">أشهر مسدَّدة مقدَّمًا</div></div>`
+    : `<div><div class="v g">${sar(partial)}</div><div class="l">${(Number(o.months_late) || 0) > 0 ? "مدفوع جزئيًّا" : "رصيد لكم"} (ريال)</div></div>`}
   <div><div class="v g">${sar(received)}</div><div class="l">إجمالي المستلم (ريال)</div></div>
 </div>
 
-${due > 0 ? `<div class="due"><span class="l">الرصيد المستحق حتى تاريخه</span><span class="v">${sar(due)} ريال</span></div>` : ""}
+${due > 0 ? `<div class="due"><span class="l">الرصيد المستحق حتى تاريخه</span><span class="v">${sar(due)} ريال</span></div>`
+  : `<div class="note">لا مستحقات على الوحدة حتى تاريخه${(Number(o.prepaid_months) || 0) > 0 ? ` — مسدَّد مقدَّمًا لـ ${Number(o.prepaid_months)} شهر` : ""}${partial > 0 && !(Number(o.months_late) > 0) ? ` — ورصيد لكم ${sar(partial)} ريال يُخصم من الشهر القادم` : ""}.</div>`}
 
 ${payments.length ? `
 <h1 style="font-size:1rem">المدفوعات المستلمة</h1>
 <table>
-  <thead><tr><th>#</th><th>تاريخ الاستلام</th><th>المبلغ (ريال)</th><th>طريقة السداد</th><th>ملاحظة</th></tr></thead>
+  <thead><tr><th>#</th><th>تاريخ الاستلام</th><th>المبلغ (ريال)</th><th>طريقة السداد</th><th>السند / المرجع</th></tr></thead>
   <tbody>
     ${payments.map((r, i) => `<tr>
       <td>${i + 1}</td><td>${r.paid_on ? arDate(r.paid_on) : "—"}</td><td>${sar(r.amount)}</td>

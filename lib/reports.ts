@@ -129,8 +129,8 @@ async function assocContext(db: DB, profile: any) {
   const assocIds = (assocs || []).map((a: any) => a.id);
   let owners: any[] = [];
   if (assocIds.length) {
-    const { data } = await db.from("owners").select("*").in("association_id", assocIds);
-    owners = data || [];
+    /* بلا قصّ عند 1000 صف: مدير بعدة عمارات قد يتجاوزها */
+    owners = await fetchAllRows<any>(db as any, "owners", "*", (q) => q.in("association_id", assocIds));
   }
   return { assocs: assocs || [], assocById, owners };
 }
@@ -565,7 +565,7 @@ export async function buildReminder(db: DB, profile: any, contractId: string): P
       const { data: o } = await db.from("owners").select("*").eq("id", contractId).maybeSingle();
       if (!o) return { ok: false, text: "المالك غير موجود." };
       const { data: assoc } = await db.from("associations")
-        .select("id,user_id,name,fee").eq("id", o.association_id).maybeSingle();
+        .select("*").eq("id", o.association_id).maybeSingle();   /* * : يشمل حقول البنك (v60) إن وُجدت */
       if (!assoc || String(assoc.user_id) !== String(profile.id)) return { ok: false, text: "غير مصرّح." };
       const fee = Number(assoc.fee) || 0;
       const partial = Number(o.partial_amount) || 0;
@@ -580,9 +580,13 @@ export async function buildReminder(db: DB, profile: any, contractId: string): P
             partial > 0 ? `• المسدَّد جزئيًّا: ${sar(partial)} ريال` : "",
             `• المبلغ المتبقّي: ${sar(due)} ريال`,
             "",
-            "ويُسدَّد المبلغ في الحساب البنكي للجمعية.",
+            assoc.iban
+              ? `ويُسدَّد بالتحويل إلى حساب الجمعية${assoc.bank_name ? ` في ${assoc.bank_name}` : ""}${assoc.bank_account_name ? ` باسم ${assoc.bank_account_name}` : ""}:\n${assoc.iban}`
+              : "ويُسدَّد المبلغ في الحساب البنكي للجمعية.",
           ].filter(Boolean)
-        : [`تذكير ودّي بأن اشتراك الصيانة عن ${unit}${fee ? ` وقدره ${sar(fee)} ريال` : ""} أصبح مستحقًّا.`];
+        : (Number(o.prepaid_months) || 0) > 0 || partial > 0
+          ? [`نشكركم على السداد — اشتراك الصيانة عن ${unit} مسدَّد${(Number(o.prepaid_months) || 0) > 0 ? ` مقدَّمًا لـ ${o.prepaid_months} شهر` : ""}، ولا مستحقات عليكم حاليًّا.`]
+          : [`تذكير ودّي بأن اشتراك الصيانة عن ${unit}${fee ? ` وقدره ${sar(fee)} ريال` : ""} يُستحق مع بداية الشهر.`];
     }
 
     if (!phone) return { ok: false, text: `لا يوجد رقم جوال مسجّل لـ ${esc(name)}.` };

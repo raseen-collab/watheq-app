@@ -176,7 +176,7 @@ export default function TeamSection() {
               <div key={i.id} className="flex flex-wrap items-center gap-2 bg-paper2 border border-line rounded-xl px-3 py-2">
                 <code className="font-mono font-bold tracking-widest text-deep" dir="ltr">{i.code}</code>
                 <span className="text-xs text-muted">{ROLE_LABEL[i.role]}</span>
-                <span className="text-[11px] text-muted">تنتهي {new Date(i.expires_at).toLocaleDateString("ar-SA")}</span>
+                <span className="text-[11px] text-muted">تنتهي {new Date(i.expires_at).toLocaleDateString("ar-SA-u-ca-gregory-nu-latn", { timeZone: "Asia/Riyadh" })}</span>
                 <span className="ms-auto flex gap-1.5">
                   <button className="btn btn-ghost text-xs" onClick={() => copyInvite(i.code)}
                     title="رسالة جاهزة بالرمز والخطوات — أرسلها للموظف على واتساب">

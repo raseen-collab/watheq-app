@@ -16,7 +16,7 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { buildSchedule, FREQUENCIES, type Frequency } from "@/lib/contracts";
-import { fromHijri, toHijri, hijriText } from "@/lib/hijri";
+import { fromHijri, toHijri, hijriText, latinDigits } from "@/lib/hijri";
 
 const AR_MONTHS = [
   "محرم", "صفر", "ربيع الأول", "ربيع الآخر", "جمادى الأولى", "جمادى الآخرة",
@@ -132,7 +132,7 @@ export default function HijriScheduleTool() {
                 <select className="fld" value={hm} onChange={(e) => setHm(e.target.value)}>
                   {AR_MONTHS.map((m, i) => <option key={m} value={i + 1}>{i + 1} — {m}</option>)}
                 </select>
-                <input className="fld" inputMode="numeric" value={hy} onChange={(e) => setHy(e.target.value.replace(/\D/g, "").slice(0, 4))} placeholder="السنة" />
+                <input className="fld" inputMode="numeric" value={hy} onChange={(e) => setHy(latinDigits(e.target.value).replace(/\D/g, "").slice(0, 4))} placeholder="السنة" />
               </div>
             ) : (
               <input className="fld" type="date" value={gDate} onChange={(e) => setGDate(e.target.value)} />

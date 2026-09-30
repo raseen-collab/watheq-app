@@ -229,17 +229,18 @@ export default function ExportData() {
         add("ملاك الجمعيات", owners.map((o: any) => {
           const fee = aFee[o.association_id] || 0, late = Number(o.months_late) || 0, part = Number(o.partial_amount) || 0;
           return { "الجمعية": aName[o.association_id] || "", "المالك": o.name, "الوحدة": o.unit || "", "الجوال": o.phone || "",
-            "الأشهر المتأخرة": late, "مدفوع من الشهر التالي": part,
+            "الأشهر المتأخرة": late, "الجزئي أو الرصيد (ريال)": part,
+            "أشهر مقدَّمة": Number(o.prepaid_months) || 0,
             "المتأخر (ريال)": Math.max(0, Math.round((late * fee - part) * 100) / 100),
             "آخر سداد": String(o.last_paid || "").slice(0, 10) };
-        }), [22, 22, 10, 14, 12, 14, 14, 12]);
+        }), [22, 22, 10, 14, 12, 14, 10, 14, 12]);
         add("سجل الجمعيات", assocNotes.map((n: any) => ({ "الجمعية": aName[n.association_id] || "",
           "التاريخ": String(n.note_date || n.created_at || "").slice(0, 10), "الملاحظة": n.text || "" })), [22, 12, 70]);
       }
 
       XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([
         ["نسخة كاملة من بيانات حسابك في وثيق"],
-        [`تاريخ التصدير: ${new Date().toLocaleDateString("ar-SA", { timeZone: "Asia/Riyadh" })}`],
+        [`تاريخ التصدير: ${new Date().toLocaleDateString("ar-SA-u-ca-gregory-nu-latn", { timeZone: "Asia/Riyadh" })}`],
         [""],
         ["ورقة «قالب الرفع» بنفس أعمدة قالب الرفع في وثيق — لو رجعت يومًا، ارفعها كما هي من صفحة «رفع Excel» وتعود كل وحداتك بعقودها ودفعاتها المسدّدة."],
         ["بقية الأوراق للعمل خارج وثيق: كل جدول بأسماء أعمدة عربية واضحة، بلا أكواد داخلية."],

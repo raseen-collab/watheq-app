@@ -50,6 +50,13 @@ export async function GET(req: Request) {
 
   const db = createAdmin(url, key, { auth: { persistSession: false } });
 
+  /* استحقاق الشهر الجديد لجمعيات الملاك (schema-v60) قبل قراءة الأرقام —
+     لا يتكرر لنفس الشهر، ولا يمسّ جمعية لم يفعّل صاحبها الاستحقاق التلقائي. */
+  try {
+    const { error: accErr } = await db.rpc("watheq_hoa_accrue_all");
+    if (accErr && !/Could not find|does not exist/.test(accErr.message)) Sentry.captureMessage("hoa accrue: " + accErr.message);
+  } catch (e) { Sentry.captureException(e); }
+
   /**
    * الملخص لصاحب المكتب وحده.
    *

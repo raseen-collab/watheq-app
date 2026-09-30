@@ -11,7 +11,7 @@
 // ============================================================
 
 import { useEffect, useState } from "react";
-import { fromHijri, toHijri, hijriText } from "@/lib/hijri";
+import { fromHijri, toHijri, hijriText, latinDigits } from "@/lib/hijri";
 
 const PREF = "watheq.cal";
 const MONTHS = [
@@ -85,7 +85,7 @@ export default function DateField({ value, onChange, id }: {
       ) : (
         <div className="grid grid-cols-3 gap-2">
           <input className="fld" inputMode="numeric" placeholder="اليوم" value={hd}
-            onChange={(e) => pushHijri(hy, hm, e.target.value.replace(/\D/g, "").slice(0, 2))} />
+            onChange={(e) => pushHijri(hy, hm, latinDigits(e.target.value).replace(/\D/g, "").slice(0, 2))} />
           <select className="fld" value={hm} onChange={(e) => pushHijri(hy, e.target.value, hd)}>
             <option value="">الشهر</option>
             {/* الرقم مع الاسم: المكتب يكتب في عقده «1448/2/18» ويعرف أن 2 هو
@@ -94,7 +94,7 @@ export default function DateField({ value, onChange, id }: {
             {MONTHS.map((n, i) => <option key={n} value={i + 1}>{i + 1} — {n}</option>)}
           </select>
           <input className="fld" inputMode="numeric" placeholder="السنة" value={hy}
-            onChange={(e) => pushHijri(e.target.value.replace(/\D/g, "").slice(0, 4), hm, hd)} />
+            onChange={(e) => pushHijri(latinDigits(e.target.value).replace(/\D/g, "").slice(0, 4), hm, hd)} />
         </div>
       )}
 

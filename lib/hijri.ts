@@ -74,9 +74,20 @@ export function fromHijri(hy: number, hm: number, hd: number): string {
  * هل النص تاريخ هجري؟ السنة بين 1300 و1600 تحسمها — لا تلتبس بميلادي
  * (1900+) ولا برقم آخر. يقبل: 1447-03-15 · 15/03/1447 · 15-3-1447هـ
  */
+/** الأرقام العربية-الهندية (٠-٩) والفارسية (۰-۹) → لاتينية */
+export function latinDigits(v: string): string {
+  return String(v ?? "")
+    .replace(/[٠-٩]/g, (d) => String("٠١٢٣٤٥٦٧٨٩".indexOf(d)))
+    .replace(/[۰-۹]/g, (d) => String("۰۱۲۳۴۵۶۷۸۹".indexOf(d)));
+}
+
 export function parseHijriInput(v: string): string {
-  const s = String(v || "").replace(/[٠-٩]/g, (d) => String("٠١٢٣٤٥٦٧٨٩".indexOf(d)))
-    .replace(/هـ|هجري|h/gi, "").trim();
+  /* (30 سبتمبر 2026) كان يرفض: الأرقام الفارسية «۱۵/۰۳/۱۴۴۷» (لوحات مفاتيح
+     كثيرة تُخرجها)، واللاحقة «ه» بلا تطويل «15/3/1447 ه»، وعلامات الاتجاه
+     الخفية (RLM) الملتصقة بالنص المنسوخ من مستند عربي. */
+  const s = latinDigits(String(v || ""))
+    .replace(/[​-‏‪-‮⁦-⁩﻿؜]/g, "")
+    .replace(/هـ|هجري|h|\s*ه\s*$/gi, "").trim();
   if (!s) return "";
   let m = /^(\d{3,4})[-/.](\d{1,2})[-/.](\d{1,2})$/.exec(s);          // سنة-شهر-يوم
   if (m && Number(m[1]) >= 1300 && Number(m[1]) <= 1600) {

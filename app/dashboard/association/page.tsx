@@ -49,6 +49,10 @@ export default async function AssociationPage() {
     await supabase.from("profiles").update({ last_dashboard: "association" }).eq("id", user.id);
   }
 
+  /* استحقاق الشهر الجديد (schema-v60) قبل القراءة — آمن للتكرار، ولا يمسّ
+     الجمعيات التي لم يفعّل صاحبها الاستحقاق التلقائي. فشله لا يوقف اللوحة. */
+  try { await supabase.rpc("watheq_hoa_accrue_mine"); } catch { /* قبل v60 */ }
+
   const { data: associations } = await supabase
     .from("associations")
     .select("*, owners(*), association_notes(*)")
