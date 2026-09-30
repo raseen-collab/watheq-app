@@ -108,13 +108,6 @@ export default function DashboardShell({
         </div>
       </header>
 
-      {sub?.kind === "paid_soon" && (
-        <div className="text-center text-sm py-2 px-4 bg-[#FBF1DF] text-[#8a5a11] border-b border-[#EBD9AA]">
-          اشتراكك ينتهي بعد <b>{sub.subDaysLeft}</b> يومًا.{" "}
-          <a href="https://wa.me/966596300591?text=%D8%A3%D8%A8%D8%BA%D9%89%20%D8%A3%D8%AC%D8%AF%D8%AF%20%D8%A7%D8%B4%D8%AA%D8%B1%D8%A7%D9%83%D9%8A%20%D9%81%D9%8A%20%D9%88%D8%AB%D9%8A%D9%82" target="_blank" rel="noreferrer" className="underline font-bold">جدّد الآن</a>
-        </div>
-      )}
-
       {/* دورة التذكير بالتجديد: 7 أيام قبل (ذهبي) → سماح 5 أيام (أحمر بعدّاد) → انتهى */}
       {sub?.kind === "paid_soon" && sub.subDaysLeft !== null && (
         <div className="text-center text-sm py-2 px-4 bg-[#FBF1DF] text-[#8a5a11] border-b border-[#EBD9AA]">

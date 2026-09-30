@@ -65,6 +65,12 @@ export async function recordSubPayment(input: {
     .maybeSingle();
   if (pe) return { ok: false, error: pe.message };
   if (!prof) return { ok: false, error: "الحساب غير موجود" };
+  /* 30 سبتمبر 2026: سُجّل شهر لحساب باقته ليست مدفوعة و«الباقة: بلا تغيير» —
+     فامتدّ subscribed_until وظهر مشتركًا هنا، بينما لوحته تبقى «تجربة» لأن
+     subState لا يعدّ الحساب مدفوعًا إلا بباقة مدفوعة. لا دفعة بلا باقة. */
+  if (!plan && !["basic", "pro", "full"].includes(String(prof.plan || "").toLowerCase())) {
+    return { ok: false, error: "هذا الحساب بلا باقة مدفوعة — اختر الباقة قبل التسجيل، وإلا يبقى في وضع التجربة عند صاحبه." };
+  }
 
   // التمديد من تاريخ الانتهاء إن كان ساريًا (فلا يخسر أيامه من جدّد مبكرًا)،
   // ومن اليوم إن كان منتهيًا (فلا يُمدَّد إلى الماضي).

@@ -95,6 +95,10 @@ type State = "paid" | "soon" | "ended" | "trial" | "trial_ended";
 
 function stateOf(r: SubRow): { s: State; label: string; tone: string } {
   const sub = daysTo(r.subscribed_until);
+  /* تاريخ اشتراك سارٍ بلا باقة مدفوعة: صاحبه يرى «تجربة» — لا نعرضه مشتركًا هنا */
+  if (sub !== null && sub >= 0 && !["basic", "pro", "full"].includes(String(r.plan || "").toLowerCase())) {
+    return { s: "soon", label: `⚠ بلا باقة — يظهر له «تجربة» (بقي ${daysWord(sub)})`, tone: "text-late font-semibold" };
+  }
   if (sub !== null && sub >= 0) {
     return sub <= 14
       ? { s: "soon", label: `بقي ${daysWord(sub)}`, tone: "text-gold font-semibold" }
