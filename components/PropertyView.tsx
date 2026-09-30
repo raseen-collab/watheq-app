@@ -2523,9 +2523,10 @@ function PaymentModal({ tenant, unitWord, onClose, onSubmit, st, recent = null, 
   const rent = Number(tenant.rent_amount) || 0;
   const already = Number(tenant.partial_amount) || 0;
   const remaining = Math.max(0, rent - already);
-  const [amount, setAmount] = useState<string>(String(init?.amount || remaining || rent));
   /* (جولة 4) المتبقي من قيمة العقد كله بوحدة التسجيل — حادثة 8,299 بدل 1,700 على عقد 10,000 */
   const rem = contractRemaining(tenant, vat);
+  /* عقد مسدَّد بالكامل: لا نقترح مبلغًا — كان الحقل يُملأ بدفعة كاملة لا وجود لها */
+  const [amount, setAmount] = useState<string>(init?.amount ? String(init.amount) : rem.remaining <= 0 ? "" : String(Math.min(remaining || rent, rem.remaining)));
   const [ask, setAsk] = useState<null | { kind: "excess" | "dup"; text: string }>(null);
   const [acked, setAcked] = useState<{ excess?: string; dup?: string }>({});
   const [method, setMethod] = useState("transfer");
@@ -2623,14 +2624,28 @@ function PaymentModal({ tenant, unitWord, onClose, onSubmit, st, recent = null, 
         </Field>
       </div>
 
-      {amt > 0 && (
-        <div className="bg-[#E6F4EC] border border-[#B7DFC7] rounded-xl p-3 mt-4 text-xs text-[#137a50] leading-relaxed">
+      {amt > 0 && (() => {
+        /* الزيادة على المتبقي من العقد كله. إن وُجدت فلا «دفعة قادمة» ولا «جزئي منها»
+           يُقال — كانت المعاينة توحي بأن الزيادة سداد طبيعي (حادثة 8,299 بدل 1,700) */
+        const overAll = excessOverRemaining(amt, rem.remaining);
+        const settled = rem.remaining <= 0;
+        return (
+        <div className={`rounded-xl p-3 mt-4 text-xs leading-relaxed border ${overAll > 0 ? "bg-[#FBE9E7] border-[#F5C6C2] text-[#8f2b26]" : "bg-[#E6F4EC] border-[#B7DFC7] text-[#137a50]"}`}>
+          {settled ? (
+            <div>العقد مسدَّد بالكامل — المبلغ كله (<b>{sar(amt)} ريال</b>) زيادة على قيمة العقد.</div>
+          ) : (<>
           {lateN > 0 && <div>يُطبَّق على أقدم دفعة متأخرة أولًا{st?.nextDueDate ? <> (المستحقة <bdi dir="ltr" className="whitespace-nowrap">{st.nextDueDate}</bdi>)</> : null}.</div>}
           {completed > 0 && <div>ستكتمل <b>{countAr(completed, "دفعة واحدة", "دفعتان", "دفعات", "دفعة")}</b>{lateN > 0 ? (completed >= lateN ? " — وتُغطّى كل المتأخرات" : ` — ويبقى متأخرًا ${countAr(lateN - completed, "دفعة واحدة", "دفعتان", "دفعات", "دفعة")}`) : ""}.</div>}
-          {leftover > 0 && <div>ويتبقّى <b>{sar(leftover)} ريال</b> مسجّلة كسداد جزئي على {lateN > completed ? "الدفعة المتأخرة التالية" : "الدفعة القادمة"}.</div>}
-          {completed === 0 && leftover > 0 && <div>لن تكتمل دفعة — يُسجَّل المبلغ جزئيًّا فقط.</div>}
-        </div>
-      )}
+          {overAll > 0
+            ? <div>ويزيد <b>{sar(overAll)} ريال</b> على المتبقي من العقد كله ({sar(rem.remaining)}) — لا دفعة بعدها في هذا العقد.</div>
+            : <>
+              {completed > 0 && leftover > 0 && <div>ويتبقّى <b>{sar(leftover)} ريال</b> مسجّلة كسداد جزئي على {lateN > completed ? "الدفعة المتأخرة التالية" : "الدفعة القادمة"}.</div>}
+              {/* لا دفعة تكتمل: المبلغ جزء من الدفعة نفسها — كانت المعاينة تقول «على الدفعة التالية» */}
+              {completed === 0 && leftover > 0 && <div>لن تكتمل الدفعة — يُسجَّل سدادًا جزئيًّا منها، ويبقى عليها <b>{sar(+(rent - leftover).toFixed(2))} ريال</b>.</div>}
+            </>}
+          </>)}
+        </div>);
+      })()}
 
       {ask ? (
         /* (جولة 4) سؤال داخل النافذة — لا نافذة المتصفح. يسأل ولا يمنع. */

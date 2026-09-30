@@ -244,7 +244,7 @@ export default function AssociationView({ initial, issuer }: { initial: Associat
       const pid = (r as any).payment_id as string | undefined;
       if (pid && !r.duplicate) afterPay.current[pid] = { late: r.months_late, partial: Number(r.partial_amount) || 0, prepaid: r.prepaid_months ?? 0, fee: feeOf(o, active) };
       notify("ok", r.duplicate ? `هذه الدفعة مسجّلة سابقًا${rc}`
-        : r.months > 0 ? `سُجّل ${riyalsAr(paid, sar)} عن ${periodsAr(r.months, periodOf(active))}${rc}`
+        : r.months > 0 ? `سُجّل ${riyalsAr(paid, sar)} عن ${periodsAr(r.months, periodOf(active), true)}${rc}`
         : `سُجّل ${riyalsAr(paid, sar)} كسداد جزئي${rc}`,
         pid ? { payment_id: pid, owner: o, receipt_no: r.receipt_no, amount: paid, paid_on: r.paid_on } : undefined);
       return true;
@@ -865,7 +865,7 @@ export default function AssociationView({ initial, issuer }: { initial: Associat
     const lines: string[] = [`السلام عليكم ورحمة الله، ${o.name}`, ""];
 
     if (o.months_late <= 0 && ((Number(o.prepaid_months) || 0) > 0 || partial > 0)) {
-      lines.push(`نشكركم على السداد — اشتراك الصيانة عن ${unit} في ${assoc} مسدَّد${(Number(o.prepaid_months) || 0) > 0 ? ` مقدَّمًا لـ ${periodsAr(Number(o.prepaid_months), per)}` : ""}، ولا مستحقات عليكم حاليًّا.`);
+      lines.push(`نشكركم على السداد — اشتراك الصيانة عن ${unit} في ${assoc} مسدَّد${(Number(o.prepaid_months) || 0) > 0 ? ` مقدَّمًا لـ ${periodsAr(Number(o.prepaid_months), per, true)}` : ""}، ولا مستحقات عليكم حاليًّا.`);
     } else if (o.months_late <= 0) {
       lines.push(`تذكير ودّي بأن اشتراك الصيانة عن ${unit} في ${assoc}${fee ? ` وقدره ${sar(fee)} ريال ${PERIOD_WORDS[per].every}` : ""} يُستحق مع بداية ${per === "annual" ? "السنة المالية للجمعية" : "الشهر"}.`);
     } else {
@@ -1683,7 +1683,7 @@ function OwnerPaymentModal({ owner, fee, period = "monthly", busy, onClose, onSu
 
       {amt > 0 && fee > 0 && (
         <div className="bg-[#E6F4EC] border border-[#B7DFC7] rounded-xl p-3 mt-4 text-xs text-[#137a50] leading-relaxed">
-          {covered > 0 && <div>يغطّي <b>{periodsAr(covered, period)}</b>{after.prepaid > 0 ? ` (منها ${after.prepaid - prepaid0 > 0 ? after.prepaid - prepaid0 : 0} مقدَّمًا)` : ""}.</div>}
+          {covered > 0 && (() => { const adv = Math.max(0, after.prepaid - prepaid0); return <div>يغطّي <b>{periodsAr(covered, period, true)}</b>{adv <= 0 ? "" : adv >= covered ? " — كلها مقدَّمًا" : ` — منها ${periodsAr(adv, period)} مقدَّمًا`}.</div>; })()}
           {after.late > 0 && <div>يبقى عليه <b>{periodsAr(after.late, period)}</b>{after.partial > 0 ? ` (دفع من آخرها ${sar(after.partial)} ريال)` : ""}.</div>}
           {after.late === 0 && after.partial > 0 && <div>ويبقى له رصيد <b>{sar(after.partial)} ريال</b> يُخصم من {period === "annual" ? "السنة القادمة" : "الشهر القادم"}.</div>}
           {covered === 0 && <div>لن يكتمل {W.one} — يُسجَّل المبلغ جزئيًّا.</div>}
@@ -2224,7 +2224,7 @@ function HistoryModal({ data, period = "monthly", onClose, onReverse, onReceipt,
                     </div>
                     <div className="text-xs text-muted">
                       {arDate(r.paid_on)}{r.receipt_no ? <> · <span dir="ltr">{r.receipt_no}</span></> : ""} · {isRev ? "سطر عكس" : methodLabel(r.method)}
-                      {pc ? ` · ${isRev ? "يُلغي " : ""}${periodsAr(pc, period)}` : ""}
+                      {pc ? ` · ${isRev ? "يُلغي " : ""}${periodsAr(pc, period, isRev)}` : ""}
                     </div>
                     {[r.reference, r.note].filter(Boolean).length > 0 && <div className="text-xs text-muted break-words">{[r.reference, r.note].filter(Boolean).join(" · ")}</div>}
                   </div>

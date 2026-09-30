@@ -73,18 +73,19 @@ export const PERIOD_WORDS: Record<FeePeriod, { one: string; adj: string; label: 
   annual: { one: "سنة", adj: "السنوي", label: "الاشتراك السنوي", every: "سنويًّا", per: "/سنة" },
 };
 
-/** «شهر واحد / شهران / 3 أشهر / 11 شهرًا» أو «سنة واحدة / سنتان / 3 سنوات / 11 سنة» */
-export function periodsAr(n: number | null | undefined, period: FeePeriod): string {
+/** «شهر واحد / شهران / 3 أشهر / 11 شهرًا» أو «سنة واحدة / سنتان / 3 سنوات / 11 سنة».
+ *  oblique: المثنى بعد حرف جر أو مفعولًا به — «عن شهرين»، «يغطّي سنتين». */
+export function periodsAr(n: number | null | undefined, period: FeePeriod, oblique = false): string {
   const x = Math.abs(Math.round(Number(n) || 0));
   const r = x % 100;
   if (period === "annual") {
     if (x === 1) return "سنة واحدة";
-    if (x === 2) return "سنتان";
+    if (x === 2) return oblique ? "سنتين" : "سنتان";
     if (r >= 3 && r <= 10) return `${x} سنوات`;
     return `${x} سنة`;
   }
   if (x === 1) return "شهر واحد";
-  if (x === 2) return "شهران";
+  if (x === 2) return oblique ? "شهرين" : "شهران";
   if (r >= 3 && r <= 10) return `${x} أشهر`;
   if (r >= 11) return `${x} شهرًا`;
   return `${x} شهر`;
