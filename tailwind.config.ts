@@ -10,7 +10,8 @@ const config: Config = {
         /* ذهبي داكن للنصوص الصغيرة: #B8791F على أبيض = 3.63 (دون معيار AA)،
            وهذا 5.4 — يُستعمل لكل نصّ ذهبي أصغر من 18px */
         goldInk: "#8A5A11",
-        paid: "#1E9E6A", late: "#D0453F",
+        /* AA على الأبيض: الأخضر 5.4 والأحمر 6.3 (كانا 3.4 و4.3) — جولة 3 */
+        paid: "#137A50", late: "#A5322C",
       },
       fontFamily: {
         sans: ['"IBM Plex Sans Arabic"', "system-ui", "sans-serif"],

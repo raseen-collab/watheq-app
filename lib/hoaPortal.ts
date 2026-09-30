@@ -7,7 +7,8 @@
  * الاستجابة، وسياسة CSP تمنع غيره.
  */
 import { sanitizeHoaHtml } from "./hoaSanitize";
-import { periodsAr, PERIOD_WORDS, expenseCatAr, amountInWordsAr, type BuildingData, type FeePeriod } from "./hoaMoney";
+import { periodsAr, PERIOD_WORDS, expenseCatAr, amountInWordsAr, moneySigned, REQUEST_CATEGORIES, REQUEST_STATUS_AR, requestCatAr, requestLocAr,
+  type BuildingData, type FeePeriod } from "./hoaMoney";
 import { waNumber } from "./utils";
 
 // ─── الأنواع ────────────────────────────────────────────────────
@@ -21,7 +22,15 @@ export type PortalOwner = {
 };
 export type PortalPayment = {
   id: string; paid_on: string; amount: number; method: string | null; reference: string | null; periods_covered: number | null;
+  /** v66: سجّلتها الإدارة في منصة «ملاك» الرسمية */
+  mullak_registered?: boolean | null;
 };
+/** v66: حوالة أبلغ عنها المالك من صفحته */
+export type PortalClaim = { id: string; amount: number; transfer_date: string; bank_ref: string | null;
+  status: "pending" | "approved" | "rejected"; reject_reason: string | null; approved_payment_id: string | null; created_at: string };
+/** v66: طلب صيانة فتحه المالك */
+export type PortalRequest = { id: string; category: string; location: string; description: string;
+  status: "new" | "in_progress" | "done" | "rejected"; manager_note: string | null; created_at: string; updated_at: string; closed_at: string | null };
 export type PortalDocItem = {
   id: string; kind: string; title: string; created_at: string; requires_signature: boolean;
   closes_at: string | null; decision: "approve" | "reject" | null; decided_at: string | null; seen_at: string | null;
@@ -39,6 +48,9 @@ export type PortalData = {
   building?: BuildingData | null;
   /** v64: دفعات عُكست — تُفتح سنداتها برابط مباشر بختم «سند معكوس» ولا تظهر في القائمة */
   reversed_payments?: (PortalPayment & { reversed_on?: string | null })[];
+  /** v66 */
+  claims?: PortalClaim[];
+  requests?: PortalRequest[];
 };
 export type PortalDocData = {
   status: "ok";
@@ -57,14 +69,8 @@ export const esc = (v: unknown): string =>
   String(v ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 
-/** 1,234.50 — الكسور بمنزلتين والصحيح بلا كسور */
-export const money = (n: unknown): string => {
-  const v = Math.round((Number(n) || 0) * 100) / 100;
-  const abs = Math.abs(v);
-  const t = Number.isInteger(abs) ? abs.toLocaleString("en-US")
-    : abs.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  return v < 0 ? `−${t}` : t;
-};
+/** 1,234.50 — الكسور بمنزلتين والصحيح بلا كسور؛ السالب «−10» معزول الاتجاه (لا يظهر «10-») */
+export const money = (n: unknown): string => moneySigned(n);
 
 const MONTHS_AR = ["يناير", "فبراير", "مارس", "أبريل", "مايو", "يونيو", "يوليو", "أغسطس", "سبتمبر", "أكتوبر", "نوفمبر", "ديسمبر"];
 
@@ -102,6 +108,14 @@ const riyadhDay = (ts: string) => {
   const d = new Date(ts);
   return isNaN(d.getTime()) ? "" : new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Riyadh", year: "numeric", month: "2-digit", day: "2-digit" }).format(d);
 };
+
+/** YYYY-MM-DD ± أيام (حساب تقويمي بلا منطقة زمنية) */
+export function addDaysIso(iso: string, days: number): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || ""));
+  if (!m) return "";
+  const t = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])) + days * 86400000;
+  return new Date(t).toISOString().slice(0, 10);
+}
 
 const METHOD_AR: Record<string, string> = { transfer: "تحويل بنكي", cash: "نقدًا", pos: "شبكة", cheque: "شيك", other: "أخرى" };
 export const methodAr = (m?: string | null) => METHOD_AR[String(m || "")] || "—";
@@ -169,16 +183,24 @@ body{margin:0;background:#F4F1EA;color:#0B211F;font-family:Tahoma,"Segoe UI",sys
 .f-ok{background:#E6F4EC;color:#0F5E3D}.f-warn{background:#FDF0DC;color:#7A4800}.f-err{background:#FBE9E7;color:#8F2B26}
 .pend{border:1.5px solid #E7C877;background:#FFFBF0}
 a{color:#0E3A37}
-.foot{margin-top:22px;font-size:11.5px;color:#7A857F;text-align:center}
+.foot{margin-top:22px;font-size:11.5px;color:#5C6B67;text-align:center}
 .docbody{border:1px solid #E4DDCD;border-radius:12px;padding:14px;background:#FFFEFB;overflow-x:auto;font-size:14.5px}
 .docbody table{border-collapse:collapse;width:100%}.docbody th,.docbody td{border:1px solid #DDD5C2;padding:6px 8px;text-align:start}
 .docbody h1{font-size:19px}.docbody h2{font-size:17px}.docbody h3,.docbody h4{font-size:15px}
-label.f{display:block;font-size:13px;font-weight:700;margin:12px 0 5px}
+.f{display:block;font-size:13px;font-weight:700;margin:12px 0 5px}
 input.fld,textarea.fld{width:100%;border:1px solid #D9D1BE;border-radius:10px;padding:11px 12px;font:inherit;font-size:16px;background:#FBF8F1;color:#0B211F}
 .ack{display:flex;gap:10px;align-items:flex-start;margin:14px 0;font-size:14px}
 .ack input{width:20px;height:20px;margin-top:3px;flex:none}
 .two{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.two .btn{white-space:normal}
 .note{font-size:12px;color:#5C6B67;background:#F6F2E8;border-radius:10px;padding:10px 12px;margin-top:12px}
+select.fld{width:100%;border:1px solid #D9D1BE;border-radius:10px;padding:11px 12px;font:inherit;font-size:16px;background:#FBF8F1;color:#0B211F;min-height:46px}
+.radio{display:flex;gap:10px;flex-wrap:wrap}.radio label{display:flex;gap:8px;align-items:center;border:1px solid #D9D1BE;border-radius:10px;padding:10px 12px;min-height:46px;flex:1 1 140px;font-size:14px}
+.radio input{width:20px;height:20px;flex:none}
+.item{padding:11px 0;border-top:1px solid #F0EBDF;font-size:14px}.item:first-of-type{border-top:0}
+.item .h{display:flex;justify-content:space-between;gap:10px;align-items:flex-start}
+.mk{display:inline-block;font-size:11px;font-weight:700;color:#137A50;margin-top:2px}
+details.more summary{cursor:pointer;font-weight:700;color:#0E3A37;min-height:44px;display:flex;align-items:center}
+.btn{min-height:44px;display:inline-flex;align-items:center;justify-content:center}
 @media print{.noprint{display:none!important}body{background:#fff}.card{border-color:#ccc}}
 `;
 
@@ -208,6 +230,19 @@ const FLASH: Record<string, [string, string]> = {
   ack: ["f-err", "ضع علامة على الإقرار بالاطلاع قبل الاعتماد أو الرفض."],
   big: ["f-err", "الملاحظة أطول من المسموح."],
   err: ["f-err", "تعذّر تسجيل قرارك الآن — أعد المحاولة بعد قليل."],
+  /* v66: الحوالة المُبلَّغ عنها وطلب الصيانة */
+  claim_ok: ["f-ok", "وصل بلاغ الحوالة للإدارة. بعد مطابقتها مع حساب الجمعية تُسجَّل دفعتك ويظهر سندها هنا."],
+  claim_amount: ["f-err", "اكتب مبلغ الحوالة بالريال (أكبر من صفر)."],
+  claim_date: ["f-err", "تاريخ الحوالة لا يكون في المستقبل ولا أقدم من 90 يومًا."],
+  claim_ref: ["f-err", "رقم المرجع أو الملاحظة أطول من المسموح."],
+  claim_many: ["f-warn", "لديك 3 حوالات بانتظار المراجعة — انتظر قرار الإدارة ثم أبلغ عن غيرها."],
+  claim_nofee: ["f-warn", "لم تُحدَّد قيمة الاشتراك بعد — تواصل مع إدارة الجمعية."],
+  claim_err: ["f-err", "تعذّر إرسال بلاغ الحوالة الآن — أعد المحاولة بعد قليل."],
+  req_ok: ["f-ok", "وصل طلب الصيانة للإدارة. تتابع حالته هنا."],
+  req_bad: ["f-err", "اختر نوع المشكلة ومكانها ثم أعد الإرسال."],
+  req_text: ["f-err", "اكتب وصف المشكلة (3 إلى 1000 حرف)."],
+  req_many: ["f-warn", "لديك 5 طلبات مفتوحة — ينتظر بعضها الإنجاز قبل فتح طلب جديد."],
+  req_err: ["f-err", "تعذّر إرسال الطلب الآن — أعد المحاولة بعد قليل."],
 };
 const flashBox = (code?: string | null) => {
   const f = code ? FLASH[code] : null;
@@ -277,9 +312,62 @@ export function renderPortalPage(d: PortalData, opts: { nonce: string; base: str
   <div class="row"><span>الآيبان</span><b dir="ltr" style="font-family:monospace;user-select:all">${esc(iban.replace(/(.{4})/g, "$1 ").trim())}</b></div>
   <div class="two noprint" style="margin-top:10px">
     <button class="btn b-ghost" type="button" id="cpiban" data-iban="${esc(iban)}">نسخ الآيبان</button>
-    ${wa ? `<a class="btn b-ok" href="https://wa.me/${esc(wa)}?text=${encodeURIComponent(`السلام عليكم، أرسلت حوالة اشتراك ${d.owner.unit ? `الوحدة (${d.owner.unit})` : "وحدتي"} في ${d.association.name} — مرفق صورة الإيصال. ${d.owner.name}`)}" target="_blank" rel="noopener noreferrer">أرسلت الحوالة؟ أرسل صورة الإيصال للإدارة</a>` : ""}
+    ${Array.isArray(d.claims) && fee > 0 ? `<a class="btn b-gold" href="#claim">أرسلت الحوالة؟ أبلغ الإدارة</a>` : ""}
   </div>
+  ${wa ? `<div class="muted noprint" style="margin-top:8px">أو <a href="https://wa.me/${esc(wa)}?text=${encodeURIComponent(`السلام عليكم، أرسلت حوالة اشتراك ${d.owner.unit ? `الوحدة (${d.owner.unit})` : "وحدتي"} في ${d.association.name} — مرفق صورة الإيصال. ${d.owner.name}`)}" target="_blank" rel="noopener noreferrer">أرسل صورة الإيصال واتساب</a></div>` : ""}
 </section>` : "";
+
+  /* v66: «أرسلت الحوالة» — نص فقط (بلا صور). القاعدة تتحقق من كل شرط مرة أخرى */
+  const claims = d.claims || [];
+  const minDay = addDaysIso(d.today, -90);
+  /* F4: قبل تطبيق schema-v66 لا ترجع البوابة مصفوفتي claims/requests ⇒ لا تُعرض النماذج (كانت ستفشل عند الإرسال) */
+  const claimBox = fee > 0 && Array.isArray(d.claims) ? `
+<section class="card" id="claim"><h2>أرسلت الحوالة؟</h2>
+  <div class="muted">أبلغ الإدارة بحوالتك لتطابقها مع حساب الجمعية، ثم تُسجَّل دفعتك ويصدر سندها هنا. لا تحتاج صورة.</div>
+  ${claims.filter((c) => c.status === "pending").length >= 3 ? `<div class="flash f-warn">لديك 3 حوالات بانتظار المراجعة — انتظر قرار الإدارة ثم أبلغ عن غيرها.</div>` : `
+  <form method="post" action="${base}/claim" data-once="1" class="noprint">
+    <label class="f" for="ca">المبلغ المحوَّل (ريال)</label>
+    <input class="fld" id="ca" name="amount" required inputmode="decimal" autocomplete="off" dir="ltr" placeholder="${st.kind === "late" && st.owed > 0 ? esc(String(st.owed)) : esc(String(fee))}">
+    <label class="f" for="cd">تاريخ الحوالة</label>
+    <input class="fld" id="cd" name="transfer_date" type="date" required value="${esc(d.today)}" min="${esc(minDay)}" max="${esc(d.today)}">
+    <label class="f" for="cr">رقم المرجع في البنك (اختياري)</label>
+    <input class="fld" id="cr" name="bank_ref" maxlength="80" dir="ltr" autocomplete="off">
+    <label class="f" for="cn">ملاحظة (اختياري)</label>
+    <input class="fld" id="cn" name="note" maxlength="300" placeholder="مثال: حوالة شهري أكتوبر ونوفمبر">
+    <button class="btn b-gold" type="submit" style="width:100%;margin-top:12px">أرسل بلاغ الحوالة</button>
+  </form>`}
+  ${claims.length ? `<div style="margin-top:12px">${claims.map((c) => `<div class="item"><div class="h">
+    <div><b>${money(c.amount)} ريال</b><div class="muted">حوالة ${gDate(c.transfer_date)}${c.bank_ref ? ` · مرجع <span dir="ltr">${esc(c.bank_ref)}</span>` : ""}</div></div>
+    ${c.status === "approved" ? `<span class="chip c-ok">اعتُمدت ✓</span>` : c.status === "rejected" ? `<span class="chip c-no">رُفضت</span>` : `<span class="chip c-wait">بانتظار المراجعة</span>`}</div>
+    ${c.status === "approved" && c.approved_payment_id ? `<a class="btn b-ghost" style="margin-top:8px;padding:6px 12px;font-size:12.5px" href="${base}/p/${esc(c.approved_payment_id)}">سند القبض</a>` : ""}
+    ${c.status === "rejected" && c.reject_reason ? `<div class="muted" style="color:#8F2B26">سبب الرفض: ${esc(c.reject_reason)}</div>` : ""}
+  </div>`).join("")}</div>` : ""}
+</section>` : "";
+
+  /* v66: طلبات الصيانة — نص فقط، بلا صور */
+  const reqs = d.requests || [];
+  const openReqs = reqs.filter((r) => r.status === "new" || r.status === "in_progress").length;
+  const reqBox = !Array.isArray(d.requests) ? "" : `
+<section class="card" id="req"><h2>طلبات الصيانة</h2>
+  ${reqs.length ? reqs.map((r) => `<div class="item"><div class="h">
+    <div style="min-width:0"><b>${esc(requestCatAr(r.category))}</b> <span class="muted">· ${esc(requestLocAr(r.location))}</span>
+      <div class="muted">فُتح ${gDate(riyadhDay(r.created_at))}${r.closed_at ? ` · أُغلق ${gDate(riyadhDay(r.closed_at))}` : r.updated_at && r.updated_at !== r.created_at ? ` · آخر تحديث ${gDate(riyadhDay(r.updated_at))}` : ""}</div></div>
+    <span class="chip ${r.status === "done" ? "c-ok" : r.status === "rejected" ? "c-no" : "c-wait"}">${esc(REQUEST_STATUS_AR[r.status] || r.status)}</span></div>
+    <div style="overflow-wrap:anywhere;margin-top:4px">${esc(r.description)}</div>
+    ${r.manager_note ? `<div class="note" style="margin-top:6px">ردّ الإدارة: ${esc(r.manager_note)}</div>` : ""}
+  </div>`).join("") : `<div class="muted">لا طلبات بعد. أبلغ عن عطل في العمارة أو وحدتك من هنا.</div>`}
+  ${openReqs >= 5 ? `<div class="flash f-warn">لديك 5 طلبات مفتوحة — ينتظر بعضها الإنجاز قبل فتح طلب جديد.</div>` : `
+  <details class="more noprint"${reqs.length ? "" : " open"} style="margin-top:10px"><summary>+ طلب صيانة جديد</summary>
+  <form method="post" action="${base}/request" data-once="1">
+    <label class="f" for="rc">نوع المشكلة</label>
+    <select class="fld" id="rc" name="category" required>${REQUEST_CATEGORIES.map((c) => `<option value="${esc(c.v)}">${esc(c.l)}</option>`).join("")}</select>
+    <div class="f">مكانها</div>
+    <div class="radio"><label><input type="radio" name="location" value="common" checked> الأجزاء المشتركة</label><label><input type="radio" name="location" value="unit"> داخل وحدتي</label></div>
+    <label class="f" for="rd">الوصف</label>
+    <textarea class="fld" id="rd" name="description" rows="3" required minlength="3" maxlength="1000" placeholder="مثال: تسريب مياه عند باب المصعد في الدور الثاني"></textarea>
+    <button class="btn b-deep" type="submit" style="width:100%;margin-top:12px">أرسل الطلب</button>
+  </form></details>`}
+</section>`;
 
   const pending = d.documents.filter((x) => x.requires_signature && !x.decision && !(x.closes_at && x.closes_at < d.today));
   const pendingBox = pending.length ? `
@@ -303,7 +391,7 @@ export function renderPortalPage(d: PortalData, opts: { nonce: string; base: str
   const pays = `
 <section class="card"><h2>سجل دفعاتك</h2>
   ${d.payments.length ? d.payments.map((p) => `<div class="row">
-    <div><b>${money(p.amount)} ريال</b><div class="muted">${gDate(p.paid_on)} · ${methodAr(p.method)}</div></div>
+    <div><b>${money(p.amount)} ريال</b><div class="muted">${gDate(p.paid_on)} · ${methodAr(p.method)}</div>${p.mullak_registered ? `<span class="mk">مسجّلة في المنصة الرسمية ✓</span>` : ""}</div>
     <a class="btn b-ghost" style="padding:6px 12px;font-size:12.5px;align-self:center" href="${base}/p/${esc(p.id)}">سند القبض</a>
   </div>`).join("") : `<div class="muted">لا دفعات مسجَّلة بعد.</div>`}
 </section>`;
@@ -314,9 +402,9 @@ export function renderPortalPage(d: PortalData, opts: { nonce: string; base: str
 
   return frame(`${d.association.name} — بوابة المالك`,
     topBar(d.office?.org_name, d.association.name, whoLine(d.owner.name, d.owner.unit)),
-    flashBox(opts.flash) + pendingBox + status.replace(/<\/section>\s*$/, `${asOf}</section>`) + bank + docs + pays + building + foot, opts.nonce,
-    /* نسخ الآيبان — السكربت الوحيد في الصفحة ويحمل nonce الاستجابة */
-    `(function(){var b=document.getElementById('cpiban');if(!b)return;b.addEventListener('click',function(){var t=b.getAttribute('data-iban')||'';function done(){b.textContent='نُسخ ✓';setTimeout(function(){b.textContent='نسخ الآيبان';},2000);}if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(t).then(done,function(){});}else{var i=document.createElement('input');i.value=t;document.body.appendChild(i);i.select();try{document.execCommand('copy');done();}catch(e){}document.body.removeChild(i);}});})();`);
+    flashBox(opts.flash) + pendingBox + status.replace(/<\/section>\s*$/, `${asOf}</section>`) + bank + claimBox + docs + pays + reqBox + building + foot, opts.nonce,
+    /* نسخ الآيبان ومنع الإرسال المزدوج — السكربت الوحيد في الصفحة ويحمل nonce الاستجابة */
+    `(function(){document.querySelectorAll('form[data-once]').forEach(function(f){f.addEventListener('submit',function(e){if(f.dataset.s){e.preventDefault();return;}f.dataset.s='1';setTimeout(function(){f.querySelectorAll('button').forEach(function(x){x.disabled=true;});},0);});});})();(function(){var b=document.getElementById('cpiban');if(!b)return;b.addEventListener('click',function(){var t=b.getAttribute('data-iban')||'';function done(){b.textContent='نُسخ ✓';setTimeout(function(){b.textContent='نسخ الآيبان';},2000);}if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(t).then(done,function(){});}else{var i=document.createElement('input');i.value=t;document.body.appendChild(i);i.select();try{document.execCommand('copy');done();}catch(e){}document.body.removeChild(i);}});})();`);
 }
 
 // ─── صفحة المستند ───────────────────────────────────────────────
@@ -455,6 +543,14 @@ export function buildingSection(b: BuildingData, opts: { heading?: string } = {}
   ${b.fee != null && Number(b.fee) > 0 ? `<div class="row"><span>${PERIOD_WORDS[per].label} للوحدة</span><b>${money(b.fee)} ريال</b></div>`
     : b.fee_basis === "share" ? `<div class="row"><span>${PERIOD_WORDS[per].label}</span><b>حسب حصة كل وحدة</b></div>` : ""}
 </section>
+${b.requests && (Number(b.requests.open) || 0) + (Number(b.requests.closed) || 0) > 0 ? `<section class="card"><h2>طلبات الصيانة</h2>
+  <div class="muted">أعداد فقط — لا تُعرض تفاصيل الطلبات ولا أصحابها.</div>
+  <div class="kpis" style="margin-top:10px">
+    <div class="kpi"><span>مفتوحة الآن</span><b>${Number(b.requests.open) || 0}</b></div>
+    <div class="kpi"><span>أُغلقت</span><b>${Number(b.requests.closed) || 0}</b></div>
+  </div>
+  ${b.requests.avg_days_to_close != null ? `<div class="row" style="margin-top:8px"><span>متوسط مدة الإنجاز</span><b>${esc(Number(b.requests.avg_days_to_close).toLocaleString("en-US", { maximumFractionDigits: 1 }))} يوم</b></div>` : ""}
+</section>` : ""}
 <section class="card"><h2>المصروفات حسب البند — ${yearLabel}</h2>
   ${cats.length ? cats.map((c) => `<div class="cat"><span>${esc(expenseCatAr(c.category))}</span><b>${money(c.total)} ريال</b>
     <div class="bar" aria-hidden="true"><i style="width:${Math.round(((Number(c.total) || 0) / maxCat) * 100)}%"></i></div></div>`).join("")

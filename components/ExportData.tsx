@@ -23,7 +23,7 @@ const FREQ_AR: Record<string, string> = {
   daily: "يومي", weekly: "اسبوعي", monthly: "شهري", quarterly: "كل 3 اشهر", trimester: "كل 4 اشهر",
   semiannual: "نصف سنوي", annual: "سنوي", yearly: "سنوي",
 };
-const METHOD_AR: Record<string, string> = { cash: "نقدًا", transfer: "تحويل بنكي", card: "بطاقة", other: "أخرى" };
+const METHOD_AR: Record<string, string> = { cash: "نقدًا", transfer: "تحويل بنكي", card: "بطاقة", pos: "شبكة", cheque: "شيك", other: "أخرى" };
 /* مسمّيات عربية للحقول المضافة — الملف يُقرأ بيد الإنسان لا بالكود */
 const EXP_CAT_AR: Record<string, string> = {
   maintenance: "صيانة", utilities: "فواتير", cleaning: "نظافة",

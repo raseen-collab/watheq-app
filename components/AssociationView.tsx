@@ -15,6 +15,9 @@ import { arDate } from "@/lib/documents";
 import DateField from "@/components/DateField";
 import { MemberLinkButton, HoaDocumentsPanel, type HoaDocPrefill } from "@/components/HoaMemberPanel";
 import { renderReceiptPage } from "@/lib/hoaPortal";
+import { Overlay, useEscape, InfoTip, Amt, GuideCard, SendLinksModal, ClaimsModal, MullakModal, MullakToggle, RequestsPanel,
+  type GuideStep, type Claim, type MullakPay, type HoaRequest, type RequestLog } from "@/components/HoaRound3";
+import { moneySigned } from "@/lib/hoaMoney";
 
 type Owner = { opening_set?: boolean | null; id: string; name: string; unit: string | null; phone: string | null; months_late: number; last_paid: string | null; partial_amount?: number | null; prepaid_months?: number | null;
   /** v63: رسم خاص (من الحصة)، الحصة ٪، المساحة م² */
@@ -46,6 +49,14 @@ function v64Patch(d: any, cur: any): Record<string, any> {
 /** رسالة موحّدة لأخطاء القاعدة */
 const dbErr = (m: string, v = "v63") => /not authorized/.test(m) ? "هذا الإجراء لمدير المكتب — اطلبه من صاحب المكتب."
   : /Could not find|does not exist|schema cache/.test(m) ? `قاعدة البيانات تحتاج تحديث (schema-${v}) — لم يُنفَّذ الإجراء.` : m;
+
+/** أخطاء حذف المالك بالعربية — لا تظهر رسالة القاعدة الإنجليزية للموظف */
+const ownerDeleteErr = (m: string, code = "") =>
+  /not authorized|permission denied/i.test(m) || code === "42501" ? "حذف المالك يحتاج صلاحية أعلى — اطلبه من صاحب المكتب."
+  : /payments_has_subject/i.test(m) ? "تعذّر الحذف: قاعدة البيانات تحتاج تحديث (schema-v65). لم يُحذف شيء وبقيت دفعاته."
+  : /foreign key|violates|constraint/i.test(m) || code === "23503" || code === "23514" ? "لا يمكن حذف هذا المالك لارتباطه بسجلات أخرى — لم يُحذف شيء."
+  : /Failed to fetch|NetworkError|network/i.test(m) ? "تعذّر الاتصال — تحقّق من الإنترنت ثم أعد المحاولة. لم يُحذف شيء."
+  : "تعذّر حذف المالك الآن — لم يُحذف شيء. أعد المحاولة بعد قليل.";
 
 /** الآيبان: أرقام عربية ← لاتينية، بلا مسافات، أحرف كبيرة */
 const normIban = (v?: string | null) => String(v || "")
@@ -112,10 +123,23 @@ export default function AssociationView({ initial, issuer }: { initial: Associat
   /** قفل متزامن لكل مالك: ضغطتان متتاليتان قبل إعادة الرسم لا تسجّلان دفعتين */
   const payLock = useRef<Set<string>>(new Set());
   const [payBusy, setPayBusy] = useState<Record<string, boolean>>({});
-  /** مستندات الملاك (محاضر/إشعارات للاطّلاع والاعتماد) */
-  const [docsOpen, setDocsOpen] = useState(false);
-  /** الصندوق والمصروفات (v62) وتوزيع الرسوم بالحصص (v63) */
-  const [expOpen, setExpOpen] = useState(false);
+  /** تبويبات الجمعية (جولة 3): الملاك · المستندات · الصندوق · طلبات الصيانة · سجل العمارة — لا شيء يدفع قائمة الملاك لأسفل */
+  type Tab = "owners" | "docs" | "fund" | "requests" | "log";
+  const [tab, setTab] = useState<Tab>("owners");
+  const setDocsOpen = (v: boolean) => setTab(v ? "docs" : "owners");
+  /** v66: الحوالات المُبلَّغ عنها · طلبات الصيانة · روابط الملاك · علامة «ملاك» */
+  const [claims, setClaims] = useState<Claim[]>([]);
+  const [claimsOpen, setClaimsOpen] = useState(false);
+  const [reqRows, setReqRows] = useState<HoaRequest[] | null>(null);
+  const [reqLogs, setReqLogs] = useState<RequestLog[]>([]);
+  const [reqErr, setReqErr] = useState<string | null>(null);
+  const [reqExpenses, setReqExpenses] = useState<{ id: string; label: string }[]>([]);
+  const [linkCounts, setLinkCounts] = useState<null | { owners: number; linked: number; seen: number }>(null);
+  /** F4: هل طُبّق schema-v66؟ (null = لم يُعرف بعد). قبل تطبيقه تُخفى الحوالات وطلبات الصيانة وعلامة «ملاك» */
+  const [v66, setV66] = useState<boolean | null>(null);
+  const [sendLinks, setSendLinks] = useState(false);
+  const [mullak, setMullak] = useState<null | { rows: MullakPay[] | null; loading: boolean }>(null);
+  const addOwnerRef = useRef<HTMLInputElement>(null);
   const [sharesOpen, setSharesOpen] = useState(false);
   /** v64: المؤرشفة مخفية افتراضيًّا */
   const [showArchived, setShowArchived] = useState(false);
@@ -241,6 +265,8 @@ export default function AssociationView({ initial, issuer }: { initial: Associat
     }
     const r = data as { months_late?: number; partial_amount?: number; prepaid_months?: number; fund_balance?: number };
     const assocId = active.id;
+    /* v66: لو كانت الدفعة من حوالة مُبلَّغ عنها عادت الحوالة «بانتظار المراجعة» — نحدّث الشارة */
+    if (v66) loadClaims(assocId);
     setItems((list) => list.map((x) => x.id === assocId ? {
       ...x,
       fund_balance: r.fund_balance != null ? Number(r.fund_balance) : x.fund_balance,
@@ -501,6 +527,137 @@ export default function AssociationView({ initial, issuer }: { initial: Associat
     if (error) { console.error("Watheq history error:", error); return notify("err", error.message); }
     setHistory({ owner: o, rows: data || [] });
   }
+  // ---------- v66: الحوالات · طلبات الصيانة · روابط الملاك · علامة «ملاك» ----------
+  /* قبل تطبيق schema-v66 ترجع هذه القراءات خطأً فتبقى الأقسام فارغة بهدوء (لا رسالة مزعجة) */
+  async function loadClaims(assocId: string) {
+    const { data, error } = await supabase.from("hoa_payment_claims")
+      .select("id,owner_id,owner_name,unit,amount,transfer_date,bank_ref,note,status,reject_reason,approved_payment_id,created_at,decided_at")
+      .eq("association_id", assocId).order("created_at", { ascending: false }).limit(200);
+    setClaims(error ? [] : ((data || []) as Claim[]));
+    if (error && /does not exist|schema cache|Could not find|relation/i.test(String(error.message))) setV66(false);
+    else if (!error) setV66(true);
+  }
+  async function loadRequests(assocId: string) {
+    const { data, error } = await supabase.from("hoa_requests")
+      .select("id,owner_id,owner_name,unit,category,location,description,status,manager_note,expense_id,created_at,updated_at,closed_at")
+      .eq("association_id", assocId).order("created_at", { ascending: false }).limit(300);
+    if (error) { setReqRows([]); setReqErr(/does not exist|schema cache|Could not find/.test(String(error.message)) ? "طلبات الصيانة تحتاج تحديث قاعدة البيانات (schema-v66)." : "تعذّر تحميل الطلبات."); return; }
+    setReqErr(null);
+    const rows = (data || []) as HoaRequest[];
+    setReqRows(rows);
+    if (rows.length) {
+      const { data: lg } = await supabase.from("hoa_request_log").select("id,request_id,status_from,status_to,note,created_at")
+        .in("request_id", rows.map((r) => r.id)).order("id", { ascending: true }).limit(2000);
+      setReqLogs((lg || []) as RequestLog[]);
+    } else setReqLogs([]);
+  }
+  async function loadReqExpenses(assocId: string) {
+    const { data } = await supabase.from("association_expenses").select("id,voucher_no,description,amount,spent_on,reverses")
+      .eq("association_id", assocId).is("reverses", null).order("spent_on", { ascending: false }).limit(40);
+    setReqExpenses(((data || []) as any[]).map((e) => ({ id: e.id, label: `${e.voucher_no || ""} · ${String(e.description || "").slice(0, 40)} · ${sar(Number(e.amount))} ريال` })));
+  }
+  async function loadLinkCounts(assocId: string) {
+    const { data, error } = await supabase.rpc("watheq_assoc_link_counts", { p_assoc: assocId });
+    setLinkCounts(error || !data ? null : (data as any));
+  }
+  const loadId = active?.id || null;
+  useEffect(() => {
+    if (!loadId) return;
+    setClaims([]); setReqRows(null); setReqLogs([]); setLinkCounts(null);
+    loadClaims(loadId); loadRequests(loadId); loadLinkCounts(loadId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loadId]);
+  useEffect(() => { if (tab === "requests" && loadId) loadReqExpenses(loadId); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [tab, loadId]);
+
+  /** اعتماد حوالة: القاعدة تسجّل الدفعة (p_request = معرّف الحوالة) وتصدر السند — لا تتكرر */
+  /** يرجع "near_dup" حين تجد القاعدة دفعة بالمبلغ نفسه قرب تاريخ الحوالة — فيعرض الشاشة تأكيدًا داخل التطبيق ثم يعيد بـp_force */
+  async function approveClaim(c: Claim, force = false): Promise<boolean | "near_dup"> {
+    if (!active) return false;
+    const assocId = active.id;
+    const { data, error } = await supabase.rpc("watheq_hoa_claim_approve", { p_claim: c.id, p_force: force });
+    if (error) {
+      const m = String(error.message || "");
+      if (!force && /بالمبلغ نفسه قريبًا من تاريخ الحوالة/.test(m)) return "near_dup";
+      notify("err", /تعارض في معرّف الحوالة/.test(m) ? "تعارض في معرّف الحوالة — لم تُسجَّل دفعة. راجع سجل مدفوعات المالك وأبلغ الدعم." : dbErr(m, "v66"));
+      return false;
+    }
+    const r = data as any;
+    const o = active.owners.find((x) => x.id === c.owner_id);
+    if (r && !r.duplicate && r.months_late != null) {
+      setItems((list) => list.map((x) => x.id === assocId ? {
+        ...x, fund_balance: r.fund_balance != null ? Number(r.fund_balance) : x.fund_balance,
+        owners: x.owners.map((y) => y.id === c.owner_id ? { ...y, months_late: r.months_late, partial_amount: r.partial_amount, prepaid_months: r.prepaid_months ?? 0,
+          ...(r.months > 0 ? { last_paid: String(r.paid_on || c.transfer_date).slice(0, 10) } : {}) } : y),
+      } : x));
+    }
+    await loadClaims(assocId);
+    const rc = r?.receipt_no ? ` · سند ${r.receipt_no}` : "";
+    notify("ok", r?.duplicate ? `هذه الحوالة معتمدة سابقًا${rc}` : `اعتُمدت حوالة ${c.owner_name || ""} (${riyalsAr(Number(c.amount), sar)})${rc}`,
+      o && r?.payment_id ? { payment_id: r.payment_id, owner: o, receipt_no: r.receipt_no, amount: Number(c.amount), paid_on: c.transfer_date } : undefined);
+    return true;
+  }
+  async function rejectClaim(c: Claim, reason: string): Promise<boolean> {
+    if (!active) return false;
+    const { error } = await supabase.rpc("watheq_hoa_claim_reject", { p_claim: c.id, p_reason: reason });
+    if (error) { notify("err", dbErr(String(error.message || ""), "v66")); return false; }
+    await loadClaims(active.id);
+    notify("ok", "رُفضت الحوالة — يرى المالك السبب في صفحته.");
+    return true;
+  }
+  /** علامة «مسجّلة في ملاك» — بالدالة فقط (v66) وتُوثَّق */
+  async function setMullakFlag(p: MullakPay, on: boolean, inv: string | null): Promise<boolean> {
+    const { data, error } = await supabase.rpc("watheq_payment_set_mullak", { p_payment: p.id, p_registered: on, p_invoice: inv });
+    if (error) { notify("err", dbErr(String(error.message || ""), "v66")); return false; }
+    const r = data as any;
+    const patch = (x: any) => x.id === p.id ? { ...x, mullak_registered: r.mullak_registered, mullak_invoice_no: r.mullak_invoice_no } : x;
+    setMullak((m) => m && { ...m, rows: (m.rows || []).map(patch) });
+    setHistory((h) => h && { ...h, rows: h.rows.map(patch) });
+    notify("ok", on ? "عُلّمت الدفعة: مسجّلة في ملاك ✓" : "أُزيلت علامة «ملاك» عن الدفعة.");
+    return true;
+  }
+  async function openMullak() {
+    if (!active) return;
+    setMullak({ rows: null, loading: true });
+    /* صفحات من 1000 صف (سقف PostgREST) حتى تكتمل الدفعات مهما كثرت */
+    const all: MullakPay[] = [];
+    for (let from = 0; from < 100000; from += 1000) {
+      const { data, error } = await supabase.from("payments")
+        .select("id,amount,paid_on,receipt_no,payer_name,unit_label,mullak_registered,mullak_invoice_no,reverses")
+        .eq("association_id", active.id).order("paid_on", { ascending: false }).order("id", { ascending: true }).range(from, from + 999);
+      if (error) { setMullak(null); return notify("err", dbErr(String(error.message || ""), "v66")); }
+      all.push(...((data || []) as MullakPay[]));
+      if (!data || data.length < 1000) break;
+    }
+    const rev = new Set(all.filter((x) => x.reverses).map((x) => String(x.reverses)));
+    setMullak({ rows: all.filter((x) => !x.reverses && !rev.has(x.id) && Number(x.amount) > 0), loading: false });
+  }
+  /** حالة طلب الصيانة — كل تغيير يُسجَّل في القاعدة ويراه المالك */
+  async function setRequestStatus(r: HoaRequest, status: HoaRequest["status"], note: string | null, expense: string | null): Promise<boolean> {
+    if (!active) return false;
+    const { error } = await supabase.rpc("watheq_hoa_request_set_status", { p_request: r.id, p_status: status, p_note: note, p_expense: expense });
+    if (error) { notify("err", dbErr(String(error.message || ""), "v66")); return false; }
+    await loadRequests(active.id);
+    notify("ok", `حُدّثت حالة الطلب: ${({ new: "جديد", in_progress: "قيد التنفيذ", done: "أُنجز", rejected: "مرفوض" } as any)[status]}.`);
+    return true;
+  }
+  /** إرسال رابط الصفحة لمالك (دليل البداية) — واتساب برسالة ترحيب، ويُوثَّق في سجل التواصل */
+  async function sendOwnerLink(ownerId: string): Promise<boolean> {
+    const o = active?.owners.find((x) => x.id === ownerId);
+    if (!o || !active) return false;
+    const tg = (globalThis as any)?.Telegram?.WebApp;
+    const w = !tg && typeof window !== "undefined" ? window.open("", "_blank") : null;
+    let url = "";
+    try { url = await ownerPortalUrl(o.id); } catch (e: any) { if (w) w.close(); notify("err", e?.message || "تعذّر إنشاء رابط المالك"); return false; }
+    const msg = [`السلام عليكم ${o.name}،`, "",
+      `هذه صفحتك الخاصة في ${active.name}: حالة اشتراكك وسنداتك ومستندات الجمعية، ومنها تبلّغ عن حوالتك أو عن عطل في العمارة.`,
+      url, "", "الرابط خاص بك — لا تشاركه.", `إدارة ${active.name}`].join("\n");
+    const href = waLink(o.phone, msg);
+    if (w) { try { w.location.href = href; } catch { openExternal(href); } } else openExternal(href);
+    await logContact(o, "إرسال رابط الصفحة");
+    loadLinkCounts(active.id);
+    return true;
+  }
+
   // ---------- جمعية ----------
   /** هوية المستخدم الحالي — تشترطها سياسة الصلاحيات (RLS) عند الإدراج */
   /** معرّف المكتب لا المستخدم — قيود الموظف تُسجَّل تحت مكتبه (v9) */
@@ -638,12 +795,16 @@ export default function AssociationView({ initial, issuer }: { initial: Associat
     return true;
   }
   async function deleteOwner(id: string) {
-    if (!active || !confirm("حذف المالك؟")) return;
+    const who = active?.owners.find((o) => o.id === id);
+    if (!active || !confirm(`حذف المالك${who ? ` «${who.name}»` : ""}؟ سجل دفعاته وسنداته يبقى محفوظًا.`)) return;
+    const assocId = active.id;
     const { data: _del, error } = await supabase.from("owners").delete().eq("id", id).select("id");
     /* حذف رفضته السياسات يرجع بلا خطأ وبصفر صفوف — لا نوهم الموظف أنه نجح */
-    if (!error && (!_del || _del.length === 0)) { notify("err", "هذا الإجراء يحتاج صلاحية أعلى — اطلبه من صاحب المكتب."); return; }
-    if (error) { console.error("Watheq save error:", error); return notify("err", error.message); }
-    setItems(items.map((a) => a.id === active.id ? { ...a, owners: a.owners.filter((o) => o.id !== id) } : a));
+    if (!error && (!_del || _del.length === 0)) { notify("err", "حذف المالك يحتاج صلاحية أعلى — اطلبه من صاحب المكتب."); return; }
+    if (error) { console.error("Watheq owner delete error:", error); return notify("err", ownerDeleteErr(String(error.message || ""), String((error as any).code || ""))); }
+    setItems((list) => list.map((a) => a.id === assocId ? { ...a, owners: a.owners.filter((o) => o.id !== id) } : a));
+    notify("ok", "حُذف المالك — بقي سجل دفعاته وسنداته.");
+    loadLinkCounts(assocId);
   }
 
   // ---------- ملاحظات ----------
@@ -925,9 +1086,42 @@ export default function AssociationView({ initial, issuer }: { initial: Associat
     { k: "ok", label: `لا متأخرات ${total - late.length}` },
   ];
   const pendingOpening = owners.filter((o) => o.opening_set === false);
+  const pendingClaims = claims.filter((c) => c.status === "pending");
+  const openRequests = (reqRows || []).filter((r) => r.status === "new" || r.status === "in_progress").length;
+  const focusAddOwner = () => { setTab("owners"); setTimeout(() => { addOwnerRef.current?.scrollIntoView({ block: "center" }); addOwnerRef.current?.focus(); }, 60); };
+  /** «المزيد ▾»: على الجوال كل الأزرار الثانوية؛ على الشاشة الواسعة ما لا زرّ له (desk) */
+  const moreItems: { label: string; run: () => void; desk?: boolean }[] = [
+    { label: "🧾 كشف حساب الجمعية", run: openAssocStatement },
+    { label: "⬇️ تنزيل الملاك CSV", run: exportOwnersCSV },
+    { label: "🧾 الصندوق والمصروفات", run: () => setTab("fund") },
+    { label: "⚖️ توزيع الرسوم حسب الحصص", run: () => setSharesOpen(true) },
+    { label: "📊 الموازنة", run: openBudget },
+    { label: "📄 محضر تأسيسي", run: () => setMinutes(true) },
+    { label: "🗂 الاجتماع السنوي", run: openRenewal },
+    ...(v66 ? [{ label: "🏛 الدفعات و«ملاك»", run: openMullak },
+      { label: `💳 الحوالات المُبلَّغ عنها${pendingClaims.length ? ` (${pendingClaims.length})` : ""}`, run: () => setClaimsOpen(true), desk: true }] : []),
+    { label: "🔗 أرسل للملاك روابطهم", run: () => (total ? setSendLinks(true) : focusAddOwner()), desk: true },
+  ];
+  const linkedN = linkCounts ? Math.min(Number(linkCounts.linked) || 0, total) : 0;
+  const guideSteps: GuideStep[] = [
+    { key: "owners", label: "أضف الملاك", hint: total ? `المضافون: ${ownersAr(total)}` : "اسم كل مالك ووحدته وجواله — أو الصق قائمتك كاملة مرة واحدة.",
+      done: total > 0, action: { label: "📋 الصق قائمة الملاك", run: () => setBulk(true) }, extra: { label: "+ مالك واحد", run: focusAddOwner } },
+    { key: "opening", label: "حدّد المتأخرات الافتتاحية", term: "الرصيد الافتتاحي",
+      hint: pendingOpening.length ? `${ownersAr(pendingOpening.length)} بلا رصيد افتتاحي — صفحاتهم «قيد المراجعة» حتى تحدّده.` : "ما على كل مالك قبل بدء الاستخدام.",
+      done: total > 0 && pendingOpening.length === 0, action: { label: "حدّد المتأخرات الافتتاحية", run: () => (pendingOpening.length ? setOpeningOpen(true) : focusAddOwner()) } },
+    { key: "iban", label: "أدخل حساب الجمعية البنكي", hint: "يظهر الآيبان للمالك في صفحته وفي رسائل التذكير.",
+      done: ibanOk(a.iban), action: { label: "⚙︎ أدخل الآيبان", run: () => setModal("edit") } },
+    /* F6: بلا عدّاد الروابط (قبل v66) تصير الخطوة اختيارية فلا يعلق الدليل */
+    { key: "links", label: "أرسل لكل مالك رابطه", optional: !linkCounts, hint: linkCounts ? `${linkedN} من ${total} لهم رابط فعّال.` : "صفحة خاصة لكل مالك: رصيده وسنداته، ومنها يبلّغ عن حوالته.",
+      done: total > 0 && !!linkCounts && linkedN >= total, action: { label: "🔗 أرسل الروابط", run: () => (total ? setSendLinks(true) : focusAddOwner()) } },
+    { key: "accrue", label: "فعّل الاستحقاق التلقائي", optional: true, term: "استحقاق تلقائي", hint: "يُضاف اشتراك كل فترة على الملاك دون تدخّل منك.",
+      done: !!a.auto_accrue, action: { label: "⚙︎ فعّله من الإعدادات", run: () => setModal("edit") } },
+    { key: "mullak", label: "أدخل رقم التسجيل في «ملاك»", optional: true, hint: "يُطبع في السندات والخطابات.",
+      done: !!a.mullak_reg_no, action: { label: "⚙︎ الإعدادات", run: () => setModal("edit") } },
+  ];
 
   return (
-    <div className="pb-24">{/* مساحة أسفل حتى لا تغطي الأزرار العائمة آخر المحتوى */}
+    <div className="pb-24 hoa">{/* مساحة أسفل حتى لا تغطي الأزرار العائمة آخر المحتوى · .hoa: أهداف لمس ≥44px */}
       {toast && (
         <div role="status" className={`fixed top-5 left-1/2 -translate-x-1/2 z-[70] w-[min(92vw,420px)] rounded-xl px-4 py-3 text-sm font-semibold shadow-lg border ${
           toast.k === "ok" ? "bg-[#E6F4EC] text-[#137a50] border-[#B7DFC7]" : "bg-[#FBE9E7] text-[#a5322c] border-[#F5C6C2]"}`}>
@@ -979,7 +1173,7 @@ export default function AssociationView({ initial, issuer }: { initial: Associat
             <PortfolioStat v={String(p.late)} l="متأخر" tone={p.late ? "warn" : undefined} />
             <PortfolioStat v={sar(p.owed)} l="ريال متأخر" tone={p.owed ? "warn" : undefined} />
             <PortfolioStat v={sar(Math.round(p.expected))} l="إيراد الشهر المتوقّع" />
-            <PortfolioStat v={sar(p.fund)} l="رصيد الصناديق" />
+            <PortfolioStat v={moneySigned(p.fund)} l="رصيد الصناديق" />
             <PortfolioStat v={String(p.certs)} l="شهادات تنتهي قريبًا" tone={p.certs ? "warn" : undefined} />
           </div>
         );
@@ -1020,6 +1214,8 @@ export default function AssociationView({ initial, issuer }: { initial: Associat
         </div>
       </div>
 
+      {!a.archived_at && <GuideCard assocId={a.id} steps={guideSteps} />}
+
       {/* تنبيه الشهادة */}
       {dl !== null && dl < 0 && (
         <div className="flex flex-wrap items-center gap-3 rounded-xl p-3.5 mb-4 bg-[#FBE9E7] border border-[#F5C6C2] text-[#8f2b26]">
@@ -1044,8 +1240,8 @@ export default function AssociationView({ initial, issuer }: { initial: Associat
       {/* إحصاءات — قابلة للنقر للتصفية */}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-5">
         <div className="col-span-2 md:col-span-1">
-          <Stat v={sar(Number(a.fund_balance) || 0)} l="رصيد الصندوق (ريال) — المصروفات" kpi={(Number(a.fund_balance) || 0) < 0 ? "overdue" : "plain"} icon="﷼"
-            onClick={() => setExpOpen((v) => !v)} active={expOpen} />
+          <Stat v={moneySigned(Number(a.fund_balance) || 0)} l="رصيد الصندوق (ريال) — المصروفات" kpi={(Number(a.fund_balance) || 0) < 0 ? "overdue" : "plain"} icon="﷼"
+            onClick={() => setTab("fund")} active={tab === "fund"} />
         </div>
         <Stat v={sar(expectedMonthly)} l={`الدخل ${per === "annual" ? "السنوي" : "الشهري"} المتوقّع`} kpi="income" icon="↑" onClick={() => setFilter("all")} active={filter === "all"} />
         <Stat v={sar(owedTotal)} l={`المتأخر (${ownersAr(late.length)})`} kpi="overdue" icon="!" onClick={() => { setFilter("due"); setSort("amount"); }} active={filter === "due"} />
@@ -1053,7 +1249,30 @@ export default function AssociationView({ initial, issuer }: { initial: Associat
         <Stat v={dl === null ? "—" : String(dl)} l="يوم حتى انتهاء الشهادة" kpi={dl !== null && dl <= 30 ? "overdue" : "expiring"} icon="↻" />
       </div>
 
-      {expOpen && (
+      {/* v66: حوالات أبلغ عنها الملاك من صفحاتهم */}
+      {v66 && pendingClaims.length > 0 && (
+        <button type="button" onClick={() => setClaimsOpen(true)}
+          className="w-full grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 rounded-xl p-3 mb-4 bg-[#FDF0DC] border border-[#EBD9AA] text-[#7A4800] text-right min-h-[44px]">
+          <span aria-hidden className="w-8 h-8 rounded-lg bg-white grid place-items-center">💳</span>
+          <span className="min-w-0"><b>حوالات بانتظار المراجعة ({pendingClaims.length})</b>
+            <span className="block text-xs">أبلغ عنها الملاك من صفحاتهم — طابقها مع البنك ثم اعتمدها ليصدر السند.</span></span>
+          <span className="text-sm font-bold">راجِع ←</span>
+        </button>
+      )}
+
+      {/* التبويبات: لا شيء يدفع قائمة الملاك لأسفل */}
+      <div className="bg-white border border-line rounded-xl p-1 mb-4">
+        <div className="hoa-tabs" role="tablist" aria-label="أقسام الجمعية">
+          {([["owners", "الملاك"], ["docs", "المستندات"], ["fund", "الصندوق والمصروفات"],
+             ...(v66 ? [["requests", `طلبات الصيانة${openRequests ? ` (${openRequests})` : ""}`]] : []), ["log", "سجل العمارة"]] as [Tab, string][]).map(([k, l]) => (
+            <button key={k} type="button" role="tab" id={`hoa-tab-${k}`} aria-selected={tab === k} aria-controls="hoa-tabpanel"
+              className="hoa-tab" onClick={() => setTab(k)}>{l}</button>
+          ))}
+        </div>
+      </div>
+
+      <div id="hoa-tabpanel" role="tabpanel" aria-labelledby={`hoa-tab-${tab}`}>
+      {tab === "fund" && (
         <div className="mb-5">
           <HoaExpensesPanel association={{ id: a.id, name: a.name, fund_balance: Number(a.fund_balance) || 0, public_token: a.public_token }}
             orgName={issuer?.billing_name || null} notify={notify}
@@ -1061,7 +1280,7 @@ export default function AssociationView({ initial, issuer }: { initial: Associat
         </div>
       )}
 
-      {docsOpen && (
+      {tab === "docs" && (
         <div className="mb-5">
           <HoaDocumentsPanel association={{ id: a.id, name: a.name }}
             owners={owners.map((o) => ({ id: o.id, name: o.name, unit: o.unit, phone: o.phone }))}
@@ -1069,30 +1288,43 @@ export default function AssociationView({ initial, issuer }: { initial: Associat
         </div>
       )}
 
-      <div className="grid grid-cols-[minmax(0,1fr)] md:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)] gap-5 items-start">
+      {tab === "requests" && v66 && (
+        <div className="mb-5">
+          <RequestsPanel rows={reqRows} logs={reqLogs} expenses={reqExpenses} error={reqErr} onSet={setRequestStatus}
+            onReload={() => { loadRequests(a.id); loadReqExpenses(a.id); }} />
+        </div>
+      )}
+
+      {(tab === "owners" || tab === "log") && (
+      <div className={`grid grid-cols-[minmax(0,1fr)] ${tab === "owners" ? "md:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]" : ""} gap-5 items-start`}>
         {/* الملّاك */}
+        {tab === "owners" && (
         <div className="bg-white border border-line rounded-2xl shadow-sm">
           <div className="flex items-center justify-between border-b border-line px-5 py-4 gap-2 flex-wrap">
             <h2 className="font-semibold">الملّاك وحالة السداد</h2>
             <div className="flex flex-wrap gap-2 items-center">
-              {(a.fee > 0 || shareBasis) && <span className="text-xs text-muted">
+              {(a.fee > 0 || shareBasis) && <span className="text-xs text-muted w-full sm:w-auto">
                 {shareBasis ? `الاشتراك ${W.every} حسب حصة كل وحدة` : `الاشتراك ${sar(a.fee)} ريال${W.per}`}
-                {a.auto_accrue ? (per === "annual" ? ` · يُستحق تلقائيًا أول ${MONTHS_AR[(Number(a.fiscal_start_month) || 1) - 1]} من كل سنة` : " · يُستحق تلقائيًا أول كل شهر") : ""}</span>}
-              <button type="button" className="btn btn-ghost text-xs" onClick={openAssocStatement}>كشف حساب</button>
-              <button type="button" className="btn btn-ghost text-xs" onClick={exportOwnersCSV} title="تنزيل ملف Excel/CSV بكل الملّاك وحالتهم">⬇️ CSV</button>
+                {a.auto_accrue ? <>{per === "annual" ? ` · يُستحق تلقائيًا أول ${MONTHS_AR[(Number(a.fiscal_start_month) || 1) - 1]} من كل سنة` : " · يُستحق تلقائيًا أول كل شهر"}<InfoTip term="استحقاق تلقائي" /></> : ""}</span>}
+              {/* ظاهران دائمًا: التحصيل ومستندات الملاك — والبقية في «المزيد ▾» على الجوال */}
               {late.length > 0 && (
                 <button type="button" className="btn btn-ghost text-xs" onClick={() => setCollect({})}
                   title="سلّم التحصيل: تذكير ← خطاب مطالبة ← إنذار نهائي، وجاهزية السند التنفيذي">⚖️ التحصيل ({late.length})</button>
               )}
-              <button type="button" className="btn btn-ghost text-xs" onClick={() => setDocsOpen((v) => !v)}
+              <button type="button" className="btn btn-ghost text-xs" onClick={() => setTab("docs")}
                 title="محاضر وإشعارات تصل كل مالك في رابطه، مع من اطّلع ومن اعتمد">📨 مستندات الملاك</button>
-              <button type="button" className="btn btn-ghost text-xs" onClick={() => setExpOpen((v) => !v)}
-                title="مصروفات العمارة بسندات صرف، ورابط شفافية للملاك">🧾 الصندوق والمصروفات</button>
-              <button type="button" className="btn btn-ghost text-xs" onClick={() => setSharesOpen(true)}
-                title="حصة كل وحدة ومساحتها، وتوزيع الموازنة عليها">⚖️ توزيع الرسوم حسب الحصص</button>
-              <button type="button" className="btn btn-ghost text-xs" onClick={openBudget}>📊 الموازنة</button>
-              <button type="button" className="btn btn-ghost text-xs" onClick={() => setMinutes(true)}>📄 محضر تأسيسي</button>
-              <button type="button" className="btn btn-gold text-xs" onClick={openRenewal} title="موازنة العام القادم + محضر الاجتماع السنوي، وأرقامهما جاهزة لقرار الرسوم في المنصة">🗂 الاجتماع السنوي</button>
+              <span className="sm:hidden"><RowMenu label="المزيد ▾" items={moreItems} /></span>
+              <span className="hidden sm:inline-flex flex-wrap gap-2 items-center">
+                <button type="button" className="btn btn-ghost text-xs" onClick={openAssocStatement}>كشف حساب</button>
+                <button type="button" className="btn btn-ghost text-xs" onClick={exportOwnersCSV} title="تنزيل ملف Excel/CSV بكل الملّاك وحالتهم">⬇️ CSV</button>
+                <button type="button" className="btn btn-ghost text-xs" onClick={() => setSharesOpen(true)}
+                  title="حصة كل وحدة ومساحتها، وتوزيع الموازنة عليها">⚖️ توزيع الرسوم حسب الحصص</button>
+                <button type="button" className="btn btn-ghost text-xs" onClick={openBudget}>📊 الموازنة</button>
+                <button type="button" className="btn btn-ghost text-xs" onClick={() => setMinutes(true)}>📄 محضر تأسيسي</button>
+                {v66 && <button type="button" className="btn btn-ghost text-xs" onClick={openMullak} title="علّم الدفعات التي سجّلتها في منصة «ملاك» الرسمية">🏛 الدفعات و«ملاك»</button>}
+                <RowMenu label="المزيد ▾" items={moreItems.filter((x) => x.desk)} />
+                <button type="button" className="btn btn-gold text-xs" onClick={openRenewal} title="موازنة العام القادم + محضر الاجتماع السنوي، وأرقامهما جاهزة لقرار الرسوم في المنصة">🗂 الاجتماع السنوي</button>
+              </span>
             </div>
           </div>
 
@@ -1108,9 +1340,9 @@ export default function AssociationView({ initial, issuer }: { initial: Associat
                 <button type="button" className="btn btn-gold text-xs" onClick={() => setOpeningOpen(true)}>حدّد المتأخرات الافتتاحية</button>
               </div>
             )}
-            <AddOwner onAdd={addOwner} />
+            <AddOwner onAdd={addOwner} inputRef={addOwnerRef} />
             <div className="flex justify-end -mt-1 mb-3">
-              <button type="button" className="text-xs font-semibold text-goldInk hover:underline" onClick={() => setBulk(true)}>
+              <button type="button" className="inline-flex items-center min-h-[44px] text-xs font-semibold text-goldInk hover:underline" onClick={() => setBulk(true)}>
                 📋 عندك قائمة جاهزة؟ الصقها وأضف كل الملّاك دفعة واحدة
               </button>
             </div>
@@ -1131,19 +1363,32 @@ export default function AssociationView({ initial, issuer }: { initial: Associat
                 </select>
                 <div className="flex flex-wrap gap-1.5 w-full">
                   {chips.map((c) => (
-                    <button key={c.k} onClick={() => setFilter(c.k)}
-                      className={`text-xs font-semibold rounded-lg px-2.5 py-1 border transition ${
-                        filter === c.k ? "bg-deep text-[#F6F1E4] border-deep" : "bg-white text-deep border-line hover:border-goldSoft"}`}>
+                    <button key={c.k} type="button" onClick={() => setFilter(c.k)} aria-pressed={filter === c.k}
+                      className={`hoa-chip ${filter === c.k ? "hoa-chip-on" : ""}`}>
                       {c.label}
                     </button>
                   ))}
+                </div>
+                <div className="text-xs text-muted flex flex-wrap items-center gap-x-3 w-full">
+                  <span>المصطلحات:</span>
+                  <span className="inline-flex items-center">متأخر<InfoTip term="متأخر" /></span>
+                  <span className="inline-flex items-center">سداد جزئي<InfoTip term="سداد جزئي" /></span>
+                  <span className="inline-flex items-center">مقدَّم<InfoTip term="مقدَّم" /></span>
                 </div>
               </div>
             )}
 
             <div className="flex flex-col gap-2">
               {!total ? (
-                <div className="text-center text-muted py-6 text-sm">لا يوجد ملّاك — أضف أول مالك بالأعلى.</div>
+                <div className="text-center rounded-xl border border-dashed border-line bg-paper px-4 py-8">
+                  <div className="text-3xl mb-2" aria-hidden>🏢</div>
+                  <div className="font-display font-bold text-deep">لا ملّاك بعد في هذه الجمعية</div>
+                  <p className="text-sm text-muted mt-1 mb-4">أسرع طريقة: انسخ قائمة الملاك من Excel أو واتساب والصقها — سطر لكل مالك.</p>
+                  <div className="flex flex-wrap justify-center gap-2">
+                    <button type="button" className="btn btn-gold text-sm" onClick={() => setBulk(true)}>📋 الصق قائمة الملاك</button>
+                    <button type="button" className="btn btn-ghost text-sm" onClick={focusAddOwner}>+ أضف مالكًا واحدًا</button>
+                  </div>
+                </div>
               ) : !rows.length ? (
                 <div className="text-center text-muted py-6 text-sm">
                   لا نتائج مطابقة.
@@ -1197,7 +1442,7 @@ export default function AssociationView({ initial, issuer }: { initial: Associat
                       {o.phone && <a href={`tel:${String(o.phone).replace(/[^0-9+]/g, "")}`} className="btn btn-ghost text-xs px-2.5 sm:hidden" title="اتصال مباشر">&#128222;</a>}
                       {o.months_late >= 2 && <button type="button" className="btn btn-gold text-xs" onClick={() => makeOwnerNotice(o)}>نموذج إشعار</button>}
                       <MemberLinkButton owner={{ id: o.id, name: o.name, unit: o.unit, phone: o.phone }} associationName={a.name}
-                        className="btn btn-ghost text-xs px-2.5" />
+                        className="btn btn-ghost text-xs px-2.5" onChange={() => loadLinkCounts(a.id)} />
                       <RowMenu
                         items={[
                           { label: "🧾 كشف حساب", run: () => openOwnerStatement(o) },
@@ -1222,8 +1467,9 @@ export default function AssociationView({ initial, issuer }: { initial: Associat
           </div>
         </div>
 
-        {/* ملاحظات */}
-        <div className="bg-white border border-line rounded-2xl shadow-sm">
+        )}
+        {/* ملاحظات — على الجوال في تبويب «سجل العمارة»، وعلى الشاشة الواسعة بجانب الملاك */}
+        <div className={`bg-white border border-line rounded-2xl shadow-sm ${tab === "log" ? "" : "hidden md:block"}`}>
           <div className="border-b border-line px-5 py-4"><h2 className="font-semibold">سجل العمارة</h2></div>
           <div className="p-4">
             <AddNote onAdd={addNote} placeholder="أضف ملاحظة (صيانة، تغيّر مالك…)" />
@@ -1234,18 +1480,20 @@ export default function AssociationView({ initial, issuer }: { initial: Associat
                 <div key={n.id} className="grid grid-cols-[auto_minmax(0,1fr)_auto] gap-2.5 items-start py-2.5 border-b border-dashed border-line last:border-0 text-sm">
                   <span className="text-xs font-semibold text-[#8a5a11] w-20 shrink-0 pt-0.5">{arDate(n.note_date)}</span>
                   <span className="text-[#33413d] break-words">{n.text}</span>
-                  {locked ? <span className="w-9 h-9 grid place-items-center text-muted text-xs" title="سجل موثَّق — لا يُحذف" aria-label="سجل موثَّق">🔒</span>
+                  {locked ? <span className="w-11 h-11 grid place-items-center text-muted text-xs" title="سجل موثَّق — لا يُحذف" aria-label="سجل موثَّق">🔒</span>
                     : noteAsk === n.id ? (
                       <span className="flex gap-1">
                         <button type="button" className="btn btn-ghost text-xs px-2 py-1.5" onClick={() => setNoteAsk(null)}>لا</button>
                         <button type="button" className="btn text-xs px-2 py-1.5 bg-late text-white" onClick={() => { setNoteAsk(null); deleteNote(n.id); }}>احذف</button>
                       </span>
-                    ) : <button type="button" className="w-9 h-9 grid place-items-center rounded-lg text-muted hover:text-late hover:bg-paper2" aria-label="حذف الملاحظة" onClick={() => setNoteAsk(n.id)}>✕</button>}
+                    ) : <button type="button" className="w-11 h-11 grid place-items-center rounded-lg text-muted hover:text-late hover:bg-paper2" aria-label="حذف الملاحظة" onClick={() => setNoteAsk(n.id)}>✕</button>}
                 </div>
               );
             }) : <div className="text-center text-muted py-6 text-sm">لا ملاحظات بعد.</div>}
           </div>
         </div>
+      </div>
+      )}
       </div>
 
       {budget && <BudgetModal assoc={a} budget={budget} onClose={() => setBudget(null)}
@@ -1267,6 +1515,10 @@ export default function AssociationView({ initial, issuer }: { initial: Associat
         onPrintMinutes={(d) => openDoc(renewalMinutesHTML(a as any, d as any, issuer || {}))}
         onSendMinutes={(d) => { const m = renewalMinutesPortalHTML(a as any, d); setDocPrefill({ title: `${m.title} — ${a.name}`, kind: "minutes", body_html: m.html }); setRenewal(null); setDocsOpen(true); }} />}
       {bulk && <BulkOwnersModal onClose={() => setBulk(false)} onSubmit={addOwnersBulk} />}
+      {claimsOpen && <ClaimsModal claims={claims} onApprove={approveClaim} onReject={rejectClaim} onClose={() => setClaimsOpen(false)} />}
+      {mullak && <MullakModal rows={mullak.rows} loading={mullak.loading} onSet={setMullakFlag} onClose={() => setMullak(null)} />}
+      {sendLinks && <SendLinksModal owners={owners.map((o) => ({ id: o.id, name: o.name, unit: o.unit, phone: o.phone }))}
+        onSend={sendOwnerLink} onClose={() => setSendLinks(false)} />}
       {openingOpen && pendingOpening.length > 0 && <OpeningModal owners={pendingOpening} period={per}
         onClose={() => setOpeningOpen(false)}
         onSave={async (vals) => {
@@ -1287,7 +1539,7 @@ export default function AssociationView({ initial, issuer }: { initial: Associat
       {ownerModal?.owner && <OwnerModal owner={ownerModal.owner} period={per} onClose={() => setOwnerModal(null)}
         onSubmit={(d) => saveOwner(ownerModal.owner!.id, d)} />}
       {history && <HistoryModal data={history} period={per} onClose={() => setHistory(null)}
-        onReverse={reverseOwnerPayment} onReceipt={(row) => printReceipt(history.owner, row)} />}
+        onReverse={reverseOwnerPayment} onReceipt={(row) => printReceipt(history.owner, row)} onMullak={setMullakFlag} />}
       {doc && <DocModal doc={doc} onClose={() => setDoc(null)}
         onDelivered={doc.owner && doc.label ? async (via) => { await logNotice(doc.owner!, via === "wa" ? `${doc.label} (أُرسل واتساب)` : `${doc.label} (سُلِّم)`); } : undefined} />}
       {paying && <OwnerPaymentModal owner={paying} fee={feeFor(paying)} period={per} busy={!!payBusy[paying.id]} onClose={() => setPaying(null)}
@@ -1381,10 +1633,12 @@ function OwnerPaymentModal({ owner, fee, period = "monthly", busy, onClose, onSu
   const future = paidOn > today();
 
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4" onClick={onClose}>
-      <div className="w-full max-w-md bg-white rounded-2xl shadow-xl p-6 max-h-[90vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
+    <Overlay onClose={onClose}>
+      <div role="dialog" aria-modal="true" className="w-full max-w-md bg-white rounded-2xl shadow-xl p-6 max-h-[90vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
       <h3 className="font-display font-bold text-deep text-xl mb-1">تسجيل مبلغ مستلم</h3>
-      <p className="text-sm text-muted mb-4">{owner.name} · {owner.unit ? `وحدة ${owner.unit}` : "—"}</p>
+      <p className="text-sm text-muted mb-1">{owner.name} · {owner.unit ? `وحدة ${owner.unit}` : "—"}</p>
+      <p className="text-xs text-muted mb-3 flex flex-wrap items-center gap-x-3"><span className="inline-flex items-center">مقدَّم<InfoTip term="مقدَّم" /></span>
+        <span className="inline-flex items-center">سداد جزئي<InfoTip term="سداد جزئي" /></span><span className="inline-flex items-center">سند قبض<InfoTip term="سند قبض" /></span></p>
 
       <div className="bg-paper2 border border-line rounded-xl p-3 mb-4 text-sm">
         <div className="flex justify-between"><span className="text-muted">{W.label}{owner.fee_override != null ? " (حسب الحصة)" : ""}</span><b className="tabular-nums">{sar(fee)} ريال</b></div>
@@ -1446,7 +1700,7 @@ function OwnerPaymentModal({ owner, fee, period = "monthly", busy, onClose, onSu
           {busy ? "جارٍ التسجيل…" : "تسجيل"}</button>
       </div>
       </div>
-    </div>
+    </Overlay>
   );
 }
 
@@ -1464,18 +1718,19 @@ function StatusPill({ k }: { k: OwnerKey }) {
 /** قائمة إجراءات منسدلة — تُخفي الأزرار الثانوية */
 function RowMenu({ items, label }: { items: { label: string; run: () => void; danger?: boolean }[]; label?: string }) {
   const [open, setOpen] = useState(false);
+  useEscape(() => setOpen(false), open);
   if (!items.length) return null;
   return (
     <div className="relative">
-      <button type="button" onClick={() => setOpen((v) => !v)} aria-label="إجراءات أخرى"
+      <button type="button" onClick={() => setOpen((v) => !v)} aria-label={label ? undefined : "إجراءات أخرى"} aria-haspopup="menu" aria-expanded={open}
         className={`btn btn-ghost px-2.5 ${label ? "text-sm" : "text-xs"}`} title="المزيد">{label || "⋯"}</button>
       {open && (
         <>
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div className="absolute z-50 top-full mt-1 left-0 min-w-[190px] bg-white border border-line rounded-xl shadow-lg overflow-hidden py-1">
+          <div role="menu" className="absolute z-50 top-full mt-1 left-0 min-w-[210px] max-w-[calc(100vw-2rem)] bg-white border border-line rounded-xl shadow-lg overflow-hidden py-1">
             {items.map((it, i) => (
-              <button key={i} type="button" onClick={() => { setOpen(false); it.run(); }}
-                className={`block w-full text-right px-3.5 py-2 text-xs font-semibold hover:bg-paper2 transition ${it.danger ? "text-late" : "text-deep"}`}>
+              <button key={i} type="button" role="menuitem" onClick={() => { setOpen(false); it.run(); }}
+                className={`block w-full text-right px-3.5 min-h-[44px] text-xs font-semibold hover:bg-paper2 transition ${it.danger ? "text-late" : "text-deep"}`}>
                 {it.label}
               </button>
             ))}
@@ -1485,11 +1740,11 @@ function RowMenu({ items, label }: { items: { label: string; run: () => void; da
     </div>
   );
 }
-function AddOwner({ onAdd }: { onAdd: (n: string, u: string, p: string) => void }) {
+function AddOwner({ onAdd, inputRef }: { onAdd: (n: string, u: string, p: string) => void; inputRef?: React.Ref<HTMLInputElement> }) {
   const [n, setN] = useState(""); const [u, setU] = useState(""); const [p, setP] = useState("");
   return (
     <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-3">
-      <input className="fld" value={n} onChange={(e) => setN(e.target.value)} placeholder="اسم المالك" />
+      <input ref={inputRef} aria-label="اسم المالك" className="fld" value={n} onChange={(e) => setN(e.target.value)} placeholder="اسم المالك" />
       <input className="fld" value={u} onChange={(e) => setU(e.target.value)} placeholder="الوحدة" />
       <input className="fld" value={p} onChange={(e) => setP(e.target.value)} placeholder="جوال (اختياري)" />
       <button className="btn btn-gold text-sm justify-center" onClick={() => { if (n.trim()) { onAdd(n, u, p); setN(""); setU(""); setP(""); } }}>+ إضافة</button>
@@ -1514,9 +1769,9 @@ function FormModal({ open, title, initial, onClose, onSubmit, onDelete, onArchiv
   const [d, setD] = useState<any>(initial || {});
   if (!open) return null;
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4" onClick={onClose}>
+    <Overlay onClose={onClose}>
       {/* max-h + overflow: على جوال 390×844 كانت أزرار الحفظ تخرج عن الشاشة بلا تمرير */}
-      <div className="w-full max-w-md bg-white rounded-2xl shadow-xl p-6 max-h-[92vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
+      <div role="dialog" aria-modal="true" className="w-full max-w-md bg-white rounded-2xl shadow-xl p-6 max-h-[92vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
         <h2 className="font-display font-bold text-deep text-xl mb-4">{title}</h2>
         <div className="space-y-3">
           <Field label="اسم الجمعية"><input className="fld" value={d.name || ""} onChange={(e) => setD({ ...d, name: e.target.value })} /></Field>
@@ -1596,7 +1851,7 @@ function FormModal({ open, title, initial, onClose, onSubmit, onDelete, onArchiv
             <Field label="رقم التسجيل في «ملاك»"><input className="fld" dir="ltr" maxLength={40} value={d.mullak_reg_no || ""} onChange={(e) => setD({ ...d, mullak_reg_no: e.target.value })} /></Field>
             <Field label="الرقم الموحّد (700)"><input className="fld" dir="ltr" maxLength={40} value={d.unified_no || ""} onChange={(e) => setD({ ...d, unified_no: e.target.value })} /></Field>
           </div>
-          <div className="text-sm font-semibold">النصاب — حسب النظام الأساسي للجمعية</div>
+          <div className="text-sm font-semibold flex items-center">النصاب — حسب النظام الأساسي للجمعية<InfoTip term="النصاب" /></div>
           <div className="grid grid-cols-2 gap-3">
             <Field label="الاجتماع الأول (٪ من الحصص)"><input className="fld" type="number" min={1} max={100} value={d.quorum_first_pct ?? 75}
               onChange={(e) => setD({ ...d, quorum_first_pct: e.target.value === "" ? "" : +e.target.value })} /></Field>
@@ -1610,7 +1865,7 @@ function FormModal({ open, title, initial, onClose, onSubmit, onDelete, onArchiv
         </div>
         <label className="flex items-start gap-2 mt-4 text-sm cursor-pointer">
           <input type="checkbox" className="mt-1" checked={d.auto_accrue ?? !initial} onChange={(e) => setD({ ...d, auto_accrue: e.target.checked })} />
-          <span><b>استحقاق تلقائي {periodOf(d) === "annual" ? "أول كل سنة مالية" : "أول كل شهر"}</b>
+          <span><b>استحقاق تلقائي {periodOf(d) === "annual" ? "أول كل سنة مالية" : "أول كل شهر"}</b><InfoTip term="استحقاق تلقائي" />
             <span className="block text-xs text-muted">يُضاف اشتراك {periodOf(d) === "annual" ? "السنة" : "الشهر"} على كل مالك تلقائيًا (ويُخصم من المقدَّم إن وُجد). عند التفعيل يبدأ من {periodOf(d) === "annual" ? "السنة المالية القادمة" : "الشهر القادم"}، ولا يُضاف شيء بأثر رجعي.</span></span>
         </label>
         {!(d.name || "").trim() && (
@@ -1628,7 +1883,7 @@ function FormModal({ open, title, initial, onClose, onSubmit, onDelete, onArchiv
         {onDelete && <div className="text-center mt-2"><button className="text-late text-sm font-semibold underline" onClick={onDelete}>حذف الجمعية نهائيًّا</button>
           <div className="text-[.7rem] text-muted">الحذف متاح فقط لجمعية بلا دفعات ولا مصروفات.</div></div>}
       </div>
-    </div>
+    </Overlay>
   );
 }
 
@@ -1663,8 +1918,8 @@ function BudgetModal({ assoc, budget, onClose, onSave, onPrint }: {
     setItems(items.map((it, i) => (i === n ? { ...it, ...patch } : it)));
 
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4" onClick={onClose}>
-      <div className="w-full max-w-2xl bg-white rounded-2xl shadow-xl p-6 max-h-[92vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
+    <Overlay onClose={onClose}>
+      <div role="dialog" aria-modal="true" className="w-full max-w-2xl bg-white rounded-2xl shadow-xl p-6 max-h-[92vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
         <h3 className="font-display font-bold text-deep text-xl mb-1">الموازنة التقديرية {budget.year}</h3>
         <p className="text-sm text-muted mb-4">{assoc.name}{units ? ` · ${units} وحدة` : ""} — أدخل المصروف الشهري لكل بند، ويُحسب الاشتراك المقترح تلقائيًّا.</p>
 
@@ -1756,7 +2011,7 @@ function BudgetModal({ assoc, budget, onClose, onSave, onPrint }: {
             onClick={() => onPrint(payload)}>طباعة الموازنة</button>
         </div>
       </div>
-    </div>
+    </Overlay>
   );
 }
 
@@ -1777,8 +2032,8 @@ function MinutesModal({ assoc, onClose, onPrint, onSend }: {
   const out = () => ({ ...d, ...att.payload(d) });
 
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4" onClick={onClose}>
-      <div className="w-full max-w-2xl bg-white rounded-2xl shadow-xl p-6 max-h-[92vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
+    <Overlay onClose={onClose}>
+      <div role="dialog" aria-modal="true" className="w-full max-w-2xl bg-white rounded-2xl shadow-xl p-6 max-h-[92vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
         <h3 className="font-display font-bold text-deep text-xl mb-1">محضر الجمعية العمومية التأسيسية</h3>
         <p className="text-sm text-muted mb-4">{assoc.name} — املأ ما تعرفه، واترك الباقي فراغات تُملأ بخطّ اليد.</p>
 
@@ -1854,7 +2109,7 @@ function MinutesModal({ assoc, onClose, onPrint, onSend }: {
             title="يظهر في رابط كل مالك ليطّلع ويعتمد">📨 للملاك للاعتماد</button>}
         </div>
       </div>
-    </div>
+    </Overlay>
   );
 }
 
@@ -1881,8 +2136,8 @@ function OwnerModal({ owner, period = "monthly", onClose, onSubmit }: {
   const areaBad = String(d.area_m2) !== "" && !(Number(d.area_m2) > 0);
   const ready = String(d.name || "").trim().length > 0;
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4" onClick={onClose}>
-      <div className="w-full max-w-md bg-white rounded-2xl shadow-xl p-6 max-h-[90vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
+    <Overlay onClose={onClose}>
+      <div role="dialog" aria-modal="true" className="w-full max-w-md bg-white rounded-2xl shadow-xl p-6 max-h-[90vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
         <h3 className="font-display font-bold text-deep text-xl mb-1">تعديل بيانات المالك</h3>
         <p className="text-sm text-muted mb-4">{owner.unit ? `وحدة ${owner.unit}` : "—"}</p>
 
@@ -1927,23 +2182,26 @@ function OwnerModal({ owner, period = "monthly", onClose, onSubmit }: {
         </div>
         {!ready && <p className="text-xs text-late mt-3 text-center">اسم المالك مطلوب لتفعيل الحفظ.</p>}
       </div>
-    </div>
+    </Overlay>
   );
 }
 
 /** سجل المدفوعات — مع رقم السند، وعكس الدفعة الخاطئة (سطر عكس لا حذف) */
-function HistoryModal({ data, period = "monthly", onClose, onReverse, onReceipt }: {
+function HistoryModal({ data, period = "monthly", onClose, onReverse, onReceipt, onMullak }: {
   data: { owner: Owner; rows: any[] }; period?: FeePeriod; onClose: () => void;
   onReverse: (row: any) => void; onReceipt: (row: any) => void;
+  onMullak?: (p: MullakPay, on: boolean, inv: string | null) => Promise<boolean>;
 }) {
   const { owner, rows } = data;
   const total = rows.reduce((s, r) => s + (Number(r.amount) || 0), 0);
   const reversed = new Set(rows.filter((r) => r.reverses).map((r) => String(r.reverses)));
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4" onClick={onClose}>
-      <div className="w-full max-w-2xl bg-white rounded-2xl shadow-xl p-6 max-h-[90vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
+    <Overlay onClose={onClose}>
+      <div role="dialog" aria-modal="true" className="w-full max-w-2xl bg-white rounded-2xl shadow-xl p-6 max-h-[90vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
         <h3 className="font-display font-bold text-deep text-lg mb-1">سجل المدفوعات — {owner.name}</h3>
-        <p className="text-sm text-muted mb-4">{owner.unit ? `وحدة ${owner.unit}` : "—"} · {countWord(rows.length, "عملية واحدة", "عمليتان", "عمليات", "عملية")} · الصافي {riyalsAr(r2(total), sar)}</p>
+        <p className="text-sm text-muted mb-1">{owner.unit ? `وحدة ${owner.unit}` : "—"} · {countWord(rows.length, "عملية واحدة", "عمليتان", "عمليات", "عملية")} · الصافي {r2(total) < 0 ? <Amt n={r2(total)} /> : riyalsAr(r2(total), sar)}</p>
+        <p className="text-xs text-muted mb-4 flex flex-wrap items-center gap-x-3"><span className="inline-flex items-center">سند قبض<InfoTip term="سند قبض" /></span>
+          <span className="inline-flex items-center">عكس الدفعة<InfoTip term="عكس الدفعة" /></span></p>
         {!rows.length ? (
           <div className="text-center text-muted py-10 text-sm">
             لا مدفوعات مسجّلة بعد.
@@ -1960,7 +2218,7 @@ function HistoryModal({ data, period = "monthly", onClose, onReverse, onReceipt 
                 <div key={r.id} className={`rounded-xl border p-3 grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-1 ${isRev || wasRev ? "border-line bg-paper2 text-muted" : "border-line bg-paper"}`}>
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-1.5">
-                      <b className={`tabular-nums ${wasRev ? "line-through" : ""}`}>{riyalsAr(Math.abs(Number(r.amount) || 0), sar)}</b>
+                      <b className={`tabular-nums ${wasRev ? "line-through" : ""}`}>{isRev ? <Amt n={Number(r.amount) || 0} /> : riyalsAr(Math.abs(Number(r.amount) || 0), sar)}</b>
                       {isRev && <span className="text-[.7rem] font-semibold rounded-md px-1.5 py-0.5 bg-[#FBE9E7] text-[#a5322c]">عكس</span>}
                       {wasRev && <span className="text-[.7rem] font-semibold rounded-md px-1.5 py-0.5 bg-[#FBE9E7] text-[#a5322c]">معكوسة</span>}
                     </div>
@@ -1976,6 +2234,9 @@ function HistoryModal({ data, period = "monthly", onClose, onReverse, onReceipt 
                       <button type="button" className="btn btn-ghost text-xs px-2.5 text-late" onClick={() => onReverse(r)}>عكس</button>
                     </div>
                   )}
+                  {!isRev && !wasRev && Number(r.amount) > 0 && onMullak && r.mullak_registered !== undefined && (
+                    <div className="col-span-2"><MullakToggle p={r} onSet={onMullak} /></div>
+                  )}
                 </div>
               );
             })}
@@ -1983,7 +2244,7 @@ function HistoryModal({ data, period = "monthly", onClose, onReverse, onReceipt 
         )}
         <button type="button" className="btn btn-ghost w-full justify-center mt-4" onClick={onClose}>إغلاق</button>
       </div>
-    </div>
+    </Overlay>
   );
 }
 
@@ -2019,8 +2280,8 @@ function CollectionsModal({ assoc, owners, only, fee, period = "monthly", stageO
   const missingFee = !(Number(fee) > 0);
 
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4" onClick={onClose}>
-      <div className="w-full max-w-3xl bg-white rounded-2xl shadow-xl p-6 max-h-[90vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
+    <Overlay onClose={onClose}>
+      <div role="dialog" aria-modal="true" className="w-full max-w-3xl bg-white rounded-2xl shadow-xl p-6 max-h-[90vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
         <h3 className="font-display font-bold text-deep text-lg mb-1">ملف التحصيل — {assoc.name}</h3>
         <p className="text-sm text-muted mb-4">
           تصعيد متدرّج وموثّق: تذكير ← مطالبة ← إنذار نهائي. كل خطوة تُسجَّل بتاريخها في سجل العمارة.
@@ -2107,7 +2368,7 @@ function CollectionsModal({ assoc, owners, only, fee, period = "monthly", stageO
           <button type="button" onClick={onClose} className="btn btn-ghost flex-1 justify-center">إغلاق</button>
         </div>
       </div>
-    </div>
+    </Overlay>
   );
 }
 
@@ -2129,8 +2390,8 @@ function DocModal({ doc, onClose, onDelivered }: {
       ? <>هذا <b>إنذار إداري</b> تصدره إدارة الجمعية، وليس إنذارًا قضائيًّا ذا حجية تنفيذية. المسار النظامي يمرّ عبر منصة «ملاك» ثم محكمة التنفيذ أو الجهة المختصة. راجع النص مع مختص مرخّص قبل أي استخدام رسمي.</>
       : <>هذا <b>خطاب تذكير إداري</b> تستخدمه إدارة الجمعية، وليس إنذارًا نظاميًّا ذا حجية. المسار النظامي للتحصيل يمرّ عبر منصة «ملاك» ثم محكمة التنفيذ أو الجهة المختصة. وثيق لا يقدّم خدمات قانونية ولا يستلم أي مبالغ — راجع النص مع مختص مرخّص قبل أي استخدام رسمي.</>;
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4" onClick={onClose}>
-      <div className="w-full max-w-2xl bg-white rounded-2xl shadow-xl p-6 max-h-[90vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
+    <Overlay onClose={onClose}>
+      <div role="dialog" aria-modal="true" className="w-full max-w-2xl bg-white rounded-2xl shadow-xl p-6 max-h-[90vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
         <h3 className="font-display font-bold text-deep text-lg mb-1">{doc.title}</h3>
         <p className="text-xs text-[#8a5a11] mb-4 bg-[#FBF1DF] border border-[#EBD9AA] rounded-lg p-2.5 leading-relaxed">
           {banner}
@@ -2149,7 +2410,7 @@ function DocModal({ doc, onClose, onDelivered }: {
           <button type="button" onClick={onClose} className="btn text-muted">إغلاق</button>
         </div>
       </div>
-    </div>
+    </Overlay>
   );
 }
 
@@ -2183,8 +2444,8 @@ function RenewalModal({ assoc, annualBudget, onClose, onEditBudget, onPrintBudge
   const out = () => ({ ...d, ...att.payload(d) });
 
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4" onClick={onClose}>
-      <div className="w-full max-w-2xl bg-white rounded-2xl shadow-xl p-6 max-h-[92vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
+    <Overlay onClose={onClose}>
+      <div role="dialog" aria-modal="true" className="w-full max-w-2xl bg-white rounded-2xl shadow-xl p-6 max-h-[92vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
         <h3 className="font-display font-bold text-deep text-xl mb-1">🗂 حزمة الاجتماع السنوي</h3>
         <p className="text-sm text-muted mb-4">
           {assoc.name} — موازنة العام القادم ومحضر الاجتماع، ثم إدخال الأرقام في قرار الرسوم بالمنصة.
@@ -2301,7 +2562,7 @@ function RenewalModal({ assoc, annualBudget, onClose, onEditBudget, onPrintBudge
           <button type="button" className="btn btn-ghost flex-1 justify-center" onClick={onClose}>إغلاق</button>
         </div>
       </div>
-    </div>
+    </Overlay>
   );
 }
 
@@ -2433,9 +2694,9 @@ function SharesModal({ assoc, onClose, onShare, onApplied, notify }: {
   };
 
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4" onClick={() => !busy && onClose()}>
-      <div className="w-full max-w-2xl bg-white rounded-2xl shadow-xl p-5 max-h-[92vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
-        <h3 className="font-display font-bold text-deep text-xl mb-1">⚖️ توزيع الرسوم حسب الحصص</h3>
+    <Overlay onClose={() => !busy && onClose()}>
+      <div role="dialog" aria-modal="true" className="w-full max-w-2xl bg-white rounded-2xl shadow-xl p-5 max-h-[92vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
+        <h3 className="font-display font-bold text-deep text-xl mb-1 flex items-center">⚖️ توزيع الرسوم حسب الحصص<InfoTip term="الحصة" /></h3>
         <p className="text-sm text-muted mb-3">رسم الوحدة {W.every} = الموازنة السنوية × حصتها ÷ {per === "annual" ? "100" : "100 ÷ 12"}. مجموع الحصص يجب أن يساوي 100٪. رصيد كل مالك بالريال لا يتغيّر.</p>
         <div className="grid grid-cols-2 gap-3 mb-3">
           <Field label="الموازنة السنوية (ريال)">
@@ -2480,7 +2741,7 @@ function SharesModal({ assoc, onClose, onShare, onApplied, notify }: {
           <button type="button" className="btn btn-gold flex-1 justify-center" disabled={!ok || busy} onClick={apply}>{busy ? "جارٍ التطبيق…" : "تطبيق التوزيع"}</button>
         </div>
       </div>
-    </div>
+    </Overlay>
   );
 }
 
@@ -2497,9 +2758,9 @@ function OpeningModal({ owners, period, onClose, onSave }: {
   });
   const n = Object.keys(parsed).length;
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4" onClick={() => !busy && onClose()}>
-      <div className="w-full max-w-lg bg-white rounded-2xl shadow-xl p-5 max-h-[92vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
-        <h3 className="font-display font-bold text-deep text-xl mb-1">حدّد المتأخرات الافتتاحية</h3>
+    <Overlay onClose={() => !busy && onClose()}>
+      <div role="dialog" aria-modal="true" className="w-full max-w-lg bg-white rounded-2xl shadow-xl p-5 max-h-[92vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
+        <h3 className="font-display font-bold text-deep text-xl mb-1 flex items-center">حدّد المتأخرات الافتتاحية<InfoTip term="الرصيد الافتتاحي" /></h3>
         <p className="text-sm text-muted mb-3">كم {period === "annual" ? "سنة" : "شهرًا"} على كل مالك قبل بدء التسجيل هنا؟ اكتب <b>0</b> لمن لا متأخرات عليه.
           لا يُحفظ إلا ما تكتبه، ويُوثَّق كتعديل يدوي. حتى يُحدَّد، تُظهر صفحة المالك «رصيدك قيد المراجعة».</p>
         <div className="flex flex-col gap-2">
@@ -2520,7 +2781,7 @@ function OpeningModal({ owners, period, onClose, onSave }: {
             onClick={async () => { setBusy(true); try { await onSave(parsed); } finally { setBusy(false); } }}>{busy ? "جارٍ الحفظ…" : `حفظ (${n})`}</button>
         </div>
       </div>
-    </div>
+    </Overlay>
   );
 }
 
@@ -2553,8 +2814,8 @@ function BulkOwnersModal({ onClose, onSubmit }: {
   }).filter(Boolean) as { name: string; unit: string | null; phone: string | null; months: number | null }[];
 
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4" onClick={onClose}>
-      <div className="w-full max-w-xl bg-white rounded-2xl shadow-xl p-6 max-h-[92vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
+    <Overlay onClose={onClose}>
+      <div role="dialog" aria-modal="true" className="w-full max-w-xl bg-white rounded-2xl shadow-xl p-6 max-h-[92vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
         <h3 className="font-display font-bold text-deep text-xl mb-1">📋 إضافة ملّاك دفعة واحدة</h3>
         <p className="text-sm text-muted mb-3">
           الصق قائمتك — سطر لكل مالك بصيغة: <b>الاسم، الوحدة، الجوال، المتأخر بالأشهر</b> (كلها اختيارية بعد الاسم؛ المتأخر رقم في الخانة الرابعة).
@@ -2584,7 +2845,7 @@ function BulkOwnersModal({ onClose, onSubmit }: {
             onClick={() => onSubmit(rows)}>إضافة {rows.length || ""} مالك</button>
         </div>
       </div>
-    </div>
+    </Overlay>
   );
 }
 
@@ -2600,8 +2861,8 @@ function RemindAllOwnersModal({ owners, dueOf, period, onSend, sentToday, onClos
   const noPhone = owners.length - withPhone.length;
 
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4" onClick={onClose}>
-      <div className="w-full max-w-lg bg-white rounded-2xl shadow-xl p-6 max-h-[92vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
+    <Overlay onClose={onClose}>
+      <div role="dialog" aria-modal="true" className="w-full max-w-lg bg-white rounded-2xl shadow-xl p-6 max-h-[92vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
         <h3 className="font-display font-bold text-deep text-xl mb-1">💬 تذكير جماعي بالسداد</h3>
         <p className="text-sm text-muted mb-4">
           واتساب لا يسمح بالإرسال الجماعي الآلي — كل زر يفتح محادثة برسالة جاهزة بتفاصيل المالك ورابط صفحته،
@@ -2630,6 +2891,6 @@ function RemindAllOwnersModal({ owners, dueOf, period, onSend, sentToday, onClos
         )}
         <button type="button" className="btn btn-ghost w-full justify-center mt-4" onClick={onClose}>إغلاق</button>
       </div>
-    </div>
+    </Overlay>
   );
 }

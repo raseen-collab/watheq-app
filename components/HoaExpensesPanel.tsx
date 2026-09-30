@@ -14,13 +14,15 @@ import { renderVoucherPage, type VoucherRow } from "@/lib/hoaPortal";
 import { openExternal, today } from "@/lib/utils";
 import { EXPENSE_CATEGORIES, expenseCatAr, MONTHS_AR, r2, type BuildingData } from "@/lib/hoaMoney";
 import DateField from "@/components/DateField";
+import { InfoTip } from "@/components/HoaRound3";
 
 type Expense = VoucherRow & { id: string; reverses: string | null; created_at: string };
 
 const fmt = (n: number) => {
   const v = r2(n); const a = Math.abs(v);
   const t = Number.isInteger(a) ? a.toLocaleString("en-US") : a.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  return v < 0 ? `−${t}` : t;
+  /* «−10» معزول الاتجاه (LRI…PDI) — وإلا يظهر في السطر العربي «10-» */
+  return v < 0 ? `\u2066\u2212${t}\u2069` : t;
 };
 const dayAr = (iso?: string | null) => {
   const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || ""));
@@ -202,6 +204,8 @@ export default function HoaExpensesPanel({ association, orgName, onFund, notify 
         <div className="min-w-0">
           <h3 className="font-display font-bold text-deep text-lg">الصندوق والمصروفات</h3>
           <p className="text-xs text-muted">كل مصروف يُنقص الصندوق ويصدر له سند صرف مرقَّم. التصحيح بعكس السند لا بحذفه.</p>
+          <p className="text-xs text-muted flex flex-wrap items-center gap-x-3"><span className="inline-flex items-center">رصيد الصندوق<InfoTip term="رصيد الصندوق" /></span>
+            <span className="inline-flex items-center">سند صرف<InfoTip term="سند صرف" /></span><span className="inline-flex items-center">صفحة الشفافية<InfoTip term="صفحة الشفافية" /></span></p>
         </div>
         <div className="flex flex-wrap gap-2">
           <button type="button" className="btn btn-gold text-sm" onClick={() => setForm(true)}>+ مصروف</button>
@@ -235,7 +239,7 @@ export default function HoaExpensesPanel({ association, orgName, onFund, notify 
                   {e.vendor ? ` · ${e.vendor}` : ""}{e.overdraft ? " · دفعه المدير مقدّمًا" : ""}{wasRev ? " · (معكوس)" : ""}
                 </div>
               </div>
-              <div className={`font-bold tabular-nums text-sm ${isRev ? "text-paid" : "text-deep"} ${wasRev ? "line-through" : ""}`}>{fmt(-Number(e.amount))}</div>
+              <div dir="ltr" className={`font-bold tabular-nums text-sm ${isRev ? "text-paid" : "text-deep"} ${wasRev ? "line-through" : ""}`}>{fmt(-Number(e.amount))}</div>
               {!isRev && !wasRev && (
                 <div className="col-span-2 flex gap-1.5 justify-end">
                   <button type="button" className="btn btn-ghost text-xs px-2" onClick={() => printVoucher(e)}>سند صرف</button>

@@ -37,6 +37,10 @@ do $$ begin
   if to_regprocedure('public.watheq_assoc_set_fee_plan(uuid, numeric, text, text, numeric, integer)') is null then
     raise exception 'شغّل schema-v63 أولًا';
   end if;
+  -- حارس إعادة التشغيل: بعد v66 كانت إعادة هذا الملف تُرجع البوابة وحذف الحساب لنسختهما الأقدم
+  if to_regclass('public.hoa_payment_claims') is not null then
+    raise exception 'نسخة أحدث مطبَّقة — لا تُعِد تشغيل هذا الملف';
+  end if;
 end $$;
 
 -- ── ١) الأعمدة ─────────────────────────────────────────────────

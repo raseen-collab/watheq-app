@@ -7,7 +7,7 @@
  *    ومتابعة اطلاع الملاك واعتمادهم.
  * مستقل بذاته: يتصل بـ /api/hoa/member-link و /api/hoa/documents فقط.
  */
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { openExternal, today } from "@/lib/utils";
 import { openDoc } from "@/lib/documents";
 import DateField from "@/components/DateField";
@@ -69,8 +69,10 @@ const LEGAL_NOTE = "الاعتماد عبر الرابط يُسجَّل باسم
 // ─── ١) رابط المالك ─────────────────────────────────────────────
 export type HoaOwnerLite = { id: string; name: string; unit?: string | null; phone?: string | null };
 
-export function MemberLinkButton({ owner, associationName, className }: {
+export function MemberLinkButton({ owner, associationName, className, onChange }: {
   owner: HoaOwnerLite; associationName: string; className?: string;
+  /** يُستدعى بعد إنشاء الرابط أو إبطاله — لتحديث عدّاد «دليل البداية» */
+  onChange?: (kind: "created" | "revoked") => void;
 }) {
   const [open, setOpen] = useState(false);
   const [url, setUrl] = useState<string | null>(null);
@@ -79,6 +81,8 @@ export function MemberLinkButton({ owner, associationName, className }: {
   const [confirming, setConfirming] = useState(false);
   const [revoked, setRevoked] = useState(false);
   const [copied, setCopied] = useState(false);
+  const onChangeRef = useRef(onChange);
+  onChangeRef.current = onChange;
 
   const fetchLink = useCallback(async () => {
     setBusy(true); setErr(null);
@@ -86,6 +90,7 @@ export function MemberLinkButton({ owner, associationName, className }: {
       const j = await postJSON("/api/hoa/member-link", { owner_id: owner.id, action: "get" });
       setUrl(`${window.location.origin}${j.path}`);
       setRevoked(false);
+      onChangeRef.current?.("created");
     } catch (e: any) { setErr(e?.message || "تعذّر إنشاء الرابط"); }
     finally { setBusy(false); }
   }, [owner.id]);
@@ -118,6 +123,7 @@ export function MemberLinkButton({ owner, associationName, className }: {
     try {
       await postJSON("/api/hoa/member-link", { owner_id: owner.id, action: "revoke" });
       setUrl(null); setRevoked(true); setConfirming(false);
+      onChangeRef.current?.("revoked");
     } catch (e: any) { setErr(e?.message || "تعذّر إبطال الرابط"); }
     finally { setBusy(false); }
   };
@@ -156,7 +162,7 @@ export function MemberLinkButton({ owner, associationName, className }: {
 
               <div className="border-t border-line mt-4 pt-3">
                 {!confirming ? (
-                  <button type="button" className="text-late text-sm font-semibold underline" onClick={() => setConfirming(true)}>إبطال هذا الرابط</button>
+                  <button type="button" className="inline-flex items-center min-h-[44px] text-late text-sm font-semibold underline" onClick={() => setConfirming(true)}>إبطال هذا الرابط</button>
                 ) : (
                   <div className="rounded-xl bg-[#FBE9E7] p-3 text-sm">
                     <p className="font-semibold text-[#8f2b26]">سيتوقف هذا الرابط فورًا ولن يفتح عند المالك. قراراته السابقة على المستندات تبقى محفوظة.</p>
@@ -394,15 +400,15 @@ export function HoaDocumentsPanel({ association, owners, prefill, onPrefillUsed 
               )}
 
               <div className="flex flex-wrap gap-x-3 gap-y-1.5 mt-2 text-xs">
-                <button type="button" className="font-semibold underline text-deep" onClick={() => { setPendingOnly(null); setExpanded(expanded === d.id && !pendingOnly ? null : d.id); }}>
+                <button type="button" className="inline-flex items-center min-h-[44px] font-semibold underline text-deep" onClick={() => { setPendingOnly(null); setExpanded(expanded === d.id && !pendingOnly ? null : d.id); }}>
                   {expanded === d.id && !pendingOnly ? "إخفاء تفاصيل الملاك" : "تفاصيل الملاك"}
                 </button>
                 {d.requires_signature && !cancelled && (c.seen + c.none) > 0 && (
-                  <button type="button" className="font-semibold underline text-[#9A5B00]" onClick={() => { setPendingOnly(d.id); setExpanded(d.id); }}>لم يردّوا ({c.seen + c.none})</button>
+                  <button type="button" className="inline-flex items-center min-h-[44px] font-semibold underline text-[#9A5B00]" onClick={() => { setPendingOnly(d.id); setExpanded(d.id); }}>لم يردّوا ({c.seen + c.none})</button>
                 )}
-                <button type="button" className="font-semibold underline text-deep" onClick={() => printApprovalLog(association.name, d)}>طباعة سجل الاعتماد</button>
+                <button type="button" className="inline-flex items-center min-h-[44px] font-semibold underline text-deep" onClick={() => printApprovalLog(association.name, d)}>طباعة سجل الاعتماد</button>
                 {!cancelled && cancelAsk !== d.id && (
-                  <button type="button" className="font-semibold underline text-late" onClick={() => setCancelAsk(d.id)}>إلغاء المستند</button>
+                  <button type="button" className="inline-flex items-center min-h-[44px] font-semibold underline text-late" onClick={() => setCancelAsk(d.id)}>إلغاء المستند</button>
                 )}
               </div>
               {cancelAsk === d.id && (
@@ -475,7 +481,7 @@ export function HoaDocumentsPanel({ association, owners, prefill, onPrefillUsed 
                 <div className="rounded-lg border border-line p-3 max-h-64 overflow-auto text-sm bg-[#FFFEFB]" dir="rtl"
                   /* نُظِّف عند الاستلام (sanitizeHoaHtml) — لا style ولا سكربت يتسرّب إلى اللوحة؛ ويُنظَّف مجددًا في الخادم */
                   dangerouslySetInnerHTML={{ __html: form.html }} />
-                <button type="button" className="text-xs underline mt-1" onClick={() => setForm({ ...form, html: null })}>استبدل بنص أكتبه بنفسي</button>
+                <button type="button" className="inline-flex items-center min-h-[44px] text-xs underline mt-1" onClick={() => setForm({ ...form, html: null })}>استبدل بنص أكتبه بنفسي</button>
                 <p className="text-xs text-muted mt-1">التنسيقات المتقدمة (الألوان والخطوط) لا تُنقل — يبقى النص والجداول والعناوين.</p>
               </div>
             ) : (

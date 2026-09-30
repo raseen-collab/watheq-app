@@ -116,6 +116,32 @@ export const EXPENSE_CATEGORIES: { v: string; l: string }[] = [
 ];
 export const expenseCatAr = (v?: string | null) => EXPENSE_CATEGORIES.find((c) => c.v === v)?.l || "أخرى";
 
+// ─── v66: طلبات الصيانة والحوالات ────────────────────────────────
+export const REQUEST_CATEGORIES: { v: string; l: string }[] = [
+  { v: "plumbing", l: "سباكة وتسريب" },
+  { v: "electric", l: "كهرباء وإنارة" },
+  { v: "elevator", l: "المصعد" },
+  { v: "cleaning", l: "نظافة" },
+  { v: "security", l: "حراسة وأبواب" },
+  { v: "ac", l: "تكييف" },
+  { v: "other", l: "أخرى" },
+];
+export const requestCatAr = (v?: string | null) => REQUEST_CATEGORIES.find((c) => c.v === v)?.l || "أخرى";
+export const REQUEST_STATUS_AR: Record<string, string> = { new: "جديد", in_progress: "قيد التنفيذ", done: "أُنجز", rejected: "مرفوض" };
+export const requestLocAr = (v?: string | null) => (v === "unit" ? "داخل الوحدة" : "الأجزاء المشتركة");
+export const CLAIM_STATUS_AR: Record<string, string> = { pending: "بانتظار المراجعة", approved: "اعتُمدت", rejected: "رُفضت" };
+
+/**
+ * مبلغ بإشارة سالبة سليمة: «−10» (علامة الطرح U+2212) داخل عزل اتجاه
+ * (LRI…PDI) — وإلا تُعرض في السطر العربي «10-». يصلح لـHTML والنص وواتساب.
+ */
+export function moneySigned(n: unknown): string {
+  const v = Math.round((Number(n) || 0) * 100) / 100;
+  const a = Math.abs(v);
+  const t = Number.isInteger(a) ? a.toLocaleString("en-US") : a.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return v < 0 ? `\u2066\u2212${t}\u2069` : t;
+}
+
 /** أرقام العمارة المجمَّعة (watheq_hoa_building_data) — لا أسماء ملاك فيها */
 export type BuildingData = {
   name: string; units: number; fee: number | null; fee_period?: string; fee_basis?: string;
@@ -125,6 +151,8 @@ export type BuildingData = {
   recent: { spent_on: string; category: string; description: string; amount: number }[];
   owners_total: number; owners_paid: number; collection_pct: number | null;
   office?: { org_name: string | null } | null;
+  /** v66: أعداد طلبات الصيانة فقط — لا نصوص ولا أسماء */
+  requests?: { open: number; closed: number; avg_days_to_close: number | null } | null;
 };
 
 // ─── العدد والمعدود ─────────────────────────────────────────────

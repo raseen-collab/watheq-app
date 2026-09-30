@@ -8,6 +8,7 @@ import { annualRentRoll } from "./income";
 import { defaultTermPeriods } from "./contracts";
 import { unitStatus, unitStatusLabel, arrearsOf, statusWindows, isPartialOnly } from "./contract-state";
 import { daysAr, monthsAr, today as riyadhTodayISO } from "./utils";
+import { moneySigned } from "./hoaMoney";
 
 const sar = (n: number) => {
   const v = Number(n) || 0;
@@ -1632,7 +1633,7 @@ ${regLine(a)}
     <h3>الوضع المالي</h3>
     <div class="r"><span>الإيرادات المتوقّعة ${isAnnual(a) ? "للسنة" : "للشهر"}</span><span>${sar(expected)} ريال</span></div>
     <div class="r"><span>إجمالي المتأخر</span><span>${sar(totalDue)} ريال</span></div>
-    ${a.fund_balance != null ? `<div class="r"><span>رصيد الصندوق</span><span>${sar(a.fund_balance)} ريال</span></div>` : ""}
+    ${a.fund_balance != null ? `<div class="r"><span>رصيد الصندوق</span><span>${moneySigned(a.fund_balance)} ريال</span></div>` : ""}
   </div>
   <div class="box">
     <h3>الوضع النظامي</h3>
@@ -2120,7 +2121,7 @@ ${quorumBlock(q)}
   <tbody>
     <tr><td>إجمالي الاشتراكات المحصَّلة</td><td style="text-align:left;font-weight:600">${collected ? sar(collected) + " ريال" : "________________"}</td></tr>
     <tr><td>إجمالي المصروفات (تشغيل وصيانة)</td><td style="text-align:left;font-weight:600">${spent ? sar(spent) + " ريال" : "________________"}</td></tr>
-    <tr style="background:#F3EEE2;font-weight:700"><td>رصيد صندوق الجمعية</td><td style="text-align:left">${sar(fund)} ريال</td></tr>
+    <tr style="background:#F3EEE2;font-weight:700"><td>رصيد صندوق الجمعية</td><td style="text-align:left">${moneySigned(fund)} ريال</td></tr>
   </tbody>
 </table>
 
@@ -3222,7 +3223,7 @@ function portalMinutes(kind: "founding" | "renewal", a: AssociationDoc, d: Minut
     `<p><b>التاريخ:</b> ${arDate(d.meeting_date || today())}${hijriText(String(d.meeting_date || today()).slice(0, 10)) ? ` (${hijriText(String(d.meeting_date || today()).slice(0, 10))})` : ""}</p>`,
     `<p><b>طريقة الانعقاد:</b> ${pEsc(d.mode || "حضوري")}${d.place ? ` — ${pEsc(d.place)}` : ""}</p>`,
     `<p><b>الاجتماع:</b> ${q.round === 2 ? "الثاني" : "الأول"} · <b>الحضور:</b> ${q.basis === "none" ? "—" : `${q.present} من ${q.total}`} · <b>النصاب:</b> ${qTxt}</p>`,
-    kind === "renewal" ? `<p><b>الموقف المالي:</b> المحصَّل ${Number(d.collected) ? sar(Number(d.collected)) + " ريال" : "—"} · المصروف ${Number(d.spent) ? sar(Number(d.spent)) + " ريال" : "—"} · رصيد الصندوق ${sar(Number(d.fund_balance ?? a.fund_balance) || 0)} ريال</p>` : "",
+    kind === "renewal" ? `<p><b>الموقف المالي:</b> المحصَّل ${Number(d.collected) ? sar(Number(d.collected)) + " ريال" : "—"} · المصروف ${Number(d.spent) ? sar(Number(d.spent)) + " ريال" : "—"} · رصيد الصندوق ${moneySigned(Number(d.fund_balance ?? a.fund_balance) || 0)} ريال</p>` : "",
     `<table><thead><tr><th>البند</th><th>القرار</th></tr></thead><tbody>${items.map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join("")}</tbody></table>`,
     `<p>${draft ? "هذا مشروع محضر للاطلاع قبل الاجتماع أو قبل تدوين القرارات — لا يُعدّ إقرارًا لأي بند." : "تُتّخذ القرارات بموافقة ملاك ثلاثة أرباع المساحة الإجمالية للوحدات (المادة 18/6)."} نموذج استرشادي أعدّته إدارة الجمعية؛ يُطابَق مع النظام الأساسي المعتمد.</p>`,
   ].filter(Boolean).join("\n");
