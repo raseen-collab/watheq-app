@@ -533,7 +533,7 @@ export function contractState(t: {
   /* سدّد العقد كله مقدّمًا (سنة كاملة مثلًا): لا «القادمة» بعد اليوم — ما يهم
      المكتب أن يرى «مسدَّد كامل العقد» ومتى ينتهي ليجدّده، لا صفًا صامتًا */
   let fullyPaid = unpaid === 0 && paid >= totalPeriods;
-  const expWin = Math.max(1, Math.min(180, Number(opts.expiringDays) || 60));
+  const expWin = expiringWindowDays(Math.max(1, Math.min(180, Number(opts.expiringDays) || 60)), t.contract_start, endDate);
   let expiringSoon = daysToEnd !== null && daysToEnd >= 0 && daysToEnd <= expWin;
   /* «مسدَّد كامل العقد» وحدها تُخفي خطأ الإدخال: مكتب استلم 3 دفعات من 4
      رأى «كامل» لأن مدة العقد مسجّلة 3. إظهار العدّاد يكشف الخلل في نظرة. */
@@ -760,10 +760,23 @@ export function renewContract(t: {
   return out as typeof out & { readonly gap: RenewalGap };
 }
 
-/** هل العقد يستحق التجديد؟ (منتهٍ أو يقترب) */
+/**
+ * (جولة 4) نافذة «ينتهي قريبًا» لا تتجاوز نصف مدة العقد: عقد ستة أشهر مع نافذة
+ * مكتب 180 يومًا كان «ينتهي قريبًا» من أسبوعه الأول فيظهر زرّ «تجديد» — مسار حادثة
+ * «التميز». مصدر واحد للّوحة والبوت والملخص اليومي (يُعاد تصديره من contract-state).
+ * طول العقد غير معروف ⇒ النافذة كما هي.
+ */
+export function expiringWindowDays(days: number, start?: string | null, end?: string | null): number {
+  const s = strictDate(start ? String(start).slice(0, 10) : null), e = strictDate(end ? String(end).slice(0, 10) : null);
+  if (!s || !e || e <= s) return days;
+  const half = Math.floor((e.getTime() - s.getTime()) / 86400000 / 2);
+  return Math.max(1, Math.min(days, half));
+}
+
+/** هل العقد يستحق التجديد؟ (منتهٍ أو يقترب — والنافذة لا تتجاوز نصف مدته) */
 export function needsRenewal(t: Parameters<typeof contractState>[0], withinDays = 60): boolean {
   const st = contractState(t);
-  return st.daysToEnd !== null && st.daysToEnd <= withinDays;
+  return st.daysToEnd !== null && st.daysToEnd <= expiringWindowDays(withinDays, t.contract_start, st.endDate);
 }
 
 /**

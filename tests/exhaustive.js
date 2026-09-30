@@ -164,7 +164,10 @@ for (const cal of CAL) for (const freq of FREQ) for (const vac of [false, true])
         ck(`${nm}: NaN`, !/NaN/.test(h), `${cal}/${freq}/${mode}`);
         ck(`${nm}: undefined`, !/undefined/.test(h), `${cal}/${freq}/${mode}`);
         ck(`${nm}: null معروض`, !/>null</.test(h), `${cal}/${freq}/${mode}`);
-        ck(`${nm}: حقن HTML`, !/<script|onerror=/.test(h), `${cal}/${freq}`);
+        /* سكربت الطباعة الموثوق (nonce + wq-print/wq-close، 30 سبتمبر 2026) جزء من القالب لا حقن:
+           يُزال وحده قبل الفحص، وأي <script آخر أو onerror= يبقى إخفاقًا */
+        const hNoPrint = h.replace(/<script nonce="[^"]*">\(function\(\)\{var p=document\.getElementById\("wq-print"\)[\s\S]*?<\/script>/g, "");
+        ck(`${nm}: حقن HTML`, !/<script|onerror=/.test(hNoPrint), `${cal}/${freq}`);
       }
     }
   }

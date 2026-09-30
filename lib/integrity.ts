@@ -12,6 +12,7 @@
 
 import { contractState, isVacant, unitVatApplies, splitVat, firstDueGap, strictDate, type Frequency } from "./contracts";
 import { termRentPaidOf } from "./documents";
+import { contractRemaining } from "./contract-state";
 
 export type Severity = "critical" | "warn" | "info";
 
@@ -35,6 +36,8 @@ export type Finding = {
   unit?: string | null;
   tenantId?: string;
   tenantName?: string | null;
+  /** أرقام هذه الوحدة بالتحديد — تُعرض تحت اسمها حين تتجمّع الملاحظة لعدة وحدات */
+  detail?: string;
 };
 
 type T = any; type P = any;
@@ -64,7 +67,15 @@ function hijriDay(iso: string): number | null {
  * الفحص الكامل لحساب مكتب.
  * يُرجع قائمة ملاحظات مرتّبة بالخطورة — كل واحدة تسمّي الوحدة وتقول ماذا يُفعل.
  */
-export function auditOffice(properties: P[], payments: any[] = [], expenses: any[] = []): Finding[] {
+/** يوم الرياض لطابع زمني (term_started_at يُخزَّن UTC) */
+const riyadhDayOf = (ts: string | number | Date) => {
+  const d = new Date(ts);
+  return isNaN(d.getTime()) ? "" : new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Riyadh", year: "numeric", month: "2-digit", day: "2-digit" }).format(d);
+};
+
+export function auditOffice(properties: P[], payments: any[] = [], expenses: any[] = [],
+  /** (جولة 4) أرشيف المستأجرين السابقين — لتمييز «إعادة التأجير» عن «التجديد المبكر» */
+  past: any[] = []): Finding[] {
   const out: Finding[] = [];
   const push = (f: Omit<Finding, "id">) => out.push({ id: `${f.propertyId || ""}:${f.tenantId || ""}:${f.title}`, ...f });
 
@@ -254,6 +265,46 @@ export function auditOffice(properties: P[], payments: any[] = [], expenses: any
         detail: `سُجّل ${Math.round(trp[t.id]).toLocaleString("en-US")} ريال إيجارًا في مدة هذا العقد، و«المسدَّد» ${num(t.paid_periods)} دفعة (${Math.round(reflected).toLocaleString("en-US")}). `
           + `فتُظهره المستندات دافعًا وتُظهره الوحدة غير دافع — غالبًا عُدّل «مسدَّد حتى» بعد تسجيل الدفعة.`,
         fix: "افتح الوحدة ← «تعديل البيانات» ← «مسدَّد حتى»: اختر آخر دفعة سُدّدت فعلًا. وإن كانت الدفعة خطأً فاعكسها من «سجل الدفعات»." } as any);
+    }
+  }
+
+  /* ── (جولة 4) حادثة «التميز»: 16,599 مسجَّلة على عقد 10,000، وتجديد بعد ستة أسابيع ── */
+  for (const { t, p } of allT) {
+    if (isVacant(t) || !(num(t.rent_amount) > 0)) continue;
+    const base = { propertyId: p.id, propertyName: p.name, unit: t.unit, tenantId: t.id, tenantName: t.name };
+    const v = { enabled: !!p.vat_enabled && unitVatApplies(t, p), rate: num(p.vat_rate) || 15, inclusive: p.vat_inclusive !== false };
+    const rem = contractRemaining(t, v);
+    /* قيمة المدة بوحدة التسجيل، وشاملةً الضريبة المضافة إن وُجدت (سجل الدفعات قد يكون بأيٍّ منهما) */
+    const totalMax = v.enabled && !v.inclusive ? splitVat(rem.total, v).total : rem.total;
+    const byCounter = rem.paid, byLedger = num(trp[t.id]);
+    const tol = Math.max(1, rem.total * 0.001);
+    if (byCounter > rem.total + tol || byLedger > totalMax + tol) {
+      const paidShown = Math.max(byCounter, byLedger);
+      push({ severity: "warn", title: "المدفوع أكثر من قيمة العقد", ...base,
+        why: "المسجَّل على مدة العقد الحالية أكبر من قيمتها كاملة — غالبًا دفعة أُدخلت بمبلغ خاطئ أو مرتين، فيتضخّم المحصَّل ويظهر المستأجر مسدِّدًا مقدَّمًا.",
+        detail: `سُجّل ${Math.round(paidShown).toLocaleString("en-US")} ريال على مدة قيمتها ${Math.round(rem.total).toLocaleString("en-US")} (${rem.periods} × ${Math.round(num(t.rent_amount)).toLocaleString("en-US")}) — زيادة ${Math.round(paidShown - rem.total).toLocaleString("en-US")}.`,
+        fix: "افتح «سجل المدفوعات» للوحدة واعكس الدفعة الخاطئة ثم سجّلها بمبلغها الصحيح." });
+    }
+    const ts = String(t.term_started_at || "");
+    const startDay = String(t.contract_start || "").slice(0, 10);
+    /* استثناءات (F4) — يوم الرياض لا UTC:
+       • إعادة تأجير: أُرشف سابقٌ لهذه الوحدة يوم بدء المدة ±3 أيام (شاغرة ← مؤجّرة، لا تجديد)
+       • عقد جديد يبدأ مستقبلًا: الصفّ نفسه أُنشئ يوم بدء المدة ±3 أيام (مستأجر لم يسكن بعد).
+       لا نستثني كل بداية مستقبلية: بعد التجديد المبكر تكون «بداية العقد» في المستقبل حتمًا
+       (نهاية المدة السابقة) — وهي الحالة المطلوب كشفها. */
+    const tsDay = ts && !/infinity/i.test(ts) ? riyadhDayOf(ts) : "";
+    const near3 = (x: any) => !!x && !!tsDay && Math.abs((new Date(riyadhDayOf(x)).getTime() - new Date(tsDay).getTime()) / 86400000) <= 3;
+    const relet = !!tsDay && (past || []).some((x: any) => String(x.unit_row_id || "") === String(t.id) && near3(x.archived_at));
+    const newFuture = !!tsDay && startDay > riyadhDayOf(Date.now()) && near3(t.created_at);
+    if (tsDay && isRealDate(startDay) && !relet && !newFuture) {
+      const early = (new Date(startDay).getTime() - new Date(tsDay).getTime()) / 86400000;
+      /* بعد التجديد تكون «بداية العقد» نهاية المدة السابقة؛ الفرق بينها ويوم الضغط = كم سبق التجديد نهايتها */
+      if (early > 30) {
+        push({ severity: "warn", title: "تجديد مبكر", ...base,
+          why: "جُدّد العقد قبل نهاية مدته السابقة بأكثر من 30 يومًا — التجديد يصفّر عدّاد الدفعات وينقل ما سُجّل قبله إلى «العقد السابق»، وقد يكون المقصود تعديل البيانات.",
+        detail: `جُدّد يوم ${tsDay} والمدة السابقة تنتهي ${String(t.contract_start).slice(0, 10)} — قبلها بـ${Math.round(early)} يومًا.`,
+          fix: "إن كان المقصود تعديل بيانات العقد لا تجديده: راجع «مسدَّد حتى» ومدة العقد من «تعديل البيانات»، وتأكّد أن الدفعات لم تُحسب على المدة السابقة." });
+      }
     }
   }
 

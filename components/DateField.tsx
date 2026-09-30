@@ -12,6 +12,7 @@
 
 import { useEffect, useState } from "react";
 import { fromHijri, toHijri, hijriText, latinDigits } from "@/lib/hijri";
+import { gregorianAr, dateDistanceAr } from "@/lib/contract-state";
 
 const PREF = "watheq.cal";
 const MONTHS = [
@@ -19,11 +20,16 @@ const MONTHS = [
   "رجب", "شعبان", "رمضان", "شوال", "ذو القعدة", "ذو الحجة",
 ];
 
-export default function DateField({ value, onChange, id }: {
+export default function DateField({ value, onChange, id, relative }: {
   value: string;                       // ميلادي ISO أو ""
   /** يمرّ التقويم الذي أُدخل به التاريخ: "h" هجري أو "g" ميلادي — ليتبعه العقد تلقائيًّا */
   onChange: (iso: string, mode?: "g" | "h") => void;
   id?: string;
+  /**
+   * (جولة 4) المسافة من تاريخ مرجعي تُكتب بجانب المقابل: «بعد 11 شهرًا من بداية العقد».
+   * warn = يُلوَّن تحذيرًا (أول استحقاق بعد أكثر من فترة، أو قبل البداية).
+   */
+  relative?: { from?: string | null; what?: string; warn?: boolean };
 }) {
   const [cal, setCal] = useState<"g" | "h">("g");
   const [hy, setHy] = useState("");
@@ -104,9 +110,13 @@ export default function DateField({ value, onChange, id }: {
       {hErr ? (
         <p className="text-[11px] text-late mt-1 leading-relaxed font-semibold">⚠️ {hErr}</p>
       ) : (
-        <p className="text-[11px] text-muted mt-1">
+        /* الهجري يعرض دائمًا الميلادي المقابل بأسماء الأشهر (كان «2027-06-25 ميلادي» يُقرأ
+           خطأً)، ومعه المسافة من بداية العقد — شهر أو سنة خطأ في القائمة يظهر فورًا. */
+        <p className={`text-[11px] mt-1 leading-relaxed ${value && relative?.warn ? "text-late font-semibold" : "text-muted"}`}
+          role={value && relative?.warn ? "status" : undefined}>
           {value
-            ? (cal === "g" ? `الموافق ${hijriText(value)}` : `الموافق ${value} ميلادي`)
+            ? <>{value && relative?.warn ? "⚠️ " : ""}{cal === "g" ? `الموافق ${hijriText(value)}` : `= ${gregorianAr(value)}`}
+                {relative?.from && dateDistanceAr(relative.from, value, relative.what) ? ` · ${dateDistanceAr(relative.from, value, relative.what)}` : ""}</>
             : (cal === "h" && (hd || hm || hy) ? "أكمل اليوم والشهر والسنة" : "—")}
         </p>
       )}

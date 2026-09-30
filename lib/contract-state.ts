@@ -1,4 +1,4 @@
-import { isVacant, withVat } from "./contracts";
+import { isVacant, withVat, expiringWindowDays, addPeriods, parseDate, isoDate, defaultTermPeriods, splitVat, type Frequency, type ContractCalendar, type VatSettings } from "./contracts";
 /** ============================================================
  *  وثيق — تسميات وألوان حالات العقد (طبقة عرض فقط)
  *  الحساب الفعلي يتم في lib/contracts.ts (نفس مصدر لوحة التحكّم).
@@ -26,8 +26,9 @@ export const stateLabel = (key: StateKey) => META[key]?.label || key;
  * يشتقّ الحالة من ناتج contractState + المستأجر.
  * st: ناتج contractState(t)  ·  tenant: صفّ المستأجر (فيه litigation)
  */
+export { expiringWindowDays };
 export function deriveState(
-  st: { status: "late" | "soon" | "ok"; daysToEnd: number | null; vacant?: boolean },
+  st: { status: "late" | "soon" | "ok"; daysToEnd: number | null; vacant?: boolean; endDate?: string | null },
   tenant: any
 ): StateKey {
   // الشغور يتقدّم على كل شيء — لا «متأخر» ولا «ينتهي قريبًا» لوحدة فارغة
@@ -35,7 +36,8 @@ export function deriveState(
   if (tenant?.litigation === true) return "litigation";
   if (st.status === "late") return "arrears";
   if (st.status === "soon") return "due_soon";
-  if (st.daysToEnd !== null && st.daysToEnd <= RENEW_DAYS) return "expiring";
+  /* النافذة لا تتجاوز نصف مدة العقد (expiringWindowDays) — كما في contractState و needsRenewal */
+  if (st.daysToEnd !== null && st.daysToEnd <= expiringWindowDays(RENEW_DAYS, tenant?.contract_start, st.endDate ?? tenant?.contract_end)) return "expiring";
   return "active";
 }
 
@@ -197,4 +199,127 @@ export function statusWindows(p?: PropertyWindows, office?: OfficeDefaults): Sta
     imminentDays: clamp(p?.imminent_days, 1, 60, officeImm),
     expiringDays: clamp(p?.expiring_days, 1, 180, officeExp),
   };
+}
+
+// ============================================================
+// حرّاس الإدخال (جولة 4 — 30 سبتمبر 2026)
+// حادثة مكتب «التميز»: أول استحقاق هجري بشهر وسنة خاطئين، ودفعة ثانية
+// 8,299 بدل 1,700 على عقد 10,000 (فسُجّل 16,599)، وتجديد بعد ستة أسابيع
+// من عقد ستة أشهر صفّر عدّاد الدفعات. كل حارس هنا يسأل ولا يمنع.
+// ============================================================
+
+const G_MONTHS = ["يناير", "فبراير", "مارس", "أبريل", "مايو", "يونيو", "يوليو", "أغسطس", "سبتمبر", "أكتوبر", "نوفمبر", "ديسمبر"];
+const r2 = (n: number) => Math.round((Number(n) || 0) * 100) / 100;
+const isoOk = (v?: string | null) => /^\d{4}-\d{2}-\d{2}/.test(String(v || ""));
+
+/** «25 يونيو 2027» — ميلادي بأسماء الأشهر العربية */
+export function gregorianAr(iso?: string | null): string {
+  if (!isoOk(iso)) return "";
+  const [y, m, d] = String(iso).slice(0, 10).split("-").map(Number);
+  return `${d} ${G_MONTHS[m - 1] || ""} ${y}`;
+}
+
+const monthsWord = (x: number) => x === 1 ? "شهر واحد" : x === 2 ? "شهرين" : x % 100 >= 3 && x % 100 <= 10 ? `${x} أشهر` : x % 100 >= 11 ? `${x} شهرًا` : `${x} شهر`;
+const daysWord = (x: number) => x === 1 ? "يوم واحد" : x === 2 ? "يومين" : x % 100 >= 3 && x % 100 <= 10 ? `${x} أيام` : x % 100 >= 11 ? `${x} يومًا` : `${x} يوم`;
+
+/**
+ * المسافة بين تاريخين بالعربية: «بعد 11 شهرًا من بداية العقد» · «قبل بداية العقد بـ5 أيام»
+ * · «يوم بداية العقد». الأشهر تُقرَّب لأقرب شهر (15 يومًا فأكثر = شهر)، وأقل من شهر بالأيام.
+ */
+export function dateDistanceAr(fromISO?: string | null, toISO?: string | null, what = "بداية العقد"): string {
+  if (!isoOk(fromISO) || !isoOk(toISO)) return "";
+  const a = parseDate(String(fromISO).slice(0, 10)), b = parseDate(String(toISO).slice(0, 10));
+  const days = Math.round((b.getTime() - a.getTime()) / 86400000);
+  if (days === 0) return `يوم ${what}`;
+  const [lo, hi] = days > 0 ? [a, b] : [b, a];
+  let months = (hi.getFullYear() - lo.getFullYear()) * 12 + (hi.getMonth() - lo.getMonth());
+  if (hi.getDate() < lo.getDate()) months--;
+  const anchor = new Date(lo.getFullYear(), lo.getMonth() + months, Math.min(lo.getDate(), new Date(lo.getFullYear(), lo.getMonth() + months + 1, 0).getDate()));
+  const rest = Math.round((hi.getTime() - anchor.getTime()) / 86400000);
+  const rounded = months + (rest >= 15 ? 1 : 0);
+  const span = rounded >= 1 ? monthsWord(rounded) : daysWord(Math.abs(days));
+  return days > 0 ? `بعد ${span} من ${what}` : `قبل ${what} بـ${span}`;
+}
+
+/**
+ * أول استحقاق خارج المعقول: قبل بداية العقد، أو بعدها بأكثر من فترة سداد واحدة
+ * (بتقويم العقد). حادثة: بداية 2026-08-03 نصف سنوي وأول استحقاق 2027-06-25.
+ */
+export function firstDueOutOfRange(start?: string | null, firstDue?: string | null, freq?: string | null, cal?: string | null): boolean {
+  if (!isoOk(start) || !isoOk(firstDue)) return false;
+  const s = String(start).slice(0, 10), f = String(firstDue).slice(0, 10);
+  if (f < s) return true;
+  const onePeriod = isoDate(addPeriods(parseDate(s), (freq || "monthly") as Frequency, 1, null, (cal === "hijri" ? "hijri" : "gregorian") as ContractCalendar));
+  return f > onePeriod;
+}
+
+/**
+ * المتبقي من قيمة المدة الجارية بوحدة تسجيل الدفعات (الإيجار كما يُسجَّل — قبل الضريبة
+ * في «مضافة فوق الإيجار»، وهي الوحدة التي يدخل بها المبلغ في نافذة الاستلام).
+ *   total = عدد فترات المدة × الإيجار · paid = المسدَّد كاملًا × الإيجار + الجزئي
+ * ومعه المتبقي شاملًا الضريبة للعرض حين تكون مضافة.
+ */
+export function contractRemaining(t: { rent_amount?: number | null; contract_periods?: number | null; payment_frequency?: string | null;
+  paid_periods?: number | null; partial_amount?: number | null }, vat?: VatSettings | null) {
+  const rent = Math.max(0, Number(t.rent_amount) || 0);
+  const periods = Number(t.contract_periods) > 0 ? Number(t.contract_periods) : defaultTermPeriods((t.payment_frequency || "monthly") as Frequency) || 12;
+  const total = r2(periods * rent);
+  const paid = r2(Math.max(0, Number(t.paid_periods) || 0) * rent + Math.max(0, Number(t.partial_amount) || 0));
+  const remaining = r2(total - paid);
+  const exclusive = !!vat?.enabled && vat?.inclusive === false;
+  return { periods, total, paid, remaining, overpaid: remaining < 0 ? -remaining : 0,
+    remainingWithVat: exclusive ? r2(splitVat(Math.max(0, remaining), vat!).total) : Math.max(0, remaining) };
+}
+
+/** هل المبلغ يزيد على المتبقي من المدة؟ يُرجع الزيادة أو 0 */
+export const excessOverRemaining = (amount: number, remaining: number) => r2(Math.max(0, (Number(amount) || 0) - Math.max(0, Number(remaining) || 0)));
+
+/**
+ * دفعة تشبه المُدخلة: خلال ±3 أيام، والمبلغ بفرق ≤ 1٪ أو ≤ 5 ريالات. تُستبعد
+ * أسطر العكس والدفعات المعكوسة والمبالغ غير الموجبة.
+ */
+export function nearDuplicatePayment<P extends { id?: string; amount?: number | string | null; paid_on?: string | null; reverses?: string | null }>(
+  amount: number, paidOn: string, payments: P[] | null | undefined): P | null {
+  const a = Number(amount) || 0;
+  if (!(a > 0) || !isoOk(paidOn)) return null;
+  const list = payments || [];
+  const reversed = new Set(list.filter((p) => p.reverses).map((p) => String(p.reverses)));
+  const day = parseDate(paidOn.slice(0, 10)).getTime();
+  for (const p of list) {
+    const v = Number(p.amount) || 0;
+    if (!(v > 0) || p.reverses || (p.id && reversed.has(String(p.id))) || !isoOk(p.paid_on)) continue;
+    const dd = Math.abs(Math.round((parseDate(String(p.paid_on).slice(0, 10)).getTime() - day) / 86400000));
+    if (dd > 3) continue;
+    const diff = Math.abs(v - a);
+    if (diff <= 5 || diff <= 0.01 * Math.max(v, a)) return p;
+  }
+  return null;
+}
+
+/** التجديد مبكر: اليوم قبل (نهاية العقد − 30 يومًا) */
+export function renewalTooEarly(endISO?: string | null, todayISO?: string | null, days = 30): boolean {
+  if (!isoOk(endISO) || !isoOk(todayISO)) return false;
+  const e = parseDate(String(endISO).slice(0, 10)); e.setDate(e.getDate() - days);
+  return String(todayISO).slice(0, 10) < isoDate(e);
+}
+
+/**
+ * (F2) هل قائمة الدفعات القريبة المقروءة تغطي تاريخ هذا السداد؟ null = لم تُقرأ (خطأ) ⇒ لا.
+ * القراءة بسقف `cap` صفًّا مرتبة تنازليًّا: إن بلغت السقف فما قبل أقدم صفّ فيها غير معروف.
+ */
+export function recentCovers(recent: { paid_on?: string | null }[] | null | undefined, paidOn: string, cap = 60): boolean {
+  if (!recent) return false;
+  if (recent.length < cap) return true;
+  const oldest = recent.reduce((m, x) => (String(x.paid_on || "") < m ? String(x.paid_on || "") : m), "9999-12-31");
+  return String(paidOn || "") >= oldest;
+}
+
+/**
+ * (F3) «مضافة فوق الإيجار»: المبلغ المُدخل يساوي المتبقي شاملًا الضريبة (±1 ريال) ⇒ غالبًا
+ * أُدخل شاملًا والتسجيل بوحدة الإيجار. يُرجع المتبقي بدون الضريبة، أو null.
+ */
+export function vatInclusiveSlip(amount: number, remaining: number, vat?: VatSettings | null): number | null {
+  if (!vat?.enabled || vat.inclusive !== false || !(remaining > 0)) return null;
+  const withVat = splitVat(remaining, vat).total;
+  return Math.abs((Number(amount) || 0) - withVat) <= 1 ? r2(remaining) : null;
 }

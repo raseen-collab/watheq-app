@@ -7,7 +7,7 @@ import { createClient } from "@/lib/supabase-client";
 import { officeId, getOffice, ROLE_LABEL, OWNER_PERMS } from "@/lib/office";
 import { arDate, termRentPaidOf, pastVatOf } from "@/lib/documents";
 import { annualRentRoll } from "@/lib/income";
-import { unitStatus, unitStatusLabel, arrearsOf } from "@/lib/contract-state";
+import { unitStatus, unitStatusLabel, arrearsOf, firstDueOutOfRange, dateDistanceAr, contractRemaining, excessOverRemaining, nearDuplicatePayment, renewalTooEarly, gregorianAr, recentCovers, vatInclusiveSlip } from "@/lib/contract-state";
 import type { ComplianceItem } from "@/lib/compliance";
 import { fetchAllRows } from "@/lib/fetch-all";
 import { hijriShort, hijriText, parseHijriInput } from "@/lib/hijri";
@@ -328,6 +328,12 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
   const [renewing, setRenewing] = useState<Tenant | null>(null);
   const [enforcing, setEnforcing] = useState<Tenant | null>(null);
   const [paying, setPaying] = useState<Tenant | null>(null);
+  /** (جولة 4) دفعات المستأجر الأخيرة لحارس «دفعة مشابهة»، ومبلغ مقترح حين يحوّل ✔ إلى النافذة */
+  const [payRecent, setPayRecent] = useState<any[] | null>(null);
+  const [payInit, setPayInit] = useState<{ amount: number; why: string } | null>(null);
+  /** (جولة 4) تجديد مبكر: سؤال داخل التطبيق قبل فتح نافذة التجديد */
+  const [renewAsk, setRenewAsk] = useState<Tenant | null>(null);
+  const renewAcked = useRef<string | null>(null);
   const [turnover, setTurnover] = useState<Tenant | null>(null);
   const [remindAll, setRemindAll] = useState(false);
 
@@ -424,7 +430,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
    * معًا أو لا شيء. لا حساب في المتصفح ولا كتابات متفرقة — فلا سباق
    * بين موظفين ولا رفض صامت للمحصّل. القيم المعروضة تأتي من القاعدة.
    */
-  async function recordPayment(t: Tenant, amount: number, method = "transfer", note?: string, paidOn?: string, reference?: string) {
+  async function recordPayment(t: Tenant, amount: number, method = "transfer", note?: string, paidOn?: string, reference?: string, guarded = false) {
     /**
      * حارس التكرار.
      *
@@ -440,7 +446,8 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       .select("*")
       .eq("tenant_id", t.id).eq("paid_on", day).limit(20);
     const same = (dup || []).filter((x: any) => Math.abs(Number(x.amount) - amount) < 0.01);
-    if (same.length && !confirm(
+    /* guarded: النافذة سألت عن «دفعة مشابهة» (±3 أيام، فرق ≤1٪ أو 5 ريالات) — لا سؤال ثانٍ */
+    if (same.length && !guarded && !confirm(
       `⚠️ سُجّلت دفعة مطابقة اليوم نفسه لهذه الوحدة.\n\n`
       + `${t.name} — ${ul} ${t.unit || "—"}\n`
       + `${sar(amount)} ريال بتاريخ ${day}${same.length > 1 ? ` (مسجّلة ${same.length} مرات)` : ""}\n\n`
@@ -480,16 +487,64 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
    * 3,000 ثم أكمل 2,000 يُسجَّل له 3,000، ويظهر 1,000 زائدًا على الدفعة التالية.
    * المبلغ بوحدة الإيجار كما يُسجَّل كل سداد (قبل الضريبة في وضع «مضافة»).
    */
-  function quickPay(t: Tenant, st: ReturnType<typeof contractState>) {
+  async function quickPay(t: Tenant, st: ReturnType<typeof contractState>) {
     const rent = Number(t.rent_amount) || 0;
     const part = st.hasPartial ? Math.min(rent, Math.max(0, Number(st.partial) || 0)) : 0;
     const amt = Math.round((rent - part) * 100) / 100;
     if (!(amt > 0)) return notify("err", `قيمة الدفعة غير محدَّدة — أدخل إيجار ${ul} ${t.unit || t.name} أولًا.`);
+    /* (جولة 4) ✔ يسجّل مبلغًا محسوبًا: إن زاد على المتبقي من العقد أو شابه دفعة قريبة
+       نفتح نافذة التسجيل بالمبلغ نفسه — والسؤال فيها داخل التطبيق لا نافذة المتصفح. */
+    const rem = contractRemaining(t);
+    let why = excessOverRemaining(amt, rem.remaining) > 0 ? `المبلغ يزيد على المتبقي من العقد (${sar(Math.max(0, rem.remaining))})` : "";
+    if (!why) {
+      try {
+        const { data: rp } = await supabase.from("payments").select("id, amount, paid_on, reverses").eq("tenant_id", t.id).order("paid_on", { ascending: false }).limit(60);
+        const near = nearDuplicatePayment(amt, today(), (rp || []) as any[]);
+        if (near) why = `يشبه دفعة ${sar(Number(near.amount))} بتاريخ ${String(near.paid_on).slice(0, 10)}`;
+      } catch { /* بلا قراءة: يبقى التأكيد المعتاد */ }
+    }
+    if (why) { setPayInit({ amount: amt, why }); setPaying(t); return; }
     const vatNote = active && unitVatApplies(t, active) && active.vat_inclusive === false ? " (قبل الضريبة المضافة)" : "";
     const head = part > 0
       ? `تسجيل استلام باقي الدفعة الحالية؟\n\n${sar(amt)} ريال${vatNote} = الدفعة ${sar(rent)} − مدفوع منها سابقًا ${sar(part)}`
       : `تسجيل استلام دفعة كاملة؟\n\n${sar(amt)} ريال${vatNote}`;
     if (confirm(`${head}\nمن ${t.name} — ${ul} ${t.unit || "—"} — ${active?.name}\n\nتاريخ السداد: اليوم (${today()})\nلمبلغ أو تاريخ مختلف أو مرجع حوالة استعمل «½ جزئي».\n\n(تُسجَّل باسمك في سجل الحركات المالية)`)) recordPayment(t, amt);
+  }
+
+  useEffect(() => {
+    if (!paying) { setPayRecent(null); return; }
+    let live = true;
+    supabase.from("payments").select("id, amount, paid_on, reverses").eq("tenant_id", paying.id).order("paid_on", { ascending: false }).limit(60)
+      /* (F2) خطأ القراءة = null (لم يُفحص) — لا قائمة فارغة توهم أن لا دفعات قريبة */
+      .then(({ data, error }: any) => { if (live) setPayRecent(!error && Array.isArray(data) ? data : null); }, () => { if (live) setPayRecent(null); });
+    return () => { live = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paying?.id]);
+  /** (جولة 4 · F1b) دفعات الوحدة المفتوحة في «تعديل البيانات» — لتنبيه إلغاء «شاغرة» */
+  const [editPayInfo, setEditPayInfo] = useState<null | { any: number; inTerm: number }>(null);
+  const editId = modal?.kind === "tenant" ? ((modal as any).id as string | undefined) : undefined;
+  useEffect(() => {
+    if (!editId) { setEditPayInfo(null); return; }
+    let on = true;
+    const t0: any = items.flatMap((p) => p.tenants || []).find((x: any) => x.id === editId);
+    const since = String(t0?.term_started_at || "");
+    const useSince = !!since && !/infinity/i.test(since);
+    supabase.from("payments").select("id, amount, created_at, reverses").eq("tenant_id", editId).limit(1000)
+      .then(({ data, error }: any) => {
+        if (!on) return;
+        if (error || !Array.isArray(data)) { setEditPayInfo(null); return; }
+        const rev = new Set(data.filter((x: any) => x.reverses).map((x: any) => String(x.reverses)));
+        const liveP = data.filter((x: any) => Number(x.amount) > 0 && !x.reverses && !rev.has(String(x.id)));
+        setEditPayInfo({ any: liveP.length, inTerm: liveP.filter((x: any) => !useSince || String(x.created_at || "") >= since).length });
+      });
+    return () => { on = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editId]);
+  /** (جولة 4) «تجديد العقد» قبل نهايته بأكثر من 30 يومًا ⇒ سؤال داخل التطبيق أولًا */
+  function askRenew(t: Tenant) {
+    const end = contractState(t).endDate;
+    if (renewalTooEarly(end, today())) { setRenewAsk(t); return; }
+    setRenewing(t);
   }
 
   /** التراجع عن آخر دفعة — ذرّي في القاعدة، للمدير فقط، بصف سالب في السجل */
@@ -1078,7 +1133,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       return notify("err", `جُدّد عقد ${t.name} أو عُدّلت مدته للتو من جهاز آخر (ينتهي الآن ${fresh.contract_end || "—"}) — لم يُجدَّد مرة ثانية. راجع الوحدة ثم جدّد إن لزم.`);
     }
     /* خارج نافذة التجديد: غالبًا ضغطة على الوحدة الخطأ — نسأل ولا نمنع */
-    if (!needsRenewal(fresh) && !confirm(`عقد ${t.name} لا ينتهي قبل ${contractState(fresh).endDate || "—"} — خارج نافذة التجديد.\n\nالتجديد الآن يبدأ المدة الجديدة من نهاية الحالية ويُرحّل ما لم يُدفع منها دينًا.\n\nالمتابعة على أي حال؟`)) return;
+    if (!needsRenewal(fresh) && renewAcked.current !== t.id && !confirm(`عقد ${t.name} لا ينتهي قبل ${contractState(fresh).endDate || "—"} — خارج نافذة التجديد.\n\nالتجديد الآن يبدأ المدة الجديدة من نهاية الحالية ويُرحّل ما لم يُدفع منها دينًا.\n\nالمتابعة على أي حال؟`)) return;
     /* vat: الرصيد المرحَّل بضريبة الوحدة (lib/contracts يقبله حين يدعمه؛ any ليبني في الحالين) */
     const renewOpts: any = { periods: opts.periods, newAmount: opts.newAmount, newFrequency: opts.newFrequency, arrears: "carry", vat: unitVat(fresh, active) };
     const fields = renewContract(fresh, renewOpts);
@@ -1704,7 +1759,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
         <div className={`flex flex-wrap items-center gap-3 rounded-xl p-3.5 mb-4 border text-sm ${
           (expiringSoon.st.daysToEnd || 0) <= 30 ? "bg-[#FBE9E7] border-[#F5C6C2] text-[#8f2b26]" : "bg-[#FBF1DF] border-[#EBD9AA] text-[#8a5a11]"}`}>
           <span>عقد {expiringSoon.t.name} ({ul} {expiringSoon.t.unit || "—"}) ينتهي خلال <b>{plural(expiringSoon.st.daysToEnd ?? 0, "يوم واحد", "يومين", "أيام", "يومًا")}</b> (<bdi dir="ltr" className="whitespace-nowrap">{expiringSoon.st.endDate}</bdi>). جهّز التجديد أو الإخلاء.</span>
-          <button className="btn btn-ghost text-xs mr-auto" onClick={() => setRenewing(expiringSoon.t)}>تجديد الآن</button>
+          <button className="btn btn-ghost text-xs mr-auto" onClick={() => askRenew(expiringSoon.t)}>تجديد الآن</button>
         </div>
       )}
 
@@ -2033,7 +2088,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                                   ...(may("edit_tenants") || may("renew_contracts") || may("move_out") || may("undo_actions") || isManager
                                     ? [{ sep: "🔧 العقد" } as any] : []),
                                   ...(may("edit_tenants") ? [{ label: "تعديل البيانات", run: () => setModal({ kind: "tenant", id: t.id }) }] : []),
-                                  ...(needsRenewal(t) && may("renew_contracts") ? [{ label: "تجديد العقد", run: () => setRenewing(t) }] : []),
+                                  ...(needsRenewal(t) && may("renew_contracts") ? [{ label: "تجديد العقد", run: () => askRenew(t) }] : []),
                                   ...(may("move_out") && !isVacant(t) ? [{ label: "إنهاء العقد وإخلاء", run: () => setTurnover(t) }] : []),
                                   ...(isManager && !t.litigation && st.unpaid > 0 ? [{ label: "رفع للتنفيذ القضائي", run: () => setEnforcing(t) }] : []),
                                   ...(may("undo_actions") && (t.paid_periods || 0) > 0 ? [{ label: "↩︎ تراجع عن آخر دفعة", run: () => undoPayment(t), danger: true }] : []),
@@ -2194,7 +2249,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                           <span className="whitespace-nowrap">&#10004; {key === "due" ? "استلام" : st.hasPartial ? "استلام الباقي" : "استلام"}</span>
                         </QuickBtn>
                       )}
-                      {primaryRenew && <button className="btn text-xs" style={{ background: "#0E3A37", color: "#F6F1E4" }} onClick={() => setRenewing(t)}>تجديد</button>}
+                      {primaryRenew && <button className="btn text-xs" style={{ background: "#0E3A37", color: "#F6F1E4" }} onClick={() => askRenew(t)}>تجديد</button>}
                       {primaryEdit && <button className="btn btn-gold text-xs" onClick={() => setModal({ kind: "tenant", id: t.id })}>إكمال البيانات</button>}
                       {/* الثانوي — على الشاشة الأوسع فقط؛ على الجوال كله في ⋯ */}
                       {canPay && !primaryPay && (
@@ -2207,7 +2262,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                         <span className="whitespace-nowrap"><Icon name="doc" /> فاتورة</span>
                       </QuickBtn></span>}
                       {st.unpaid > 0 && may("send_reminders") && <button className={`btn btn-gold text-xs ${wide}`} onClick={() => makeNotice(t)}>نموذج إشعار</button>}
-                      {!primaryRenew && needsRenewal(t) && may("renew_contracts") && <button className={`btn text-xs ${wide}`} style={{ background: "#0E3A37", color: "#F6F1E4" }} onClick={() => setRenewing(t)}>تجديد</button>}
+                      {!primaryRenew && needsRenewal(t) && may("renew_contracts") && <button className={`btn text-xs ${wide}`} style={{ background: "#0E3A37", color: "#F6F1E4" }} onClick={() => askRenew(t)}>تجديد</button>}
                     </>
                   )}
                   <RowMenu
@@ -2235,7 +2290,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                       ...(may("edit_tenants") || may("renew_contracts") || may("move_out") || may("undo_actions") || isManager
                         ? [{ sep: "🔧 العقد" } as any] : []),
                       ...(may("edit_tenants") ? [{ label: "تعديل البيانات", run: () => setModal({ kind: "tenant", id: t.id }) }] : []),
-                      ...(needsRenewal(t) && may("renew_contracts") ? [{ label: "تجديد العقد", run: () => setRenewing(t) }] : []),
+                      ...(needsRenewal(t) && may("renew_contracts") ? [{ label: "تجديد العقد", run: () => askRenew(t) }] : []),
                       ...(may("move_out") && !isVacant(t) ? [{ label: "إنهاء العقد وإخلاء", run: () => setTurnover(t) }] : []),
                       ...(may("move_out") && isVacant(t) ? [{ label: "تعديل بيانات الإخلاء", run: () => setTurnover(t) }] : []),
                       ...(isManager && t.litigation ? [{ label: "إلغاء الرفع للتنفيذ", run: () => { if (confirm("إلغاء رفع العقد للتنفيذ؟ ستعود الإشعارات الودية.")) patchTenant(t.id, { litigation: false }); } }] : []),
@@ -2338,7 +2393,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
           onClose={() => setModal(null)} onSubmit={(d) => saveProperty(d, active.id)} onDelete={deleteProperty} />
       )}
       {modal?.kind === "tenant" && (
-        <TenantModal open initial={editing} unitWord={ul} error={saveErr} saving={saving} vatEnabled={!!active?.vat_enabled} property={active}
+        <TenantModal open initial={editing} unitWord={ul} error={saveErr} saving={saving} vatEnabled={!!active?.vat_enabled} property={active} payInfo={editPayInfo}
           onClose={() => setModal(null)} onSubmit={(d) => saveTenant(d, editing?.id)} />
       )}
 
@@ -2374,9 +2429,30 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
         onClose={() => setEnforcing(null)}
         onSubmit={async (no, order) => {   /* تُغلق بعد نجاح الحفظ — كانت تُغلق فورًا فيضيع ما كُتب إن فشل */
           if (await patchTenant(enforcing.id, { litigation: true, enforcement_no: no || null, enforcement_order: order || null })) setEnforcing(null); }} />}
-      {paying && <PaymentModal tenant={paying} unitWord={ul} onClose={() => setPaying(null)}
+      {paying && <PaymentModal tenant={paying} unitWord={ul} onClose={() => { setPaying(null); setPayInit(null); }}
         st={contractState(paying, { graceDays: Number(active?.grace_days) || 0, ...windowsOf(active) })}
-        onSubmit={(amt, method, note, paidOn, reference) => { recordPayment(paying, amt, method, note, paidOn, reference); setPaying(null); }} />}
+        recent={payRecent} vat={active ? unitVat(paying, active) : null} init={payInit}
+        onSubmit={(amt, method, note, paidOn, reference, guarded) => { recordPayment(paying, amt, method, note, paidOn, reference, guarded); setPaying(null); setPayInit(null); }} />}
+      {renewAsk && (() => {
+        const end = contractState(renewAsk).endDate;
+        return (
+          <Shell onClose={() => setRenewAsk(null)}>
+            <div role="alertdialog" aria-labelledby="renew-early-h">
+              <h3 id="renew-early-h" className="font-display font-bold text-deep text-lg mb-2">التجديد قبل موعده</h3>
+              <p className="text-sm leading-relaxed text-[#33413d]">
+                العقد ينتهي <b>{end ? `${hijriText(end)} (${gregorianAr(end)})` : "—"}</b>. التجديد الآن يبدأ مدة جديدة ويصفّر عدّاد الدفعات. هل تقصد تعديل بيانات العقد؟
+              </p>
+              <p className="text-xs text-muted mt-2">{renewAsk.name} — {ul} {renewAsk.unit || "—"}</p>
+              <div className="flex gap-2 mt-5">
+                {may("edit_tenants") && <button type="button" className="btn btn-gold flex-1 justify-center" autoFocus
+                  onClick={() => { const t = renewAsk; setRenewAsk(null); setModal({ kind: "tenant", id: t.id }); }}>تعديل البيانات</button>}
+                <button type="button" className="btn btn-ghost flex-1 justify-center"
+                  onClick={() => { const t = renewAsk; renewAcked.current = t.id; setRenewAsk(null); setRenewing(t); }}>متابعة التجديد</button>
+              </div>
+            </div>
+          </Shell>
+        );
+      })()}
       {turnover && <TurnoverModal key={turnover.id} tenant={turnover} unitWord={ul} onClose={() => setTurnover(null)}
         vat={active ? { enabled: unitVatApplies(turnover, active), rate: Number(active.vat_rate) || 15, inclusive: active.vat_inclusive !== false } : undefined}
         onSubmit={(d) => saveTurnover(turnover, d)} />}
@@ -2432,16 +2508,26 @@ const METHODS: { v: string; l: string }[] = [
 ];
 export const methodLabel = (v?: string | null) => METHODS.find((m) => m.v === v)?.l || "أخرى";
 
-function PaymentModal({ tenant, unitWord, onClose, onSubmit, st }: {
+function PaymentModal({ tenant, unitWord, onClose, onSubmit, st, recent = null, vat = null, init = null }: {
   tenant: Tenant; unitWord: string; onClose: () => void;
   /** حالة العقد — لتقول المعاينة على أي دفعة يقع المبلغ (30 سبتمبر 2026) */
   st?: ReturnType<typeof contractState>;
-  onSubmit: (amount: number, method: string, note?: string, paidOn?: string, reference?: string) => void;
+  /** (جولة 4) دفعات المستأجر الأخيرة — لحارس «دفعة مشابهة» */
+  recent?: any[] | null;
+  /** ضريبة الوحدة — لعرض المتبقي شاملًا الضريبة حين تكون مضافة */
+  vat?: any;
+  /** مبلغ مقترح وسبب حين حوّل زرّ ✔ إلى هنا */
+  init?: { amount: number; why: string } | null;
+  onSubmit: (amount: number, method: string, note?: string, paidOn?: string, reference?: string, guarded?: boolean) => void;
 }) {
   const rent = Number(tenant.rent_amount) || 0;
   const already = Number(tenant.partial_amount) || 0;
   const remaining = Math.max(0, rent - already);
-  const [amount, setAmount] = useState<string>(String(remaining || rent));
+  const [amount, setAmount] = useState<string>(String(init?.amount || remaining || rent));
+  /* (جولة 4) المتبقي من قيمة العقد كله بوحدة التسجيل — حادثة 8,299 بدل 1,700 على عقد 10,000 */
+  const rem = contractRemaining(tenant, vat);
+  const [ask, setAsk] = useState<null | { kind: "excess" | "dup"; text: string }>(null);
+  const [acked, setAcked] = useState<{ excess?: string; dup?: string }>({});
   const [method, setMethod] = useState("transfer");
   const [note, setNote] = useState("");
   /* تاريخ وصول المال ومرجع الحوالة — أساس مطابقة كشف البنك */
@@ -2455,6 +2541,29 @@ function PaymentModal({ tenant, unitWord, onClose, onSubmit, st }: {
      و«جزئي على الدفعة التالية» كأن المستأجر منتظم، وعليه ثلاث متأخرة. */
   const lateN = Math.max(0, Number(st?.unpaid) || 0);
   const lateDue = Math.max(0, Number(st?.amountDue) || 0);
+  /** الحارسان بالترتيب: يزيد على المتبقي ← يشبه دفعة قريبة؛ كل تأكيد مرتبط بالمبلغ والتاريخ نفسيهما */
+  function submit(ok: { excess?: string; dup?: string }) {
+    if (!amt) return;
+    const key = `${amt}|${paidOn}`;
+    const over = excessOverRemaining(amt, rem.remaining);
+    if (over > 0 && ok.excess !== key) {
+      /* (F3) «مضافة فوق الإيجار»: المبلغ = المتبقي شاملًا الضريبة (±1) ⇒ غالبًا أُدخل شاملًا والتسجيل بدونها */
+      const slip = vatInclusiveSlip(amt, rem.remaining, vat);
+      setAsk({ kind: "excess", text: slip !== null
+        ? `يبدو أنك أدخلت المبلغ شاملًا الضريبة — المتبقي بدون الضريبة ${sar(slip)}`
+        : `المبلغ يزيد على المتبقي من العقد (${sar(Math.max(0, rem.remaining))}) بـ${sar(over)} — متأكد؟` });
+      return;
+    }
+    const near = nearDuplicatePayment(amt, paidOn, recent || []);
+    if (near && ok.dup !== key) {
+      setAsk({ kind: "dup", text: `يشبه دفعة ${sar(Number(near.amount))} بتاريخ ${String(near.paid_on).slice(0, 10)} — دفعة جديدة فعلًا؟` });
+      return;
+    }
+    /* (F2) covered = قائمة الدفعات القريبة مكتملة لتاريخ هذا السداد: قُرئت بلا خطأ، وإمّا أقل من سقف
+       القراءة (60) أو التاريخ لا يسبق أقدم دفعة فيها. عندها فقط لا يعيد recordPayment سؤال «اليوم نفسه». */
+    const covered = recentCovers(recent, paidOn, 60);
+    onSubmit(amt, method, note.trim() || undefined, paidOn, reference.trim() || undefined, covered);
+  }
 
   return (
     <Shell onClose={onClose}>
@@ -2473,8 +2582,15 @@ function PaymentModal({ tenant, unitWord, onClose, onSubmit, st }: {
         )}
       </div>
 
+      <div className={`flex justify-between text-sm rounded-xl px-3 py-2 mb-3 border ${rem.remaining < 0 ? "bg-[#FBE9E7] border-[#F5C6C2] text-[#8f2b26]" : "bg-white border-line"}`} data-testid="contract-remaining">
+        <span className="text-muted">المتبقي من العقد</span>
+        <b className="tabular-nums">{rem.remaining < 0 ? <>مدفوع زيادةً <bdi dir="ltr">{sar(-rem.remaining)}</bdi></> : <>{sar(rem.remaining)} ريال</>}
+          {rem.remaining > 0 && rem.remainingWithVat !== rem.remaining ? <span className="text-xs text-muted font-normal"> (شاملًا الضريبة {sar(rem.remainingWithVat)})</span> : null}</b>
+      </div>
+      {init?.why && <div className="text-xs rounded-lg border border-[#EBD9AA] bg-[#FDF0DC] text-[#7A4800] p-2.5 mb-3">راجع قبل التسجيل: {init.why}.</div>}
+
       <Field label="المبلغ المستلم (ريال)">
-        <input className="fld" type="number" autoFocus value={amount} onChange={(e) => setAmount(e.target.value)} />
+        <input className="fld" type="number" autoFocus value={amount} onChange={(e) => { setAmount(e.target.value); setAsk(null); }} />
       </Field>
       <div className="flex gap-2 mt-2 flex-wrap">
         {remaining > 0 && remaining !== rent && (
@@ -2494,7 +2610,7 @@ function PaymentModal({ tenant, unitWord, onClose, onSubmit, st }: {
         {/* تاريخ وصول المال لا تاريخ إدخاله: المستأجر يحوّل الخميس والمكتب
             يسجّل الأحد، فيبحث في كشف البنك عن حوالة الأحد ولا يجدها. */}
         <Field label="تاريخ السداد" hint="يوم وصول المال — لا يوم التسجيل">
-          <DateField value={paidOn} onChange={(v) => v && setPaidOn(v)} />
+          <DateField value={paidOn} onChange={(v) => { if (v) { setPaidOn(v); setAsk(null); } }} />
         </Field>
       </div>
 
@@ -2516,10 +2632,23 @@ function PaymentModal({ tenant, unitWord, onClose, onSubmit, st }: {
         </div>
       )}
 
+      {ask ? (
+        /* (جولة 4) سؤال داخل النافذة — لا نافذة المتصفح. يسأل ولا يمنع. */
+        <div role="alertdialog" aria-labelledby="pay-ask" className="mt-5 rounded-xl border border-[#F5C6C2] bg-[#FBE9E7] p-3 text-[#8f2b26]">
+          <div id="pay-ask" className="text-sm font-semibold leading-relaxed">⚠️ {ask.text}</div>
+          <div className="flex gap-2 mt-3">
+            <button type="button" className="btn btn-ghost flex-1 justify-center" autoFocus onClick={() => setAsk(null)}>{ask.kind === "dup" ? "لا، سأراجع" : "مراجعة المبلغ"}</button>
+            <button type="button" className="btn flex-1 justify-center bg-late text-white"
+              onClick={() => { const key = `${amt}|${paidOn}`; const next = { ...acked, [ask.kind]: key }; setAcked(next); setAsk(null); submit(next); }}>
+              {ask.kind === "dup" ? "نعم، دفعة جديدة" : "نعم، سجّله"}</button>
+          </div>
+        </div>
+      ) : (
       <div className="flex gap-2 mt-5">
         <button type="button" className="btn btn-ghost flex-1 justify-center" onClick={onClose}>إلغاء</button>
-        <button type="button" className="btn btn-gold flex-1 justify-center" disabled={!amt} onClick={() => onSubmit(amt, method, note.trim() || undefined, paidOn, reference.trim() || undefined)}>تسجيل</button>
+        <button type="button" className="btn btn-gold flex-1 justify-center" disabled={!amt} onClick={() => submit(acked)}>تسجيل</button>
       </div>
+      )}
     </Shell>
   );
 }
@@ -3176,8 +3305,10 @@ function PropertyModal({ open, initial, orgName, ownerNames = [], officeSoon = 1
   );
 }
 
-function TenantModal({ open, initial, unitWord, error, saving, onClose, onSubmit, vatEnabled = false, property = null }: {
+function TenantModal({ open, initial, unitWord, error, saving, onClose, onSubmit, vatEnabled = false, property = null, payInfo = null }: {
   open: boolean; initial?: Tenant; unitWord: string; onClose: () => void; onSubmit: (d: any) => void;
+  /** (جولة 4 · F1b) دفعات الوحدة: الكل، وما في المدة الحالية — null = لم تُقرأ */
+  payInfo?: { any: number; inTerm: number } | null;
   /** العقار — ليُعرض المتأخر المستنتَج شاملًا الضريبة في وضع «مضافة فوق الإيجار» */
   property?: any;
   /** حقل ضريبة الوحدة يظهر فقط لعقار مفعّلة ضريبته — كان يظهر لكل عمارة سكنية */
@@ -3246,13 +3377,26 @@ function TenantModal({ open, initial, unitWord, error, saving, onClose, onSubmit
           onChange={(e) => setD({
             ...d,
             status: e.target.checked ? "vacated" : "active",
-            ...(e.target.checked ? { paid_periods: 0, partial_amount: 0 } : {}),
+            ...(e.target.checked ? { paid_periods: 0, partial_amount: 0 }
+              /* (جولة 4 · F1b) إلغاء علامة وُضعت بالخطأ في هذا النموذج نفسه يُعيد العدّادات كما فُتح —
+                 كانت تبقى صفرًا فيُحفظ المستأجر المنتظم «لم يدفع شيئًا» */
+              : initial && String(initial.status || "active") !== "vacated" ? { paid_periods: initial.paid_periods ?? 0, partial_amount: initial.partial_amount ?? 0 } : {}),
           })} />
         <span className="text-sm">
           <b className="text-deep">الوحدة شاغرة</b>
           <span className="text-muted"> — بلا مستأجر حاليًّا. سجّلها الآن وأجّرها لاحقًا بزر «تأجير».</span>
         </span>
       </label>
+      {initial && String(initial.status || "active") === "vacated" && String(d.status) !== "vacated" && !!payInfo && payInfo.any > 0 && (
+        /* (جولة 4 · F1b) شاغرة ← مؤجّرة من المربّع: مدة إيجار جديدة — تنبيه داخل النافذة لا منع */
+        <div role="status" data-testid="unvacate-notice" className="-mt-2 mb-4 rounded-xl border border-[#EBD9AA] bg-[#FDF0DC] p-3 text-[12.5px] leading-relaxed text-[#7A4800]">
+          <b>إلغاء «شاغرة» يبدأ مدة إيجار جديدة لهذه الوحدة:</b> عدّاد الدفعات يبدأ من الصفر، والدفعات المسجّلة سابقًا ({payInfo.any}) تبقى للمدة السابقة.
+          {payInfo.inTerm > 0
+            ? <> على المدة الحالية {payInfo.inTerm === 1 ? "دفعة مسجّلة" : `${payInfo.inTerm} دفعات مسجّلة`} — إن كان المقصود تصحيح بيانات العقد فأبقِ الوحدة كما هي وعدّل الحقول من «تعديل البيانات».</>
+            : <> لمستأجر جديد استعمل «إعادة تأجير» من قائمة الوحدة — تحفظ المستأجر السابق ودينه.</>}
+          <div className="mt-2"><button type="button" className="btn btn-ghost text-xs" onClick={() => setD({ ...d, status: "vacated" })}>أبقِها شاغرة</button></div>
+        </div>
+      )}
       <p className="text-sm text-muted mb-4">أدخل تاريخ البداية والدورة والقيمة — والنظام يستنتج بقية التواريخ والدفعات تلقائيًّا.</p>
       <div className="space-y-3">
         <div className="grid grid-cols-2 gap-3">
@@ -3341,7 +3485,7 @@ function TenantModal({ open, initial, unitWord, error, saving, onClose, onSubmit
             const FW: Record<string, string> = { monthly: "شهرية", quarterly: "ربع سنوية", trimester: "كل 4 أشهر", semiannual: "نصف سنوية", annual: "سنوية" };
             const end = d.contract_start ? derivedEndDate(d.contract_start, f, cnt, null, d.calendar === "hijri" ? "hijri" : "gregorian") : null;
             return (
-              <Field label="مدة العقد" hint={`= ${plural(cnt, "دفعة واحدة", "دفعتان", "دفعات", "دفعة")} ${FW[f]}${end ? ` · ينتهي ${arDate(end)}` : ""}`}>
+              <Field label="مدة العقد" hint={`= ${plural(cnt, "دفعة واحدة", "دفعتان", "دفعات", "دفعة")} ${FW[f]}${end ? ` · ينتهي ${arDate(end)} (${end < startISO ? "⚠️ " : ""}${dateDistanceAr(startISO, end)})` : ""}`}>
                 <select className="fld" value={custom ? "custom" : String(months)}
                   onChange={(e) => e.target.value === "custom" ? setD({ ...d, _durCustom: true })
                     : setD({ ...d, _durCustom: false, contract_periods: Number(e.target.value) / st })}>
@@ -3449,13 +3593,14 @@ function TenantModal({ open, initial, unitWord, error, saving, onClose, onSubmit
             <input className="fld" type="number" min={0} value={d.carried_debt ?? ""} onChange={(e) => setD({ ...d, carried_debt: e.target.value })} placeholder="0" />
           </Field>
             <Field label="أول تاريخ استحقاق" hint="اتركه فارغًا إن كان المستأجر يدفع يوم بداية العقد — وهذا أغلب العقود. املأه فقط إن كانت أول دفعة في يوم آخر (يبدأ 1/1 والدفعة الأولى 5/1)">
-              <DateField value={d.first_due || ""} onChange={(v) => setD({ ...d, first_due: v })} />
+              <DateField value={d.first_due || ""} onChange={(v) => setD({ ...d, first_due: v })}
+                relative={{ from: startISO, warn: firstDueOutOfRange(startISO, d.first_due, d.payment_frequency, d.calendar) }} />
               {dueGap && (
                 /* (30 سبتمبر 2026) مكتبان كتبا هنا تاريخًا لمستأجر يدفع يوم بداية العقد،
                    فانزاح يوم الدفع الشهري كله. نقول الأثر بالأرقام قبل الحفظ. */
                 <div className="mt-2 rounded-lg border border-[#F2D49B] bg-[#FFF6E5] p-2.5 text-[12.5px] leading-relaxed">
                   <b>انتبه:</b> أول دفعة {dueGap.days > 0 ? `بعد ${daysAr(dueGap.days)}` : `قبل ${daysAr(-dueGap.days)}`} من بداية العقد
-                  {dueGap.months >= 2 ? <> (قرابة <b>{dueGap.months} شهرًا</b>)</> : null}
+                  {dueGap.months >= 2 ? <> (قرابة <b>{plural(dueGap.months, "شهر واحد", "شهرين", "أشهر", "شهرًا")}</b>)</> : null}
                   {dueGap.dueDay !== dueGap.startDay ? <>، ويوم الدفع الشهري سيصير <b>{dueGap.dueDay}</b> بدل {dueGap.startDay}</> : null}.
                   <div className="mt-1">إن كان المستأجر يدفع يوم بداية العقد:
                     <button type="button" className="underline underline-offset-4 font-semibold ms-1" onClick={() => setD({ ...d, first_due: "" })}>امسح هذا التاريخ</button>

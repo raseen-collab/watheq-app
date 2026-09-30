@@ -5,8 +5,9 @@ import { createClient } from "@supabase/supabase-js";
 import { tgSend, tgEdit, tgAnswer, navButtons, TgKeyboard } from "@/lib/telegram";
 import {
   buildReport, getUnpaid, markPaid, buildReminder, sar,
-  statusReport, contractsInState, contractCard, payTenantOldest, renewContract, buildNotice, stateLabel, searchTenants } from "@/lib/reports";
+  statusReport, contractsInState, contractCard, payTenantOldest, renewContract, renewalPreview, earlyRenewalMsg, buildNotice, stateLabel, searchTenants } from "@/lib/reports";
 import { noStoreFetch } from "@/lib/no-store-fetch";
+import { arDate } from "@/lib/documents";
 
 export const dynamic = "force-dynamic";
 export const fetchCache = "force-no-store";
@@ -499,11 +500,17 @@ async function doPayTenant(db: DB, chatId: number, messageId: number, p: any, te
 async function confirmRenew(db: DB, chatId: number, messageId: number, p: any, tenantId: string) {
   const c = await contractCard(db, p, tenantId);
   if (!c) return tgEdit(chatId, messageId, "لم تُعثر على العقد.", statusButtons());
+  /* (جولة 4) التأكيد يذكر النهاية الحالية والجديدة؛ والمبكر (> 30 يومًا) يُرفض هنا قبل الزر */
+  const pv = await renewalPreview(db, p, tenantId);
+  const back: TgKeyboard = [[{ text: "⬅️ رجوع", callback_data: "back:status" }]];
+  if (!pv.ok) return tgEdit(chatId, messageId, `⚠️ ${escHtml(pv.msg || "تعذّر تجهيز التجديد")}`, back);
+  if (pv.early && pv.currentEnd) return tgEdit(chatId, messageId, `⚠️ ${escHtml(earlyRenewalMsg(pv.currentEnd))}\n\n<b>${escHtml(c.label)}</b> — ${escHtml(c.tenant)}`, back);
   const buttons: TgKeyboard = [
     [{ text: "✅ نعم، جدّد سنة", callback_data: `renewok:${tenantId}` }],
-    [{ text: "⬅️ رجوع", callback_data: "back:status" }],
+    ...back,
   ];
-  return tgEdit(chatId, messageId, `تأكيد تجديد عقد:\n\n<b>${escHtml(c.label)}</b> — ${escHtml(c.tenant)}\nسيُمدّد لسنة إضافية.`, buttons);
+  return tgEdit(chatId, messageId, `تأكيد تجديد عقد:\n\n<b>${escHtml(c.label)}</b> — ${escHtml(c.tenant)}\n`
+    + `ينتهي الآن: ${escHtml(pv.currentEnd ? arDate(pv.currentEnd) : "—")}\nبعد التجديد ينتهي: ${escHtml(pv.newEnd ? arDate(pv.newEnd) : "—")}\nسيُمدّد لسنة إضافية.`, buttons);
 }
 
 /** تنفيذ التجديد ثم تحديث البطاقة */

@@ -12,7 +12,7 @@ import { annualRentRoll } from "@/lib/income";
 import { fetchAllRows } from "@/lib/fetch-all";
 import { createHash } from "crypto";
 import { arDate } from "@/lib/documents";
-import { deriveState, STATE_ORDER, stateMeta, stateLabel, type StateKey } from "./contract-state";
+import { deriveState, STATE_ORDER, stateMeta, stateLabel, renewalTooEarly, type StateKey } from "./contract-state";
 
 type DB = SupabaseClient<any, any, any>;
 type Track = "properties" | "associations";
@@ -477,6 +477,25 @@ async function recordPayment(db: DB, profile: any, id: string, mode: "one" | "al
 export const markPaid = (db: DB, profile: any, id: string, mode: "one" | "all" = "one", requestKey?: string | null) => recordPayment(db, profile, id, mode, requestKey);
 export const payTenantOldest = (db: DB, profile: any, tenantId: string, mode: "one" | "all" = "one") => recordPayment(db, profile, tenantId, mode);
 
+/** (جولة 4) رسالة رفض التجديد المبكر — نصّها واحد في البوت وصفحة التأكيد */
+export const earlyRenewalMsg = (endISO: string) => `العقد ينتهي ${arDate(endISO)} — التجديد قبل موعده بأكثر من 30 يومًا يُجرى من اللوحة`;
+
+/**
+ * معاينة التجديد للبوت: نهاية العقد الحالية والجديدة، وهل التجديد مبكر.
+ * المدة الجديدة سنة بدورة العقد — كما ينفّذها renewContract أدناه حرفيًّا.
+ */
+export async function renewalPreview(db: DB, profile: any, tenantId: string): Promise<{ ok: boolean; msg?: string; currentEnd?: string | null; newEnd?: string; early?: boolean }> {
+  try {
+    const { data: t } = await db.from("tenants").select("*").eq("id", tenantId).maybeSingle();
+    if (!t) return { ok: false, msg: "العقد غير موجود." };
+    const { data: prop } = await db.from("properties").select("id,user_id").eq("id", t.property_id).maybeSingle();
+    if (!prop || String(prop.user_id) !== String(profile.id)) return { ok: false, msg: "غير مصرّح." };
+    const end = contractState(t).endDate;
+    const fields = renewFields(t, { periods: defaultTermPeriods((t.payment_frequency || "monthly") as Frequency) });
+    return { ok: true, currentEnd: end, newEnd: fields.contract_end, early: renewalTooEarly(end, todayISO()) };
+  } catch (e: any) { return { ok: false, msg: e.message }; }
+}
+
 /** تجديد العقد بنفس منطق اللوحة (renewContract في contracts.ts) + توثيق في السجل */
 export async function renewContract(db: DB, profile: any, tenantId: string): Promise<{ ok: boolean; msg: string }> {
   try {
@@ -484,6 +503,10 @@ export async function renewContract(db: DB, profile: any, tenantId: string): Pro
     if (!t) return { ok: false, msg: "العقد غير موجود." };
     const { data: prop } = await db.from("properties").select("id,user_id,property_type,name").eq("id", t.property_id).maybeSingle();
     if (!prop || String(prop.user_id) !== String(profile.id)) return { ok: false, msg: "غير مصرّح." };
+    /* (جولة 4) البوت لا يجدّد قبل نهاية العقد بأكثر من 30 يومًا — نفس حارس اللوحة وعتبته.
+       حادثة «التميز»: تجديد بعد ستة أسابيع من عقد ستة أشهر صفّر عدّاد الدفعات. */
+    const curEnd = contractState(t).endDate;
+    if (curEnd && renewalTooEarly(curEnd, todayISO())) return { ok: false, msg: earlyRenewalMsg(curEnd) };
     /* «جدّد سنة» سنةً فعلًا: كانت بمدة العقد السابق (عقد سنتين يُجدَّد سنتين) */
     const fields = renewFields(t, { periods: defaultTermPeriods((t.payment_frequency || "monthly") as Frequency) });
     const moved = Math.round(((Number((fields as any).carried_debt) || 0) - (Number(t.carried_debt) || 0)) * 100) / 100;

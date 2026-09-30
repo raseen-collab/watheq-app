@@ -20,6 +20,8 @@ export default function DataHealth({ initial }: { initial: any[] }) {
   const [exps, setExps] = useState<any[]>([]);
   /* ديون مستأجرين سابقين أُرشفت ناقصة (قبل إصلاحات 22 سبتمبر) */
   const [gaps, setGaps] = useState<PastDebtGap[]>([]);
+  /** أرشيف المستأجرين السابقين — يميّز «إعادة التأجير» عن «التجديد المبكر» */
+  const [past, setPast] = useState<any[]>([]);
   const [gapMsg, setGapMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [ranAt, setRanAt] = useState<string | null>(null);
@@ -59,6 +61,7 @@ export default function DataHealth({ initial }: { initial: any[] }) {
       setPays(pa.data || []);
       setExps(ex.data || []);
       setGaps(ptMissing ? [] : pastDebtGaps(pt.data || []));
+      setPast(ptMissing ? [] : (pt.data || []));
       setRanAt(new Date().toLocaleString("ar-SA-u-ca-gregory-nu-latn", { timeZone: "Asia/Riyadh", dateStyle: "medium", timeStyle: "short" }));
       setOkOnce(true);
     } catch (e: any) {
@@ -69,7 +72,7 @@ export default function DataHealth({ initial }: { initial: any[] }) {
   }
   useEffect(() => { void run(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
 
-  const findings = useMemo(() => auditOffice(props, pays, exps), [props, pays, exps]);
+  const findings = useMemo(() => auditOffice(props, pays, exps, past), [props, pays, exps, past]);
   const counts = useMemo(() => ({
     critical: findings.filter((f) => f.severity === "critical").length,
     warn: findings.filter((f) => f.severity === "warn").length,
@@ -214,8 +217,9 @@ function GroupCard({ g }: { g: Group }) {
         <div className="mt-2 border-t border-line pt-2 space-y-1 max-h-64 overflow-auto">
           {g.items.slice(0, 200).map((f, i) => (
             <div key={f.id + i} className="flex items-center justify-between gap-2 text-[11px]">
-              <span className="text-muted truncate">
-                {f.propertyName}{f.unit ? ` · وحدة ${f.unit}` : ""}{f.tenantName ? ` · ${f.tenantName}` : ""}
+              <span className="text-muted min-w-0">
+                <span className="block truncate">{f.propertyName}{f.unit ? ` · وحدة ${f.unit}` : ""}{f.tenantName ? ` · ${f.tenantName}` : ""}</span>
+                {f.detail && <span className="block text-ink">{f.detail}</span>}
               </span>
               {f.propertyId && (
                 <Link href={`/dashboard/property?p=${f.propertyId}${f.unit ? `&q=${encodeURIComponent(f.unit)}` : ""}`}
@@ -247,6 +251,7 @@ function Card({ f }: { f: Finding }) {
         </div>
       )}
       <p className="text-sm text-ink leading-relaxed mb-1">{f.why}</p>
+      {f.detail && <p className="text-sm text-deep font-semibold leading-relaxed mb-1">{f.detail}</p>}
       <p className="text-xs text-muted"><b className="text-deep">ما تفعله:</b> {f.fix}</p>
     </div>
   );
