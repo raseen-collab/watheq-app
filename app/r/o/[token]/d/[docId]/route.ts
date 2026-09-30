@@ -2,6 +2,7 @@ import { renderDocPage, renderDeny, portalHeaders, denyHeaders, TOKEN_RE, UUID_R
 import { portalDb, newNonce, clientIp, userAgent } from "@/lib/hoaPortalServer";
 
 export const dynamic = "force-dynamic";
+export const fetchCache = "force-no-store";
 
 /**
  * مستند الجمعية كما يراه المالك — /r/o/{token}/d/{docId}

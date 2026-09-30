@@ -2,6 +2,7 @@ import { renderReceiptPage, renderDeny, portalHeaders, denyHeaders, TOKEN_RE, UU
 import { portalDb, newNonce } from "@/lib/hoaPortalServer";
 
 export const dynamic = "force-dynamic";
+export const fetchCache = "force-no-store";
 
 /**
  * سند قبض قابل للطباعة — /r/o/{token}/p/{paymentId}

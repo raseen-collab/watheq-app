@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient as createAdmin } from "@supabase/supabase-js";
 import { createClient as createSession } from "@/lib/supabase-server";
+import { noStoreFetch } from "@/lib/no-store-fetch";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -33,7 +34,7 @@ export async function POST(req: Request) {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url || !key) return NextResponse.json({ error: "الخدمة غير مهيّأة" }, { status: 500 });
-  const db = createAdmin(url, key, { auth: { persistSession: false } });
+  const db = createAdmin(url, key, { auth: { persistSession: false }, global: { fetch: noStoreFetch } });
 
   const uid = user.id;
 

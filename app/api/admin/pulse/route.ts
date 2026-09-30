@@ -5,6 +5,7 @@ import { tgSend } from "@/lib/telegram";
 import { subsDigest, type SubAccount } from "@/lib/subs-ops";
 import { splitDemo } from "@/lib/real-data";
 import { fetchAllRows } from "@/lib/fetch-all";
+import { noStoreFetch } from "@/lib/no-store-fetch";
 
 export const dynamic = "force-dynamic";
 
@@ -23,7 +24,7 @@ function serviceDb() {
   return createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.SUPABASE_SERVICE_ROLE_KEY!,
-    { auth: { persistSession: false } }
+    { auth: { persistSession: false }, global: { fetch: noStoreFetch } }
   );
 }
 

@@ -2,6 +2,7 @@ import { renderPortalPage, renderDeny, portalHeaders, denyHeaders, TOKEN_RE, FLA
 import { portalDb, newNonce } from "@/lib/hoaPortalServer";
 
 export const dynamic = "force-dynamic";
+export const fetchCache = "force-no-store";
 
 /**
  * 🏢 بوابة المالك في اتحاد الملاك — /r/o/{token}

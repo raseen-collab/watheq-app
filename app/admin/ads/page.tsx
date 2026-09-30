@@ -5,6 +5,7 @@ import Link from "next/link";
 import AdsWorkspace from "@/components/AdsWorkspace";
 import { splitDemo, isPayingCustomer } from "@/lib/real-data";
 import { CHOSEN_SOURCES, LINK_SOURCES } from "@/lib/signup-sources";
+import { noStoreFetch } from "@/lib/no-store-fetch";
 
 export const dynamic = "force-dynamic";
 
@@ -22,7 +23,7 @@ export default async function AdsPage() {
   const allowed = (process.env.ADMIN_USER_IDS || "").split(",").map((s) => s.trim()).filter(Boolean);
   if (!allowed.length || !allowed.includes(user.id)) notFound();
 
-  const db = createServiceClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!, { auth: { persistSession: false } });
+  const db = createServiceClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!, { auth: { persistSession: false }, global: { fetch: noStoreFetch } });
   const [{ data: profiles }, { data: props }, { data: posts, error: postsErr }, { data: team }] = await Promise.all([
     db.from("profiles").select("id,created_at,signup_source,subscribed_until"),
     db.from("properties").select("id,user_id,is_demo"),

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase-server";
 import { createClient as createAdmin } from "@supabase/supabase-js";
 import { buildDemo, demoPayments, setDemoPhone } from "@/lib/demo-data";
+import { noStoreFetch } from "@/lib/no-store-fetch";
 
 export const dynamic = "force-dynamic";
 
@@ -18,7 +19,7 @@ export const dynamic = "force-dynamic";
 function adminDb() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL, key = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url || !key) return null;
-  return createAdmin(url, key, { auth: { persistSession: false } });
+  return createAdmin(url, key, { auth: { persistSession: false }, global: { fetch: noStoreFetch } });
 }
 
 export async function POST() {

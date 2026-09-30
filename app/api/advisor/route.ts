@@ -6,6 +6,7 @@ import {
   buildSystemPrompt, classify, DISCLAIMER,
   HIGH_RISK_REPLY, OUT_OF_SCOPE_REPLY, advisorLimit,
 } from "@/lib/advisor";
+import { noStoreFetch } from "@/lib/no-store-fetch";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -14,7 +15,7 @@ function serviceDb() {
   return createServiceClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.SUPABASE_SERVICE_ROLE_KEY!,
-    { auth: { persistSession: false } }
+    { auth: { persistSession: false }, global: { fetch: noStoreFetch } }
   );
 }
 

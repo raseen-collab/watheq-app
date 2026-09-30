@@ -3,6 +3,7 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase-server";
 import { createClient as admin } from "@supabase/supabase-js";
 import { KB } from "@/lib/help-kb";
+import { noStoreFetch } from "@/lib/no-store-fetch";
 
 export const dynamic = "force-dynamic";
 
@@ -39,7 +40,7 @@ export default async function HelpMonitorPage() {
   }
 
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL, key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  const db = url && key ? admin(url, key, { auth: { persistSession: false } }) : null;
+  const db = url && key ? admin(url, key, { auth: { persistSession: false }, global: { fetch: noStoreFetch } }) : null;
   const since = new Date(Date.now() - 30 * 86400000).toISOString();
   const { data: rows, error } = db
     ? await db.from("help_queries").select("*").gte("created_at", since).order("created_at", { ascending: false }).limit(3000)

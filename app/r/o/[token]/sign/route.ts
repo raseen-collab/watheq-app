@@ -2,6 +2,7 @@ import { renderDeny, denyHeaders, TOKEN_RE, UUID_RE } from "@/lib/hoaPortal";
 import { portalDb, clientIp, userAgent } from "@/lib/hoaPortalServer";
 
 export const dynamic = "force-dynamic";
+export const fetchCache = "force-no-store";
 
 /**
  * اعتماد/رفض مستند من بوابة المالك — POST /r/o/{token}/sign (نموذج عادي).

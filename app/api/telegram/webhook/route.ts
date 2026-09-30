@@ -6,6 +6,7 @@ import { tgSend, tgEdit, tgAnswer, navButtons, TgKeyboard } from "@/lib/telegram
 import {
   buildReport, getUnpaid, markPaid, buildReminder, sar,
   statusReport, contractsInState, contractCard, payTenantOldest, renewContract, buildNotice, stateLabel, searchTenants } from "@/lib/reports";
+import { noStoreFetch } from "@/lib/no-store-fetch";
 
 export const dynamic = "force-dynamic";
 
@@ -18,7 +19,7 @@ function admin() {
   return createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.SUPABASE_SERVICE_ROLE_KEY!,
-    { auth: { persistSession: false } }
+    { auth: { persistSession: false }, global: { fetch: noStoreFetch } }
   );
 }
 type DB = ReturnType<typeof admin>;

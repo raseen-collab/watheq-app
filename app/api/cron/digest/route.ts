@@ -14,6 +14,7 @@ import { arDate } from "@/lib/documents";
 import { daysAr } from "@/lib/utils";
 import { fetchAllRows } from "@/lib/fetch-all";
 import { tgClip } from "@/lib/reports";
+import { noStoreFetch } from "@/lib/no-store-fetch";
 
 /** تليجرام يقرأ الرسالة كـHTML: اسم فيه < أو & يُسقط الرسالة كلها للحساب. نهرّب النصوص الحرة */
 /** يوم الرياض — نفس أساس بقية النظام */
@@ -48,7 +49,7 @@ export async function GET(req: Request) {
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url || !key) return NextResponse.json({ ok: false, error: "إعدادات ناقصة" }, { status: 500 });
 
-  const db = createAdmin(url, key, { auth: { persistSession: false } });
+  const db = createAdmin(url, key, { auth: { persistSession: false }, global: { fetch: noStoreFetch } });
 
   /* استحقاق الشهر الجديد لجمعيات الملاك (schema-v60) قبل قراءة الأرقام —
      لا يتكرر لنفس الشهر، ولا يمسّ جمعية لم يفعّل صاحبها الاستحقاق التلقائي. */

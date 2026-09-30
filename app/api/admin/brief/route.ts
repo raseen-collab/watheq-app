@@ -4,6 +4,7 @@ import { createClient as createServiceClient } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase-server";
 import { fetchAllRows } from "@/lib/fetch-all";
 import { splitDemo, isPayingCustomer } from "@/lib/real-data";
+import { noStoreFetch } from "@/lib/no-store-fetch";
 
 /* على دفعات: Supabase يقصّ كل استجابة عند 1000 صف بصمت — والمنصة تجاوزتها
    (كل حساب جرّب البيانات التجريبية أضاف ~80 وحدة ودفعاتها)، فكانت أرقام
@@ -33,7 +34,7 @@ export async function POST() {
   const key = process.env.ANTHROPIC_API_KEY;
   if (!key) return NextResponse.json({ error: "مفتاح الذكاء غير مضبوط" }, { status: 500 });
 
-  const db = createServiceClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!, { auth: { persistSession: false } });
+  const db = createServiceClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!, { auth: { persistSession: false }, global: { fetch: noStoreFetch } });
   const [{ data: profiles }, propsRes, tenantsRes, paysRes, { data: subs }, { data: team }] = await Promise.all([
     db.from("profiles").select("id,account_type,created_at,trial_ends_at,subscribed_until,plan,signup_source,telegram_chat_id"),
     page(db, "properties", "id,user_id,created_at,is_demo"),

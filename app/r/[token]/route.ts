@@ -3,8 +3,10 @@ import { createClient as createAdmin } from "@supabase/supabase-js";
 import { fetchAllRows } from "@/lib/fetch-all";
 import { ownerReportHTML, termRentPaidOf, pastVatOf, type PastVat, ownerConsolidatedStatementHTML, type OwnerStatementSection } from "@/lib/documents";
 import { issuerMarks } from "@/lib/subscription";
+import { noStoreFetch } from "@/lib/no-store-fetch";
 
 export const dynamic = "force-dynamic";
+export const fetchCache = "force-no-store";
 
 /**
  * 🔗 صفحة المالك العامة — /r/{token}
@@ -67,7 +69,7 @@ async function render(_req: Request, { params }: { params: { token: string } }) 
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url || !key) return deny("الخدمة غير مهيأة", 500);
-  const db = createAdmin(url, key, { auth: { persistSession: false } });
+  const db = createAdmin(url, key, { auth: { persistSession: false }, global: { fetch: noStoreFetch } });
 
   const { data: link } = await db.from("owner_links")
     .select("id, user_id, property_id, property_ids, owner_name, revoked, expires_at")

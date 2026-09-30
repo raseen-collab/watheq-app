@@ -1,4 +1,5 @@
 import { createClient as createAdmin, type SupabaseClient } from "@supabase/supabase-js";
+import { noStoreFetch } from "./no-store-fetch";
 
 /**
  * وثيق — أدوات خادم بوابة المالك (app/r/o/**). مفتاح الخدمة لا يُستعمل إلا
@@ -9,7 +10,7 @@ export function portalDb(): SupabaseClient | null {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url || !key) return null;
-  return createAdmin(url, key, { auth: { persistSession: false, autoRefreshToken: false } });
+  return createAdmin(url, key, { auth: { persistSession: false, autoRefreshToken: false }, global: { fetch: noStoreFetch } });
 }
 
 /** أول عنوان في x-forwarded-for (يضعه Vercel) — للتوثيق لا للتحقق */

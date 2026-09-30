@@ -208,6 +208,7 @@ export default function AssociationView({ initial, issuer }: { initial: Associat
     } : x));
     notify("ok", "عُكست الدفعة وبقي أثرها في السجل.");
     openHistory(history.owner);
+    router.refresh();   /* تاريخ آخر سداد يعيد القاعدة حسابه بعد العكس */
   }
 
   /** سند القبض من جهة الإدارة — نفس قالب صفحة المالك */

@@ -12,6 +12,7 @@ import { splitDemo } from "@/lib/real-data";
 import { sourceAdminLabel } from "@/lib/signup-sources";
 import { isPayingCustomer } from "@/lib/real-data";
 import { withClockSkewRetry } from "@/lib/db-retry";
+import { noStoreFetch } from "@/lib/no-store-fetch";
 
 /* على دفعات: Supabase يقصّ كل استجابة عند 1000 صف بصمت — والمنصة تجاوزتها
    (كل حساب جرّب البيانات التجريبية أضاف ~80 وحدة ودفعاتها)، فكانت أرقام
@@ -37,7 +38,7 @@ function serviceDb() {
   return createServiceClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.SUPABASE_SERVICE_ROLE_KEY!,
-    { auth: { persistSession: false } },
+    { auth: { persistSession: false }, global: { fetch: noStoreFetch } },
   );
 }
 
@@ -101,17 +102,6 @@ export default async function AdminPage({ searchParams }: { searchParams?: { vie
        future» من الثاني وحده — فلا معنى لإعادة المحاولة هنا. */
     db.auth.admin.listUsers({ perPage: 1000 }),
   ]);
-  /* مقياس انحراف الساعة (schema-v53): يقارن `iat` في رمزك بساعة القاعدة.
-     يُستدعى بجلستك أنت لا بمفتاح الخدمة — مفتاح الخدمة رمز طويل الأمد
-     لا يُقاس به شيء. موجب = الرمز «صادر في المستقبل»، وهو سبب العطل.
-     يفشل بصمت إن لم تُنشأ الدالة بعد: تشخيص لا يجوز أن يُسقط اللوحة. */
-  let skew: number | null = null;
-  try {
-    const { data: probe } = await supabase.rpc("clock_probe");
-    const row = Array.isArray(probe) ? probe[0] : probe;
-    if (row && row.skew_seconds !== null && row.skew_seconds !== undefined) skew = Number(row.skew_seconds);
-  } catch { /* الدالة غير موجودة أو لا صلاحية — لا شيء يُعرض */ }
-
   const profiles = (profilesRes.data || []) as any[];
   const properties = (propsRes.data || []) as any[];
   const tenants = (tenantsRes.data || []) as any[];
@@ -295,10 +285,6 @@ export default async function AdminPage({ searchParams }: { searchParams?: { vie
           <Link href="/admin/subs" className="btn btn-ghost text-xs">💳 الاشتراكات</Link>
           <Link href="/admin/help" className="btn btn-ghost text-xs">🛟 مراقب المساعد</Link>
           <a href="https://sentry.io/" target="_blank" rel="noreferrer" className="btn btn-ghost text-xs">🐞 الأخطاء (Sentry)</a>
-          {/* قياس انحراف الساعة — يقارن ترويسة Date في ردّ خادم المصادقة
-              بردّ خادم البيانات في لحظة واحدة، فيُظهر الانحراف الذي يسبّب
-              «JWT issued at future» بلا حاجة لرمز طازج ولا مصادفة. */}
-          <a href="/api/admin/clock?n=12" target="_blank" rel="noreferrer" className="btn btn-ghost text-xs">⏱️ قياس انحراف الساعة</a>
           <Link href="/dashboard" className="btn btn-ghost text-xs">← اللوحة</Link>
         </div>
       </div>
@@ -308,23 +294,6 @@ export default async function AdminPage({ searchParams }: { searchParams?: { vie
           <div className="font-semibold mb-1">تعذّر تحميل بعض البيانات — الأرقام المتأثرة تظهر «—» لا رقمًا مُقدَّرًا.</div>
           <div className="text-xs opacity-90">{errors.join(" · ")}</div>
           <div className="text-xs opacity-90 mt-1">أعد تحميل الصفحة؛ فإن تكرر فالعطل في القاعدة لا في اللوحة.</div>
-        </div>
-      )}
-
-      {/* مقياس انحراف الساعة — تشخيص «JWT issued at future».
-          ⚠️ الرقم = iat ناقص ساعة القاعدة، وهو **سالب دائمًا** في الوضع
-          الطبيعي لأنه يساوي عمر الرمز: رمز عمره خمس دقائق يعطي −300.
-          الانحراف الحقيقي موجب فقط — رمز صادر في المستقبل. فلا يُعرض
-          إلا الموجب، ولا يُعرض عمر الرمز لأنه ليس خبرًا.
-          والالتقاط لا يصحّ إلا برمز طازج: خروج ثم دخول ثم فتح هذه الصفحة
-          فورًا — بعد دقائق يبتلع عمرُ الرمز انحرافًا مقداره ثوانٍ. */}
-      {skew !== null && skew > 0 && (
-        <div className="rounded-xl p-3 text-sm mb-4 border bg-[#FBF1DF] border-[#EAD9A8] text-[#7a5c12]">
-          <b>انحراف الساعة: +{skew} ثانية</b>
-          {" — "}
-          رمز جلستك صادر «في المستقبل» بالنسبة لساعة القاعدة. هذا سبب
-          <span dir="ltr"> JWT issued at future</span>، وكل ثانية موجبة هنا نافذة رفض بطولها.
-          صوّر هذا السطر: هو دليل التذكرة.
         </div>
       )}
 

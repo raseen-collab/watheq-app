@@ -8,6 +8,7 @@ import { fetchAllRows } from "@/lib/fetch-all";
 import { splitDemo } from "@/lib/real-data";
 import { withClockSkewRetry } from "@/lib/db-retry";
 import { bankBlock } from "@/lib/subs-ops";
+import { noStoreFetch } from "@/lib/no-store-fetch";
 
 export const dynamic = "force-dynamic";
 
@@ -15,7 +16,7 @@ function serviceDb() {
   return createServiceClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.SUPABASE_SERVICE_ROLE_KEY!,
-    { auth: { persistSession: false } }
+    { auth: { persistSession: false }, global: { fetch: noStoreFetch } }
   );
 }
 
