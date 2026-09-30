@@ -9,6 +9,8 @@
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { openExternal, today } from "@/lib/utils";
+import { openDoc } from "@/lib/documents";
+import DateField from "@/components/DateField";
 import { plainTextToHoaHtml, sanitizeHoaHtml } from "@/lib/hoaSanitize";
 
 // ─── أدوات ─────────────────────────────────────────────────────
@@ -188,9 +190,80 @@ type DocRow = {
 };
 export type HoaDocPrefill = { title: string; kind: "minutes" | "notice" | "circular" | "budget" | "other"; body_html: string };
 
+/** رابط صفحة المالك الخاصة (يُنشأ إن لم يوجد) */
+async function ownerLink(ownerId: string): Promise<string> {
+  const j = await postJSON("/api/hoa/member-link", { owner_id: ownerId, action: "get" });
+  return `${window.location.origin}${j.path}`;
+}
+const escT = (v: unknown) => String(v ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+
+/** «أرسله للملاك» / «ذكّرهم»: رسالة واتساب لكل مالك برابط صفحته (واتساب لا يسمح بالإرسال الجماعي الآلي) */
+function SendToOwners({ title, docTitle, owners, reminder, onClose }: {
+  title: string; docTitle: string; reminder?: boolean;
+  owners: { id: string; name: string; unit?: string | null; phone?: string | null }[]; onClose: () => void;
+}) {
+  const [sent, setSent] = useState<Record<string, boolean>>({});
+  const [busy, setBusy] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const send = async (o: { id: string; name: string; unit?: string | null; phone?: string | null }) => {
+    setBusy(o.id); setErr(null);
+    const w = typeof window !== "undefined" && !(globalThis as any)?.Telegram?.WebApp ? window.open("", "_blank") : null;
+    try {
+      const url = await ownerLink(o.id);
+      const msg = [`السلام عليكم ${o.name}،`,
+        reminder ? `تذكير: ما زال مستند «${docTitle}» بانتظار ردّك (اعتماد أو رفض).` : `صدر مستند جديد من إدارة الجمعية: «${docTitle}».`,
+        "تجده في صفحتك الخاصة:", url, "", "الرابط خاص بك، فلا تشاركه مع أحد."].join("\n");
+      const href = `https://wa.me/${saudiWa(o.phone)}?text=${encodeURIComponent(msg)}`;
+      if (w) w.location.href = href; else openExternal(href);
+      setSent((x) => ({ ...x, [o.id]: true }));
+    } catch (e: any) { if (w) w.close(); setErr(e?.message || "تعذّر تجهيز الرابط"); }
+    finally { setBusy(null); }
+  };
+  const n = Object.values(sent).filter(Boolean).length;
+  return (
+    <Modal onClose={onClose}>
+      <h3 className="font-display font-bold text-deep text-lg mb-1">{title}</h3>
+      <p className="text-xs text-muted mb-3">كل زر يفتح محادثة المالك برسالة فيها رابط صفحته الخاصة. أُرسل {n} من {owners.length}.</p>
+      {err && <p className="text-sm text-late mb-2">{err}</p>}
+      <div className="flex flex-col gap-2">
+        {owners.map((o) => (
+          <div key={o.id} className={`grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 rounded-xl border p-2.5 ${sent[o.id] ? "border-[#B7DFC7] bg-[#F2FAF5]" : "border-line"}`}>
+            <div className="min-w-0"><div className="font-semibold text-sm truncate">{o.name}</div>
+              <div className="text-xs text-muted">{o.unit || "—"}{saudiWa(o.phone) ? "" : " · بلا جوال صحيح (تختار المحادثة)"}{sent[o.id] ? " · ✓ أُرسل" : ""}</div></div>
+            <button type="button" className="btn btn-wa text-xs" disabled={busy === o.id} onClick={() => send(o)}>{busy === o.id ? "…" : sent[o.id] ? "إعادة" : "واتساب"}</button>
+          </div>
+        ))}
+        {!owners.length && <p className="text-sm text-muted text-center py-4">لا أحد في القائمة.</p>}
+      </div>
+      <div className="flex justify-end mt-4"><button type="button" className="btn btn-ghost" onClick={onClose}>إغلاق</button></div>
+    </Modal>
+  );
+}
+
+/** سجل الاعتماد للطباعة: العنوان، بصمة المستند، ولكل مالك: القرار والاسم المكتوب والوقت والعنوان الشبكي */
+function printApprovalLog(associationName: string, d: DocRow) {
+  const dec = (o: OwnerRow) => o.decision === "approve" ? "اعتمد" : o.decision === "reject" ? "رفض" : o.seen_at ? "اطّلع دون رد" : "لم يفتحه";
+  const html = `<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>سجل الاعتماد — ${escT(d.title)}</title><style>body{font-family:Tahoma,system-ui,sans-serif;color:#0B211F;padding:16px;max-width:900px;margin:0 auto;line-height:1.6}
+h1{font-size:18px;margin:0 0 4px}.m{color:#5C6B67;font-size:12.5px}table{width:100%;border-collapse:collapse;font-size:12.5px;margin-top:12px}
+th,td{border:1px solid #DDD5C2;padding:6px;text-align:right;vertical-align:top}th{background:#F3EEE2}.sha{font-family:monospace;direction:ltr;word-break:break-all}
+@media print{.np{display:none}}</style></head><body>
+<p class="np"><button id="pr" type="button">طباعة / حفظ PDF</button></p>
+<h1>سجل الاعتماد — ${escT(d.title)}</h1>
+<div class="m">${escT(associationName)} · صدر ${escT(stamp(d.created_at))}${d.closes_at ? ` · آخر موعد ${escT(dayAr(d.closes_at))}` : ""}</div>
+<div class="m">بصمة المستند (SHA-256): <span class="sha">${escT(d.body_sha256 || "—")}</span></div>
+<div class="m">اعتمد ${d.counts.approve} · رفض ${d.counts.reject} · اطّلع دون رد ${d.counts.seen} · لم يفتحه ${d.counts.none}</div>
+<table><thead><tr><th>#</th><th>المالك</th><th>الوحدة</th><th>القرار</th><th>الاسم المكتوب</th><th>الوقت (الرياض)</th><th>IP</th><th>ملاحظة</th></tr></thead><tbody>
+${d.owners.map((o, i) => `<tr><td>${i + 1}</td><td>${escT(o.name)}${o.former ? " (محذوف)" : ""}</td><td>${escT(o.unit || "—")}</td><td>${dec(o)}</td><td>${escT(o.typed_name || "—")}</td><td>${escT(stamp(o.decided_at || o.seen_at))}</td><td class="sha">${escT(o.ip || "—")}</td><td>${escT(o.comment || "")}</td></tr>`).join("")}
+</tbody></table>
+<p class="m">${escT(LEGAL_NOTE)}</p>
+<script nonce="watheq">document.getElementById('pr').addEventListener('click',function(){window.print();});</script></body></html>`;
+  openDoc(html);
+}
+
 export function HoaDocumentsPanel({ association, owners, prefill, onPrefillUsed }: {
   association: { id: string; name: string };
-  owners: { id: string; name: string; unit?: string | null }[];
+  owners: { id: string; name: string; unit?: string | null; phone?: string | null }[];
   prefill?: HoaDocPrefill | null;
   onPrefillUsed?: () => void;
 }) {
@@ -202,6 +275,9 @@ export function HoaDocumentsPanel({ association, owners, prefill, onPrefillUsed 
   const [expanded, setExpanded] = useState<string | null>(null);
   const [cancelAsk, setCancelAsk] = useState<string | null>(null);
   const [preview, setPreview] = useState<null | { title: string; html: string; sha: string | null }>(null);
+  /** بعد الإصدار: «أرسله للملاك» · وفي البطاقة: «ذكّر من لم يردّ» */
+  const [sendList, setSendList] = useState<null | { title: string; docTitle: string; reminder?: boolean; owners: typeof owners }>(null);
+  const [pendingOnly, setPendingOnly] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setErr(null);
@@ -240,8 +316,10 @@ export function HoaDocumentsPanel({ association, owners, prefill, onPrefillUsed 
         association_id: association.id, kind: form.kind, title: form.title.trim(), body_html,
         requires_signature: form.requires, closes_at: form.requires && form.closes ? form.closes : null,
       });
+      const docTitle = form.title.trim();
       setForm(null);
       await load();
+      setSendList({ title: "أرسله للملاك", docTitle, owners });
     } catch (e: any) { setFormErr(e?.message || "تعذّر إصدار المستند"); }
     finally { setSaving(false); }
   };
@@ -315,10 +393,14 @@ export function HoaDocumentsPanel({ association, owners, prefill, onPrefillUsed 
                 </>
               )}
 
-              <div className="flex gap-3 mt-2 text-xs">
-                <button type="button" className="font-semibold underline text-deep" onClick={() => setExpanded(expanded === d.id ? null : d.id)}>
-                  {expanded === d.id ? "إخفاء تفاصيل الملاك" : "تفاصيل الملاك"}
+              <div className="flex flex-wrap gap-x-3 gap-y-1.5 mt-2 text-xs">
+                <button type="button" className="font-semibold underline text-deep" onClick={() => { setPendingOnly(null); setExpanded(expanded === d.id && !pendingOnly ? null : d.id); }}>
+                  {expanded === d.id && !pendingOnly ? "إخفاء تفاصيل الملاك" : "تفاصيل الملاك"}
                 </button>
+                {d.requires_signature && !cancelled && (c.seen + c.none) > 0 && (
+                  <button type="button" className="font-semibold underline text-[#9A5B00]" onClick={() => { setPendingOnly(d.id); setExpanded(d.id); }}>لم يردّوا ({c.seen + c.none})</button>
+                )}
+                <button type="button" className="font-semibold underline text-deep" onClick={() => printApprovalLog(association.name, d)}>طباعة سجل الاعتماد</button>
                 {!cancelled && cancelAsk !== d.id && (
                   <button type="button" className="font-semibold underline text-late" onClick={() => setCancelAsk(d.id)}>إلغاء المستند</button>
                 )}
@@ -333,34 +415,42 @@ export function HoaDocumentsPanel({ association, owners, prefill, onPrefillUsed 
                 </div>
               )}
 
-              {expanded === d.id && (
-                <div className="mt-2 overflow-x-auto">
-                  <table className="w-full text-xs">
-                    <thead><tr className="text-muted text-right">
-                      <th className="py-1 pe-2">المالك</th><th className="py-1 pe-2">الحالة</th><th className="py-1 pe-2">الوقت</th><th className="py-1">التفاصيل</th>
-                    </tr></thead>
-                    <tbody>
-                      {d.owners.map((o, i) => (
-                        <tr key={(o.owner_id || "x") + i} className="border-t border-line align-top">
-                          <td className="py-1 pe-2">{o.name}{o.unit ? ` · ${o.unit}` : ""}{o.former ? " (محذوف)" : ""}</td>
-                          <td className="py-1 pe-2 whitespace-nowrap">
+              {expanded === d.id && (() => {
+                const list = pendingOnly === d.id ? d.owners.filter((o) => !o.decision && !o.former) : d.owners;
+                const pendingOwners = owners.filter((ow) => list.some((o) => o.owner_id === ow.id));
+                return (
+                  <div className="mt-2">
+                    {pendingOnly === d.id && (
+                      <div className="flex items-center justify-between gap-2 mb-2">
+                        <span className="text-xs text-muted">{list.length} لم يعتمدوا ولم يرفضوا</span>
+                        {pendingOwners.length > 0 && <button type="button" className="btn btn-wa text-xs"
+                          onClick={() => setSendList({ title: "ذكّر من لم يردّ", docTitle: d.title, reminder: true, owners: pendingOwners })}>ذكّرهم</button>}
+                      </div>
+                    )}
+                    {/* بطاقات لا جدول: تُقرأ على الجوال بلا تمرير أفقي */}
+                    <div className="flex flex-col gap-1.5">
+                      {list.map((o, i) => (
+                        <div key={(o.owner_id || "x") + i} className="rounded-lg border border-line p-2 text-xs grid grid-cols-[minmax(0,1fr)_auto] gap-x-2">
+                          <div className="min-w-0">
+                            <div className="font-semibold truncate">{o.name}{o.unit ? ` · ${o.unit}` : ""}{o.former ? " (محذوف)" : ""}</div>
+                            <div className="text-muted">{stamp(o.decided_at || o.seen_at)}</div>
+                            {o.typed_name ? <div className="text-muted">بالاسم: {o.typed_name}</div> : null}
+                            {o.ip ? <div className="text-muted" dir="ltr">IP {o.ip}</div> : null}
+                            {o.comment ? <div className="text-muted break-words">ملاحظة: {o.comment}</div> : null}
+                          </div>
+                          <div className="whitespace-nowrap">
                             {o.decision === "approve" ? <span className="text-[#137a50] font-semibold">اعتمد</span>
                               : o.decision === "reject" ? <span className="text-[#a5322c] font-semibold">رفض</span>
                               : o.seen_at ? <span className="text-[#9A5B00]">اطّلع</span>
                               : <span className="text-muted">لم يفتحه</span>}
-                          </td>
-                          <td className="py-1 pe-2 whitespace-nowrap">{stamp(o.decided_at || o.seen_at)}</td>
-                          <td className="py-1 text-muted">
-                            {o.typed_name ? <>بالاسم: {o.typed_name}</> : null}
-                            {o.ip ? <span dir="ltr" className="block">IP {o.ip}</span> : null}
-                            {o.comment ? <span className="block">ملاحظة: {o.comment}</span> : null}
-                          </td>
-                        </tr>
+                          </div>
+                        </div>
                       ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
+                      {!list.length && <div className="text-xs text-muted">لا أحد.</div>}
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
           );
         })}
@@ -400,7 +490,7 @@ export function HoaDocumentsPanel({ association, owners, prefill, onPrefillUsed 
             </label>
             {form.requires && (
               <label className="block"><span className="block text-sm font-semibold mb-1">آخر موعد للرد (اختياري)</span>
-                <input className="fld" type="date" min={today()} value={form.closes} onChange={(e) => setForm({ ...form, closes: e.target.value })} />
+                <DateField value={form.closes} onChange={(v) => setForm({ ...form, closes: v })} />
               </label>
             )}
             {form.requires && <p className="text-xs text-muted">{LEGAL_NOTE}</p>}
@@ -412,6 +502,9 @@ export function HoaDocumentsPanel({ association, owners, prefill, onPrefillUsed 
           </div>
         </Modal>
       )}
+
+      {sendList && <SendToOwners title={sendList.title} docTitle={sendList.docTitle} reminder={sendList.reminder}
+        owners={sendList.owners} onClose={() => setSendList(null)} />}
 
       {preview && (
         <Modal wide onClose={() => setPreview(null)}>

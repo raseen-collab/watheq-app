@@ -1,4 +1,5 @@
 import { createClient as createServiceClient } from "@supabase/supabase-js";
+import { noStoreFetch } from "./no-store-fetch";
 import { isSignupSource } from "./signup-sources";
 
 /**
@@ -42,7 +43,7 @@ export async function recordSignupSource(
   const FRESH_MS = 15 * 60 * 1000;
 
   try {
-    const db = createServiceClient(url, key, { auth: { persistSession: false } });
+    const db = createServiceClient(url, key, { auth: { persistSession: false }, global: { fetch: noStoreFetch } });
 
     if (opts.requireFreshProfile) {
       const { data: prof, error: profErr } = await db.from("profiles")

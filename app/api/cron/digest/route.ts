@@ -23,6 +23,7 @@ const todayISO = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Riyadh
 const esc = (v: any) => String(v ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
 export const dynamic = "force-dynamic";
+export const fetchCache = "force-no-store";
 export const maxDuration = 60;
 
 const sar = (n: number) => (Number(n) || 0).toLocaleString("en-US");
@@ -276,16 +277,20 @@ export async function GET(req: Request) {
  */
 async function assocDigest(db: any, userId: string, t0: string): Promise<string[]> {
   try {
-    const { data: assocs, error } = await db.from("associations")
-      .select("id,name,fee,cert_expiry,fund_balance").eq("user_id", userId);
-    if (error || !assocs?.length) return [];
+    /* "*" ثم تصفية المؤرشفة (v64) هنا لا في الاستعلام — يعمل قبل تطبيق v64 وبعده */
+    const { data: assocsAll, error } = await db.from("associations")
+      .select("*").eq("user_id", userId);
+    const assocs = (assocsAll || []).filter((a: any) => !a.archived_at);
+    if (error || !assocs.length) return [];
     const ids = assocs.map((a: any) => a.id);
     const byId: Record<string, any> = {};
     assocs.forEach((a: any) => { byId[a.id] = a; });
-    const late = await fetchAllRows<any>(db, "owners", "id,association_id,months_late,partial_amount",
+    /* "*": يشمل fee_override (v63) إن وُجد، ولا يتعطّل قبله */
+    const late = await fetchAllRows<any>(db, "owners", "*",
       (q) => q.in("association_id", ids).gt("months_late", 0));
-    const owed = late.reduce((s: number, o: any) =>
-      s + Math.max(0, (Number(o.months_late) || 0) * (Number(byId[o.association_id]?.fee) || 0) - (Number(o.partial_amount) || 0)), 0);
+    const feeOfO = (o: any) => (Number(o.fee_override) > 0 ? Number(o.fee_override) : Number(byId[o.association_id]?.fee) || 0);
+    const owed = Math.round(late.reduce((s: number, o: any) =>
+      s + Math.max(0, (Number(o.months_late) || 0) * feeOfO(o) - (Number(o.partial_amount) || 0)), 0) * 100) / 100;
 
     const certs = assocs.filter((a: any) => a.cert_expiry)
       .map((a: any) => ({ a, d: dayDiff(String(a.cert_expiry).slice(0, 10), t0) }))

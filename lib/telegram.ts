@@ -18,6 +18,7 @@ async function call(method: string, payload: Record<string, any>) {
   try {
     const res = await fetch(api(method), {
       method: "POST",
+      cache: "no-store",   /* رسالتان متطابقتان في يومين كانت الثانية تُرجع ردّ الأولى المحفوظ ولا تُرسل */
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });

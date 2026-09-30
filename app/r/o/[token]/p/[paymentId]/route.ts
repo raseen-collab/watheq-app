@@ -23,9 +23,12 @@ export async function GET(_req: Request, { params }: { params: { token: string; 
     if (!data) return deny();
     const d = data as PortalData;
     const p = (d.payments || []).find((x) => String(x.id).toLowerCase() === pid);
-    if (!p) return deny("السند غير متاح");
+    /* v64: سند دفعة عُكست يُفتح برابطه المباشر بختم «سند معكوس» (القائمة تبقى صافية) */
+    const rv = p ? null : (d.reversed_payments || []).find((x) => String(x.id).toLowerCase() === pid);
+    if (!p && !rv) return deny("السند غير متاح");
     const nonce = newNonce();
-    return new Response(renderReceiptPage(d, p, { nonce, base: `/r/o/${token}` }), { headers: portalHeaders(nonce) });
+    return new Response(renderReceiptPage(d, (p || rv)!, { nonce, base: `/r/o/${token}`, reversedOn: rv ? (rv.reversed_on || "") : null }),
+      { headers: portalHeaders(nonce) });
   } catch (e: any) {
     console.error("hoa receipt failed", e?.message);
     return deny("تعذّر تحميل السند الآن — أعد المحاولة بعد قليل", 503);

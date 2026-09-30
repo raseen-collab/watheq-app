@@ -129,6 +129,7 @@ ${CHANNEL_RULES[channel] || CHANNEL_RULES.other}
 
   try {
     const res = await fetch("https://api.anthropic.com/v1/messages", {
+      cache: "no-store",
       method: "POST",
       headers: { "content-type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01" },
       body: JSON.stringify({ model: process.env.ADVISOR_MODEL || "claude-sonnet-4-6", max_tokens: 1800, system, messages: [{ role: "user", content: JSON.stringify(context, null, 1) }] }),

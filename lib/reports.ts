@@ -10,6 +10,7 @@ import { contractState, renewContract as renewFields, freqShort, applyPayment, d
 import { today as riyadhToday, waNumber, daysAr } from "@/lib/utils";
 import { annualRentRoll } from "@/lib/income";
 import { fetchAllRows } from "@/lib/fetch-all";
+import { createHash } from "crypto";
 import { arDate } from "@/lib/documents";
 import { deriveState, STATE_ORDER, stateMeta, stateLabel, type StateKey } from "./contract-state";
 
@@ -62,6 +63,14 @@ function phoneOk(d: string): boolean { return /^9665\d{8}$/.test(d) || (!d.start
 // ======================= اكتشاف نوع الحساب =======================
 
 async function detectTrack(db: DB, profile: any): Promise<Track> {
+  /* 30 سبتمبر 2026: الحساب المزدوج («both») كان يُقرأ «عقارات» دائمًا (كلمة both لا تطابق شيئًا
+     ثم يُفحص وجود عقارات). الآن: اختيار المستخدم في البوت (_track) ثم آخر لوحة فتحها. */
+  if (String(profile.account_type || "").toLowerCase() === "both") {
+    if (profile._track === "associations" || profile._track === "properties") return profile._track;
+    const last = String(profile.last_dashboard || "").toLowerCase();
+    if (/assoc/.test(last)) return "associations";
+    if (/prop/.test(last)) return "properties";
+  }
   const hint = String(profile.account_type || profile.last_dashboard || profile.role || "").toLowerCase();
   if (/(assoc|hoa|جمع|owner|ملاك|ملّاك)/.test(hint)) return "associations";
   if (/(prop|real|عقار|ايجار|إيجار|مؤجر|مؤجّر)/.test(hint)) return "properties";
@@ -123,7 +132,15 @@ const cardOf = (r: Enriched): ContractCard => ({
 // ======================= مسار الجمعيات (months_late) =======================
 
 async function assocContext(db: DB, profile: any) {
-  const { data: assocs } = await db.from("associations").select("*").eq("user_id", profile.id);
+  /* استحقاق الفترة الجديدة قبل أي تقرير (مفتاح الخدمة) — وإلا يرى المكتب في البوت أرقام
+     ما قبل أول الشهر حتى يفتح اللوحة. v64 لمكتب واحد، وقبله للكل. الفشل لا يوقف التقرير. */
+  try {
+    const r = await db.rpc("watheq_hoa_accrue_office", { p_office: profile.id });
+    if (r.error) await db.rpc("watheq_hoa_accrue_all");
+  } catch { /* قبل v60 */ }
+  const { data: assocsAll } = await db.from("associations").select("*").eq("user_id", profile.id);
+  /* المؤرشفة (v64) خارج التقارير — تصفية هنا لا في الاستعلام حتى يعمل قبل تطبيق v64 */
+  const assocs = (assocsAll || []).filter((a: any) => !a.archived_at);
   const assocById: Record<string, any> = {};
   (assocs || []).forEach((a: any) => (assocById[a.id] = a));
   const assocIds = (assocs || []).map((a: any) => a.id);
@@ -136,8 +153,11 @@ async function assocContext(db: DB, profile: any) {
 }
 /* 30 سبتمبر 2026: يُطرح المسدَّد جزئيًّا كما تفعل اللوحة (ownerDue) — كان البوت
    يعرض المتأخر كاملًا فيختلف رقمه عن الشاشة عند من سدّد جزءًا. */
+/* v63: الرسم الفعلي للمالك (من حصته إن وُزّعت الرسوم بالحصص) وإلا رسم الجمعية */
+const ownerFeeOf = (o: any, a: any) => (Number(o?.fee_override) > 0 ? Number(o.fee_override) : Number(a?.fee) || 0);
+const periodWord = (a: any) => (a?.fee_period === "annual" ? "سنة" : "شهر");
 const ownerOwed = (o: any, assocById: Record<string, any>) =>
-  Math.max(0, (Number(o.months_late) || 0) * (Number(assocById[o.association_id]?.fee) || 0) - (Number(o.partial_amount) || 0));
+  Math.max(0, Math.round(((Number(o.months_late) || 0) * ownerFeeOf(o, assocById[o.association_id]) - (Number(o.partial_amount) || 0)) * 100) / 100);
 
 // ======================= التقارير (نص) =======================
 
@@ -273,6 +293,8 @@ export type UnpaidRow = {
   id: string; amount: number; due: string; unit: string; tenant: string; phone: string; contractId: string;
   /** 30 سبتمبر 2026: «owner» لمالك جمعية — لا بطاقة عقد له، والتسجيل اشتراك شهر واحد بقيمة `fee` */
   kind?: "tenant" | "owner"; fee?: number;
+  /** v63: «شهر» أو «سنة» — فترة اشتراك الجمعية */
+  period?: string;
 };
 
 export async function getUnpaid(db: DB, profile: any, scope: string): Promise<UnpaidRow[]> {
@@ -293,7 +315,8 @@ export async function getUnpaid(db: DB, profile: any, scope: string): Promise<Un
     id: o.id, amount: ownerOwed(o, assocById), due: "",
     unit: o.unit ? `وحدة ${o.unit}` : (assocById[o.association_id]?.name || ""),
     tenant: o.name || "—", phone: o.phone || "", contractId: o.id,
-    kind: "owner" as const, fee: Number(assocById[o.association_id]?.fee) || 0,
+    kind: "owner" as const, fee: ownerFeeOf(o, assocById[o.association_id]),
+    period: periodWord(assocById[o.association_id]),
   }));
 }
 
@@ -404,13 +427,23 @@ async function payTenant(db: DB, profile: any, tenantId: string, mode: "one" | "
  * في القاعدة. الآن: watheq_record_owner_payment تقفل وتحدّث المالك والصندوق والسجل
  * معًا أو لا شيء، ونرفض دفعة ثانية من البوت للمالك نفسه خلال 90 ثانية (كمسار العقارات).
  */
-async function payOwner(db: DB, profile: any, ownerId: string): Promise<{ ok: boolean; msg: string }> {
-  const { data: o } = await db.from("owners").select("id,association_id").eq("id", ownerId).maybeSingle();
+/** UUID حتمي من مفتاح (نمط UUIDv5: sha1 ثم بتات الإصدار والمتغيّر) — نفس زرّ تليجرام ⇒ نفس الطلب */
+export function uuidFromKey(key: string): string {
+  const h = createHash("sha1").update("watheq:" + key).digest();
+  h[6] = (h[6] & 0x0f) | 0x50;
+  h[8] = (h[8] & 0x3f) | 0x80;
+  const x = h.subarray(0, 16).toString("hex");
+  return `${x.slice(0, 8)}-${x.slice(8, 12)}-${x.slice(12, 16)}-${x.slice(16, 20)}-${x.slice(20, 32)}`;
+}
+
+async function payOwner(db: DB, profile: any, ownerId: string, requestKey?: string | null): Promise<{ ok: boolean; msg: string }> {
+  /* select("*"): يعمل قبل v63 وبعدها (fee_override / fee_period قد لا يوجدان بعد) */
+  const { data: o } = await db.from("owners").select("*").eq("id", ownerId).maybeSingle();
   if (!o) return { ok: false, msg: "المالك غير موجود." };
-  const { data: assoc } = await db.from("associations").select("id,user_id,fee").eq("id", o.association_id).maybeSingle();
+  const { data: assoc } = await db.from("associations").select("*").eq("id", o.association_id).maybeSingle();
   if (!assoc || String(assoc.user_id) !== String(profile.id)) return { ok: false, msg: "غير مصرّح." };
 
-  const fee = Number(assoc.fee) || 0;
+  const fee = ownerFeeOf(o, assoc);
   if (fee <= 0) return { ok: false, msg: "قيمة الاشتراك غير محدّدة لهذه الجمعية." };
 
   const since = new Date(Date.now() - 90_000).toISOString();
@@ -420,6 +453,8 @@ async function payOwner(db: DB, profile: any, ownerId: string): Promise<{ ok: bo
 
   const { data, error } = await db.rpc("watheq_record_owner_payment", {
     p_owner: ownerId, p_amount: fee, p_method: "other", p_note: BOT_NOTE, p_actor: profile.id,
+    /* M4: معرّف الضغطة من تليجرام ⇒ إعادة تسليم الاستدعاء نفسه لا تسجّل دفعة ثانية (القاعدة تُرجع الأولى) */
+    ...(requestKey ? { p_request: uuidFromKey(`tg:${requestKey}:${ownerId}`) } : {}),
   });
   if (error) {
     const m = String(error.message || "");
@@ -427,17 +462,19 @@ async function payOwner(db: DB, profile: any, ownerId: string): Promise<{ ok: bo
       ? "تعذّر الحفظ: دالة سداد الجمعيات تحتاج تحديث قاعدة البيانات (schema-v59)."
       : "تعذّر الحفظ: " + m };
   }
-  const r = (data || {}) as { months?: number; fund_balance?: number };
+  const r = (data || {}) as { months?: number; fund_balance?: number; duplicate?: boolean; receipt_no?: string };
+  if (r.duplicate) return { ok: true, msg: `هذه الدفعة مسجّلة سابقًا${r.receipt_no ? ` (سند ${r.receipt_no})` : ""} — لم تُسجَّل مرة ثانية.` };
   const months = Number(r.months) || 0;
-  return { ok: true, msg: `سُجّل اشتراك (${sar(fee)} ريال) — ${months > 0 ? `سُدّد ${arPlural(months, "شهر واحد", "شهران", "أشهر", "شهرًا")}` : "سداد جزئي"}${r.fund_balance != null ? ` · رصيد الصندوق ${sar(Number(r.fund_balance))} ريال` : ""}.` };
+  const covered = assoc.fee_period === "annual" ? arPlural(months, "سنة واحدة", "سنتان", "سنوات", "سنة") : arPlural(months, "شهر واحد", "شهران", "أشهر", "شهرًا");
+  return { ok: true, msg: `سُجّل اشتراك (${sar(fee)} ريال) — ${months > 0 ? `سُدّد ${covered}` : "سداد جزئي"}${r.fund_balance != null ? ` · رصيد الصندوق ${sar(Number(r.fund_balance))} ريال` : ""}.` };
 }
 
 /** موجّه واحد: يختار المسار الصحيح تلقائيًّا (كان يفشل للجمعيات) */
-async function recordPayment(db: DB, profile: any, id: string, mode: "one" | "all" = "one"): Promise<{ ok: boolean; msg: string }> {
+async function recordPayment(db: DB, profile: any, id: string, mode: "one" | "all" = "one", requestKey?: string | null): Promise<{ ok: boolean; msg: string }> {
   const track = await detectTrack(db, profile);
-  return track === "properties" ? payTenant(db, profile, id, mode) : payOwner(db, profile, id);
+  return track === "properties" ? payTenant(db, profile, id, mode) : payOwner(db, profile, id, requestKey);
 }
-export const markPaid = (db: DB, profile: any, id: string, mode: "one" | "all" = "one") => recordPayment(db, profile, id, mode);
+export const markPaid = (db: DB, profile: any, id: string, mode: "one" | "all" = "one", requestKey?: string | null) => recordPayment(db, profile, id, mode, requestKey);
 export const payTenantOldest = (db: DB, profile: any, tenantId: string, mode: "one" | "all" = "one") => recordPayment(db, profile, tenantId, mode);
 
 /** تجديد العقد بنفس منطق اللوحة (renewContract في contracts.ts) + توثيق في السجل */
@@ -567,9 +604,10 @@ export async function buildReminder(db: DB, profile: any, contractId: string): P
       const { data: assoc } = await db.from("associations")
         .select("*").eq("id", o.association_id).maybeSingle();   /* * : يشمل حقول البنك (v60) إن وُجدت */
       if (!assoc || String(assoc.user_id) !== String(profile.id)) return { ok: false, text: "غير مصرّح." };
-      const fee = Number(assoc.fee) || 0;
+      const fee = ownerFeeOf(o, assoc);
       const partial = Number(o.partial_amount) || 0;
-      const due = Math.max(0, (Number(o.months_late) || 0) * fee - partial);
+      const due = Math.max(0, Math.round(((Number(o.months_late) || 0) * fee - partial) * 100) / 100);
+      const annual = assoc.fee_period === "annual";
       name = o.name || "المالك"; phone = o.phone || "";
       unit = o.unit ? `الوحدة (${o.unit})` : "وحدتكم";
       who = `إدارة ${assoc.name || "الجمعية"}`;
@@ -585,8 +623,8 @@ export async function buildReminder(db: DB, profile: any, contractId: string): P
               : "ويُسدَّد المبلغ في الحساب البنكي للجمعية.",
           ].filter(Boolean)
         : (Number(o.prepaid_months) || 0) > 0 || partial > 0
-          ? [`نشكركم على السداد — اشتراك الصيانة عن ${unit} مسدَّد${(Number(o.prepaid_months) || 0) > 0 ? ` مقدَّمًا لـ ${o.prepaid_months} شهر` : ""}، ولا مستحقات عليكم حاليًّا.`]
-          : [`تذكير ودّي بأن اشتراك الصيانة عن ${unit}${fee ? ` وقدره ${sar(fee)} ريال` : ""} يُستحق مع بداية الشهر.`];
+          ? [`نشكركم على السداد — اشتراك الصيانة عن ${unit} مسدَّد${(Number(o.prepaid_months) || 0) > 0 ? ` مقدَّمًا لـ ${annual ? arPlural(Number(o.prepaid_months), "سنة واحدة", "سنتين", "سنوات", "سنة") : arPlural(Number(o.prepaid_months), "شهر واحد", "شهرين", "أشهر", "شهرًا")}` : ""}، ولا مستحقات عليكم حاليًّا.`]
+          : [`تذكير ودّي بأن اشتراك الصيانة عن ${unit}${fee ? ` وقدره ${sar(fee)} ريال ${annual ? "سنويًّا" : "شهريًّا"}` : ""} يُستحق مع بداية ${annual ? "السنة المالية للجمعية" : "الشهر"}.`];
     }
 
     if (!phone) return { ok: false, text: `لا يوجد رقم جوال مسجّل لـ ${esc(name)}.` };

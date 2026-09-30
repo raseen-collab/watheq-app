@@ -24,6 +24,15 @@
 -- ═══════════════════════════════════════════════════════════════════
 begin;
 
+-- حارس إعادة التشغيل (أُضيف 30 سبتمبر 2026): إعادة هذا الملف بعد v62/v63 كانت ستُرجع
+-- دوال المال والحراس إلى نسختها الأقدم. التشغيل الأول (قبلها) لا يتأثر.
+do $$ begin
+  if to_regprocedure('public.watheq_assoc_set_fee_plan(uuid, numeric, text, text, numeric, integer)') is not null
+     or to_regprocedure('public.watheq_record_assoc_expense(uuid, numeric, text, text, date, text, text, boolean, uuid)') is not null then
+    raise exception 'نسخة أحدث مطبَّقة — لا تُعِد تشغيل هذا الملف';
+  end if;
+end $$;
+
 do $$ begin
   if to_regprocedure('public.watheq_today()') is null
      or to_regprocedure('public.watheq_hoa_accrue_locked(public.associations)') is null then

@@ -58,8 +58,9 @@ export default function ActivityLog({ properties, onClose, db }: { properties: a
       /* الدفعات والمصروفات معًا: الاثنان يؤثران في صافي المالك، ولا يفيد
          أن يرى المكتب أحدهما بلا الآخر عند مراجعة اختلاف في الأرقام. */
       const [pay, exp, adj] = await Promise.all([
+        /* L3: سجل الإيجارات — دفعات الجمعيات (association_id) لها سجلها في لوحة الجمعيات */
         supabase.from("payments")
-          .select("*")
+          .select("*").is("association_id", null)
           .order("created_at", { ascending: false, nullsFirst: false }).limit(300),
         supabase.from("expenses")
           .select("id, created_at, spent_on, amount, category, note, property_id, unit, created_by")

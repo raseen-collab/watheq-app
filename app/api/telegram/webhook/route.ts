@@ -9,6 +9,7 @@ import {
 import { noStoreFetch } from "@/lib/no-store-fetch";
 
 export const dynamic = "force-dynamic";
+export const fetchCache = "force-no-store";
 
 /** تهريب HTML — اسم مستأجر فيه < أو & كان يُسقط رسالة تليجرام كاملة */
 const esc = (v: any) => String(v ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -54,6 +55,12 @@ const backBtn = (scope: string): TgKeyboard[number] => [{ text: "⬅️ رجوع
 
 /** آخر نقرة لكل (محادثة + زر) — لمنع تكرار الفعل عند النقر المزدوج */
 const RECENT_TAPS = new Map<string, number>();
+
+/** الحساب المزدوج (عقارات + جمعيات): اختيار المسار في البوت. في الذاكرة — وإلا فآخر لوحة فُتحت (last_dashboard) */
+const TRACK_PREF = new Map<string, "associations" | "properties">();
+const withTrack = (p: any) => (p && TRACK_PREF.has(String(p.id)) ? { ...p, _track: TRACK_PREF.get(String(p.id)) } : p);
+const trackButtons = (p: any): TgKeyboard => String(p?.account_type || "") === "both"
+  ? [[{ text: "🏢 تقارير العقارات", callback_data: "track:p" }, { text: "🏗️ تقارير الجمعيات", callback_data: "track:a" }]] : [];
 
 /** ربط حساب بالرمز */
 async function linkAccount(db: DB, chatId: number, codeIn: string, username: string | null) {
@@ -137,7 +144,7 @@ async function handleMessage(db: DB, msg: any) {
     return /^[A-Za-z0-9]{6,12}$/.test(clean) ? clean : null;
   };
 
-  const p = await findProfileByChat(db, chatId);
+  const p = withTrack(await findProfileByChat(db, chatId));
   if (!p) {
     const code = codeOf(text);
     if (code) return linkAccount(db, chatId, code, username);
@@ -186,7 +193,7 @@ async function handleMessage(db: DB, msg: any) {
       return tgSend(chatId, r, statusButtons());
     }
     case "help": return tgSend(chatId, helpText(), navButtons());
-    case "menu": return tgSend(chatId, "اختر من القائمة:", reportButtons("late"));
+    case "menu": return tgSend(chatId, "اختر من القائمة:", [...reportButtons("late"), ...trackButtons(p)]);
     case "team": case "فريق": return teamInbox(db, chatId, p);
     default: {
       /* أي نص غير أمر = بحث عن مستأجر. أكثر سؤال خارج المكتب: «فلان دفع؟» —
@@ -218,10 +225,11 @@ async function confirmPay(db: DB, chatId: number, messageId: number, p: any, sco
      يعرضان كامل المتأخر بينما التسجيل شهر واحد. للجمعيات زرّ واحد بالاشتراك الفعلي. */
   if (row.kind === "owner") {
     const fee = Number(row.fee) || 0;
-    if (fee <= 0) return tgEdit(chatId, messageId, "قيمة الاشتراك الشهري غير محدّدة لهذه الجمعية — اضبطها من اللوحة.", [backBtn(scope)]);
+    const pw = row.period === "سنة" ? "سنة" : "شهر";
+    if (fee <= 0) return tgEdit(chatId, messageId, "قيمة الاشتراك غير محدّدة لهذه الجمعية — اضبطها من اللوحة.", [backBtn(scope)]);
     return tgEdit(chatId, messageId,
-      `تأكيد تسجيل اشتراك:\n\n<b>${esc(row.unit)}</b> — ${esc(row.tenant)}\nالمتأخر: <b>${sar(row.amount)}</b> ريال\n\nيُسجَّل اشتراك شهر واحد ويُضاف لرصيد الصندوق.`,
-      [[{ text: `✅ اشتراك شهر (${sar(fee)})`, callback_data: `payok:${scope}:${id}:one` }], backBtn(scope)]);
+      `تأكيد تسجيل اشتراك:\n\n<b>${esc(row.unit)}</b> — ${esc(row.tenant)}\nالمتأخر: <b>${sar(row.amount)}</b> ريال\n\nيُسجَّل اشتراك ${pw} واحد${pw === "سنة" ? "ة" : ""} (${sar(fee)} ريال) ويُضاف لرصيد الصندوق.`,
+      [[{ text: `✅ اشتراك ${pw} (${sar(fee)})`, callback_data: `payok:${scope}:${id}:one` }], backBtn(scope)]);
   }
   /* كان يُعرض «المبلغ: كامل المتأخر» (7,500) ثم يُسجَّل قسط واحد (2,500) — فيظن صاحب
      المكتب أنه سوّى المتأخرات. الآن خياران صريحان بمبلغيهما. */
@@ -238,8 +246,8 @@ async function confirmPay(db: DB, chatId: number, messageId: number, p: any, sco
 }
 
 /** تنفيذ التسجيل ثم تحديث التقرير */
-async function doPay(db: DB, chatId: number, messageId: number, p: any, scope: string, id: string, mode: string) {
-  const res = await markPaid(db, p, id, mode === "all" ? "all" : "one");
+async function doPay(db: DB, chatId: number, messageId: number, p: any, scope: string, id: string, mode: string, cqId?: string) {
+  const res = await markPaid(db, p, id, mode === "all" ? "all" : "one", cqId || null);
   const rep = await buildReport(db, p, scope);
   const banner = res.ok ? `✅ ${esc(res.msg)}` : `⚠️ ${esc(res.msg)}`;
   return tgEdit(chatId, messageId, `${banner}\n\n${rep}`, reportButtons(scope));
@@ -276,7 +284,7 @@ async function handleCallback(db: DB, cq: any) {
   await tgAnswer(cq.id);
   if (!chatId) return;
 
-  const p = await findProfileByChat(db, chatId);
+  const p = withTrack(await findProfileByChat(db, chatId));
   if (!p) return tgEdit(chatId, messageId, "حسابك غير مربوط. افتح «الإعدادات» في المنصة.");
   if ((p as any)._isStaff) return tgEdit(chatId, messageId, "تنبيهات وثيق لصاحب المكتب وحده — استعمل اللوحة من المتصفح.");
   if (subState(p as any).kind === "expired")
@@ -300,7 +308,7 @@ async function handleCallback(db: DB, cq: any) {
   switch (action) {
     case "cmd": {
       /* 30 سبتمبر 2026: زرّ «⬅︎ القائمة» (cmd:menu) كان يسقط إلى buildReport فيفتح تقرير اليوم */
-      if (a1 === "menu") return tgEdit(chatId, messageId, "اختر من القائمة:", reportButtons("late"));
+      if (a1 === "menu") return tgEdit(chatId, messageId, "اختر من القائمة:", [...reportButtons("late"), ...trackButtons(p)]);
       const rep = await buildReport(db, p, a1);
       return tgEdit(chatId, messageId, rep, reportButtons(a1));
     }
@@ -311,7 +319,13 @@ async function handleCallback(db: DB, cq: any) {
     }
     case "paylist": return showPayList(db, chatId, messageId, p, a1);
     case "pay": return confirmPay(db, chatId, messageId, p, a1, a2);
-    case "payok": return doPay(db, chatId, messageId, p, a1, a2, a3);
+    case "payok": return doPay(db, chatId, messageId, p, a1, a2, a3, String(cq.id || ""));
+    /* الحساب المزدوج: التبديل بين تقارير العقارات والجمعيات */
+    case "track": {
+      if (a1 === "a" || a1 === "p") TRACK_PREF.set(String(p.id), a1 === "a" ? "associations" : "properties");
+      const rep = await buildReport(db, withTrack(p), "today");
+      return tgEdit(chatId, messageId, rep, [...reportButtons("today"), ...trackButtons(p)]);
+    }
     case "remindlist": return showRemindList(db, chatId, messageId, p, a1);
     case "remind": return doRemind(db, chatId, messageId, p, a1, a2);
     // آلة حالات العقد

@@ -7,11 +7,17 @@
  * الاستجابة، وسياسة CSP تمنع غيره.
  */
 import { sanitizeHoaHtml } from "./hoaSanitize";
+import { periodsAr, PERIOD_WORDS, expenseCatAr, amountInWordsAr, type BuildingData, type FeePeriod } from "./hoaMoney";
+import { waNumber } from "./utils";
 
 // ─── الأنواع ────────────────────────────────────────────────────
 export type PortalOwner = {
   name: string; unit: string | null; months_late: number; partial_amount: number;
   prepaid_months: number; last_paid: string | null;
+  /** v63: رسم هذا المالك للفترة وحصته (إن وُزّعت الرسوم بالحصص) */
+  fee?: number | null; share_pct?: number | null;
+  /** v64: false = المدير لم يؤكد الرصيد الافتتاحي بعد */
+  opening_set?: boolean | null;
 };
 export type PortalPayment = {
   id: string; paid_on: string; amount: number; method: string | null; reference: string | null; periods_covered: number | null;
@@ -21,12 +27,18 @@ export type PortalDocItem = {
   closes_at: string | null; decision: "approve" | "reject" | null; decided_at: string | null; seen_at: string | null;
 };
 export type PortalData = {
-  association: { name: string; fee: number; bank_name?: string | null; bank_account_name?: string | null; iban?: string | null };
-  office: { org_name: string | null } | null;
+  association: { name: string; fee: number; fee_period?: string | null; fee_basis?: string | null;
+    mullak_reg_no?: string | null; unified_no?: string | null;
+    bank_name?: string | null; bank_account_name?: string | null; iban?: string | null };
+  office: { org_name: string | null; billing_name?: string | null; billing_phone?: string | null } | null;
   owner: PortalOwner;
   today: string;
   payments: PortalPayment[];
   documents: PortalDocItem[];
+  /** v62: أرقام العمارة المجمَّعة (بلا أسماء) */
+  building?: BuildingData | null;
+  /** v64: دفعات عُكست — تُفتح سنداتها برابط مباشر بختم «سند معكوس» ولا تظهر في القائمة */
+  reversed_payments?: (PortalPayment & { reversed_on?: string | null })[];
 };
 export type PortalDocData = {
   status: "ok";
@@ -97,13 +109,8 @@ const KIND_AR: Record<string, string> = { minutes: "محضر", notice: "إشعا
 export const kindAr = (k?: string | null) => KIND_AR[String(k || "")] || "مستند";
 export const receiptNo = (id: string) => String(id || "").replace(/-/g, "").slice(0, 8).toUpperCase();
 
-function monthsAr(n: number): string {
-  const x = Math.abs(Math.round(n));
-  if (x === 1) return "شهر واحد";
-  if (x === 2) return "شهران";
-  if (x >= 3 && x <= 10) return `${x} أشهر`;
-  return `${x} شهرًا`;
-}
+/** فترة الاشتراك من بيانات البوابة (v63) — الافتراضي شهري كما قبلها */
+const periodOfPortal = (a?: { fee_period?: string | null } | null): FeePeriod => (a?.fee_period === "annual" ? "annual" : "monthly");
 
 /** حالة المالك من نموذج v60: الرصيد = مقدَّم×الرسم + الجزئي − متأخر×الرسم */
 export function ownerStatus(o: PortalOwner, fee: number) {
@@ -170,7 +177,7 @@ label.f{display:block;font-size:13px;font-weight:700;margin:12px 0 5px}
 input.fld,textarea.fld{width:100%;border:1px solid #D9D1BE;border-radius:10px;padding:11px 12px;font:inherit;font-size:16px;background:#FBF8F1;color:#0B211F}
 .ack{display:flex;gap:10px;align-items:flex-start;margin:14px 0;font-size:14px}
 .ack input{width:20px;height:20px;margin-top:3px;flex:none}
-.two{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.two{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.two .btn{white-space:normal}
 .note{font-size:12px;color:#5C6B67;background:#F6F2E8;border-radius:10px;padding:10px 12px;margin-top:12px}
 @media print{.noprint{display:none!important}body{background:#fff}.card{border-color:#ccc}}
 `;
@@ -183,16 +190,16 @@ function frame(title: string, head: string, body: string, nonce: string, script 
 ${head}<main class="wrap">${body}</main>${script ? `<script nonce="${esc(nonce)}">${script}</script>` : ""}</body></html>`;
 }
 
-const topBar = (org: string | null | undefined, assoc: string, who: string) => `
+const topBar = (org: string | null | undefined, assoc: string, who: string, label = "بوابة المالك") => `
 <header class="top"><div class="in">
-  <div class="org">${org ? esc(org) + " · " : ""}بوابة المالك</div>
+  <div class="org">${org ? esc(org) + " · " : ""}${esc(label)}</div>
   <h1>${esc(assoc)}</h1>
   <div class="who">${who}</div>
 </div></header>`;
 
 const FLASH: Record<string, [string, string]> = {
   approve: ["f-ok", "سُجّل اعتمادك للمستند. شكرًا لك."],
-  reject: ["f-ok", "سُجّل رفضك للمستند، وسيطّلع عليه مجلس الجمعية."],
+  reject: ["f-ok", "سُجّل رفضك وملاحظتك، وتطّلع عليها إدارة الجمعية."],
   dup: ["f-warn", "سُجّل قرارك سابقًا — لا يمكن تغييره."],
   closed: ["f-warn", "انتهت مدة الرد على هذا المستند."],
   cancelled: ["f-warn", "أُلغي هذا المستند من إدارة الجمعية."],
@@ -221,41 +228,57 @@ function docChip(d: { requires_signature: boolean; decision: string | null; seen
 
 // ─── الصفحة الرئيسية ────────────────────────────────────────────
 export function renderPortalPage(d: PortalData, opts: { nonce: string; base: string; flash?: string | null }): string {
-  const fee = Number(d.association.fee) || 0;
+  const fee = Number(d.owner.fee ?? d.association.fee) || 0;
+  const per = periodOfPortal(d.association);
+  const W = PERIOD_WORDS[per];
   const st = ownerStatus(d.owner, fee);
   const base = opts.base; // /r/o/<token>
+  const share = d.owner.share_pct != null && d.association.fee_basis === "share"
+    ? `<div class="row"><span>حصة وحدتك</span><b>${esc(Number(d.owner.share_pct).toLocaleString("en-US", { maximumFractionDigits: 4 }))}٪</b></div>` : "";
+  const feeRow = `<div class="row"><span>${W.label}${d.association.fee_basis === "share" ? " لوحدتك" : ""}</span><b>${money(fee)} ريال</b></div>${share}`;
 
-  const status = st.kind === "late" ? `
+  const asOf = `<div class="muted" style="margin-top:6px">الأرقام حسب سجل الجمعية حتى ${gDate(d.today)}</div>`;
+  const status = d.owner.opening_set === false ? `
+<section class="card"><h2>حالة اشتراكك</h2>
+  <div class="big" style="font-size:19px;color:#9A5B00">رصيدك قيد المراجعة لدى إدارة الجمعية</div>
+  <div class="muted">تُدخل الإدارة رصيدك الافتتاحي (ما قبل التسجيل في هذه الصفحة)، ثم تظهر هنا حالتك كاملة.</div>
+  ${feeRow}
+</section>` : st.kind === "late" ? `
 <section class="card st-late"><h2>حالة اشتراكك</h2>
   <div class="muted">المستحق عليك</div>
   <div><span class="big">${money(st.owed)}</span><span class="cur">ريال</span></div>
-  <div class="row"><span>أشهر غير مسدَّدة</span><b>${monthsAr(st.late)}</b></div>
-  ${st.partial > 0 ? `<div class="row"><span>مدفوع جزئيًّا من الشهر المستحق</span><b>${money(st.partial)} ريال</b></div>` : ""}
-  <div class="row"><span>الاشتراك الشهري</span><b>${money(fee)} ريال</b></div>
+  <div class="row"><span>${per === "annual" ? "سنوات غير مسدَّدة" : "أشهر غير مسدَّدة"}</span><b>${periodsAr(st.late, per)}</b></div>
+  ${st.partial > 0 ? `<div class="row"><span>مدفوع جزئيًّا من ${per === "annual" ? "السنة المستحقة" : "الشهر المستحق"}</span><b>${money(st.partial)} ريال</b></div>` : ""}
+  ${feeRow}
   <div class="row"><span>آخر سداد</span><b>${d.owner.last_paid ? gDate(d.owner.last_paid) : "—"}</b></div>
 </section>` : st.kind === "credit" ? `
 <section class="card st-credit"><h2>حالة اشتراكك</h2>
-  <div class="muted">لا مستحقات عليك — لديك رصيد مقدَّم</div>
+  <div class="muted">لا مستحقات عليك — رصيدك لدى الجمعية</div>
   <div><span class="big">${money(st.credit)}</span><span class="cur">ريال</span></div>
-  ${st.prepaid > 0 ? `<div class="row"><span>مسدَّد مقدَّمًا</span><b>${monthsAr(st.prepaid)}</b></div>` : ""}
-  ${st.partial > 0 ? `<div class="row"><span>رصيد جزئي للشهر القادم</span><b>${money(st.partial)} ريال</b></div>` : ""}
-  <div class="row"><span>الاشتراك الشهري</span><b>${money(fee)} ريال</b></div>
+  ${st.prepaid > 0 ? `<div class="row"><span>مسدَّد مقدَّمًا</span><b>${periodsAr(st.prepaid, per)}</b></div>` : ""}
+  ${st.partial > 0 ? `<div class="row"><span>رصيد جزئي ${per === "annual" ? "للسنة القادمة" : "للشهر القادم"}</span><b>${money(st.partial)} ريال</b></div>` : ""}
+  ${feeRow}
   <div class="row"><span>آخر سداد</span><b>${d.owner.last_paid ? gDate(d.owner.last_paid) : "—"}</b></div>
 </section>` : `
 <section class="card st-clear"><h2>حالة اشتراكك</h2>
   <div class="big" style="font-size:22px;color:#137A50">لا مستحقات عليك ✓</div>
-  <div class="row"><span>الاشتراك الشهري</span><b>${money(fee)} ريال</b></div>
+  ${feeRow}
   <div class="row"><span>آخر سداد</span><b>${d.owner.last_paid ? gDate(d.owner.last_paid) : "—"}</b></div>
 </section>`;
 
   const A = d.association;
   const iban = String(A.iban || "").replace(/\s+/g, "");
+  const wa = (() => { const n = waNumber(d.office?.billing_phone || ""); return /^9665\d{8}$/.test(n) ? n : ""; })();
   const bank = st.kind === "late" && iban ? `
 <section class="card"><h2>طريقة السداد</h2>
   <div class="muted">حوّل المبلغ إلى حساب الجمعية، ثم أرسل صورة الحوالة لإدارة الجمعية لتسجيلها وإصدار سندك.</div>
   ${A.bank_name ? `<div class="row"><span>البنك</span><b>${esc(A.bank_name)}</b></div>` : ""}
   ${A.bank_account_name ? `<div class="row"><span>اسم الحساب</span><b>${esc(A.bank_account_name)}</b></div>` : ""}
   <div class="row"><span>الآيبان</span><b dir="ltr" style="font-family:monospace;user-select:all">${esc(iban.replace(/(.{4})/g, "$1 ").trim())}</b></div>
+  <div class="two noprint" style="margin-top:10px">
+    <button class="btn b-ghost" type="button" id="cpiban" data-iban="${esc(iban)}">نسخ الآيبان</button>
+    ${wa ? `<a class="btn b-ok" href="https://wa.me/${esc(wa)}?text=${encodeURIComponent(`السلام عليكم، أرسلت حوالة اشتراك ${d.owner.unit ? `الوحدة (${d.owner.unit})` : "وحدتي"} في ${d.association.name} — مرفق صورة الإيصال. ${d.owner.name}`)}" target="_blank" rel="noopener noreferrer">أرسلت الحوالة؟ أرسل صورة الإيصال للإدارة</a>` : ""}
+  </div>
 </section>` : "";
 
   const pending = d.documents.filter((x) => x.requires_signature && !x.decision && !(x.closes_at && x.closes_at < d.today));
@@ -287,9 +310,13 @@ export function renderPortalPage(d: PortalData, opts: { nonce: string; base: str
 
   const foot = `<div class="foot">هذه الصفحة خاصة بك وحدك — لا تشارك رابطها.<br>أي ملاحظة على الأرقام؟ تواصل مع إدارة الجمعية.<br>عبر منصة وثيق</div>`;
 
+  const building = d.building ? buildingSection(d.building, { heading: "شفافية العمارة" }) : "";
+
   return frame(`${d.association.name} — بوابة المالك`,
     topBar(d.office?.org_name, d.association.name, whoLine(d.owner.name, d.owner.unit)),
-    flashBox(opts.flash) + pendingBox + status + bank + docs + pays + foot, opts.nonce);
+    flashBox(opts.flash) + pendingBox + status.replace(/<\/section>\s*$/, `${asOf}</section>`) + bank + docs + pays + building + foot, opts.nonce,
+    /* نسخ الآيبان — السكربت الوحيد في الصفحة ويحمل nonce الاستجابة */
+    `(function(){var b=document.getElementById('cpiban');if(!b)return;b.addEventListener('click',function(){var t=b.getAttribute('data-iban')||'';function done(){b.textContent='نُسخ ✓';setTimeout(function(){b.textContent='نسخ الآيبان';},2000);}if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(t).then(done,function(){});}else{var i=document.createElement('input');i.value=t;document.body.appendChild(i);i.select();try{document.execCommand('copy');done();}catch(e){}document.body.removeChild(i);}});})();`);
 }
 
 // ─── صفحة المستند ───────────────────────────────────────────────
@@ -347,28 +374,138 @@ ${action}${mine}
 }
 
 // ─── سند القبض ─────────────────────────────────────────────────
-export function renderReceiptPage(d: PortalData, p: PortalPayment, opts: { nonce: string; base: string }): string {
+/**
+ * السند (للمالك ولإدارة الجمعية): التاريخ بالتقويمين، المبلغ رقمًا وكتابةً (تفقيط)،
+ * المستلِم (المكتب/إدارة الجمعية)، ورقم تسجيل الجمعية إن وُجد.
+ * «الرصيد بعد هذه الدفعة» يُطبع فقط حين يُعرف من ردّ التسجيل نفسه (لا يُخمَّن لاحقًا).
+ * السند المعكوس يُفتح برابطه المباشر بختم واضح بدل أن يختفي.
+ */
+export function renderReceiptPage(d: PortalData, p: PortalPayment, opts: { nonce: string; base: string;
+  reversedOn?: string | null; balanceAfter?: { late: number; partial: number; prepaid: number; fee: number } | null }): string {
   const hij = hDate(p.paid_on);
-  const org = d.office?.org_name;
+  const org = d.office?.billing_name || d.office?.org_name;
+  const per = periodOfPortal(d.association);
+  const receiver = org ? `${esc(org)} — لصالح ${esc(d.association.name)}` : `إدارة ${esc(d.association.name)}`;
+  const reg = [d.association.mullak_reg_no ? `رقم التسجيل في «ملاك»: ${esc(d.association.mullak_reg_no)}` : "",
+    d.association.unified_no ? `الرقم الموحّد: ${esc(d.association.unified_no)}` : ""].filter(Boolean).join(" · ");
+  const reversed = opts.reversedOn !== undefined && opts.reversedOn !== null;
+  const ba = opts.balanceAfter;
+  const balTxt = ba ? (ba.late > 0 ? `متبقٍّ ${money(Math.max(0, ba.late * ba.fee - ba.partial))} ريال (${periodsAr(ba.late, per)})`
+    : ba.prepaid > 0 || ba.partial > 0 ? `لا مستحقات — رصيد لدى الجمعية ${money(ba.prepaid * ba.fee + ba.partial)} ريال` : "لا مستحقات") : "";
   const body = `
 ${opts.base ? `<p class="noprint" style="margin:0 0 4px"><a href="${opts.base}">→ العودة إلى صفحتك</a></p>` : ""}
-<section class="card" style="padding:20px">
+<section class="card" style="padding:20px;position:relative">
+  ${reversed ? `<div role="status" style="border:2px solid #A5322C;color:#A5322C;border-radius:10px;padding:8px 12px;margin-bottom:12px;font-weight:700;text-align:center">سند معكوس — أُلغيت هذه الدفعة${opts.reversedOn ? ` بتاريخ ${gDate(opts.reversedOn)}` : ""} ولا يُعتدّ بها</div>` : ""}
   <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;border-bottom:2px solid #0E3A37;padding-bottom:10px">
-    <div><div style="font-size:20px;font-weight:700;color:#0E3A37">سند قبض</div>
-      <div class="muted">${esc(d.association.name)}${org ? ` · ${esc(org)}` : ""}</div></div>
-    <div style="text-align:left"><div class="muted">رقم السند</div><b dir="ltr" style="font-family:monospace">${esc((p as any).receipt_no || receiptNo(p.id))}</b></div>
+    <div style="min-width:0"><div style="font-size:20px;font-weight:700;color:#0E3A37">سند قبض</div>
+      <div class="muted">${esc(d.association.name)}</div>${reg ? `<div class="muted" style="font-size:11.5px">${reg}</div>` : ""}</div>
+    <div style="text-align:left;flex:none"><div class="muted">رقم السند</div><b dir="ltr" style="font-family:monospace;white-space:nowrap">${esc((p as any).receipt_no || receiptNo(p.id))}</b></div>
   </div>
   <div class="row"><span>التاريخ</span><b>${gDate(p.paid_on)}${hij ? `<br><span class="muted">${esc(hij)}</span>` : ""}</b></div>
   <div class="row"><span>استلمنا من</span><b>${esc((p as any).payer_name || d.owner.name)}</b></div>
   <div class="row"><span>الوحدة</span><b>${esc((p as any).unit_label || d.owner.unit || "—")}</b></div>
   <div class="row"><span>المبلغ</span><b style="font-size:18px">${money(p.amount)} ريال سعودي</b></div>
+  <div class="row"><span>المبلغ كتابةً</span><b style="text-align:left;font-weight:600;overflow-wrap:anywhere">${esc(amountInWordsAr(p.amount))}</b></div>
   <div class="row"><span>طريقة الدفع</span><b>${methodAr(p.method)}</b></div>
   ${p.reference ? `<div class="row"><span>المرجع</span><b dir="ltr">${esc(p.reference)}</b></div>` : ""}
-  <div class="row"><span>البيان</span><b>اشتراك اتحاد الملاك${p.periods_covered && p.periods_covered > 0 ? ` — ${monthsAr(p.periods_covered)}` : ""}</b></div>
+  <div class="row"><span>البيان</span><b>اشتراك اتحاد الملاك${p.periods_covered && p.periods_covered > 0 ? ` — ${periodsAr(p.periods_covered, per)}` : ""}</b></div>
+  ${balTxt ? `<div class="row"><span>الرصيد بعد هذه الدفعة</span><b>${balTxt}</b></div>` : ""}
+  <div class="row"><span>المستلِم</span><b style="text-align:left;overflow-wrap:anywhere">${receiver}</b></div>
   <div class="note">سند إلكتروني مستخرج من سجل دفعات الجمعية. الأرقام كما سجّلتها إدارة الجمعية.</div>
 </section>
 <div class="noprint" style="margin-top:14px;display:flex;gap:10px"><button class="btn b-deep" id="pr" type="button">طباعة / حفظ PDF</button></div>`;
-  return frame(`سند قبض ${(p as any).receipt_no || receiptNo(p.id)}`, "", body, opts.nonce,
+  return frame(`${reversed ? "سند معكوس" : "سند قبض"} ${(p as any).receipt_no || receiptNo(p.id)}`, "", body, opts.nonce,
+    `document.getElementById('pr').addEventListener('click',function(){window.print();});`);
+}
+
+// ─── شفافية العمارة (أرقام مجمَّعة فقط) ───────────────────────────
+const BCSS = `.kpis{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.kpi{border:1px solid #E4DDCD;border-radius:12px;padding:10px 12px;background:#FBF8F1;min-width:0}
+.kpi b{display:block;font-size:18px;overflow-wrap:anywhere}.kpi span{font-size:12px;color:#5C6B67}
+.bar{height:8px;border-radius:99px;background:#EEE8DA;overflow:hidden;margin-top:6px}.bar i{display:block;height:100%;background:#137A50}
+.cat{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 10px;align-items:center;padding:7px 0;border-top:1px solid #F0EBDF;font-size:13.5px}
+.cat:first-of-type{border-top:0}.cat .bar{grid-column:1 / -1;margin-top:0;height:6px}.cat .bar i{background:#9A6314}
+.ex{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 10px;padding:9px 0;border-top:1px solid #F0EBDF;font-size:13.5px}
+.ex:first-of-type{border-top:0}.ex .d{overflow-wrap:anywhere}`;
+
+/** أرقام العمارة للمالك وللصفحة العامة — لا اسم مالك ولا وحدة ولا من تأخر */
+export function buildingSection(b: BuildingData, opts: { heading?: string } = {}): string {
+  const per = b.fee_period === "annual" ? "annual" : "monthly";
+  const monthName = gDate(b.month_start).replace(/^\d+\s/, "");
+  const yearLabel = b.year_start && b.year_start.slice(5) !== "01-01"
+    ? `السنة المالية (من ${gDate(b.year_start)})` : `عام ${esc(String(b.year_start || b.today).slice(0, 4))}`;
+  const cats = (b.by_category || []).filter((c) => Number(c.total) > 0);
+  const maxCat = Math.max(1, ...cats.map((c) => Number(c.total) || 0));
+  const pct = b.collection_pct == null ? null : Math.max(0, Math.min(100, Number(b.collection_pct)));
+  return `
+<style>${BCSS}</style>
+<section class="card"><h2>${esc(opts.heading || "صندوق العمارة")}</h2>
+  <div class="muted">أرقام مجمَّعة لكل العمارة — لا تُعرض أسماء الملاك ولا حالة أي وحدة.</div>
+  <div style="margin-top:10px"><div class="muted">رصيد الصندوق الآن</div>
+    <div><span class="big" style="${Number(b.fund_balance) < 0 ? "color:#A5322C" : ""}">${money(b.fund_balance)}</span><span class="cur">ريال</span></div></div>
+  <div class="kpis" style="margin-top:10px">
+    <div class="kpi"><span>المحصَّل في ${esc(monthName)}</span><b>${money(b.month_collected)}</b></div>
+    <div class="kpi"><span>المصروف في ${esc(monthName)}</span><b>${money(b.month_expenses)}</b></div>
+    <div class="kpi"><span>المحصَّل — ${yearLabel}</span><b>${money(b.year_collected)}</b></div>
+    <div class="kpi"><span>المصروف — ${yearLabel}</span><b>${money(b.year_expenses)}</b></div>
+  </div>
+  ${pct != null ? `<div class="row" style="margin-top:8px"><span>نسبة الوحدات المسدِّدة</span><b>${pct}٪ <span class="muted">(${Number(b.owners_paid) || 0} من ${Number(b.owners_total) || 0})</span></b></div>
+  <div class="bar" aria-hidden="true"><i style="width:${pct}%"></i></div>` : ""}
+  <div class="row"><span>عدد الوحدات</span><b>${Number(b.units) || Number(b.owners_total) || "—"}</b></div>
+  ${b.fee != null && Number(b.fee) > 0 ? `<div class="row"><span>${PERIOD_WORDS[per].label} للوحدة</span><b>${money(b.fee)} ريال</b></div>`
+    : b.fee_basis === "share" ? `<div class="row"><span>${PERIOD_WORDS[per].label}</span><b>حسب حصة كل وحدة</b></div>` : ""}
+</section>
+<section class="card"><h2>المصروفات حسب البند — ${yearLabel}</h2>
+  ${cats.length ? cats.map((c) => `<div class="cat"><span>${esc(expenseCatAr(c.category))}</span><b>${money(c.total)} ريال</b>
+    <div class="bar" aria-hidden="true"><i style="width:${Math.round(((Number(c.total) || 0) / maxCat) * 100)}%"></i></div></div>`).join("")
+    : `<div class="muted">لا مصروفات مسجَّلة في هذه الفترة.</div>`}
+</section>
+<section class="card"><h2>آخر المصروفات</h2>
+  ${(b.recent || []).length ? b.recent.map((x) => `<div class="ex"><div class="d"><b>${esc(x.description)}</b>
+    <div class="muted">${esc(expenseCatAr(x.category))} · ${gDate(x.spent_on)}</div></div><b>${money(x.amount)} ريال</b></div>`).join("")
+    : `<div class="muted">لا مصروفات بعد.</div>`}
+</section>`;
+}
+
+/** الصفحة العامة /b/<رمز> */
+export function renderBuildingPage(b: BuildingData, opts: { nonce: string }): string {
+  const body = buildingSection(b, { heading: "صندوق العمارة" }) + `
+<div class="foot">صفحة شفافية لملاك وسكان ${esc(b.name)} — تُحدَّث تلقائيًّا من سجل الجمعية.<br>بتاريخ ${gDate(b.today)}${hDate(b.today) ? ` (${esc(hDate(b.today))})` : ""} · عبر منصة وثيق</div>`;
+  return frame(`${b.name} — شفافية العمارة`, topBar(b.office?.org_name, b.name, "أرقام مجمَّعة بلا أسماء", "شفافية العمارة"), body, opts.nonce);
+}
+
+// ─── سند الصرف ──────────────────────────────────────────────────
+export type VoucherRow = {
+  voucher_no: string | null; spent_on: string; amount: number; category: string; description: string;
+  vendor?: string | null; reference?: string | null; overdraft?: boolean | null;
+};
+export function renderVoucherPage(v: { association: { name: string }; office?: { org_name: string | null } | null; expense: VoucherRow },
+  opts: { nonce: string }): string {
+  const e = v.expense;
+  const hij = hDate(e.spent_on);
+  const org = v.office?.org_name;
+  const body = `
+<section class="card" style="padding:20px">
+  <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;border-bottom:2px solid #0E3A37;padding-bottom:10px">
+    <div style="min-width:0"><div style="font-size:20px;font-weight:700;color:#0E3A37">سند صرف</div>
+      <div class="muted">${esc(v.association.name)}${org ? ` · ${esc(org)}` : ""}</div></div>
+    <div style="text-align:left"><div class="muted">رقم السند</div><b dir="ltr" style="font-family:monospace">${esc(e.voucher_no || "—")}</b></div>
+  </div>
+  <div class="row"><span>التاريخ</span><b>${gDate(e.spent_on)}${hij ? `<br><span class="muted">${esc(hij)}</span>` : ""}</b></div>
+  <div class="row"><span>صُرف لـ</span><b style="overflow-wrap:anywhere">${esc(e.vendor || "—")}</b></div>
+  <div class="row"><span>البند</span><b>${esc(expenseCatAr(e.category))}</b></div>
+  <div class="row"><span>البيان</span><b style="overflow-wrap:anywhere;text-align:left">${esc(e.description)}</b></div>
+  <div class="row"><span>المبلغ</span><b style="font-size:18px">${money(e.amount)} ريال سعودي</b></div>
+  ${e.reference ? `<div class="row"><span>المرجع / الفاتورة</span><b dir="ltr">${esc(e.reference)}</b></div>` : ""}
+  ${e.overdraft ? `<div class="note">سُجّل والصندوق لا يكفي — دفعه مدير العقار مقدّمًا ويُستردّ من الصندوق.</div>` : ""}
+  <div class="two" style="margin-top:22px;font-size:13px;color:#5C6B67">
+    <div>المستلم: ____________<br><br>التوقيع: ____________</div>
+    <div>مدير العقار: ____________<br><br>التوقيع: ____________</div>
+  </div>
+  <div class="note">سند صرف مستخرج من سجل مصروفات الجمعية. التصحيح يكون بعكس السند لا بتعديله.</div>
+</section>
+<div class="noprint" style="margin-top:14px;display:flex;gap:10px"><button class="btn b-deep" id="pr" type="button">طباعة / حفظ PDF</button></div>`;
+  return frame(`سند صرف ${e.voucher_no || ""}`, "", body, opts.nonce,
     `document.getElementById('pr').addEventListener('click',function(){window.print();});`);
 }
 

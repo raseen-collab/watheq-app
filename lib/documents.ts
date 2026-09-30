@@ -1378,15 +1378,141 @@ function showDocInline(html: string) {
 type OwnerRow = {
   id?: string; name: string; unit: string | null; phone: string | null;
   months_late: number; last_paid: string | null; partial_amount?: number | null; prepaid_months?: number | null;
+  /** v63: رسم خاص بالمالك (من حصته) وحصته ومساحته */
+  fee_override?: number | null; share_pct?: number | null; area_m2?: number | null;
 };
 type AssociationDoc = {
   name: string; units?: number; fee: number;
+  mullak_reg_no?: string | null; unified_no?: string | null;
+  quorum_first_pct?: number | null; quorum_second_pct?: number | null;
   cert_expiry?: string | null; fund_balance?: number | null;
+  /** v63: فترة الرسم وأساسه — الافتراضي شهري ومتساوٍ كما قبلها */
+  fee_period?: string | null; fee_basis?: string | null; total_budget?: number | null;
   owners?: OwnerRow[];
 };
 
+/** رسم المالك الفعلي للفترة: الخاص (من حصته) وإلا رسم الجمعية */
+const ownerFee = (o: OwnerRow, fee: number) => (Number(o.fee_override) > 0 ? Number(o.fee_override) : fee);
 const owed = (o: OwnerRow, fee: number) =>
-  Math.max(0, (Number(o.months_late) || 0) * fee - (Number(o.partial_amount) || 0));
+  Math.max(0, Math.round(((Number(o.months_late) || 0) * ownerFee(o, fee) - (Number(o.partial_amount) || 0)) * 100) / 100);
+/** (30 سبتمبر 2026) الرسم يُطبع بفترته: كان الرسم الشهري يظهر في محضر الاجتماع
+ *  السنوي تحت «اشتراك الصيانة لعام …» فيُقرأ رسمًا سنويًّا. */
+const isAnnual = (a?: { fee_period?: string | null } | null) => a?.fee_period === "annual";
+const perWord = (a?: { fee_period?: string | null } | null) => (isAnnual(a) ? "سنويًّا" : "شهريًّا");
+const perAdj = (a?: { fee_period?: string | null } | null) => (isAnnual(a) ? "السنوي" : "الشهري");
+const periodsWord = (n: number, a?: { fee_period?: string | null } | null) => {
+  const x = Math.abs(Math.round(Number(n) || 0)), r = x % 100;
+  if (isAnnual(a)) return x === 1 ? "سنة واحدة" : x === 2 ? "سنتان" : r >= 3 && r <= 10 ? `${x} سنوات` : `${x} سنة`;
+  return x === 1 ? "شهر واحد" : x === 2 ? "شهران" : r >= 3 && r <= 10 ? `${x} أشهر` : r >= 11 ? `${x} شهرًا` : `${x} شهر`;
+};
+
+// ─── نصاب الجمعية العامة ─────────────────────────────────────────
+/** حضور الاجتماع: مالك/وحدة وحصته (إن وُزّعت) وهل حضر (أصالةً أو وكالة) */
+export type HoaAttendance = { name: string; unit?: string | null; share_pct?: number | null; present: boolean };
+export type HoaQuorum = {
+  basis: "shares" | "units" | "none"; present: number; total: number; pct: number | null;
+  met: boolean | null; round: 1 | 2; threshold: number;
+};
+/**
+ * النصاب (النظام الأساسي الاسترشادي لجمعية الملاك — المرجع المعتمد في وثيق):
+ *  • الاجتماع الأول: يصح بحضور ملاك يملكون 75٪ على الأقل من الحصص (نسب الملكية/المساحة).
+ *  • الاجتماع الثاني (بعد عدم اكتمال الأول): يصح بأي عدد من الحاضرين.
+ * إن أُدخلت الحصص لكل الملاك يُحتسب بها؛ وإلا بعدد الوحدات (تقريب يُذكر صراحةً في المحضر).
+ * بلا بيانات حضور ⇒ met = null (لم يُعقد بعد) فلا يُطبع أي قرار كأنه أُقرّ.
+ */
+export function hoaQuorum(d: { attendance?: HoaAttendance[] | null; attendees?: number | string | null; total_units?: number | string | null; round?: number | string | null;
+  /** حسب النظام الأساسي للجمعية: نصاب الاجتماع الأول (افتراضي 75٪) والثاني (null = أي عدد) */
+  first_pct?: number | string | null; second_pct?: number | string | null }): HoaQuorum {
+  const round: 1 | 2 = Number(d.round) === 2 ? 2 : 1;
+  const firstPct = Number(d.first_pct) > 0 && Number(d.first_pct) <= 100 ? Number(d.first_pct) : 75;
+  const secondPct = Number(d.second_pct) > 0 && Number(d.second_pct) <= 100 ? Number(d.second_pct) : null;
+  const threshold = round === 2 ? (secondPct ?? 0) : firstPct;
+  const list = Array.isArray(d.attendance) ? d.attendance : [];
+  const mk = (basis: HoaQuorum["basis"], present: number, total: number): HoaQuorum => {
+    const pct = total > 0 ? Math.round((present / total) * 10000) / 100 : null;
+    const met = basis === "none" ? null : round === 2 && secondPct === null ? present > 0 : pct !== null && pct >= threshold;
+    return { basis, present, total, pct, met, round, threshold };
+  };
+  /* قائمة حضور بلا أي حاضر = لم يُسجَّل الحضور بعد (لا «غير متحقق») */
+  if (list.length && !list.some((a) => a.present)) return mk("none", 0, list.length);
+  if (list.length) {
+    const u = (x: any) => Math.round((Number(x) || 0) * 10000);
+    const allShares = list.every((a) => Number(a.share_pct) > 0);
+    const sum = list.reduce((s, a) => s + u(a.share_pct), 0);
+    if (allShares && Math.abs(sum - 1000000) <= 100) {
+      return mk("shares", list.filter((a) => a.present).reduce((s, a) => s + u(a.share_pct), 0) / 10000, sum / 10000);
+    }
+    const anyPresent = list.some((a) => a.present);
+    if (anyPresent || d.attendees === "" || d.attendees == null) {
+      return anyPresent ? mk("units", list.filter((a) => a.present).length, list.length) : mk("none", 0, list.length);
+    }
+  }
+  if (d.attendees !== "" && d.attendees != null && Number(d.total_units) > 0) {
+    return mk("units", Math.max(0, Number(d.attendees) || 0), Number(d.total_units));
+  }
+  return mk("none", 0, Number(d.total_units) || list.length || 0);
+}
+
+/** سطر النصاب في المحضر */
+function quorumBlock(q: HoaQuorum): string {
+  const pctTxt = q.pct === null ? "—" : `${q.pct.toLocaleString("en-US", { maximumFractionDigits: 2 })}٪`;
+  const what = q.basis === "shares" ? `الحاضرون يملكون ${pctTxt} من الحصص`
+    : q.basis === "units" ? `حضر ${q.present} من ${q.total} وحدة (${pctTxt}) — احتُسب بعدد الوحدات لعدم إدخال حصص الملكية`
+    : "لم تُدخل بيانات الحضور بعد";
+  const need = q.round === 2
+    ? (q.threshold > 0 ? `المطلوب في الاجتماع الثاني ${q.threshold}٪ حسب النظام الأساسي للجمعية` : "الاجتماع الثاني يصح بأي عدد من الحاضرين حسب النظام الأساسي للجمعية")
+    : `المطلوب في الاجتماع الأول ${q.threshold}٪ من الحصص حسب النظام الأساسي للجمعية`;
+  const law = "ويُشترط نظامًا لإقرار القرارات موافقة ملاك ثلاثة أرباع المساحة الإجمالية للوحدات (المادة 18/6).";
+  if (q.met === true) return `<div class="note" style="border-inline-start-color:#1E9E6A;background:#E6F4EC;color:#137a50"><b>النصاب متحقق ✓</b> — ${what}. (${need}.) ${law}</div>`;
+  if (q.met === false) return `<div class="note" style="border-inline-start-color:#D0453F;background:#FBE9E7;color:#a5322c"><b>النصاب غير متحقق ✗</b> — ${what}، و${need}.
+    لذلك لم يُتّخذ أي قرار في هذا الاجتماع، ويُدعى إلى اجتماع ثانٍ.</div>`;
+  return `<div class="note"><b>النصاب: يُحتسب عند الانعقاد</b> — ${need}. تُدوَّن القرارات بعد التحقق من النصاب والتصويت. ${law}</div>`;
+}
+/** نص القرار: يُطبع «أُقرّ» فقط إن تحقق النصاب */
+/* لا يُثبت المحضر وقائع لم تقع: القرار يُطبع «مُقرًّا» فقط إن تحقق النصاب وأكّد المدير
+   أن البند أُقرّ فعلًا (approved[n] من «عُقد الاجتماع وأُقرّ البند»). وإلا فراغ يُدوَّن بعد التصويت. */
+const decided = (q: HoaQuorum, text: string, ticked?: boolean) =>
+  q.met === true && ticked ? text : q.met === false ? `<span style="color:#a5322c">لم يُتّخذ قرار — النصاب غير مكتمل</span>` : "________________________________ <span style=\"color:#5C6B67;font-size:.75rem\">(يُدوَّن بعد التصويت)</span>";
+
+/** جدول الحضور والتوقيعات — بالحصص إن وُجدت */
+function attendanceTable(a: AssociationDoc, list: HoaAttendance[] | null | undefined, esc: (s: any) => string): string {
+  const rows = Array.isArray(list) && list.length ? list : null;
+  const shares = !!rows && rows.some((r) => Number(r.share_pct) > 0);
+  if (rows) {
+    return `<table>
+  <thead><tr><th>#</th><th>اسم المالك</th><th>الوحدة</th>${shares ? "<th>الحصة</th>" : ""}<th>الحضور</th><th>التوقيع</th></tr></thead>
+  <tbody>${rows.map((o, i) => `<tr><td>${i + 1}</td><td>${esc(o.name)}</td><td>${esc(o.unit || "—")}</td>${shares ? `<td>${Number(o.share_pct) > 0 ? `${Number(o.share_pct).toLocaleString("en-US", { maximumFractionDigits: 4 })}٪` : "—"}</td>` : ""}<td>${o.present ? "حاضر" : "غائب"}</td><td>${o.present ? "________________" : ""}</td></tr>`).join("")}</tbody>
+</table>`;
+  }
+  return `<table>
+  <thead><tr><th>#</th><th>اسم المالك</th><th>الوحدة</th><th>التوقيع</th></tr></thead>
+  <tbody>
+    ${(a.owners && a.owners.length
+      ? a.owners.map((o, i) => `<tr><td>${i + 1}</td><td>${esc(o.name)}</td><td>${esc(o.unit || "—")}</td><td>________________</td></tr>`).join("")
+      : Array.from({ length: 8 }, (_, i) => `<tr><td>${i + 1}</td><td>________________</td><td>____</td><td>________________</td></tr>`).join(""))}
+  </tbody>
+</table>`;
+}
+
+/**
+ * المُصدِر في مستندات الجمعية = المكتب (اسم الفوترة ثم اسم المنشأة) وإلا «إدارة الجمعية».
+ * لا تظهر بيانات تواصل وثيق أبدًا كمُصدِر لمستند جمعية (التذييل الأصلي يعود إليها حين لا اسم).
+ */
+function hoaIssuer(issuer: Issuer, a: { name: string }): Issuer {
+  const name = String(issuer?.billing_name || issuer?.org_name || "").trim() || `إدارة ${a.name}`;
+  return { ...(issuer || {}), billing_name: name };
+}
+/** سطر رقم التسجيل في «ملاك» والرقم الموحّد — النظام يشترط اسم الجمعية ورقم تسجيلها في مراسلاتها */
+const regLine = (a: any) => {
+  const parts = [a?.mullak_reg_no ? `رقم التسجيل في «ملاك»: ${a.mullak_reg_no}` : "", a?.unified_no ? `الرقم الموحّد: ${a.unified_no}` : ""].filter(Boolean);
+  return parts.length ? `<div class="sub" style="margin-top:-12px">${parts.join(" · ")}</div>` : "";
+};
+
+/** بند الرسوم في المحضر: بفترته، أو حسب الحصص */
+const feeClause = (fee: number, a: AssociationDoc, basis?: string | null, dueDay?: string | null) =>
+  (basis || a.fee_basis) === "share"
+    ? `توزيع رسوم الاشتراك على الوحدات حسب حصة كل وحدة من الموازنة المعتمدة، وتُستحق ${perWord(a)}${dueDay ? `، وتُسدَّد ${dueDay}` : ""}.`
+    : fee ? `تحديد الاشتراك بمبلغ <b>${sar(fee)}</b> ريال لكل وحدة ${perWord(a)}${dueDay ? `، يُسدَّد ${dueDay}` : ""}.` : "";
 
 /** كشف حساب مالك واحد في جمعية */
 export function ownerStatementHTML(
@@ -1397,22 +1523,27 @@ export function ownerStatementHTML(
   a = scrub(a);
   issuer = scrub(issuer);
   payments = scrub(payments);
-  const fee = Number(a.fee) || 0;
-  const who = issuer.billing_name || `إدارة ${a.name}`;
+  const fee = ownerFee(o, Number(a.fee) || 0);
+  issuer = hoaIssuer(issuer, a);
+  const who = issuer.billing_name as string;
   const due = owed(o, fee);
   const partial = Number(o.partial_amount) || 0;
-  const received = payments.reduce((x, r) => x + (Number(r.amount) || 0), 0);
+  const received = Math.round(payments.reduce((x, r) => x + (Number(r.amount) || 0), 0) * 100) / 100;
+  /* الرصيد لكم (مقدَّم + جزئي حين لا متأخرات) — لموازنة «الاستحقاقات = المستلم + المتبقي − الرصيد لكم» */
+  const credit = (Number(o.months_late) || 0) > 0 ? 0 : Math.round(((Number(o.prepaid_months) || 0) * fee + partial) * 100) / 100;
 
   const body = `
 ${header("كشف حساب مالك", o.name, issuer)}
 <h1>كشف حساب الوحدة رقم (${o.unit || "—"})</h1>
 <div class="sub">${a.name} · جمعية ملاك${a.units ? ` · ${countAr(a.units, "وحدة")}` : ""}</div>
+${regLine(a)}
 
 <div class="grid">
   <div class="box">
     <h3>بيانات الجمعية</h3>
     <div class="r"><span>الاسم</span><span>${a.name}</span></div>
-    <div class="r"><span>اشتراك الفترة</span><span>${sar(fee)} ريال</span></div>
+    <div class="r"><span>الاشتراك ${perAdj(a)}${Number(o.fee_override) > 0 ? " للوحدة" : ""}</span><span>${sar(fee)} ريال</span></div>
+    ${Number(o.share_pct) > 0 && a.fee_basis === "share" ? `<div class="r"><span>حصة الوحدة</span><span>${Number(o.share_pct).toLocaleString("en-US", { maximumFractionDigits: 4 })}٪</span></div>` : ""}
     ${a.cert_expiry ? `<div class="r"><span>انتهاء الشهادة</span><span>${arDate(a.cert_expiry)}</span></div>` : ""}
     ${issuer.billing_phone ? `<div class="r"><span>للتواصل</span><span>${issuer.billing_phone}</span></div>` : ""}
   </div>
@@ -1420,22 +1551,26 @@ ${header("كشف حساب مالك", o.name, issuer)}
     <h3>بيانات المالك</h3>
     <div class="r"><span>الاسم</span><span>${o.name}</span></div>
     <div class="r"><span>الوحدة</span><span>${o.unit || "—"}</span></div>
-    ${o.phone ? `<div class="r"><span>الجوال</span><span>${o.phone}</span></div>` : ""}
     <div class="r"><span>آخر سداد</span><span>${arDate(o.last_paid)}</span></div>
   </div>
 </div>
 
 <div class="tot">
-  <div><div class="v r">${o.months_late || 0}</div><div class="l">فترات متأخرة</div></div>
-  <div><div class="v">${sar(fee)}</div><div class="l">اشتراك الفترة (ريال)</div></div>
+  <div><div class="v r">${o.months_late || 0}</div><div class="l">${isAnnual(a) ? "سنوات متأخرة" : "أشهر متأخرة"}</div></div>
+  <div><div class="v">${sar(fee)}</div><div class="l">الاشتراك ${perAdj(a)} (ريال)</div></div>
   ${(Number(o.months_late) || 0) === 0 && (Number(o.prepaid_months) || 0) > 0
-    ? `<div><div class="v g">${Number(o.prepaid_months) || 0}</div><div class="l">أشهر مسدَّدة مقدَّمًا</div></div>`
+    ? `<div><div class="v g">${Number(o.prepaid_months) || 0}</div><div class="l">${isAnnual(a) ? "سنوات" : "أشهر"} مسدَّدة مقدَّمًا</div></div>`
     : `<div><div class="v g">${sar(partial)}</div><div class="l">${(Number(o.months_late) || 0) > 0 ? "مدفوع جزئيًّا" : "رصيد لكم"} (ريال)</div></div>`}
   <div><div class="v g">${sar(received)}</div><div class="l">إجمالي المستلم (ريال)</div></div>
 </div>
 
+<table><tbody>
+  <tr><td>إجمالي الاستحقاقات حتى تاريخه <span style="color:#5C6B67;font-size:.75rem">(المستلم + المتبقي − الرصيد لكم)</span></td><td style="text-align:left;font-weight:600">${sar(Math.round((received + due - credit) * 100) / 100)} ريال</td></tr>
+  <tr><td>إجمالي المستلم</td><td style="text-align:left;font-weight:600">${sar(received)} ريال</td></tr>
+  <tr style="background:#F3EEE2;font-weight:700"><td>${due > 0 ? "المتبقي عليكم" : "الرصيد لكم"}</td><td style="text-align:left">${sar(due > 0 ? due : credit)} ريال</td></tr>
+</tbody></table>
 ${due > 0 ? `<div class="due"><span class="l">الرصيد المستحق حتى تاريخه</span><span class="v">${sar(due)} ريال</span></div>`
-  : `<div class="note">لا مستحقات على الوحدة حتى تاريخه${(Number(o.prepaid_months) || 0) > 0 ? ` — مسدَّد مقدَّمًا لـ ${Number(o.prepaid_months)} شهر` : ""}${partial > 0 && !(Number(o.months_late) > 0) ? ` — ورصيد لكم ${sar(partial)} ريال يُخصم من الشهر القادم` : ""}.</div>`}
+  : `<div class="note">لا مستحقات على الوحدة حتى تاريخه${(Number(o.prepaid_months) || 0) > 0 ? ` — مسدَّد مقدَّمًا لـ ${periodsWord(Number(o.prepaid_months), a)}` : ""}${partial > 0 && !(Number(o.months_late) > 0) ? ` — ورصيد لكم ${sar(partial)} ريال يُخصم من ${isAnnual(a) ? "السنة القادمة" : "الشهر القادم"}` : ""}.</div>`}
 
 ${payments.length ? `
 <h1 style="font-size:1rem">المدفوعات المستلمة</h1>
@@ -1444,7 +1579,7 @@ ${payments.length ? `
   <tbody>
     ${payments.map((r, i) => `<tr>
       <td>${i + 1}</td><td>${r.paid_on ? arDate(r.paid_on) : "—"}</td><td>${sar(r.amount)}</td>
-      <td>${payMethod(r)}</td><td>${r.note ? escH(r.note) : "—"}</td>
+      <td>${payMethod(r)}</td><td>${r.note ? r.note /* مُعقَّم بـscrub أعلاه — escH هنا كان يهرّب مرتين */ : "—"}</td>
     </tr>`).join("")}
     <tr style="background:#F3EEE2;font-weight:700">
       <td colspan="2">إجمالي المستلم</td><td>${sar(received)}</td><td colspan="2">${countAr(payments.length, "عملية")}</td>
@@ -1471,17 +1606,19 @@ export function associationStatementHTML(a: AssociationDoc, issuer: Issuer = {})
   a = scrub(a);
   issuer = scrub(issuer);
   const fee = Number(a.fee) || 0;
-  const who = issuer.billing_name || `إدارة ${a.name}`;
+  issuer = hoaIssuer(issuer, a);
+  const who = issuer.billing_name as string;
   const rows = a.owners || [];
   const late = rows.filter((o) => (Number(o.months_late) || 0) > 0);
-  const totalDue = rows.reduce((s, o) => s + owed(o, fee), 0);
-  const expected = rows.length * fee;
+  const totalDue = Math.round(rows.reduce((s, o) => s + owed(o, fee), 0) * 100) / 100;
+  const expected = Math.round(rows.reduce((s, o) => s + ownerFee(o, fee), 0) * 100) / 100;
   const pct = rows.length ? Math.round(((rows.length - late.length) / rows.length) * 100) : 0;
 
   const body = `
 ${header("كشف حساب جمعية", a.name, issuer)}
 <h1>كشف حساب ${a.name}</h1>
-<div class="sub">جمعية ملاك · ${countAr(rows.length, "مالك")}${a.units ? ` من ${countAr(a.units, "وحدة")}` : ""} · اشتراك الفترة ${sar(fee)} ريال</div>
+${regLine(a)}
+<div class="sub">جمعية ملاك · ${countAr(rows.length, "مالك")}${a.units ? ` من ${countAr(a.units, "وحدة")}` : ""} · ${a.fee_basis === "share" ? `الاشتراك ${perAdj(a)} حسب حصة كل وحدة` : `الاشتراك ${perAdj(a)} ${sar(fee)} ريال`}</div>
 
 <div class="tot">
   <div><div class="v">${rows.length}</div><div class="l">إجمالي الملّاك</div></div>
@@ -1493,7 +1630,7 @@ ${header("كشف حساب جمعية", a.name, issuer)}
 <div class="grid">
   <div class="box">
     <h3>الوضع المالي</h3>
-    <div class="r"><span>الإيرادات المتوقّعة للفترة</span><span>${sar(expected)} ريال</span></div>
+    <div class="r"><span>الإيرادات المتوقّعة ${isAnnual(a) ? "للسنة" : "للشهر"}</span><span>${sar(expected)} ريال</span></div>
     <div class="r"><span>إجمالي المتأخر</span><span>${sar(totalDue)} ريال</span></div>
     ${a.fund_balance != null ? `<div class="r"><span>رصيد الصندوق</span><span>${sar(a.fund_balance)} ريال</span></div>` : ""}
   </div>
@@ -1508,7 +1645,7 @@ ${header("كشف حساب جمعية", a.name, issuer)}
 ${totalDue > 0 ? `<div class="due"><span class="l">إجمالي المستحق على الملّاك</span><span class="v">${sar(totalDue)} ريال</span></div>` : ""}
 
 <table>
-  <thead><tr><th>الوحدة</th><th>المالك</th><th>فترات متأخرة</th><th>المتأخر (ريال)</th><th>آخر سداد</th><th>الحالة</th></tr></thead>
+  <thead><tr><th>الوحدة</th><th>المالك</th><th>${isAnnual(a) ? "سنوات" : "أشهر"} متأخرة</th><th>المتأخر (ريال)</th><th>آخر سداد</th><th>الحالة</th></tr></thead>
   <tbody>
     ${rows.map((o) => {
       const d = owed(o, fee); const m = Number(o.months_late) || 0;
@@ -1518,10 +1655,10 @@ ${totalDue > 0 ? `<div class="due"><span class="l">إجمالي المستحق �
         <td>${m || "—"}</td>
         <td>${d ? sar(d) : "—"}</td>
         <td>${arDate(o.last_paid)}</td>
-        <td>${m >= 3 ? '<span class="pill l">حرج</span>'
-            : (Number(o.partial_amount) || 0) > 0 && m > 0 ? '<span class="pill u">سداد جزئي</span>'
+        <td>${m >= 3 ? '<span class="pill l">متأخر 3+</span>'
+            : (Number(o.partial_amount) || 0) > 0 && m > 0 ? '<span class="pill u">دفع جزءًا</span>'
             : m > 0 ? '<span class="pill l">متأخر</span>'
-            : '<span class="pill p">مسدّد</span>'}</td>
+            : '<span class="pill p">لا متأخرات</span>'}</td>
       </tr>`;
     }).join("")}
   </tbody>
@@ -1563,7 +1700,8 @@ export function budgetHTML(
   a = scrub(a);
   budget = scrub(budget);
   issuer = scrub(issuer);
-  const who = issuer.billing_name || `إدارة ${a.name}`;
+  issuer = hoaIssuer(issuer, a);
+  const who = issuer.billing_name as string;
   const items = (budget.items || []).filter((i) => i && i.label);
   const monthlyTotal = items.reduce((s, i) => s + (Number(i.monthly) || 0), 0);
   const annualOps = monthlyTotal * 12;
@@ -1575,7 +1713,12 @@ export function budgetHTML(
   const perUnitYear = units ? Math.round(annualTotal / units) : 0;
   const perUnitMonth = units ? Math.round(annualTotal / units / 12) : 0;
   const currentFee = Number(a.fee) || 0;
-  const currentAnnual = currentFee * 12 * units;
+  /* (30 سبتمبر 2026) الرسم بفترته: السنوي لا يُضرب في 12. وبالحصص: مجموع رسوم الملاك الفعلية */
+  const ppy = isAnnual(a) ? 1 : 12;
+  const byShares = a.fee_basis === "share" && (a.owners || []).length > 0;
+  const currentAnnual = byShares
+    ? Math.round((a.owners || []).reduce((s, o) => s + ownerFee(o, currentFee), 0) * ppy * 100) / 100
+    : currentFee * ppy * units;
   const gap = annualTotal - currentAnnual;
 
   const body = `
@@ -1630,7 +1773,7 @@ ${units > 0 ? `<div class="tot">
   <div><div class="v">${units}</div><div class="l">عدد الوحدات</div></div>
   <div><div class="v">${sar(perUnitYear)}</div><div class="l">سنويًّا لكل وحدة (ريال)</div></div>
   <div><div class="v">${sar(perUnitMonth)}</div><div class="l">شهريًّا لكل وحدة (ريال)</div></div>
-  ${currentFee > 0
+  ${currentAnnual > 0
     ? `<div><div class="v ${gap > 0 ? "r" : "g"}">${sar(Math.abs(gap))}</div><div class="l">${gap > 0 ? "عجز متوقّع (ريال)" : "فائض متوقّع (ريال)"}</div></div>`
     : `<div><div class="v">—</div><div class="l">لم يُعتمد اشتراك بعد</div></div>`}
 </div>` : `<div class="note" style="border-inline-start-color:#D0453F;background:#FBE9E7;color:#a5322c">
@@ -1638,9 +1781,9 @@ ${units > 0 ? `<div class="tot">
   وهو الرقم الذي تُبنى عليه الموازنة.
 </div>`}
 
-${currentFee > 0 ? `<table>
+${currentAnnual > 0 ? `<table>
   <tbody>
-    <tr><td>الاشتراك الحالي المعتمد</td><td style="text-align:left;font-weight:600">${sar(currentFee)} ريال / شهر لكل وحدة</td></tr>
+    <tr><td>الاشتراك الحالي المعتمد</td><td style="text-align:left;font-weight:600">${byShares ? `حسب حصة كل وحدة (${isAnnual(a) ? "سنويًّا" : "شهريًّا"})` : `${sar(currentFee)} ريال / ${isAnnual(a) ? "سنة" : "شهر"} لكل وحدة`}</td></tr>
     <tr><td>إيرادات الاشتراك الحالي سنويًّا</td><td style="text-align:left;font-weight:600">${sar(currentAnnual)} ريال</td></tr>
     <tr style="background:${gap > 0 ? "#FBE9E7" : "#E6F4EC"};font-weight:700">
       <td>${gap > 0 ? "الفرق المطلوب تغطيته" : "الفائض المرحّل"}</td>
@@ -1673,6 +1816,10 @@ export function foundingMinutesHTML(
     president?: string; manager?: string;
     fee?: number; due_day?: string; bank?: string;
     year?: number; annual_budget?: number;
+    /** v63: فترة الرسم وأساسه، والحضور بالحصص، ورقم الاجتماع (1 أول · 2 ثانٍ) */
+    fee_period?: string; fee_basis?: string; attendance?: HoaAttendance[]; round?: number;
+    /** approved[n] = المدير أكّد «عُقد الاجتماع وأُقرّ البند n» */
+    approved?: boolean[];
   },
   issuer: Issuer = {}
 ) {
@@ -1680,17 +1827,22 @@ export function foundingMinutesHTML(
   a = scrub(a);
   d = scrub(d);
   issuer = scrub(issuer);
-  const who = issuer.billing_name || `إدارة ${a.name}`;
+  issuer = hoaIssuer(issuer, a);
+  const who = issuer.billing_name as string;
   const date = d.meeting_date || today();
   const units = Number(d.total_units) || Number(a.units) || (a.owners || []).length || 0;
-  const att = Number(d.attendees) || 0;
-  const quorum = units ? Math.round((att / units) * 100) : 0;
+  const q = hoaQuorum({ attendance: d.attendance, attendees: d.attendees as any, total_units: units, round: d.round,
+    first_pct: a.quorum_first_pct, second_pct: a.quorum_second_pct });
+  const ap1 = (n: number) => !!(d.approved || [])[n];
+  const att = q.basis === "units" ? q.present : (d.attendance || []).filter((x) => x.present).length || Number(d.attendees) || 0;
   const fee = Number(d.fee) || Number(a.fee) || 0;
+  const ap = { fee_period: d.fee_period || a.fee_period };
 
   const body = `
 ${header("محضر اجتماع", "الجمعية العمومية التأسيسية", issuer)}
 <h1>محضر الجمعية العمومية التأسيسية</h1>
 <div class="sub">${a.name}${units ? ` · ${countAr(units, "وحدة")}` : ""}</div>
+${regLine(a)}
 
 <div class="grid">
   <div class="box">
@@ -1698,8 +1850,9 @@ ${header("محضر اجتماع", "الجمعية العمومية التأسي�
     <div class="r"><span>التاريخ</span><span>${arDate(date)}</span></div>
     <div class="r"><span>طريقة الانعقاد</span><span>${d.mode || "حضوري"}</span></div>
     ${d.place ? `<div class="r"><span>المكان</span><span>${d.place}</span></div>` : ""}
-    <div class="r"><span>عدد الحاضرين</span><span>${att || "—"} من ${units || "—"}</span></div>
-    <div class="r"><span>نسبة الحضور</span><span>${units ? quorum + "%" : "—"}</span></div>
+    <div class="r"><span>الاجتماع</span><span>${q.round === 2 ? "الثاني (بعد عدم اكتمال نصاب الأول)" : "الأول"}</span></div>
+    <div class="r"><span>عدد الحاضرين</span><span>${q.basis === "none" ? "—" : att} من ${(d.attendance || []).length || units || "—"}</span></div>
+    <div class="r"><span>${q.basis === "shares" ? "الحصص الحاضرة" : "نسبة الحضور"}</span><span>${q.pct === null || q.basis === "none" ? "—" : q.pct.toLocaleString("en-US", { maximumFractionDigits: 2 }) + "٪"}</span></div>
   </div>
   <div class="box">
     <h3>الأساس النظامي</h3>
@@ -1708,6 +1861,7 @@ ${header("محضر اجتماع", "الجمعية العمومية التأسي�
     <div class="r"><span>الجهة المشرفة</span><span>الهيئة العامة للعقار</span></div>
   </div>
 </div>
+${quorumBlock(q)}
 
 <div class="note">
   عُقد هذا الاجتماع لتأسيس جمعية ملاك العقار المشترك المذكور أعلاه، وفقًا لنظام ملكية الوحدات العقارية
@@ -1719,19 +1873,19 @@ ${header("محضر اجتماع", "الجمعية العمومية التأسي�
   <thead><tr><th>#</th><th>البند</th><th>القرار</th></tr></thead>
   <tbody>
     <tr><td>1</td><td>تأسيس جمعية الملاك واعتماد نظامها الأساسي</td>
-        <td>الموافقة على التأسيس واعتماد النظام الأساسي (الاسترشادي الصادر من الهيئة).</td></tr>
+        <td>${decided(q, "الموافقة على التأسيس واعتماد النظام الأساسي (الاسترشادي الصادر من الهيئة).", ap1(1))}</td></tr>
     <tr><td>2</td><td>انتخاب رئيس الجمعية</td>
-        <td>${d.president ? `انتخاب المكرَّم <b>${String(d.president).replace(/</g, "&lt;")}</b> رئيسًا للجمعية.` : "________________________________"}</td></tr>
+        <td>${decided(q, d.president ? `انتخاب المكرَّم <b>${escH(d.president)}</b> رئيسًا للجمعية.` : "________________________________", ap1(2))}</td></tr>
     <tr><td>3</td><td>تعيين مدير العقار</td>
-        <td>${d.manager ? `تعيين <b>${String(d.manager).replace(/</g, "&lt;")}</b> مديرًا للعقار.` : "________________________________"}</td></tr>
+        <td>${decided(q, d.manager ? `تعيين <b>${escH(d.manager)}</b> مديرًا للعقار.` : "________________________________", ap1(3))}</td></tr>
     <tr><td>4</td><td>اعتماد الموازنة التقديرية${d.year ? ` لعام ${d.year}` : ""}</td>
-        <td>${d.annual_budget ? `اعتماد موازنة بإجمالي <b>${sar(d.annual_budget)}</b> ريال.` : "________________________________"}</td></tr>
+        <td>${decided(q, d.annual_budget ? `اعتماد موازنة بإجمالي <b>${sar(d.annual_budget)}</b> ريال سنويًّا.` : "________________________________", ap1(4))}</td></tr>
     <tr><td>5</td><td>تحديد اشتراك الصيانة وموعد سداده</td>
-        <td>${fee ? `تحديد الاشتراك بمبلغ <b>${sar(fee)}</b> ريال لكل وحدة${d.due_day ? `، يُسدَّد ${d.due_day}` : ""}.` : "________________________________"}</td></tr>
+        <td>${decided(q, feeClause(fee, ap as any, d.fee_basis, d.due_day) || "________________________________", ap1(5))}</td></tr>
     <tr><td>6</td><td>فتح الحساب البنكي للجمعية</td>
-        <td>${d.bank ? `تفويض إدارة الجمعية بفتح حساب لدى <b>${String(d.bank).replace(/</g, "&lt;")}</b> باسم الجمعية.` : "تفويض إدارة الجمعية بفتح حساب بنكي باسم الجمعية."}</td></tr>
+        <td>${decided(q, d.bank ? `تفويض إدارة الجمعية بفتح حساب لدى <b>${escH(d.bank)}</b> باسم الجمعية.` : "تفويض إدارة الجمعية بفتح حساب بنكي باسم الجمعية.", ap1(6))}</td></tr>
     <tr><td>7</td><td>تسجيل الجمعية لدى الهيئة العامة للعقار</td>
-        <td>تفويض رئيس الجمعية بإتمام التسجيل عبر منصة «ملاك» واستكمال المتطلبات النظامية.</td></tr>
+        <td>${decided(q, "تفويض رئيس الجمعية بإتمام التسجيل عبر منصة «ملاك» واستكمال المتطلبات النظامية.", ap1(7))}</td></tr>
   </tbody>
 </table>
 
@@ -1740,15 +1894,8 @@ ${header("محضر اجتماع", "الجمعية العمومية التأسي�
   ولا يملك مدير العقار صلاحية تعديل النظام الأساسي أو فرض رسوم جديدة.
 </div>
 
-<h1 style="font-size:1rem">توقيعات الحاضرين</h1>
-<table>
-  <thead><tr><th>#</th><th>اسم المالك</th><th>الوحدة</th><th>التوقيع</th></tr></thead>
-  <tbody>
-    ${(a.owners && a.owners.length
-      ? a.owners.map((o, i) => `<tr><td>${i + 1}</td><td>${String(o.name).replace(/</g, "&lt;")}</td><td>${o.unit || "—"}</td><td>________________</td></tr>`).join("")
-      : Array.from({ length: 8 }, (_, i) => `<tr><td>${i + 1}</td><td>________________</td><td>____</td><td>________________</td></tr>`).join(""))}
-  </tbody>
-</table>
+<h1 style="font-size:1rem">${d.attendance && d.attendance.length ? "الحضور والتوقيعات" : "توقيعات الحاضرين"}</h1>
+${attendanceTable(a, d.attendance, escH)}
 
 <div class="sign">
   <div>رئيس الجمعية: ${d.president || "________________"}<br><br>التوقيع: ________________</div>
@@ -1896,8 +2043,8 @@ ${footer(issuer)}`;
 
 // ============================================================
 // محضر الاجتماع السنوي للجمعية العمومية
-// أساسه النظام الأساسي: المادة (14/2) توجب انعقاد الجمعية العامة مرّتين سنويًّا على الأقل،
-// وأحد الاجتماعين خلال الأشهر الثلاثة التالية لنهاية السنة المالية؛ والمادة (التاسعة)
+// النظام يوجب انعقاد الجمعية العامة مرة على الأقل سنويًّا خلال ثلاثة أشهر من نهاية السنة
+// المالية؛ وما زاد على ذلك (عدد الاجتماعات، المدد) من النظام الأساسي النموذجي وقابل للتعديل. والمادة (التاسعة)
 // تجعل اعتماد الميزانية وتقرير المدير وإبراء ذمّته من اختصاصات الجمعية العامة.
 // ملاحظة: إصدار شهادة الجمعية إجراء إلكتروني مباشر في منصة «ملاك» ولا يتطلّب رفع مستندات.
 // ============================================================
@@ -1911,20 +2058,27 @@ export function renewalMinutesHTML(
     fee?: number; year?: number; annual_budget?: number;
     collected?: number; spent?: number; fund_balance?: number;
     notes?: string;
+    /** v63: فترة الرسم وأساسه، والحضور بالحصص، ورقم الاجتماع */
+    fee_period?: string; fee_basis?: string; attendance?: HoaAttendance[]; round?: number;
+    approved?: boolean[];
   },
   issuer: Issuer = {}
 ) {
   // تعقيم المدخلات (انظر scrub أعلاه)
   a = scrub(a);
   d = scrub(d);
-  issuer = scrub(issuer);
+  issuer = hoaIssuer(scrub(issuer), a);
   const esc = (s: any) => String(s ?? "").replace(/</g, "&lt;");
   const date = d.meeting_date || today();
   const units = Number(d.total_units) || Number(a.units) || (a.owners || []).length || 0;
-  const att = Number(d.attendees) || 0;
-  const quorum = units ? Math.round((att / units) * 100) : 0;
+  const q = hoaQuorum({ attendance: d.attendance, attendees: d.attendees as any, total_units: units, round: d.round,
+    first_pct: a.quorum_first_pct, second_pct: a.quorum_second_pct });
+  const ap1 = (n: number) => !!(d.approved || [])[n];
+  const att = q.basis === "units" ? q.present : (d.attendance || []).filter((x) => x.present).length || Number(d.attendees) || 0;
   const fee = Number(d.fee) || Number(a.fee) || 0;
-  const nextYear = Number(d.year) || new Date().getFullYear() + 1;
+  const ap = { fee_period: d.fee_period || a.fee_period };
+  /* السنة بتوقيت الرياض لا الجهاز */
+  const nextYear = Number(d.year) || Number(today().slice(0, 4)) + 1;
   const collected = Number(d.collected) || 0;
   const spent = Number(d.spent) || 0;
   const fund = d.fund_balance !== undefined ? Number(d.fund_balance) || 0 : Number(a.fund_balance) || 0;
@@ -1933,6 +2087,7 @@ export function renewalMinutesHTML(
 ${header("محضر اجتماع", "الجمعية العمومية السنوية", issuer)}
 <h1>محضر اجتماع الجمعية العمومية السنوي</h1>
 <div class="sub">${a.name}${units ? ` · ${countAr(units, "وحدة")}` : ""} · الاجتماع السنوي واعتماد موازنة عام ${nextYear}</div>
+${regLine(a)}
 
 <div class="grid">
   <div class="box">
@@ -1940,8 +2095,9 @@ ${header("محضر اجتماع", "الجمعية العمومية السنوي�
     <div class="r"><span>التاريخ</span><span>${arDate(date)}</span></div>
     <div class="r"><span>طريقة الانعقاد</span><span>${d.mode || "حضوري"}</span></div>
     ${d.place ? `<div class="r"><span>المكان</span><span>${esc(d.place)}</span></div>` : ""}
-    <div class="r"><span>عدد الحاضرين</span><span>${att || "—"} من ${units || "—"}</span></div>
-    <div class="r"><span>نسبة الحضور</span><span>${units ? quorum + "%" : "—"}</span></div>
+    <div class="r"><span>الاجتماع</span><span>${q.round === 2 ? "الثاني (بعد عدم اكتمال نصاب الأول)" : "الأول"}</span></div>
+    <div class="r"><span>عدد الحاضرين</span><span>${q.basis === "none" ? "—" : att} من ${(d.attendance || []).length || units || "—"}</span></div>
+    <div class="r"><span>${q.basis === "shares" ? "الحصص الحاضرة" : "نسبة الحضور"}</span><span>${q.pct === null || q.basis === "none" ? "—" : q.pct.toLocaleString("en-US", { maximumFractionDigits: 2 }) + "٪"}</span></div>
   </div>
   <div class="box">
     <h3>الأساس النظامي</h3>
@@ -1951,6 +2107,7 @@ ${header("محضر اجتماع", "الجمعية العمومية السنوي�
     <div class="r"><span>سند الانعقاد</span><span>النظام الأساسي — المادتان (9) و(14/2)</span></div>
   </div>
 </div>
+${quorumBlock(q)}
 
 <div class="note">
   عُقد هذا الاجتماع السنوي لاستعراض أعمال الجمعية عن العام المنقضي، واعتماد الموازنة التقديرية
@@ -1972,37 +2129,32 @@ ${header("محضر اجتماع", "الجمعية العمومية السنوي�
   <thead><tr><th>#</th><th>البند</th><th>القرار</th></tr></thead>
   <tbody>
     <tr><td>1</td><td>تقرير أعمال الجمعية عن العام المنقضي</td>
-        <td>استُعرض التقرير وصودق عليه.</td></tr>
+        <td>${decided(q, "استُعرض التقرير وصودق عليه.", ap1(1))}</td></tr>
     <tr><td>2</td><td>المصادقة على الحساب الختامي والموقف المالي</td>
-        <td>صودق على الموقف المالي الموضّح أعلاه.</td></tr>
+        <td>${decided(q, "صودق على الموقف المالي الموضّح أعلاه.", ap1(2))}</td></tr>
     <tr><td>3</td><td>اعتماد الموازنة التقديرية لعام ${nextYear}</td>
-        <td>${d.annual_budget ? `اعتماد موازنة بإجمالي <b>${sar(d.annual_budget)}</b> ريال (مرفقة بهذا المحضر).` : "اعتماد الموازنة التقديرية المرفقة بهذا المحضر."}</td></tr>
+        <td>${decided(q, d.annual_budget ? `اعتماد موازنة بإجمالي <b>${sar(d.annual_budget)}</b> ريال سنويًّا (الموازنة التقديرية المعروضة).` : "اعتماد الموازنة التقديرية المعروضة.", ap1(3))}</td></tr>
     <tr><td>4</td><td>اشتراك الصيانة لعام ${nextYear}</td>
-        <td>${fee ? `إقرار الاشتراك بمبلغ <b>${sar(fee)}</b> ريال لكل وحدة.` : "________________________________"}</td></tr>
+        <td>${decided(q, (d.fee_basis || a.fee_basis) === "share"
+          ? `توزيع رسوم الاشتراك على الوحدات حسب حصة كل وحدة من الموازنة المعتمدة، وتُستحق ${perWord(ap)}.`
+          : fee ? `إقرار الاشتراك بمبلغ <b>${sar(fee)}</b> ريال لكل وحدة ${perWord(ap)}${isAnnual(ap) ? "" : ` (${sar(Math.round(fee * 12 * 100) / 100)} ريال في السنة)`}.` : "________________________________", ap1(4))}</td></tr>
     <tr><td>5</td><td>مدير العقار</td>
-        <td>${d.manager ? `تجديد تعيين <b>${esc(d.manager)}</b> مديرًا للعقار.` : "________________________________"}</td></tr>
+        <td>${decided(q, d.manager ? `تجديد تعيين <b>${esc(d.manager)}</b> مديرًا للعقار.` : "________________________________", ap1(5))}</td></tr>
     <tr><td>6</td><td>إدخال قرار رسوم الاشتراك في المنصة</td>
-        <td>تفويض ${d.president ? `رئيس الجمعية <b>${esc(d.president)}</b>` : "رئيس الجمعية"} ومدير العقار بإنشاء قرار
+        <td>${decided(q, `تفويض ${d.president ? `رئيس الجمعية <b>${esc(d.president)}</b>` : "رئيس الجمعية"} ومدير العقار بإنشاء قرار
             «إعادة تحديد رسوم الاشتراك» في منصة «ملاك» ببنود موازنة عام ${nextYear} وطرحه لتصويت الأعضاء،
-            ثم إصدار الفواتير وفق موعد الاستحقاق المعتمد.</td></tr>
-    ${d.notes ? `<tr><td>7</td><td>بنود إضافية</td><td>${esc(d.notes)}</td></tr>` : ""}
+            ثم إصدار الفواتير وفق موعد الاستحقاق المعتمد.`, ap1(6))}</td></tr>
+    ${d.notes ? `<tr><td>7</td><td>بنود إضافية</td><td>${decided(q, esc(d.notes), ap1(7))}</td></tr>` : ""}
   </tbody>
 </table>
 
 <div class="note">
   تُودَع الاشتراكات في الحساب البنكي للجمعية، ولا يُصرف منها إلا وفق الموازنة المعتمدة.
-  ويُرفق بهذا المحضر: الموازنة التقديرية لعام ${nextYear}.
+  وعُرضت في الاجتماع: الموازنة التقديرية لعام ${nextYear}.
 </div>
 
-<h1 style="font-size:1rem">توقيعات الحاضرين</h1>
-<table>
-  <thead><tr><th>#</th><th>اسم المالك</th><th>الوحدة</th><th>التوقيع</th></tr></thead>
-  <tbody>
-    ${(a.owners && a.owners.length
-      ? a.owners.map((o, i) => `<tr><td>${i + 1}</td><td>${esc(o.name)}</td><td>${o.unit || "—"}</td><td>________________</td></tr>`).join("")
-      : Array.from({ length: 8 }, (_, i) => `<tr><td>${i + 1}</td><td>________________</td><td>____</td><td>________________</td></tr>`).join(""))}
-  </tbody>
-</table>
+<h1 style="font-size:1rem">${d.attendance && d.attendance.length ? "الحضور والتوقيعات" : "توقيعات الحاضرين"}</h1>
+${attendanceTable(a, d.attendance, escH)}
 
 <div class="sign">
   <div>رئيس الجمعية: ${d.president ? esc(d.president) : "________________"}<br><br>التوقيع: ________________</div>
@@ -3012,3 +3164,69 @@ export function termRentPaidOf(
   }
   return out;
 }
+
+// ============================================================
+// محاضر الجمعية لبوابة الملاك (30 سبتمبر 2026)
+// HTML دلالي بسيط يمرّ على منقّي البوابة كما هو (h2 · p · b · table):
+// بلا ترويسة ولا تذييل ولا جداول توقيع ولا أنماط — المالك يقرأ ويعتمد من جواله.
+// ============================================================
+type MinutesInput = {
+  meeting_date?: string; place?: string; mode?: string; attendees?: number | string; total_units?: number | string;
+  president?: string; manager?: string; fee?: number | string; due_day?: string; bank?: string;
+  year?: number | string; annual_budget?: number | string; collected?: number | string; spent?: number | string;
+  fund_balance?: number | string; notes?: string;
+  fee_period?: string; fee_basis?: string; attendance?: HoaAttendance[]; round?: number; approved?: boolean[];
+};
+const pEsc = (v: any) => escH(unesc(String(v ?? "")));
+const decidedPlain = (q: HoaQuorum, text: string, ticked?: boolean) =>
+  q.met === true && ticked ? text : q.met === false ? "لم يُتّخذ قرار — النصاب غير مكتمل" : "يُدوَّن بعد التصويت";
+function portalMinutes(kind: "founding" | "renewal", a: AssociationDoc, d: MinutesInput): { title: string; html: string; draft: boolean } {
+  const units = Number(d.total_units) || Number(a.units) || (a.owners || []).length || 0;
+  const q = hoaQuorum({ attendance: d.attendance, attendees: d.attendees as any, total_units: units, round: d.round,
+    first_pct: a.quorum_first_pct, second_pct: a.quorum_second_pct });
+  const ap1 = (n: number) => !!(d.approved || [])[n];
+  const draft = !(q.met === true && (d.approved || []).some(Boolean));
+  const ap = { fee_period: d.fee_period || a.fee_period };
+  const fee = Number(d.fee) || Number(a.fee) || 0;
+  const share = (d.fee_basis || a.fee_basis) === "share";
+  const feeTxt = share ? `توزيع رسوم الاشتراك حسب حصة كل وحدة، وتُستحق ${perWord(ap)}`
+    : fee ? `الاشتراك ${sar(fee)} ريال لكل وحدة ${perWord(ap)}` : "";
+  const nextYear = Number(d.year) || Number(today().slice(0, 4)) + (kind === "renewal" ? 1 : 0);
+  const items: [string, string][] = kind === "founding" ? [
+    ["تأسيس جمعية الملاك واعتماد نظامها الأساسي", decidedPlain(q, "الموافقة على التأسيس واعتماد النظام الأساسي", ap1(1))],
+    ["انتخاب رئيس الجمعية", decidedPlain(q, d.president ? `انتخاب ${pEsc(d.president)} رئيسًا للجمعية` : "يُدوَّن بعد التصويت", ap1(2))],
+    ["تعيين مدير العقار", decidedPlain(q, d.manager ? `تعيين ${pEsc(d.manager)} مديرًا للعقار` : "يُدوَّن بعد التصويت", ap1(3))],
+    [`اعتماد الموازنة التقديرية${d.year ? ` لعام ${pEsc(d.year)}` : ""}`, decidedPlain(q, d.annual_budget ? `اعتماد موازنة بإجمالي ${sar(Number(d.annual_budget))} ريال سنويًّا` : "يُدوَّن بعد التصويت", ap1(4))],
+    ["تحديد اشتراك الصيانة", decidedPlain(q, feeTxt || "يُدوَّن بعد التصويت", ap1(5))],
+    ["فتح الحساب البنكي للجمعية", decidedPlain(q, d.bank ? `تفويض الإدارة بفتح حساب لدى ${pEsc(d.bank)}` : "تفويض الإدارة بفتح حساب بنكي باسم الجمعية", ap1(6))],
+    ["التسجيل في منصة «ملاك»", decidedPlain(q, "تفويض رئيس الجمعية بإتمام التسجيل", ap1(7))],
+  ] : [
+    ["تقرير أعمال الجمعية عن العام المنقضي", decidedPlain(q, "استُعرض التقرير وصودق عليه", ap1(1))],
+    ["الموقف المالي", decidedPlain(q, "صودق على الموقف المالي", ap1(2))],
+    [`اعتماد الموازنة التقديرية لعام ${nextYear}`, decidedPlain(q, d.annual_budget ? `اعتماد موازنة بإجمالي ${sar(Number(d.annual_budget))} ريال سنويًّا (الموازنة المعروضة)` : "اعتماد الموازنة التقديرية المعروضة", ap1(3))],
+    [`اشتراك الصيانة لعام ${nextYear}`, decidedPlain(q, feeTxt || "يُدوَّن بعد التصويت", ap1(4))],
+    ["مدير العقار", decidedPlain(q, d.manager ? `تجديد تعيين ${pEsc(d.manager)} مديرًا للعقار` : "يُدوَّن بعد التصويت", ap1(5))],
+    ["قرار رسوم الاشتراك في منصة «ملاك»", decidedPlain(q, "تفويض الرئيس ومدير العقار بإنشاء القرار وطرحه للتصويت", ap1(6))],
+    ...(d.notes ? [["بنود إضافية", decidedPlain(q, pEsc(d.notes), ap1(7))] as [string, string]] : []),
+  ];
+  const base = kind === "founding" ? "محضر الجمعية العمومية التأسيسية" : "محضر اجتماع الجمعية العمومية السنوي";
+  const title = draft ? `مشروع محضر — للاطلاع والاعتماد: ${base.replace(/^محضر /, "")}` : base;
+  const pct = q.pct === null || q.basis === "none" ? "—" : `${q.pct.toLocaleString("en-US", { maximumFractionDigits: 2 })}٪`;
+  const qTxt = q.met === true ? `النصاب متحقق (${pct}${q.basis === "shares" ? " من الحصص" : ""})`
+    : q.met === false ? `النصاب غير متحقق (${pct}) — لم يُتّخذ أي قرار`
+    : `يُحتسب النصاب عند الانعقاد — المطلوب ${q.round === 2 && !q.threshold ? "أي عدد في الاجتماع الثاني" : `${q.threshold}٪ من الحصص`} حسب النظام الأساسي للجمعية`;
+  const reg = [a.mullak_reg_no ? `رقم التسجيل في «ملاك»: ${pEsc(a.mullak_reg_no)}` : "", a.unified_no ? `الرقم الموحّد: ${pEsc(a.unified_no)}` : ""].filter(Boolean).join(" · ");
+  const html = [
+    `<h2>${pEsc(title)} — ${pEsc(a.name)}</h2>`,
+    reg ? `<p>${reg}</p>` : "",
+    `<p><b>التاريخ:</b> ${arDate(d.meeting_date || today())}${hijriText(String(d.meeting_date || today()).slice(0, 10)) ? ` (${hijriText(String(d.meeting_date || today()).slice(0, 10))})` : ""}</p>`,
+    `<p><b>طريقة الانعقاد:</b> ${pEsc(d.mode || "حضوري")}${d.place ? ` — ${pEsc(d.place)}` : ""}</p>`,
+    `<p><b>الاجتماع:</b> ${q.round === 2 ? "الثاني" : "الأول"} · <b>الحضور:</b> ${q.basis === "none" ? "—" : `${q.present} من ${q.total}`} · <b>النصاب:</b> ${qTxt}</p>`,
+    kind === "renewal" ? `<p><b>الموقف المالي:</b> المحصَّل ${Number(d.collected) ? sar(Number(d.collected)) + " ريال" : "—"} · المصروف ${Number(d.spent) ? sar(Number(d.spent)) + " ريال" : "—"} · رصيد الصندوق ${sar(Number(d.fund_balance ?? a.fund_balance) || 0)} ريال</p>` : "",
+    `<table><thead><tr><th>البند</th><th>القرار</th></tr></thead><tbody>${items.map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join("")}</tbody></table>`,
+    `<p>${draft ? "هذا مشروع محضر للاطلاع قبل الاجتماع أو قبل تدوين القرارات — لا يُعدّ إقرارًا لأي بند." : "تُتّخذ القرارات بموافقة ملاك ثلاثة أرباع المساحة الإجمالية للوحدات (المادة 18/6)."} نموذج استرشادي أعدّته إدارة الجمعية؛ يُطابَق مع النظام الأساسي المعتمد.</p>`,
+  ].filter(Boolean).join("\n");
+  return { title, html, draft };
+}
+export const foundingMinutesPortalHTML = (a: AssociationDoc, d: MinutesInput) => portalMinutes("founding", a, d);
+export const renewalMinutesPortalHTML = (a: AssociationDoc, d: MinutesInput) => portalMinutes("renewal", a, d);

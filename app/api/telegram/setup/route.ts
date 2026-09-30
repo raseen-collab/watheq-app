@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { tgSetWebhook, tgSetCommands } from "@/lib/telegram";
 
 export const dynamic = "force-dynamic";
+export const fetchCache = "force-no-store";
 
 /**
  * إعداد لمرّة واحدة:

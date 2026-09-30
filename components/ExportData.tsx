@@ -145,7 +145,10 @@ export default function ExportData() {
         "ملاحظات التأمين": t.deposit_notes || "", "تاريخ الإشعار": t.notice_date || "",
       })), [22, 10, 22, 14, 14, 12, 10, 12, 12, 10, 10, 10, 12, 12, 10, 12, 14, 14, 12, 12, 12, 12, 10, 12, 14, 8, 10, 10, 10, 12, 20, 10, 14, 20, 12]);
 
-      add("الدفعات", payments.map((x) => ({
+      /* M1: ورقة «الدفعات» للإيجارات فقط — دفعات الجمعيات في ورقتها (كانت تختلط بلا عقار ولا مستأجر) */
+      const rentPays = payments.filter((x: any) => !x.association_id && !x.owner_id);
+      const hoaPays = payments.filter((x: any) => x.association_id || x.owner_id);
+      add("الدفعات", rentPays.map((x) => ({
         "التاريخ": x.paid_on, "العقار": pName[x.property_id] || pName[tById[x.tenant_id]?.property_id] || "",
         /* الساكن باسمه الحيّ؛ ودفعات من سبقه بالاسم المحفوظ فيها (v45) */
         "الوحدة": (x.tenant_id && tById[x.tenant_id]?.unit) || x.unit_label || "",
@@ -221,19 +224,36 @@ export default function ExportData() {
 
       if (assocs.length) {
         const aName: Record<string, string> = {}; assocs.forEach((a) => { aName[a.id] = a.name; });
-        add("جمعيات الملاك", assocs.map((a) => ({ "الجمعية": a.name, "المدينة": a.city || "", "الاشتراك الشهري": a.fee ?? a.monthly_fee ?? "", "عدد الملاك": owners.filter((o) => o.association_id === a.id).length })));
+        add("جمعيات الملاك", assocs.map((a) => ({ "الجمعية": a.name, "المدينة": a.city || "", "الاشتراك للفترة": a.fee ?? a.monthly_fee ?? "", "الفترة": a.fee_period === "annual" ? "سنوي" : "شهري", "أساس التوزيع": a.fee_basis === "share" ? "حسب الحصص" : "متساوٍ", "عدد الملاك": owners.filter((o) => o.association_id === a.id).length })));
         /* أعمدة الملاك الحقيقية: الأشهر المتأخرة والجزئي — كانت الورقة تقرأ paid_periods
            و status (لا وجود لهما في الجدول) فتُصدّر «المسدَّد 0» لكل مالك، ويسقط
            دين الجمعيات من النسخة الاحتياطية. المتأخر بالريال بمعادلة كشف المالك. */
         const aFee: Record<string, number> = Object.fromEntries(assocs.map((a: any) => [a.id, Number(a.fee) || 0]));
         add("ملاك الجمعيات", owners.map((o: any) => {
-          const fee = aFee[o.association_id] || 0, late = Number(o.months_late) || 0, part = Number(o.partial_amount) || 0;
+          /* v63: رسم المالك الخاص (من حصته) إن وُجد */
+          const fee = Number(o.fee_override) > 0 ? Number(o.fee_override) : aFee[o.association_id] || 0, late = Number(o.months_late) || 0, part = Number(o.partial_amount) || 0;
           return { "الجمعية": aName[o.association_id] || "", "المالك": o.name, "الوحدة": o.unit || "", "الجوال": o.phone || "",
-            "الأشهر المتأخرة": late, "الجزئي أو الرصيد (ريال)": part,
+            "الفترات المتأخرة": late, "الجزئي أو الرصيد (ريال)": part,
             "أشهر مقدَّمة": Number(o.prepaid_months) || 0,
             "المتأخر (ريال)": Math.max(0, Math.round((late * fee - part) * 100) / 100),
-            "آخر سداد": String(o.last_paid || "").slice(0, 10) };
-        }), [22, 22, 10, 14, 12, 14, 10, 14, 12]);
+            "آخر سداد": String(o.last_paid || "").slice(0, 10),
+            "رسم الفترة (ريال)": fee, "الحصة ٪": o.share_pct ?? "", "المساحة م²": o.area_m2 ?? "" };
+        }), [22, 22, 10, 14, 12, 14, 10, 14, 12, 12, 10, 10]);
+        const oById: Record<string, any> = Object.fromEntries(owners.map((o: any) => [o.id, o]));
+        const reversedIds = new Set(hoaPays.filter((x: any) => x.reverses).map((x: any) => String(x.reverses)));
+        add("دفعات الجمعيات", hoaPays.map((x: any) => ({
+          "الجمعية": aName[x.association_id] || "", "المالك / الدافع": x.payer_name || oById[x.owner_id]?.name || "",
+          "الوحدة": x.unit_label || oById[x.owner_id]?.unit || "", "التاريخ": String(x.paid_on || "").slice(0, 10),
+          "المبلغ": Number(x.amount) || 0, "الطريقة": METHOD_AR[x.method] || x.method || "", "رقم السند": x.receipt_no || "",
+          "المرجع": x.reference || "", "الحالة": x.reverses ? "عكس" : reversedIds.has(String(x.id)) ? "معكوسة" : "",
+        })), [22, 22, 10, 12, 12, 12, 12, 16, 10]);
+        const assocExp = await all("association_expenses", "*", "spent_on").catch(() => []);
+        const expRev = new Set(assocExp.filter((x: any) => x.reverses).map((x: any) => String(x.reverses)));
+        add("مصروفات الجمعيات", assocExp.map((x: any) => ({
+          "الجمعية": aName[x.association_id] || "", "رقم سند الصرف": x.voucher_no || "", "التاريخ": String(x.spent_on || "").slice(0, 10),
+          "البند": x.category || "", "البيان": x.description || "", "المبلغ": Number(x.amount) || 0, "المورّد": x.vendor || "",
+          "المرجع": x.reference || "", "الحالة": x.reverses ? "عكس" : expRev.has(String(x.id)) ? "معكوس" : "",
+        })), [22, 14, 12, 14, 30, 12, 18, 14, 10]);
         add("سجل الجمعيات", assocNotes.map((n: any) => ({ "الجمعية": aName[n.association_id] || "",
           "التاريخ": String(n.note_date || n.created_at || "").slice(0, 10), "الملاحظة": n.text || "" })), [22, 12, 70]);
       }

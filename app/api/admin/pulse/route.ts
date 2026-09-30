@@ -8,6 +8,7 @@ import { fetchAllRows } from "@/lib/fetch-all";
 import { noStoreFetch } from "@/lib/no-store-fetch";
 
 export const dynamic = "force-dynamic";
+export const fetchCache = "force-no-store";
 
 /**
  * نبض المنصة — ملخّص يومي يصلك على تليجرام.
@@ -72,9 +73,10 @@ async function handle(req: Request) {
     fetchAllRows(db, "tenants", "id,property_id").then((data) => ({ data, error: null as any }), (e) => ({ data: [] as any[], error: e })),
     db.from("owners").select("id", { count: "exact", head: true }),
     db.from("team_members").select("member_id"),
-    fetchAllRows(db, "payments", "id,property_id,is_demo").then((data) => ({ data, error: null as any }), (e) => ({ data: [] as any[], error: e })),
+    /* L3: مجاميع الإيجار فقط — دفعات الجمعيات (association_id) ليست إيجارًا */
+    fetchAllRows(db, "payments", "id,property_id,is_demo", (q: any) => q.is("association_id", null)).then((data) => ({ data, error: null as any }), (e) => ({ data: [] as any[], error: e })),
     /* بوقت التسجيل لا بتاريخ الدفعة: دفعة تُسجَّل اليوم بتاريخ الشهر الماضي نشاطٌ اليوم */
-    db.from("payments").select("amount,paid_on,property_id,is_demo").gte("created_at", sinceISO),
+    db.from("payments").select("amount,paid_on,property_id,is_demo").is("association_id", null).gte("created_at", sinceISO),
   ]);
 
   /* التعريف الواحد للبيانات الحقيقية — lib/real-data */

@@ -3,22 +3,49 @@ import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase-client";
 import { officeId } from "@/lib/office";
-import { sar, daysLeft, waLink, WATHEQ_WA, today, openExternal, daysAr, csvCell } from "@/lib/utils";
+import { sar, daysLeft, waLink, WATHEQ_WA, today, openExternal, daysAr, csvCell, countAr as countWord } from "@/lib/utils";
 import { ownerStatementHTML, associationStatementHTML, budgetHTML, foundingMinutesHTML,
-  renewalMinutesHTML, DEFAULT_BUDGET_ITEMS, openDoc, type BudgetItem } from "@/lib/documents";
+  renewalMinutesHTML, DEFAULT_BUDGET_ITEMS, openDoc, hoaQuorum, foundingMinutesPortalHTML, renewalMinutesPortalHTML,
+  type BudgetItem, type HoaAttendance } from "@/lib/documents";
+import HoaExpensesPanel from "@/components/HoaExpensesPanel";
+import { feeOf, periodOf, basisOf, PERIOD_WORDS, periodsAr, ownerDueAt, shareFee, sharesSum, sharesValid,
+  sharesFromAreas, MONTHS_AR, r2, ownerBalance, splitBalance, riyalsAr, ownersAr, type FeePeriod } from "@/lib/hoaMoney";
+import { hijriText } from "@/lib/hijri";
+import { arDate } from "@/lib/documents";
 import DateField from "@/components/DateField";
 import { MemberLinkButton, HoaDocumentsPanel, type HoaDocPrefill } from "@/components/HoaMemberPanel";
 import { renderReceiptPage } from "@/lib/hoaPortal";
 
-type Owner = { id: string; name: string; unit: string | null; phone: string | null; months_late: number; last_paid: string | null; partial_amount?: number | null; prepaid_months?: number | null };
+type Owner = { opening_set?: boolean | null; id: string; name: string; unit: string | null; phone: string | null; months_late: number; last_paid: string | null; partial_amount?: number | null; prepaid_months?: number | null;
+  /** v63: رسم خاص (من الحصة)، الحصة ٪، المساحة م² */
+  fee_override?: number | null; share_pct?: number | null; area_m2?: number | null };
 type Note = { id: string; note_date: string; text: string };
 type Association = {
   id: string; name: string; units: number; fee: number;
   cert_expiry: string | null; fund_balance: number; grace_days?: number | null;
   auto_accrue?: boolean | null;
   bank_name?: string | null; bank_account_name?: string | null; iban?: string | null;
+  /** v62/v63/v64 */
+  archived_at?: string | null; mullak_reg_no?: string | null; unified_no?: string | null;
+  quorum_first_pct?: number | null; quorum_second_pct?: number | null;
+  public_token?: string | null; fee_basis?: string | null; fee_period?: string | null;
+  total_budget?: number | null; fiscal_start_month?: number | null;
   owners: Owner[]; association_notes: Note[];
 };
+/** حقول v64 (رقم التسجيل، الرقم الموحّد، النصاب) التي تغيّرت فقط */
+function v64Patch(d: any, cur: any): Record<string, any> {
+  const out: Record<string, any> = {};
+  const txt = (v: any) => (String(v ?? "").trim() || null);
+  if (d.mullak_reg_no !== undefined && txt(d.mullak_reg_no) !== txt(cur?.mullak_reg_no)) out.mullak_reg_no = txt(d.mullak_reg_no);
+  if (d.unified_no !== undefined && txt(d.unified_no) !== txt(cur?.unified_no)) out.unified_no = txt(d.unified_no);
+  if (d.quorum_first_pct !== undefined && d.quorum_first_pct !== "" && Number(d.quorum_first_pct) !== Number(cur?.quorum_first_pct ?? 75)
+      && Number(d.quorum_first_pct) > 0 && Number(d.quorum_first_pct) <= 100) out.quorum_first_pct = Number(d.quorum_first_pct);
+  if (d.quorum_second_pct !== undefined && (d.quorum_second_pct ?? null) !== (cur?.quorum_second_pct ?? null)) out.quorum_second_pct = d.quorum_second_pct ?? null;
+  return out;
+}
+/** رسالة موحّدة لأخطاء القاعدة */
+const dbErr = (m: string, v = "v63") => /not authorized/.test(m) ? "هذا الإجراء لمدير المكتب — اطلبه من صاحب المكتب."
+  : /Could not find|does not exist|schema cache/.test(m) ? `قاعدة البيانات تحتاج تحديث (schema-${v}) — لم يُنفَّذ الإجراء.` : m;
 
 /** الآيبان: أرقام عربية ← لاتينية، بلا مسافات، أحرف كبيرة */
 const normIban = (v?: string | null) => String(v || "")
@@ -32,13 +59,16 @@ const bankFields = (d: any) => ({
   iban: d.iban && ibanOk(d.iban) ? normIban(d.iban) : null,
 });
 
+/** دفعة الإشعار الأخير — لأزرار «تراجع» و«إرسال السند» */
+type ToastPay = { payment_id: string; owner: Owner; receipt_no?: string | null; amount: number; paid_on?: string | null };
+
 /** حالة المالك المعروضة */
 type OwnerKey = "critical" | "late" | "partial" | "ok";
 const OWNER_META: Record<OwnerKey, { label: string; dot: string; cls: string }> = {
-  critical: { label: "حرج", dot: "bg-late", cls: "bg-[#F7DAD7] text-[#8f2b26]" },
+  critical: { label: "متأخر 3+", dot: "bg-late", cls: "bg-[#F7DAD7] text-[#8f2b26]" },
   late:     { label: "متأخر", dot: "bg-late", cls: "bg-[#FBE9E7] text-[#a5322c]" },
-  partial:  { label: "سداد جزئي", dot: "bg-[#EA8C00]", cls: "bg-[#FDF0DC] text-[#9A5B00]" },
-  ok:       { label: "مسدّد", dot: "bg-paid", cls: "bg-[#E6F4EC] text-[#137a50]" },
+  partial:  { label: "دفع جزءًا", dot: "bg-[#EA8C00]", cls: "bg-[#FDF0DC] text-[#9A5B00]" },
+  ok:       { label: "لا متأخرات", dot: "bg-paid", cls: "bg-[#E6F4EC] text-[#137a50]" },
 };
 const ownerKey = (o: Owner): OwnerKey =>
   o.months_late >= 3 ? "critical"
@@ -58,7 +88,7 @@ export default function AssociationView({ initial, issuer }: { initial: Associat
     }));
 
   const [items, setItems] = useState<Association[]>(() => normalize(initial));
-  const [activeId, setActiveId] = useState<string | null>(initial[0]?.id || null);
+  const [activeId, setActiveId] = useState<string | null>((initial.find((x) => !x.archived_at) || initial[0])?.id || null);
   const [modal, setModal] = useState<null | "new" | "edit">(null);
   const [busy, setBusy] = useTransition();
 
@@ -67,7 +97,7 @@ export default function AssociationView({ initial, issuer }: { initial: Associat
   const [filter, setFilter] = useState<"all" | "due" | OwnerKey>("all");
   const [sort, setSort] = useState<"urgent" | "amount" | "name" | "unit">("urgent");
   const [paying, setPaying] = useState<Owner | null>(null);
-  const [doc, setDoc] = useState<null | { title: string; body: string; kind?: "notice" | "final" | "file" }>(null);
+  const [doc, setDoc] = useState<null | { title: string; body: string; kind?: "notice" | "final" | "file"; owner?: Owner; label?: string }>(null);
   const [history, setHistory] = useState<null | { owner: Owner; rows: any[] }>(null);
   const [ownerModal, setOwnerModal] = useState<null | { owner?: Owner }>(null);
   const [budget, setBudget] = useState<null | { year: number; items: BudgetItem[]; reserve_pct: number; notes: string }>(null);
@@ -78,12 +108,19 @@ export default function AssociationView({ initial, issuer }: { initial: Associat
   const [remindAll, setRemindAll] = useState(false);
   /** ملف التحصيل — سلّم التصعيد وصولًا إلى مستندات السند التنفيذي */
   const [collect, setCollect] = useState<null | { owner?: Owner }>(null);
-  const [toast, setToast] = useState<null | { k: "ok" | "err"; m: string }>(null);
+  const [toast, setToast] = useState<null | { k: "ok" | "err"; m: string; pay?: ToastPay; confirmUndo?: boolean }>(null);
   /** قفل متزامن لكل مالك: ضغطتان متتاليتان قبل إعادة الرسم لا تسجّلان دفعتين */
   const payLock = useRef<Set<string>>(new Set());
   const [payBusy, setPayBusy] = useState<Record<string, boolean>>({});
   /** مستندات الملاك (محاضر/إشعارات للاطّلاع والاعتماد) */
   const [docsOpen, setDocsOpen] = useState(false);
+  /** الصندوق والمصروفات (v62) وتوزيع الرسوم بالحصص (v63) */
+  const [expOpen, setExpOpen] = useState(false);
+  const [sharesOpen, setSharesOpen] = useState(false);
+  /** v64: المؤرشفة مخفية افتراضيًّا */
+  const [showArchived, setShowArchived] = useState(false);
+  const [openingOpen, setOpeningOpen] = useState(false);
+  const [noteAsk, setNoteAsk] = useState<string | null>(null);
   const [docPrefill, setDocPrefill] = useState<HoaDocPrefill | null>(null);
   // الحسابات تعتمد على تاريخ اليوم، وتوقيت السيرفر يختلف عن توقيت الجهاز.
   const [hydrated, setHydrated] = useState(false);
@@ -96,11 +133,20 @@ export default function AssociationView({ initial, issuer }: { initial: Associat
     router.refresh();
     setTimeout(() => setRefreshing(false), 1200);
   }
-  function notify(k: "ok" | "err", m: string) {
-    setToast({ k, m });
-    setTimeout(() => setToast(null), 3600);
+  /* الإشعار: 3.6 ثانية عادةً، و8 ثوانٍ لإشعار الدفعة (فيه «تراجع» و«إرسال السند») */
+  const toastTimer = useRef<any>(null);
+  function notify(k: "ok" | "err", m: string, pay?: ToastPay) {
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    setToast({ k, m, pay });
+    toastTimer.current = setTimeout(() => setToast(null), pay ? 8000 : 3600);
   }
+  const holdToast = () => { if (toastTimer.current) clearTimeout(toastTimer.current); toastTimer.current = setTimeout(() => setToast(null), 12000); };
+  /** آخر رصيد بعد كل دفعة كما أعادته القاعدة — لسطر «الرصيد بعد هذه الدفعة» في السند فقط حين يُعرف */
+  const afterPay = useRef<Record<string, { late: number; partial: number; prepaid: number; fee: number }>>({});
 
+  const visibleItems = useMemo(() => items.filter((x) => showArchived || !x.archived_at || x.id === activeId), [items, showArchived, activeId]);
+  const archivedCount = items.filter((x) => x.archived_at).length;
+  const liveItems = useMemo(() => items.filter((x) => !x.archived_at), [items]);
   const active = useMemo(() => items.find((a) => a.id === activeId) || null, [items, activeId]);
 
   // ── تُحسب قبل أي خروج مبكر حتى يبقى ترتيب الـhooks ثابتًا ──
@@ -140,7 +186,7 @@ export default function AssociationView({ initial, issuer }: { initial: Associat
   async function recordOwnerPayment(o: Owner, amount: number | null,
     opts: { method?: string; note?: string; paidOn?: string; reference?: string; request?: string } = {}): Promise<boolean> {
     if (!active) return false;
-    if (!((active.fee || 0) > 0)) { notify("err", "حدّد قيمة الاشتراك في إعدادات الجمعية أولًا."); return false; }
+    if (!(feeOf(o, active) > 0)) { notify("err", "حدّد قيمة الاشتراك في إعدادات الجمعية أولًا."); return false; }
     const amt = amount == null ? null : Math.round((Number(amount) || 0) * 100) / 100;
     if (amt !== null && !(amt > 0)) return false;
     if (payLock.current.has(o.id)) return false;
@@ -171,14 +217,53 @@ export default function AssociationView({ initial, issuer }: { initial: Associat
           : y)),
       } : x));
       const rc = r.receipt_no ? ` · سند ${r.receipt_no}` : "";
+      const pid = (r as any).payment_id as string | undefined;
+      if (pid && !r.duplicate) afterPay.current[pid] = { late: r.months_late, partial: Number(r.partial_amount) || 0, prepaid: r.prepaid_months ?? 0, fee: feeOf(o, active) };
       notify("ok", r.duplicate ? `هذه الدفعة مسجّلة سابقًا${rc}`
-        : r.months > 0 ? `سُجّل ${sar(paid)} ريال — ${r.months} شهر${rc}`
-        : `سُجّل ${sar(paid)} ريال كسداد جزئي${rc}`);
+        : r.months > 0 ? `سُجّل ${riyalsAr(paid, sar)} عن ${periodsAr(r.months, periodOf(active))}${rc}`
+        : `سُجّل ${riyalsAr(paid, sar)} كسداد جزئي${rc}`,
+        pid ? { payment_id: pid, owner: o, receipt_no: r.receipt_no, amount: paid, paid_on: r.paid_on } : undefined);
       return true;
     } finally {
       payLock.current.delete(o.id);
       setPayBusy((b) => { const n = { ...b }; delete n[o.id]; return n; });
     }
+  }
+
+  /** عكس دفعة بمعرّفها — مشترك بين «تراجع» في الإشعار وسجل المدفوعات */
+  async function reversePaymentById(paymentId: string, ownerId: string | null): Promise<boolean> {
+    if (!active) return false;
+    const { data, error } = await supabase.rpc("watheq_reverse_owner_payment", { p_payment: paymentId });
+    if (error) {
+      const m = String(error.message || "");
+      notify("err", /not authorized/.test(m) ? "العكس يحتاج صلاحية «التراجع والحذف» — اطلبه من صاحب المكتب." : m);
+      return false;
+    }
+    const r = data as { months_late?: number; partial_amount?: number; prepaid_months?: number; fund_balance?: number };
+    const assocId = active.id;
+    setItems((list) => list.map((x) => x.id === assocId ? {
+      ...x,
+      fund_balance: r.fund_balance != null ? Number(r.fund_balance) : x.fund_balance,
+      owners: x.owners.map((y) => y.id === ownerId && r.months_late != null
+        ? { ...y, months_late: r.months_late, partial_amount: r.partial_amount ?? 0, prepaid_months: r.prepaid_months ?? 0 } : y),
+    } : x));
+    return true;
+  }
+  /** «إرسال السند» — واتساب للمالك برابط سنده في صفحته الخاصة */
+  async function sendReceiptLink(t: ToastPay) {
+    try {
+      const url = await ownerPortalUrl(t.owner.id);
+      const msg = [`السلام عليكم ${t.owner.name}،`, `استلمنا ${riyalsAr(t.amount, sar)}${t.receipt_no ? ` — سند قبض رقم ${t.receipt_no}` : ""}.`,
+        `سند القبض: ${url}/p/${t.payment_id}`, "", `شاكرين لكم، إدارة ${active?.name || "الجمعية"}`].join("\n");
+      openExternal(waLink(t.owner.phone, msg));
+    } catch (e: any) { notify("err", e?.message || "تعذّر تجهيز رابط السند"); }
+  }
+  /** رابط صفحة المالك الخاصة (يُنشأ إن لم يوجد) — للتذكير والسند والمستندات */
+  async function ownerPortalUrl(ownerId: string): Promise<string> {
+    const r = await fetch("/api/hoa/member-link", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ owner_id: ownerId, action: "get" }) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok || !j?.ok) throw new Error(j?.error || "تعذّر إنشاء رابط المالك");
+    return `${window.location.origin}${j.path}`;
   }
 
   /** «سدّد الكل» — بتأكيد يذكر المبلغ، والقاعدة تحسبه من جديد لحظة التنفيذ */
@@ -193,19 +278,7 @@ export default function AssociationView({ initial, issuer }: { initial: Associat
   async function reverseOwnerPayment(row: any) {
     if (!active || !history) return;
     if (!confirm(`عكس دفعة ${sar(row.amount)} ريال بتاريخ ${row.paid_on}؟ يبقى السطران في السجل.`)) return;
-    const { data, error } = await supabase.rpc("watheq_reverse_owner_payment", { p_payment: row.id });
-    if (error) {
-      const m = String(error.message || "");
-      return notify("err", /not authorized/.test(m) ? "العكس يحتاج صلاحية «التراجع والحذف» — اطلبه من صاحب المكتب." : m);
-    }
-    const r = data as { months_late?: number; partial_amount?: number; prepaid_months?: number; fund_balance?: number };
-    const ownerId = history.owner.id, assocId = active.id;
-    setItems((list) => list.map((x) => x.id === assocId ? {
-      ...x,
-      fund_balance: r.fund_balance != null ? Number(r.fund_balance) : x.fund_balance,
-      owners: x.owners.map((y) => y.id === ownerId && r.months_late != null
-        ? { ...y, months_late: r.months_late, partial_amount: r.partial_amount ?? 0, prepaid_months: r.prepaid_months ?? 0 } : y),
-    } : x));
+    if (!(await reversePaymentById(row.id, history.owner.id))) return;
     notify("ok", "عُكست الدفعة وبقي أثرها في السجل.");
     openHistory(history.owner);
     router.refresh();   /* تاريخ آخر سداد يعيد القاعدة حسابه بعد العكس */
@@ -214,9 +287,12 @@ export default function AssociationView({ initial, issuer }: { initial: Associat
   /** سند القبض من جهة الإدارة — نفس قالب صفحة المالك */
   function printReceipt(o: Owner, row: any) {
     if (!active) return;
+    /* المستلِم = المكتب (اسم الفوترة ثم المنشأة) لا وثيق؛ «الرصيد بعد» فقط إن عُرف من ردّ التسجيل */
     openDoc(renderReceiptPage(
-      { association: { name: active.name }, owner: { name: row.payer_name || o.name, unit: row.unit_label ?? o.unit }, office: { org_name: issuer?.billing_name || null } } as any,
-      row, { nonce: "watheq", base: "" }));
+      { association: { name: active.name, fee_period: active.fee_period, mullak_reg_no: active.mullak_reg_no, unified_no: active.unified_no },
+        owner: { name: row.payer_name || o.name, unit: row.unit_label ?? o.unit },
+        office: { org_name: issuer?.org_name || null, billing_name: issuer?.billing_name || null } } as any,
+      row, { nonce: "watheq", base: "", balanceAfter: afterPay.current[row.id] || null }));
   }
 
   /** حفظ بيانات مالك (تعديل) — لم يكن ممكنًا قبل الآن */
@@ -235,8 +311,27 @@ export default function AssociationView({ initial, issuer }: { initial: Associat
     if (cur && want !== cur.months_late) {
       if (!(await adjustOwnerMonths(cur, want - cur.months_late))) return;
     }
+    /* الحصة والمساحة: بدالة المدير (v63) — لا تغيّر الرسم حتى يُعاد التوزيع */
+    const sh = String(d.share_pct ?? "").trim() === "" ? null : Number(d.share_pct);
+    const ar = String(d.area_m2 ?? "").trim() === "" ? null : Number(d.area_m2);
+    if (cur && ((sh ?? null) !== (cur.share_pct == null ? null : Number(cur.share_pct)) || (ar ?? null) !== (cur.area_m2 == null ? null : Number(cur.area_m2)))) {
+      if (!(await setOwnerShare(cur, sh, ar))) return;
+    }
     setOwnerModal(null);
     notify("ok", "حُدّثت بيانات المالك.");
+  }
+
+  /** حصة المالك ومساحته — دالة المدير (v63) */
+  async function setOwnerShare(o: Owner, share: number | null, area: number | null): Promise<boolean> {
+    if (!active) return false;
+    const assocId = active.id;
+    const { data, error } = await supabase.rpc("watheq_owner_set_share", { p_owner: o.id, p_share: share, p_area: area });
+    if (error) { notify("err", dbErr(String(error.message || ""))); return false; }
+    const r = data as { share_pct: number | null; area_m2: number | null };
+    setItems((list) => list.map((x) => x.id === assocId ? {
+      ...x, owners: x.owners.map((y) => y.id === o.id ? { ...y, share_pct: r.share_pct, area_m2: r.area_m2 } : y),
+    } : x));
+    return true;
   }
 
   /** تعديل يدوي لأشهر المالك (استحقاق يدوي أو تصحيح رصيد افتتاحي) — للمدير، ويُوثَّق */
@@ -274,7 +369,7 @@ export default function AssociationView({ initial, issuer }: { initial: Associat
   /** يفتح الموازنة: يجلب المحفوظة أو يبدأ بالبنود النموذجية */
   async function openBudget() {
     if (!active) return;
-    const year = new Date().getFullYear();
+    const year = Number(today().slice(0, 4));   /* سنة الرياض لا الجهاز */
     const { data, error } = await supabase.from("association_budgets")
       .select("*").eq("association_id", active.id).eq("year", year).maybeSingle();
     if (error) console.error("Watheq budget load error:", error);
@@ -315,7 +410,7 @@ export default function AssociationView({ initial, issuer }: { initial: Associat
   /** يفتح حزمة تجديد الشهادة — يجلب موازنة العام القادم (أو الحالي) لتعبئة المحضر تلقائيًّا */
   async function openRenewal() {
     if (!active) return;
-    const nextYear = new Date().getFullYear() + 1;
+    const nextYear = Number(today().slice(0, 4)) + 1;
     const annualBudget = (await savedAnnualBudget(nextYear)) ?? (await savedAnnualBudget(nextYear - 1));
     setRenewal({ annualBudget });
   }
@@ -323,7 +418,7 @@ export default function AssociationView({ initial, issuer }: { initial: Associat
   /** طباعة الموازنة المحفوظة مباشرة — يفضّل موازنة العام القادم ثم الحالي */
   async function printSavedBudget() {
     if (!active) return;
-    const nextYear = new Date().getFullYear() + 1;
+    const nextYear = Number(today().slice(0, 4)) + 1;
     for (const y of [nextYear, nextYear - 1]) {
       const { data } = await supabase.from("association_budgets")
         .select("*").eq("association_id", active.id).eq("year", y).maybeSingle();
@@ -338,27 +433,52 @@ export default function AssociationView({ initial, issuer }: { initial: Associat
   }
 
   /** إضافة ملّاك دفعة واحدة — سطر لكل مالك: الاسم، الوحدة، الجوال */
-  async function addOwnersBulk(rows: { name: string; unit: string | null; phone: string | null }[]) {
+  async function addOwnersBulk(rows: { name: string; unit: string | null; phone: string | null; months?: number | null }[]) {
     if (!active || !rows.length) return;
+    const assocId = active.id;
     const { data, error } = await supabase.from("owners").insert(
-      rows.map((r) => ({ association_id: active.id, name: r.name, unit: r.unit, phone: r.phone, months_late: 0 }))
+      rows.map((r) => ({ association_id: assocId, name: r.name, unit: r.unit, phone: r.phone, months_late: 0 }))
     ).select("*");
     if (error) { console.error("Watheq bulk owners error:", error); return notify("err", error.message); }
-    setItems(items.map((a) => a.id === active.id ? { ...a, owners: [...a.owners, ...((data || []) as Owner[])] } : a));
+    let added = (data || []) as Owner[];
+    setItems((list) => list.map((a) => a.id === assocId ? { ...a, owners: [...a.owners, ...added] } : a));
     setBulk(false);
-    notify("ok", `أُضيف ${rows.length} مالكًا دفعة واحدة.`);
+    /* العمود الرابع (المتأخر الافتتاحي بالأشهر): يؤكَّد بدالة المدير مباشرة لمن أُدخل له */
+    let confirmed = 0;
+    for (let i = 0; i < added.length; i++) {
+      const m = rows[i]?.months;
+      if (m != null && Number.isFinite(m)) { if (await confirmOpening(added[i], Number(m))) confirmed++; }
+    }
+    notify("ok", `أُضيف ${ownersAr(rows.length)} دفعة واحدة${confirmed ? ` · حُدّد الرصيد الافتتاحي لـ ${ownersAr(confirmed)}` : ""}.`);
+    if (confirmed < added.length) setOpeningOpen(true);
+  }
+
+  /** تأكيد الرصيد الافتتاحي لمالك جديد (v64): المتأخر بالفترات، وصفر = لا متأخرات */
+  async function confirmOpening(o: Owner, months: number): Promise<boolean> {
+    if (!active) return false;
+    const assocId = active.id;
+    const { data, error } = await supabase.rpc("watheq_owner_confirm_opening", { p_owner: o.id, p_months: Math.max(0, Math.floor(months)), p_expected_late: o.months_late || 0 });
+    if (error) { notify("err", `${o.name}: ${dbErr(String(error.message || ""), "v64")}`); return false; }
+    const r = data as any;
+    setItems((list) => list.map((x) => x.id === assocId ? {
+      ...x, owners: x.owners.map((y) => y.id === o.id ? { ...y, opening_set: true, months_late: r.months_late, partial_amount: r.partial_amount, prepaid_months: r.prepaid_months } : y),
+    } : x));
+    return true;
   }
 
   /** تصدير الملّاك CSV — يفتح مباشرة في Excel بترميز عربي سليم */
   function exportOwnersCSV() {
     if (!active) return;
-    const fee = active.fee || 0;
-    const head = ["الاسم", "الوحدة", "الجوال", "أشهر متأخرة", "المتأخر (ريال)", "الجزئي أو الرصيد (ريال)", "أشهر مقدَّمة", "آخر سداد", "الحالة"];
+    const pw = periodOf(active) === "annual" ? "سنوات" : "أشهر";
+    const head = ["الاسم", "الوحدة", "الجوال", `${pw} متأخرة`, "المتأخر (ريال)", "الجزئي أو الرصيد (ريال)", `${pw} مقدَّمة`, "آخر سداد", "الحالة",
+      `${PERIOD_WORDS[periodOf(active)].label} (ريال)`, "الحصة ٪", "المساحة م²"];
     const lines = (active.owners || []).map((o) => {
       const k = ownerKey(o);
+      const fee = feeOf(o, active);
       return [o.name, o.unit || "", o.phone || "", o.months_late,
-        Math.max(0, o.months_late * fee - (Number(o.partial_amount) || 0)),
-        Number(o.partial_amount) || 0, Number(o.prepaid_months) || 0, o.last_paid || "", OWNER_META[k].label]
+        ownerDueAt(o, fee),
+        Number(o.partial_amount) || 0, Number(o.prepaid_months) || 0, o.last_paid || "", OWNER_META[k].label,
+        fee, o.share_pct ?? "", o.area_m2 ?? ""]
         .map(csvCell).join(",");   /* csvCell: يمنع حقن المعادلات في Excel (30 سبتمبر 2026) */
     });
     const csv = "\uFEFF" + [head.map(csvCell).join(","), ...lines].join("\r\n");
@@ -400,6 +520,8 @@ export default function AssociationView({ initial, issuer }: { initial: Associat
       cert_expiry: data.cert_expiry || null, fund_balance: data.fund_balance || 0,
       grace_days: Math.max(0, Math.min(30, Number(data.grace_days) || 0)),
       ...(typeof data.auto_accrue === "boolean" ? { auto_accrue: data.auto_accrue } : {}),
+      /* السنوي فقط يُرسل (الافتراضي شهري) — فلا يتعطّل الإنشاء قبل تطبيق v63 */
+      ...(periodOf(data) === "annual" ? { fee_period: "annual", fiscal_start_month: Math.min(12, Math.max(1, Number(data.fiscal_start_month) || 1)) } : {}),
       ...bankFields(data),
       user_id: uid,
     }).select("*").single();
@@ -411,33 +533,86 @@ export default function AssociationView({ initial, issuer }: { initial: Associat
     if (!active) return;
     /* الرصيد لا يُكتب فوق قيمته: لو سُجّلت دفعة والنموذج مفتوح لضاعت.
        نرسل الفرق فقط، بعملية ذرّية، ويُحفظ في سجل التدقيق. */
+    /* H2: لا يُرسل اشتراك صفر أبدًا حين يُفرَّغ الحقل — يبقى القديم وتظهر رسالة */
+    if (!(Number(data.fee) > 0) && Number(active.fee) > 0) {
+      return notify("err", `قيمة الاشتراك لا تكون صفرًا أو فارغة — بقيت ${sar(Number(active.fee))} ريال. أدخل القيمة الجديدة ثم احفظ.`);
+    }
     const fundDelta = Math.round(((Number(data.fund_balance) || 0) - (Number(active.fund_balance) || 0)) * 100) / 100;
+    /* خطة الرسوم (الرسم، الأساس، الفترة، الموازنة، السنة المالية): دالة واحدة ذرّية (v63)
+       تُبقي رصيد كل مالك بالريال ثابتًا. التحديث المباشر للرسم فقط إن لم تتغيّر الخطة. */
+    const plan = {
+      fee: r2(Number(data.fee) || 0), basis: basisOf(data), period: periodOf(data),
+      total: data.total_budget === null || (data.total_budget as any) === "" || data.total_budget === undefined ? null : r2(Number(data.total_budget) || 0),
+      fiscal: Math.min(12, Math.max(1, Number(data.fiscal_start_month) || 1)),
+    };
+    const planChanged = plan.basis !== basisOf(active) || plan.period !== periodOf(active)
+      || (plan.total ?? null) !== (active.total_budget == null ? null : r2(Number(active.total_budget)))
+      || plan.fiscal !== (Number(active.fiscal_start_month) || 1);
     const { error } = await supabase.from("associations").update({
-      name: data.name, units: data.units || 0, fee: data.fee || 0,
+      name: data.name, units: data.units || 0, ...(planChanged ? {} : { fee: data.fee || 0 }),
       cert_expiry: data.cert_expiry || null,
       grace_days: Math.max(0, Math.min(30, Number(data.grace_days) || 0)),
       ...(typeof data.auto_accrue === "boolean" ? { auto_accrue: data.auto_accrue } : {}),
       ...bankFields(data),
+      /* v64: تُرسل فقط إن تغيّرت — فلا يتعطّل الحفظ قبل تطبيق v64 */
+      ...v64Patch(data, active),
     }).eq("id", active.id);
     if (error) { console.error("Watheq save error:", error); return notify("err", error.message); }
+    let planPatch: Partial<Association> = {};
+    let ownersPatch: Record<string, Partial<Owner>> = {};
+    if (planChanged) {
+      const { data: pr, error: pe } = await supabase.rpc("watheq_assoc_set_fee_plan", {
+        p_assoc: active.id, p_fee: plan.fee, p_basis: plan.basis, p_period: plan.period,
+        p_total_budget: plan.total, p_fiscal_start: plan.fiscal,
+      });
+      if (pe) return notify("err", "حُفظت البيانات الأخرى، لكن خطة الرسوم لم تتغيّر: " + dbErr(String(pe.message || "")));
+      const r = pr as any;
+      planPatch = { fee: Number(r.fee), fee_basis: r.fee_basis, fee_period: r.fee_period, total_budget: r.total_budget, fiscal_start_month: r.fiscal_start_month };
+      (r.owners || []).forEach((o: any) => { ownersPatch[o.id] = { fee_override: o.fee_override, months_late: o.months_late, partial_amount: o.partial_amount, prepaid_months: o.prepaid_months }; });
+    }
     let fund = active.fund_balance;
     if (fundDelta) {
       const { data: nb, error: fe } = await supabase.rpc("watheq_adjust_fund", { p_assoc: active.id, p_delta: fundDelta });
       if (fe) { notify("err", "حُفظت الإعدادات، لكن تعذّر تعديل رصيد الصندوق: " + fe.message); }
       else fund = Number(nb);
     }
-    const { fund_balance: _f, ...rest } = data as any;
-    setItems(items.map((a) => a.id === active.id ? { ...a, ...rest, ...bankFields(data), fund_balance: fund } as any : a));
+    const { fund_balance: _f, fee_basis: _b, fee_period: _p, total_budget: _t, fiscal_start_month: _m, ...rest } = data as any;
+    if (planChanged) delete rest.fee;
+    setItems(items.map((a) => a.id === active.id ? {
+      ...a, ...rest, ...bankFields(data), ...planPatch, fund_balance: fund,
+      owners: a.owners.map((o) => ownersPatch[o.id] ? { ...o, ...ownersPatch[o.id] } : o),
+    } as any : a));
     setModal(null);
+    if (planChanged) notify("ok", "حُدّثت خطة الرسوم — رصيد كل مالك بالريال كما هو.");
   }
   async function deleteAssociation() {
     if (!active || !confirm("حذف الجمعية وكل بياناتها؟")) return;
     const { data: _del, error } = await supabase.from("associations").delete().eq("id", active.id).select("id");
     /* حذف رفضته السياسات يرجع بلا خطأ وبصفر صفوف — لا نوهم الموظف أنه نجح */
     if (!error && (!_del || _del.length === 0)) { notify("err", "هذا الإجراء يحتاج صلاحية أعلى — اطلبه من صاحب المكتب."); return; }
-    if (error) { console.error("Watheq save error:", error); return notify("err", error.message); }
+    if (error) {
+      console.error("Watheq save error:", error);
+      /* v64: جمعية لها دفعات أو مصروفات لا تُحذف — نعرض الأرشفة بدلها */
+      if (/أرشفها|payments|expenses|foreign key/i.test(String(error.message))) {
+        return notify("err", "لا يمكن حذف جمعية لها دفعات أو مصروفات مسجّلة — استعمل «أرشفة الجمعية» فيبقى سجلها المالي محفوظًا وتختفي من القائمة.");
+      }
+      return notify("err", error.message);
+    }
     const rest = items.filter((a) => a.id !== active.id);
     setItems(rest); setActiveId(rest[0]?.id || null); setModal(null);
+  }
+  /** أرشفة الجمعية أو إرجاعها (v64) — المؤرشفة تختفي من القائمة افتراضيًّا وسجلّها باقٍ */
+  async function archiveAssociation(archive: boolean) {
+    if (!active) return;
+    if (archive && !confirm(`أرشفة «${active.name}»؟ تختفي من القائمة ويبقى سجلّها المالي كاملًا، ويمكن إرجاعها لاحقًا.`)) return;
+    const { data, error } = await supabase.rpc("watheq_assoc_archive", { p_assoc: active.id, p_archive: archive });
+    if (error) return notify("err", dbErr(String(error.message || ""), "v64"));
+    const id = active.id;
+    setItems((list) => list.map((x) => x.id === id ? { ...x, archived_at: (data as any) || null } : x));
+    if (!archive) router.refresh();   /* الإرجاع يعيد ضبط بداية الاستحقاق في القاعدة */
+    setModal(null);
+    if (archive) { const next = items.find((x) => x.id !== id && !x.archived_at); if (next) setActiveId(next.id); }
+    notify("ok", archive ? "أُرشفت الجمعية — تجدها من «عرض المؤرشفة»." : "أُرجعت الجمعية إلى القائمة.");
   }
 
   // ---------- ملّاك ----------
@@ -448,6 +623,7 @@ export default function AssociationView({ initial, issuer }: { initial: Associat
     }).select("*").single();
     if (error) { console.error("Watheq save error:", error); return notify("err", error.message); }
     setItems(items.map((a) => a.id === active.id ? { ...a, owners: [...a.owners, data as Owner] } : a));
+    if ((data as Owner)?.opening_set === false) setOpeningOpen(true);
   }
   /** بيانات المالك الوصفية فقط (الاسم/الوحدة/الجوال) — الأرقام عبر الدوال */
   async function ownerPatch(id: string, patch: { name?: string; unit?: string | null; phone?: string | null }): Promise<boolean> {
@@ -490,25 +666,51 @@ export default function AssociationView({ initial, issuer }: { initial: Associat
 
   // ---------- إجراءات واتساب ----------
   /** تذكير ودّي — يحفظ حسن الجوار ويوضّح تفاصيل المطالبة */
-  function ownerRemindLink(o: Owner) {
-    if (!active) return "#";
-    const fee = active.fee || 0;
+  function ownerRemindLink(o: Owner) { return waLink(o.phone, ownerRemindText(o)); }
+  /** يرسل تذكيرًا برابط صفحة المالك الخاصة، ويوثّقه في السجل «[تواصل] تذكير واتساب — …» */
+  async function sendReminder(o: Owner) {
+    /* تُفتح النافذة فورًا (داخل النقرة) ثم يُضبط عنوانها بعد جلب الرابط — وإلا يحجبها المتصفح */
+    const tg = (globalThis as any)?.Telegram?.WebApp;
+    const w = !tg && typeof window !== "undefined" ? window.open("", "_blank") : null;
+    let url = "";
+    try { url = await ownerPortalUrl(o.id); } catch { /* بلا رابط: يُرسل النص وحده */ }
+    const href = waLink(o.phone, ownerRemindText(o, url));
+    if (w) { try { w.location.href = href; } catch { openExternal(href); } } else openExternal(href);
+    await logContact(o, "تذكير واتساب");
+  }
+  /** سجل التواصل: لا يُحذف (سياسة v64) ويُبنى منه «آخر تذكير» و«أُرسل» في التذكير الجماعي */
+  async function logContact(o: Owner, label: string) {
+    if (!active) return;
+    const text = `${CONTACT_TAG} ${label} — ${o.name}${o.unit ? ` (${o.unit})` : ""} — ${riyalsAr(ownerDue(o), sar)}`;
+    const assocId = active.id;
+    const { data, error } = await supabase.from("association_notes").insert({ association_id: assocId, text, note_date: today() }).select("*").single();
+    if (error) { console.error("Watheq contact log error:", error); return; }
+    setItems((prev) => prev.map((x) => x.id === assocId ? { ...x, association_notes: [data as Note, ...(x.association_notes || [])] } : x));
+  }
+  const contactLog = (o: Owner): Note[] => (active?.association_notes || [])
+    .filter((n) => String(n.text || "").startsWith(CONTACT_TAG) && String(n.text).includes(`— ${o.name}${o.unit ? ` (${o.unit})` : ""} —`))
+    .sort((x, y) => String(y.note_date).localeCompare(String(x.note_date)));
+  const lastReminder = (o: Owner) => contactLog(o)[0]?.note_date || null;
+
+  function ownerRemindText(o: Owner, portalUrl = "") {
+    if (!active) return "";
+    const fee = feeOf(o, active);
+    const per = periodOf(active);
     const partial = Number(o.partial_amount) || 0;
-    const gross = o.months_late * fee;
-    const due = Math.max(0, gross - partial);
+    const due = ownerDueAt(o, fee);
     const unit = o.unit ? `الوحدة (${o.unit})` : "وحدتكم";
     const assoc = active.name;
 
     const lines: string[] = [`السلام عليكم ورحمة الله، ${o.name}`, ""];
 
     if (o.months_late <= 0 && ((Number(o.prepaid_months) || 0) > 0 || partial > 0)) {
-      lines.push(`نشكركم على السداد — اشتراك الصيانة عن ${unit} في ${assoc} مسدَّد${(Number(o.prepaid_months) || 0) > 0 ? ` مقدَّمًا لـ ${o.prepaid_months} شهر` : ""}، ولا مستحقات عليكم حاليًّا.`);
+      lines.push(`نشكركم على السداد — اشتراك الصيانة عن ${unit} في ${assoc} مسدَّد${(Number(o.prepaid_months) || 0) > 0 ? ` مقدَّمًا لـ ${periodsAr(Number(o.prepaid_months), per)}` : ""}، ولا مستحقات عليكم حاليًّا.`);
     } else if (o.months_late <= 0) {
-      lines.push(`تذكير ودّي بأن اشتراك الصيانة عن ${unit} في ${assoc}${fee ? ` وقدره ${sar(fee)} ريال` : ""} يُستحق مع بداية الشهر.`);
+      lines.push(`تذكير ودّي بأن اشتراك الصيانة عن ${unit} في ${assoc}${fee ? ` وقدره ${sar(fee)} ريال ${PERIOD_WORDS[per].every}` : ""} يُستحق مع بداية ${per === "annual" ? "السنة المالية للجمعية" : "الشهر"}.`);
     } else {
       lines.push(`نودّ تذكيركم بأن اشتراك الصيانة عن ${unit} في ${assoc} لا يزال غير مسدَّد، وبيانه:`);
-      lines.push(`• عدد الفترات المتأخرة: ${o.months_late}`);
-      if (fee) lines.push(`• قيمة الاشتراك للفترة: ${sar(fee)} ريال`);
+      lines.push(`• ${per === "annual" ? "السنوات" : "الأشهر"} المتأخرة: ${o.months_late}`);
+      if (fee) lines.push(`• ${PERIOD_WORDS[per].label}: ${sar(fee)} ريال`);
       if (partial > 0) lines.push(`• المسدَّد جزئيًّا: ${sar(partial)} ريال`);
       if (due) lines.push(`• المبلغ المتبقّي: ${sar(due)} ريال`);
       if (due && active.iban) {
@@ -524,24 +726,26 @@ export default function AssociationView({ initial, issuer }: { initial: Associat
     lines.push("");
     lines.push("فإن كان السداد قد تم فنعتذر عن التذكير، ونرجو تزويدنا بما يفيد لتحديث السجل.");
     lines.push("");
+    if (portalUrl) { lines.push("", "صفحتك الخاصة (حالة اشتراكك وسنداتك ومستندات الجمعية):", portalUrl); }
+    lines.push("");
     lines.push("شاكرين لكم حسن تعاونكم،");
     lines.push(`إدارة ${assoc}`);
-    return waLink(o.phone, lines.join("\n"));
+    return lines.join("\n");
   }
 
   /** إشعار مكتوب — مستند إلى الأساس النظامي والمسار الصحيح للتحصيل */
   function makeOwnerNotice(o: Owner) {
     if (!active) return;
-    const fee = active.fee || 0;
+    const fee = feeOf(o, active);
     const partial = Number(o.partial_amount) || 0;
-    const due = Math.max(0, o.months_late * fee - partial);
+    const due = ownerDueAt(o, fee);
     const unit = o.unit || "—";
     const body = [
       ...trialBanner(),
       "إشعار بسداد اشتراكات الصيانة المتأخرة",
       `التاريخ: ${today()}`,
       "",
-      `من: إدارة ${active.name} (جمعية الملاك)`,
+      `من: إدارة ${active.name} (جمعية الملاك)${regText()}`,
       `إلى: المكرَّم ${o.name}، مالك الوحدة العقارية رقم (${unit}).`,
       "",
       "الموضوع: مطالبة بسداد اشتراكات الصيانة المستحقة.",
@@ -550,13 +754,13 @@ export default function AssociationView({ initial, issuer }: { initial: Associat
       "",
       "بالإشارة إلى نظام ملكية الوحدات العقارية وفرزها وإدارتها، الصادر بالمرسوم الملكي رقم (م/85) وتاريخ 02/07/1441هـ، وإلى النظام الأساسي للجمعية وقرار الجمعية العامة المعتمد بتحديد مبلغ الاشتراك؛",
       "",
-      `نفيدكم بأنه قد ترصَّد بذمّتكم مبلغ (${sar(due)}) ريال، قيمة (${o.months_late}) فترة اشتراك مستحقة عن الوحدة رقم (${unit})${fee ? `، بواقع (${sar(fee)}) ريال للفترة` : ""}${partial > 0 ? `، بعد خصم مبلغ (${sar(partial)}) ريال مسدَّد جزئيًّا` : ""}، ولم يُسدَّد حتى تاريخ هذا الإشعار.`,
+      `نفيدكم بأنه قد ترصَّد بذمّتكم مبلغ (${sar(due)}) ريال، قيمة (${o.months_late}) فترة اشتراك ${periodOf(active) === "annual" ? "سنوية" : "شهرية"} مستحقة عن الوحدة رقم (${unit})${fee ? `، بواقع (${sar(fee)}) ريال للفترة` : ""}${partial > 0 ? `، بعد خصم مبلغ (${sar(partial)}) ريال مسدَّد جزئيًّا` : ""}، ولم يُسدَّد حتى تاريخ هذا الإشعار.`,
       "",
       "وتُخصَّص هذه الاشتراكات لصيانة الأجزاء المشتركة وتشغيلها وفق الموازنة المعتمدة، ويؤثّر التأخّر في سدادها على حقوق بقية الملاك وعلى استدامة خدمات العقار.",
       "",
       "لذا نأمل المبادرة بسداد المبلغ المذكور خلال (10) أيام من تاريخ استلامكم هذا الإشعار، إيداعًا في الحساب البنكي للجمعية، وتزويد إدارة الجمعية بما يفيد السداد.",
       "",
-      "وفي حال عدم السداد خلال المدة المذكورة، فسيتخذ مدير العقار الإجراءات النظامية المتاحة، ومنها رفع بيانات المتعثّرين عن السداد عبر منصة «ملاك»، والتوجّه إلى محكمة التنفيذ أو الجهة المختصة وفق الإجراءات المعتمدة.",
+      "وفي حال عدم السداد خلال المدة المذكورة، فللجمعية اتخاذ ما يتيحه النظام من إجراءات، ومنها — متى صدرت الرسوم وفواتيرها عبر منصة «ملاك» — طلب السند التنفيذي من خلالها.",
       "",
       "ونؤكّد أن غايتنا حفظ حقوق الجميع وحسن الجوار، ونتطلّع إلى تسوية الأمر ودّيًا.",
       "",
@@ -567,8 +771,8 @@ export default function AssociationView({ initial, issuer }: { initial: Associat
       `التوقيع: ____________________     التاريخ: ${today()}`,
       ...brandLine(),
     ].join("\n");
-    setDoc({ title: `إشعار سداد اشتراكات — ${o.name}`, body, kind: "notice" });
-    logNotice(o, "خطاب مطالبة");
+    /* لا يُوثَّق عند الفتح: التوثيق حين يؤكد المدير التسليم أو يرسله واتساب (DocModal) */
+    setDoc({ title: `إشعار سداد اشتراكات — ${o.name}`, body, kind: "notice", owner: o, label: "خطاب مطالبة" });
   }
 
   // ════════════════════════════════════════════════════════════
@@ -578,11 +782,11 @@ export default function AssociationView({ initial, issuer }: { initial: Associat
   // ════════════════════════════════════════════════════════════
 
   /** المبلغ الصافي المتأخر على مالك */
-  const ownerDue = (o: Owner) =>
-    Math.max(0, o.months_late * (active?.fee || 0) - (Number(o.partial_amount) || 0));
+  const ownerDue = (o: Owner) => ownerDueAt(o, feeOf(o, active));
 
   /** وسم يميّز خطابات التحصيل داخل سجل العمارة */
   const NOTICE_TAG = "[تحصيل]";
+  const CONTACT_TAG = "[تواصل]";
   const ownerRef = (o: Owner) => (o.unit ? `الوحدة (${o.unit})` : o.name);
 
   /** سجل المطالبات السابقة لمالك — يُقرأ من سجل العمارة نفسه، بلا جدول جديد */
@@ -610,6 +814,12 @@ export default function AssociationView({ initial, issuer }: { initial: Associat
       ? { ...x, association_notes: [data as Note, ...(x.association_notes || [])] } : x));
   }
 
+  /** رقم التسجيل في «ملاك» والرقم الموحّد — النظام يشترطهما مع اسم الجمعية في المراسلات */
+  const regText = () => {
+    const x = [active?.mullak_reg_no ? `رقم التسجيل في «ملاك»: ${active.mullak_reg_no}` : "", active?.unified_no ? `الرقم الموحّد: ${active.unified_no}` : ""].filter(Boolean);
+    return x.length ? ` — ${x.join(" · ")}` : "";
+  };
+
   /** ثلاث حالات: مشترك = نظيف · تجربة نشطة = لا شيء (سطر المصدر في التذييل) · انتهت بلا اشتراك = علامة */
   const trialBanner = () => issuer?.expired
     ? ["《 نسخة تجريبية — غير معتمدة 》", "انتهت فترة التجربة ولم يُفعَّل اشتراك. فعّل اشتراكك لإصدار النسخة النهائية.", "", "──────────────────────────────", ""]
@@ -623,7 +833,7 @@ export default function AssociationView({ initial, issuer }: { initial: Associat
   /** إنذار نهائي — آخر خطوة ودّية قبل اللجوء إلى إجراءات المنصة */
   function makeFinalNotice(o: Owner, feeApprovedOn?: string) {
     if (!active) return;
-    const fee = active.fee || 0;
+    const fee = feeOf(o, active);
     const partial = Number(o.partial_amount) || 0;
     const due = ownerDue(o);
     const unit = o.unit || "—";
@@ -633,7 +843,7 @@ export default function AssociationView({ initial, issuer }: { initial: Associat
       "إنذار نهائي بسداد اشتراكات الصيانة المتأخرة",
       `التاريخ: ${today()}`,
       "",
-      `من: إدارة ${active.name} (جمعية الملاك)`,
+      `من: إدارة ${active.name} (جمعية الملاك)${regText()}`,
       `إلى: المكرَّم ${o.name}، مالك الوحدة العقارية رقم (${unit}).`,
       "",
       "الموضوع: إنذار نهائي قبل اتخاذ الإجراءات النظامية.",
@@ -642,13 +852,13 @@ export default function AssociationView({ initial, issuer }: { initial: Associat
       "",
       `إلحاقًا بمطالباتنا السابقة${prev.length ? ` (${prev.map((n) => n.note_date).join("، ")})` : ""}، وبالإشارة إلى نظام ملكية الوحدات العقارية وفرزها وإدارتها الصادر بالمرسوم الملكي رقم (م/85) وتاريخ 02/07/1441هـ ولائحته التنفيذية، وإلى النظام الأساسي لجمعية الملاك${feeApprovedOn ? ` وقرار الجمعية العامة بتحديد مبلغ الاشتراك الصادر بتاريخ ${feeApprovedOn}` : ""}؛`,
       "",
-      `نُنذركم إنذارًا نهائيًّا بسداد مبلغ (${sar(due)}) ريال، قيمة (${o.months_late}) فترة اشتراك مستحقة عن الوحدة رقم (${unit})${fee ? `، بواقع (${sar(fee)}) ريال للفترة` : ""}${partial > 0 ? `، بعد خصم مبلغ (${sar(partial)}) ريال مسدَّد جزئيًّا` : ""}.`,
+      `نُنذركم إنذارًا نهائيًّا بسداد مبلغ (${sar(due)}) ريال، قيمة (${o.months_late}) فترة اشتراك ${periodOf(active) === "annual" ? "سنوية" : "شهرية"} مستحقة عن الوحدة رقم (${unit})${fee ? `، بواقع (${sar(fee)}) ريال للفترة` : ""}${partial > 0 ? `، بعد خصم مبلغ (${sar(partial)}) ريال مسدَّد جزئيًّا` : ""}.`,
       "",
       "ويكون السداد — وفق المادة السادسة من النظام الأساسي — بتحويل بنكي من حسابكم إلى الحساب البنكي لجمعية الملاك، مع تزويد رئيس الجمعية بما يفيد التحويل فور إتمامه، وذلك خلال (15) يومًا من تاريخ استلامكم هذا الإنذار.",
       "",
       "ونذكّركم بأن النظام الأساسي لا يجيز التخلّي عن الالتزام تجاه الجمعية بأي مسوّغ، ولو أبديتم رغبتكم بعدم الانتفاع بالأجزاء المشتركة (المادة الثلاثون)، وأن التزامكم يبقى قائمًا حتى لو كانت الوحدة مؤجَّرة (المادة الحادية والثلاثون).",
       "",
-      "وفي حال عدم السداد خلال المدة المذكورة، سيتّخذ مدير العقار الإجراءات المقرّرة نظامًا — بما فيها الاستناد إلى قراره بقيم الاشتراكات المعتمد من الهيئة العامة للعقار، والذي يُعدّ سندًا تنفيذيًّا في مواجهة الملاك وفق المادة السادسة/4 والمادة العشرين من النظام الأساسي — واستكمال إجراءات التنفيذ لدى الجهة المختصة.",
+      "وفي حال عدم السداد خلال المدة المذكورة، سيتّخذ مدير العقار ما يقرّره النظام الأساسي من إجراءات، بما فيها — إن كان قرار تحديد الاشتراكات معتمدًا من الهيئة العامة للعقار — طلب السند التنفيذي واستكمال التنفيذ لدى الجهة المختصة.",
       "",
       "ونؤكّد رغبتنا في تسوية الأمر ودّيًا قبل بلوغ هذه المرحلة، وباب التواصل مفتوح لأي ترتيب للسداد.",
       "",
@@ -659,15 +869,14 @@ export default function AssociationView({ initial, issuer }: { initial: Associat
       `التوقيع: ____________________     التاريخ: ${today()}`,
       ...brandLine(),
     ].join("\n");
-    setDoc({ title: `إنذار نهائي — ${o.name}`, body, kind: "final" });
-    logNotice(o, "إنذار نهائي");
+    setDoc({ title: `إنذار نهائي — ${o.name}`, body, kind: "final", owner: o, label: "إنذار نهائي" });
   }
 
 
   function ownerNoticeLink(o: Owner) {
     if (!active) return "#";
-    const total = o.months_late * (active.fee || 0);
-    return waLink(WATHEQ_WA, `مرحبًا، أرغب بتجهيز نموذج خطاب تذكير بالسداد عبر وثيق.\nالجمعية: ${active.name}\nمالك الوحدة: ${o.unit || "—"} (${o.name})\nالمتأخرات: ${o.months_late} أشهر${total ? ` بمبلغ ${sar(total)} ريال` : ""}.`);
+    const total = ownerDue(o);
+    return waLink(WATHEQ_WA, `مرحبًا، أرغب بتجهيز نموذج خطاب تذكير بالسداد عبر وثيق.\nالجمعية: ${active.name}\nمالك الوحدة: ${o.unit || "—"} (${o.name})\nالمتأخرات: ${periodsAr(o.months_late, periodOf(active))}${total ? ` بمبلغ ${sar(total)} ريال` : ""}.`);
   }
   function renewLink() {
     if (!active) return "#";
@@ -698,40 +907,66 @@ export default function AssociationView({ initial, issuer }: { initial: Associat
   const total = owners.length;
   const late = owners.filter((o) => o.months_late > 0);
   const critical = owners.filter((o) => o.months_late >= 3);
-  const pct = total ? Math.round(((total - late.length) / total) * 100) : 0;
   const dl = daysLeft(a.cert_expiry);
-  const owedTotal = late.reduce((s, o) => s + Math.max(0, o.months_late * (a.fee || 0) - (Number(o.partial_amount) || 0)), 0);
-  const expectedMonthly = total * (a.fee || 0);
+  const per: FeePeriod = periodOf(a);
+  const W = PERIOD_WORDS[per];
+  const shareBasis = basisOf(a) === "share";
+  const feeFor = (o: Owner) => feeOf(o, a);
+  const owedTotal = r2(late.reduce((s, o) => s + ownerDueAt(o, feeFor(o)), 0));
+  const expectedMonthly = r2(owners.reduce((s, o) => s + feeFor(o), 0));
+  const noShare = shareBasis ? owners.filter((o) => o.fee_override == null).length : 0;
 
 
-  const chips: { k: "all" | OwnerKey; label: string }[] = [
+  const chips: { k: "all" | "due" | OwnerKey; label: string }[] = [
     { k: "all", label: `الكل ${total}` },
-    { k: "critical", label: `حرج ${critical.length}` },
-    { k: "late", label: `متأخر ${owners.filter((o) => ownerKey(o) === "late").length}` },
-    { k: "partial", label: `سداد جزئي ${owners.filter((o) => ownerKey(o) === "partial").length}` },
-    { k: "ok", label: `مسدّد ${total - late.length}` },
+    { k: "due", label: `عليهم متأخرات ${late.length}` },
+    { k: "critical", label: `${per === "annual" ? "3 سنوات" : "3 أشهر"} فأكثر ${critical.length}` },
+    { k: "partial", label: `دفعوا جزءًا ${owners.filter((o) => ownerKey(o) === "partial").length}` },
+    { k: "ok", label: `لا متأخرات ${total - late.length}` },
   ];
+  const pendingOpening = owners.filter((o) => o.opening_set === false);
 
   return (
-    <div>
+    <div className="pb-24">{/* مساحة أسفل حتى لا تغطي الأزرار العائمة آخر المحتوى */}
       {toast && (
-        <div className={`fixed top-5 left-1/2 -translate-x-1/2 z-[70] rounded-xl px-4 py-3 text-sm font-semibold shadow-lg border ${
+        <div role="status" className={`fixed top-5 left-1/2 -translate-x-1/2 z-[70] w-[min(92vw,420px)] rounded-xl px-4 py-3 text-sm font-semibold shadow-lg border ${
           toast.k === "ok" ? "bg-[#E6F4EC] text-[#137a50] border-[#B7DFC7]" : "bg-[#FBE9E7] text-[#a5322c] border-[#F5C6C2]"}`}>
-          {toast.m}
+          <div>{toast.m}</div>
+          {toast.pay && !toast.confirmUndo && (
+            <div className="flex gap-2 mt-2">
+              <button type="button" className="btn btn-ghost text-xs flex-1 justify-center py-2"
+                onClick={() => { holdToast(); setToast((t) => t && { ...t, confirmUndo: true }); }}>↶ تراجع</button>
+              <button type="button" className="btn btn-wa text-xs flex-1 justify-center py-2"
+                onClick={() => { const t = toast.pay!; setToast(null); sendReceiptLink(t); }}>إرسال السند</button>
+            </div>
+          )}
+          {toast.pay && toast.confirmUndo && (
+            <div className="mt-2">
+              <div className="text-xs text-[#8f2b26]">عكس هذه الدفعة؟ يبقى السطران في السجل.</div>
+              <div className="flex gap-2 mt-1.5">
+                <button type="button" className="btn btn-ghost text-xs flex-1 justify-center py-2" onClick={() => setToast((t) => t && { ...t, confirmUndo: false })}>لا</button>
+                <button type="button" className="btn text-xs flex-1 justify-center py-2 bg-late text-white"
+                  onClick={async () => { const t = toast.pay!; setToast(null); if (await reversePaymentById(t.payment_id, t.owner.id)) notify("ok", "عُكست الدفعة وبقي أثرها في السجل."); }}>نعم، اعكسها</button>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
       {/* ملخّص كل الجمعيات */}
-      {items.length > 1 && (() => {
-        const p = items.reduce((acc, x) => {
+      {/* المحفظة بلا المؤرشفة دائمًا — حتى لو عُرضت في القائمة (كتقارير البوت والملخص اليومي) */}
+      {liveItems.length > 1 && (() => {
+        const p = liveItems.reduce((acc, x) => {
           const ow = Array.isArray(x.owners) ? x.owners : [];
           const f = Number(x.fee) || 0;
           ow.forEach((o) => {
             acc.owners++;
-            const d = Math.max(0, (Number(o.months_late) || 0) * f - (Number(o.partial_amount) || 0));
+            const d = ownerDueAt(o, feeOf(o, x));
             if ((Number(o.months_late) || 0) > 0) { acc.late++; acc.owed += d; }
+            /* السنوي يُحسب بحصته الشهرية (÷12) حتى يُجمع مع الشهري */
+            acc.expected += feeOf(o, x) / (periodOf(x) === "annual" ? 12 : 1);
           });
-          acc.expected += ow.length * f;
+          void f;
           acc.fund += Number(x.fund_balance) || 0;
           const dd = daysLeft(x.cert_expiry);
           if (dd !== null && dd <= 60) acc.certs++;
@@ -739,32 +974,50 @@ export default function AssociationView({ initial, issuer }: { initial: Associat
         }, { owners: 0, late: 0, owed: 0, expected: 0, fund: 0, certs: 0 });
         return (
           <div className="bg-deep text-[#EAF1EE] rounded-2xl p-4 mb-5 flex flex-wrap items-center gap-x-6 gap-y-3">
-            <div className="font-display font-bold text-sm text-goldSoft">محفظتك · {items.length} جمعيات</div>
+            <div className="font-display font-bold text-sm text-goldSoft">محفظتك · {countWord(liveItems.length, "جمعية واحدة", "جمعيتان", "جمعيات", "جمعية")}</div>
             <PortfolioStat v={String(p.owners)} l="مالك" />
             <PortfolioStat v={String(p.late)} l="متأخر" tone={p.late ? "warn" : undefined} />
             <PortfolioStat v={sar(p.owed)} l="ريال متأخر" tone={p.owed ? "warn" : undefined} />
-            <PortfolioStat v={sar(p.expected)} l="إيراد الفترة المتوقّع" />
+            <PortfolioStat v={sar(Math.round(p.expected))} l="إيراد الشهر المتوقّع" />
             <PortfolioStat v={sar(p.fund)} l="رصيد الصناديق" />
             <PortfolioStat v={String(p.certs)} l="شهادات تنتهي قريبًا" tone={p.certs ? "warn" : undefined} />
           </div>
         );
       })()}
 
-      {/* شريط اختيار الجمعية */}
-      <div className="flex flex-wrap items-center gap-2 mb-5">
-        <div className="flex-1 min-w-0">
-          <h1 className="font-display font-bold text-deep text-xl flex items-center gap-2">
-            <span>🏗️</span> {a.name}
+      {/* شريط اختيار الجمعية — على الجوال: العنوان في سطره، والأزرار الثانوية في قائمة مختصرة */}
+      <div className="grid grid-cols-[minmax(0,1fr)] sm:grid-cols-[minmax(0,1fr)_auto] gap-2 mb-5 items-center">
+        <div className="min-w-0">
+          <h1 className="font-display font-bold text-deep text-xl leading-snug break-words">
+            <span aria-hidden>🏗️ </span>{a.name}{a.archived_at ? <span className="text-xs font-semibold text-muted mr-2">(مؤرشفة)</span> : null}
           </h1>
           <div className="text-sm text-muted">إدارة جمعية الملاك · {total} من {a.units || total} وحدة</div>
         </div>
-        <select value={a.id} onChange={(e) => setActiveId(e.target.value)} className="fld max-w-[220px] font-semibold text-deep">
-          {items.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
-        </select>
-        <button type="button" className="btn btn-ghost text-sm" onClick={refreshNow} disabled={refreshing}
-          title="تحديث البيانات من السيرفر">{refreshing ? "…" : "↻ تحديث"}</button>
-        <button type="button" className="btn btn-ghost text-sm" onClick={() => setModal("edit")}>⚙︎ إعدادات</button>
-        <button className="btn btn-gold text-sm" onClick={() => setModal("new")}>+ جمعية</button>
+        <div className="flex flex-wrap items-center gap-2">
+          {(visibleItems.length > 1 || archivedCount > 0) && (
+            <select value={a.id} onChange={(e) => setActiveId(e.target.value)} className="fld min-w-0 max-w-[220px] flex-1 sm:flex-none font-semibold text-deep" aria-label="اختر الجمعية">
+              {visibleItems.map((x) => <option key={x.id} value={x.id}>{x.name}{x.archived_at ? " (مؤرشفة)" : ""}</option>)}
+            </select>
+          )}
+          <button type="button" className="btn btn-ghost text-sm" onClick={() => setModal("edit")}>⚙︎ إعدادات</button>
+          {/* .btn يفرض display — فالإخفاء على غلاف لا على الزر */}
+          <span className="hidden sm:inline-flex gap-2">
+            <button type="button" className="btn btn-ghost text-sm" onClick={refreshNow} disabled={refreshing}
+              title="تحديث البيانات من السيرفر">{refreshing ? "…" : "↻ تحديث"}</button>
+            <button className="btn btn-gold text-sm" onClick={() => setModal("new")}>+ جمعية</button>
+          </span>
+          <div className="sm:hidden">
+            <RowMenu label="⋯ المزيد" items={[
+              { label: refreshing ? "… جارٍ التحديث" : "↻ تحديث البيانات", run: refreshNow },
+              { label: "+ جمعية جديدة", run: () => setModal("new") },
+              ...(archivedCount > 0 ? [{ label: showArchived ? "إخفاء المؤرشفة" : `عرض المؤرشفة (${archivedCount})`, run: () => setShowArchived((v) => !v) }] : []),
+            ]} />
+          </div>
+          {archivedCount > 0 && (
+            <span className="hidden sm:inline-flex"><button type="button" className="btn btn-ghost text-xs" onClick={() => setShowArchived((v) => !v)}>
+              {showArchived ? "إخفاء المؤرشفة" : `عرض المؤرشفة (${archivedCount})`}</button></span>
+          )}
+        </div>
       </div>
 
       {/* تنبيه الشهادة */}
@@ -780,7 +1033,7 @@ export default function AssociationView({ initial, issuer }: { initial: Associat
       {dl !== null && dl >= 0 && dl <= 60 && (
         <div className={`flex flex-wrap items-center gap-3 rounded-xl p-3.5 mb-4 border ${dl <= 30 ? "bg-[#FBE9E7] border-[#F5C6C2] text-[#8f2b26]" : "bg-[#FBF1DF] border-[#EBD9AA] text-[#8a5a11]"}`}>
           <span>{dl <= 30 ? "🔴" : "⚠️"}</span>
-          <span><b>تنتهي شهادة الجمعية خلال {daysAr(dl)}</b> ({a.cert_expiry}). إصدارها من «ملاك» إجراء مباشر ويشترط الرقم الموحّد 700 أولًا.</span>
+          <span><b>تنتهي شهادة الجمعية خلال {daysAr(dl)}</b> ({a.cert_expiry}{a.cert_expiry && hijriText(a.cert_expiry) ? ` — ${hijriText(a.cert_expiry)}` : ""}). إصدارها من «ملاك» إجراء مباشر ويشترط الرقم الموحّد 700 أولًا.</span>
           <div className="flex gap-2 mr-auto">
             <button type="button" className="btn btn-gold text-sm" onClick={openRenewal}>🗂 جهّز الاجتماع السنوي</button>
             <a href={renewLink()} target="_blank" rel="noreferrer" className="btn btn-ghost text-sm">اطلبها جاهزة</a>
@@ -789,17 +1042,29 @@ export default function AssociationView({ initial, issuer }: { initial: Associat
       )}
 
       {/* إحصاءات — قابلة للنقر للتصفية */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
-        <Stat v={sar(expectedMonthly)} l="الدخل الشهري المتوقّع" kpi="income" icon="↑" onClick={() => setFilter("all")} active={filter === "all"} />
-        <Stat v={sar(owedTotal)} l={`المتأخر (${late.length} مالك)`} kpi="overdue" icon="!" onClick={() => { setFilter("due"); setSort("amount"); }} active={filter === "due"} />
-        <Stat v={`${pct}%`} l="نسبة السداد" kpi="soon" icon="●" onClick={() => setFilter("ok")} active={filter === "ok"} />
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-5">
+        <div className="col-span-2 md:col-span-1">
+          <Stat v={sar(Number(a.fund_balance) || 0)} l="رصيد الصندوق (ريال) — المصروفات" kpi={(Number(a.fund_balance) || 0) < 0 ? "overdue" : "plain"} icon="﷼"
+            onClick={() => setExpOpen((v) => !v)} active={expOpen} />
+        </div>
+        <Stat v={sar(expectedMonthly)} l={`الدخل ${per === "annual" ? "السنوي" : "الشهري"} المتوقّع`} kpi="income" icon="↑" onClick={() => setFilter("all")} active={filter === "all"} />
+        <Stat v={sar(owedTotal)} l={`المتأخر (${ownersAr(late.length)})`} kpi="overdue" icon="!" onClick={() => { setFilter("due"); setSort("amount"); }} active={filter === "due"} />
+        <Stat v={`${total - late.length} من ${total}`} l="ملّاك بلا متأخرات" kpi="soon" icon="●" onClick={() => setFilter("ok")} active={filter === "ok"} />
         <Stat v={dl === null ? "—" : String(dl)} l="يوم حتى انتهاء الشهادة" kpi={dl !== null && dl <= 30 ? "overdue" : "expiring"} icon="↻" />
       </div>
+
+      {expOpen && (
+        <div className="mb-5">
+          <HoaExpensesPanel association={{ id: a.id, name: a.name, fund_balance: Number(a.fund_balance) || 0, public_token: a.public_token }}
+            orgName={issuer?.billing_name || null} notify={notify}
+            onFund={(b) => { if (Number.isFinite(b)) setItems((list) => list.map((x) => x.id === a.id ? { ...x, fund_balance: b } : x)); }} />
+        </div>
+      )}
 
       {docsOpen && (
         <div className="mb-5">
           <HoaDocumentsPanel association={{ id: a.id, name: a.name }}
-            owners={owners.map((o) => ({ id: o.id, name: o.name, unit: o.unit }))}
+            owners={owners.map((o) => ({ id: o.id, name: o.name, unit: o.unit, phone: o.phone }))}
             prefill={docPrefill} onPrefillUsed={() => setDocPrefill(null)} />
         </div>
       )}
@@ -810,7 +1075,9 @@ export default function AssociationView({ initial, issuer }: { initial: Associat
           <div className="flex items-center justify-between border-b border-line px-5 py-4 gap-2 flex-wrap">
             <h2 className="font-semibold">الملّاك وحالة السداد</h2>
             <div className="flex flex-wrap gap-2 items-center">
-              {a.fee > 0 && <span className="text-xs text-muted">الاشتراك {sar(a.fee)} ريال/شهر{a.auto_accrue ? " · يُستحق تلقائيًا أول كل شهر" : ""}</span>}
+              {(a.fee > 0 || shareBasis) && <span className="text-xs text-muted">
+                {shareBasis ? `الاشتراك ${W.every} حسب حصة كل وحدة` : `الاشتراك ${sar(a.fee)} ريال${W.per}`}
+                {a.auto_accrue ? (per === "annual" ? ` · يُستحق تلقائيًا أول ${MONTHS_AR[(Number(a.fiscal_start_month) || 1) - 1]} من كل سنة` : " · يُستحق تلقائيًا أول كل شهر") : ""}</span>}
               <button type="button" className="btn btn-ghost text-xs" onClick={openAssocStatement}>كشف حساب</button>
               <button type="button" className="btn btn-ghost text-xs" onClick={exportOwnersCSV} title="تنزيل ملف Excel/CSV بكل الملّاك وحالتهم">⬇️ CSV</button>
               {late.length > 0 && (
@@ -819,6 +1086,10 @@ export default function AssociationView({ initial, issuer }: { initial: Associat
               )}
               <button type="button" className="btn btn-ghost text-xs" onClick={() => setDocsOpen((v) => !v)}
                 title="محاضر وإشعارات تصل كل مالك في رابطه، مع من اطّلع ومن اعتمد">📨 مستندات الملاك</button>
+              <button type="button" className="btn btn-ghost text-xs" onClick={() => setExpOpen((v) => !v)}
+                title="مصروفات العمارة بسندات صرف، ورابط شفافية للملاك">🧾 الصندوق والمصروفات</button>
+              <button type="button" className="btn btn-ghost text-xs" onClick={() => setSharesOpen(true)}
+                title="حصة كل وحدة ومساحتها، وتوزيع الموازنة عليها">⚖️ توزيع الرسوم حسب الحصص</button>
               <button type="button" className="btn btn-ghost text-xs" onClick={openBudget}>📊 الموازنة</button>
               <button type="button" className="btn btn-ghost text-xs" onClick={() => setMinutes(true)}>📄 محضر تأسيسي</button>
               <button type="button" className="btn btn-gold text-xs" onClick={openRenewal} title="موازنة العام القادم + محضر الاجتماع السنوي، وأرقامهما جاهزة لقرار الرسوم في المنصة">🗂 الاجتماع السنوي</button>
@@ -826,6 +1097,17 @@ export default function AssociationView({ initial, issuer }: { initial: Associat
           </div>
 
           <div className="p-4">
+            {noShare > 0 && (
+              <div className="text-xs rounded-lg p-2.5 mb-3 bg-[#FBF1DF] border border-[#EBD9AA] text-[#8a5a11]">
+                {ownersAr(noShare)} بلا حصة موزّعة — يُحسب عليه رسم الجمعية العام ({sar(a.fee)} ريال) حتى تعيد «توزيع الرسوم حسب الحصص».
+              </div>
+            )}
+            {pendingOpening.length > 0 && (
+              <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 text-xs rounded-lg p-2.5 mb-3 bg-[#FDF0DC] border border-[#EBD9AA] text-[#9A5B00]">
+                <span>{ownersAr(pendingOpening.length)} بلا رصيد افتتاحي — تظهر صفحاتهم «قيد المراجعة» حتى تحدّده.</span>
+                <button type="button" className="btn btn-gold text-xs" onClick={() => setOpeningOpen(true)}>حدّد المتأخرات الافتتاحية</button>
+              </div>
+            )}
             <AddOwner onAdd={addOwner} />
             <div className="flex justify-end -mt-1 mb-3">
               <button type="button" className="text-xs font-semibold text-goldInk hover:underline" onClick={() => setBulk(true)}>
@@ -881,18 +1163,23 @@ export default function AssociationView({ initial, issuer }: { initial: Associat
                         <div className="min-w-0 flex-1">
                           <div className="font-semibold truncate">{o.name}</div>
                           <div className="text-xs text-muted">
-                            {o.unit ? `وحدة ${o.unit}` : "—"}{o.last_paid ? ` · آخر سداد ${o.last_paid}` : ""}
+                            {o.unit ? `وحدة ${o.unit}` : "—"}{o.last_paid ? ` · آخر سداد ${arDate(o.last_paid)}` : ""}
+                            {o.share_pct != null ? ` · حصة ${Number(o.share_pct)}٪` : ""}{o.area_m2 != null ? ` · ${Number(o.area_m2)} م²` : ""}
+                            {o.fee_override != null ? ` · رسمه ${sar(Number(o.fee_override))}${W.per}` : ""}
                           </div>
+                          {lastReminder(o) && <div className="text-[.7rem] text-muted">آخر تذكير: {arDate(lastReminder(o))}</div>}
                         </div>
                       </div>
                       <div className="text-right sm:text-left shrink-0">
-                        <StatusPill k={k} />
+                        {o.opening_set === false
+                          ? <span className="inline-flex items-center gap-1.5 text-xs font-semibold rounded-lg px-2.5 py-1 bg-[#FDF0DC] text-[#9A5B00]">لم يُحدَّد الرصيد</span>
+                          : <StatusPill k={k} />}
                         <div className="text-xs mt-1 tabular-nums">
                           {o.months_late > 0
                             ? (Number(o.partial_amount) || 0) > 0
                               ? <span className="text-[#9A5B00] font-semibold">دُفع {sar(Number(o.partial_amount) || 0)} · متبقٍ {sar(owed)}</span>
-                              : <span className="text-late font-bold">{o.months_late} شهر · {sar(owed)} ريال</span>
-                            : prepaid > 0 ? <span className="text-paid font-semibold">مقدَّم {prepaid} شهر{credit > 0 ? ` + ${sar(credit)}` : ""}</span>
+                              : <span className="text-late font-bold">{periodsAr(o.months_late, per)} · {sar(owed)} ريال</span>
+                            : prepaid > 0 ? <span className="text-paid font-semibold">مقدَّم {periodsAr(prepaid, per)}{credit > 0 ? ` + ${sar(credit)}` : ""}</span>
                             : credit > 0 ? <span className="text-paid font-semibold">رصيد له {sar(credit)} ريال</span>
                             : <span className="text-muted">لا مستحقات</span>}
                         </div>
@@ -901,12 +1188,12 @@ export default function AssociationView({ initial, issuer }: { initial: Associat
 
                     {/* إجراء رئيسي + قائمة المزيد */}
                     <div className="flex flex-wrap gap-1.5 justify-stretch sm:justify-end mt-2.5 items-center [&>*]:flex-1 sm:[&>*]:flex-none [&>*]:justify-center">
-                      {(a.fee || 0) > 0 && (
-                        <QuickBtn title={o.months_late > 0 ? "تأكيد استلام اشتراك شهر" : "استلام اشتراك شهر مقدَّمًا"} cls={o.months_late > 0 ? "btn-primary" : "btn-ghost"}
-                          disabled={busyRow} onClick={() => recordOwnerPayment(o, a.fee || 0)}>{busyRow ? "…" : "\u2714"}</QuickBtn>
+                      {feeFor(o) > 0 && (
+                        <QuickBtn title={o.months_late > 0 ? `تأكيد استلام اشتراك ${W.one}` : `استلام اشتراك ${W.one} مقدَّمًا`} cls={o.months_late > 0 ? "btn-primary" : "btn-ghost"}
+                          disabled={busyRow} onClick={() => recordOwnerPayment(o, feeFor(o))}>{busyRow ? "…" : "\u2714"}</QuickBtn>
                       )}
                       <QuickBtn title="تسجيل مبلغ (جزئي أو بتاريخ ومرجع)" cls="btn-ghost" disabled={busyRow} onClick={() => setPaying(o)}>&#189;</QuickBtn>
-                      {o.months_late > 0 && <a href={ownerRemindLink(o)} target="_blank" rel="noreferrer" className="btn btn-wa text-xs px-2.5" title="إرسال تذكير واتساب">&#128172;</a>}
+                      {o.months_late > 0 && <button type="button" onClick={() => sendReminder(o)} className="btn btn-wa text-xs px-2.5" title="إرسال تذكير واتساب برابط صفحته" aria-label="إرسال تذكير واتساب">&#128172;</button>}
                       {o.phone && <a href={`tel:${String(o.phone).replace(/[^0-9+]/g, "")}`} className="btn btn-ghost text-xs px-2.5 sm:hidden" title="اتصال مباشر">&#128222;</a>}
                       {o.months_late >= 2 && <button type="button" className="btn btn-gold text-xs" onClick={() => makeOwnerNotice(o)}>نموذج إشعار</button>}
                       <MemberLinkButton owner={{ id: o.id, name: o.name, unit: o.unit, phone: o.phone }} associationName={a.name}
@@ -916,8 +1203,8 @@ export default function AssociationView({ initial, issuer }: { initial: Associat
                           { label: "🧾 كشف حساب", run: () => openOwnerStatement(o) },
                           { label: "🧮 سجل المدفوعات", run: () => openHistory(o) },
                           { label: "✎ تعديل البيانات", run: () => setOwnerModal({ owner: o }) },
-                          { label: "➕ إضافة استحقاق يدوي", run: async () => { if (await adjustOwnerMonths(o, 1)) notify("ok", "أُضيف استحقاق شهر."); } },
-                          ...(o.months_late === 0 ? [{ label: "💬 رسالة للمالك", run: () => window.open(ownerRemindLink(o), "_blank") }] : []),
+                          { label: "➕ إضافة استحقاق يدوي", run: async () => { if (await adjustOwnerMonths(o, 1)) notify("ok", `أُضيف استحقاق ${W.one}.`); } },
+                          ...(o.months_late === 0 ? [{ label: "💬 رسالة للمالك", run: () => sendReminder(o) }] : []),
                           ...(o.months_late > 0 ? [{ label: "⚖️ ملف التحصيل والتصعيد", run: () => setCollect({ owner: o }) }] : []),
                           ...(o.months_late > 0 ? [{ label: "✅ سدّد الكل (بسند قبض)", run: () => settleAll(o) }] : []),
                           { label: "🗑 حذف المالك", run: () => deleteOwner(o.id), danger: true },
@@ -940,13 +1227,23 @@ export default function AssociationView({ initial, issuer }: { initial: Associat
           <div className="border-b border-line px-5 py-4"><h2 className="font-semibold">سجل العمارة</h2></div>
           <div className="p-4">
             <AddNote onAdd={addNote} placeholder="أضف ملاحظة (صيانة، تغيّر مالك…)" />
-            {notes.length ? notes.map((n) => (
-              <div key={n.id} className="flex gap-2.5 py-2.5 border-b border-dashed border-line last:border-0 text-sm">
-                <span className="text-xs font-semibold text-[#8a5a11] w-16 shrink-0">{n.note_date}</span>
-                <span className="flex-1 text-[#33413d]">{n.text}</span>
-                <button className="text-muted text-sm opacity-60 hover:opacity-100 hover:text-late" onClick={() => deleteNote(n.id)}>✕</button>
-              </div>
-            )) : <div className="text-center text-muted py-6 text-sm">لا ملاحظات بعد.</div>}
+            {notes.length ? notes.map((n) => {
+              /* سجل المطالبات والتواصل لا يُحذف (يُفرض في القاعدة أيضًا — v64) */
+              const locked = /^\s*[\[［]\s*(تحصيل|تواصل)/.test(String(n.text || ""));
+              return (
+                <div key={n.id} className="grid grid-cols-[auto_minmax(0,1fr)_auto] gap-2.5 items-start py-2.5 border-b border-dashed border-line last:border-0 text-sm">
+                  <span className="text-xs font-semibold text-[#8a5a11] w-20 shrink-0 pt-0.5">{arDate(n.note_date)}</span>
+                  <span className="text-[#33413d] break-words">{n.text}</span>
+                  {locked ? <span className="w-9 h-9 grid place-items-center text-muted text-xs" title="سجل موثَّق — لا يُحذف" aria-label="سجل موثَّق">🔒</span>
+                    : noteAsk === n.id ? (
+                      <span className="flex gap-1">
+                        <button type="button" className="btn btn-ghost text-xs px-2 py-1.5" onClick={() => setNoteAsk(null)}>لا</button>
+                        <button type="button" className="btn text-xs px-2 py-1.5 bg-late text-white" onClick={() => { setNoteAsk(null); deleteNote(n.id); }}>احذف</button>
+                      </span>
+                    ) : <button type="button" className="w-9 h-9 grid place-items-center rounded-lg text-muted hover:text-late hover:bg-paper2" aria-label="حذف الملاحظة" onClick={() => setNoteAsk(n.id)}>✕</button>}
+                </div>
+              );
+            }) : <div className="text-center text-muted py-6 text-sm">لا ملاحظات بعد.</div>}
           </div>
         </div>
       </div>
@@ -954,35 +1251,52 @@ export default function AssociationView({ initial, issuer }: { initial: Associat
       {budget && <BudgetModal assoc={a} budget={budget} onClose={() => setBudget(null)}
         onSave={(b) => { saveBudget(b); setBudget(b); }}
         onPrint={(b) => openDoc(budgetHTML(a as any, b as any, issuer || {}))} />}
+      {sharesOpen && <SharesModal assoc={a} onClose={() => setSharesOpen(false)} notify={notify}
+        onShare={setOwnerShare}
+        onApplied={(r) => setItems((list) => list.map((x) => x.id === a.id ? {
+          ...x, fee_basis: r.fee_basis, fee_period: r.fee_period, total_budget: r.total_budget, fee: Number(r.fee),
+          owners: x.owners.map((o) => { const n = (r.owners || []).find((y: any) => y.id === o.id); return n ? { ...o, ...n } : o; }),
+        } : x))} />}
       {minutes && <MinutesModal assoc={a} onClose={() => setMinutes(false)}
         onPrint={(d) => openDoc(foundingMinutesHTML(a as any, d as any, issuer || {}))}
-        onSend={(d) => { setDocPrefill({ title: "محضر الاجتماع التأسيسي — " + a.name, kind: "minutes", body_html: foundingMinutesHTML(a as any, d as any, issuer || {}) }); setMinutes(false); setDocsOpen(true); }} />}
+        onSend={(d) => { const m = foundingMinutesPortalHTML(a as any, d); setDocPrefill({ title: `${m.title} — ${a.name}`, kind: "minutes", body_html: m.html }); setMinutes(false); setDocsOpen(true); }} />}
       {renewal && <RenewalModal assoc={a} annualBudget={renewal.annualBudget}
         onClose={() => setRenewal(null)}
         onEditBudget={() => { setRenewal(null); openBudget(); }}
         onPrintBudget={printSavedBudget}
         onPrintMinutes={(d) => openDoc(renewalMinutesHTML(a as any, d as any, issuer || {}))}
-        onSendMinutes={(d) => { setDocPrefill({ title: "محضر الاجتماع السنوي — " + a.name, kind: "minutes", body_html: renewalMinutesHTML(a as any, d as any, issuer || {}) }); setRenewal(null); setDocsOpen(true); }} />}
+        onSendMinutes={(d) => { const m = renewalMinutesPortalHTML(a as any, d); setDocPrefill({ title: `${m.title} — ${a.name}`, kind: "minutes", body_html: m.html }); setRenewal(null); setDocsOpen(true); }} />}
       {bulk && <BulkOwnersModal onClose={() => setBulk(false)} onSubmit={addOwnersBulk} />}
-      {remindAll && <RemindAllOwnersModal owners={late} fee={a.fee || 0} linkOf={ownerRemindLink}
+      {openingOpen && pendingOpening.length > 0 && <OpeningModal owners={pendingOpening} period={per}
+        onClose={() => setOpeningOpen(false)}
+        onSave={async (vals) => {
+          let n = 0;
+          for (const o of pendingOpening) { if (vals[o.id] !== undefined && await confirmOpening(o, vals[o.id])) n++; }
+          if (n) notify("ok", `حُدّد الرصيد الافتتاحي لـ ${ownersAr(n)}.`);
+          if (n === pendingOpening.length) setOpeningOpen(false);
+        }} />}
+      {remindAll && <RemindAllOwnersModal owners={late} dueOf={ownerDue} period={per} onSend={sendReminder}
+        sentToday={(o) => contactLog(o).some((n) => n.note_date === today())}
         onClose={() => setRemindAll(false)} />}
       {collect && <CollectionsModal assoc={a} owners={late} only={collect.owner}
-        fee={a.fee || 0} stageOf={escalation} logOf={noticeLog} dueOf={ownerDue}
+        fee={shareBasis ? Math.max(a.fee || 0, 1) : a.fee || 0} period={per} stageOf={escalation} logOf={noticeLog} dueOf={ownerDue}
         onClose={() => setCollect(null)}
-        onRemind={(o) => window.open(ownerRemindLink(o), "_blank")}
+        onRemind={(o) => sendReminder(o)}
         onNotice={(o) => makeOwnerNotice(o)}
         onFinal={(o, d) => makeFinalNotice(o, d)} />}
-      {ownerModal?.owner && <OwnerModal owner={ownerModal.owner} onClose={() => setOwnerModal(null)}
+      {ownerModal?.owner && <OwnerModal owner={ownerModal.owner} period={per} onClose={() => setOwnerModal(null)}
         onSubmit={(d) => saveOwner(ownerModal.owner!.id, d)} />}
-      {history && <HistoryModal data={history} onClose={() => setHistory(null)}
+      {history && <HistoryModal data={history} period={per} onClose={() => setHistory(null)}
         onReverse={reverseOwnerPayment} onReceipt={(row) => printReceipt(history.owner, row)} />}
-      {doc && <DocModal doc={doc} onClose={() => setDoc(null)} />}
-      {paying && <OwnerPaymentModal owner={paying} fee={a.fee || 0} busy={!!payBusy[paying.id]} onClose={() => setPaying(null)}
+      {doc && <DocModal doc={doc} onClose={() => setDoc(null)}
+        onDelivered={doc.owner && doc.label ? async (via) => { await logNotice(doc.owner!, via === "wa" ? `${doc.label} (أُرسل واتساب)` : `${doc.label} (سُلِّم)`); } : undefined} />}
+      {paying && <OwnerPaymentModal owner={paying} fee={feeFor(paying)} period={per} busy={!!payBusy[paying.id]} onClose={() => setPaying(null)}
         onSubmit={async (amt, o2) => { const ok = await recordOwnerPayment(paying, amt, o2); if (ok) setPaying(null); }} />}
       {/* عرض شرطي: التفكيك عند الإغلاق هو ما يمحو الحقول */}
       {modal === "new" && <FormModal open title="جمعية جديدة" onClose={() => setModal(null)} onSubmit={createAssociation} />}
       {modal === "edit" && active && (
-        <FormModal open title="إعدادات الجمعية" initial={active} onClose={() => setModal(null)} onSubmit={updateAssociation} onDelete={deleteAssociation} />
+        <FormModal open title="إعدادات الجمعية" initial={active} onClose={() => setModal(null)} onSubmit={updateAssociation} onDelete={deleteAssociation}
+          onArchive={() => archiveAssociation(!active.archived_at)} />
       )}
     </div>
   );
@@ -1034,8 +1348,8 @@ const METHODS: { v: string; l: string }[] = [
 ];
 const methodLabel = (v?: string | null) => METHODS.find((m) => m.v === v)?.l || "أخرى";
 
-function OwnerPaymentModal({ owner, fee, busy, onClose, onSubmit }: {
-  owner: Owner; fee: number; busy?: boolean; onClose: () => void;
+function OwnerPaymentModal({ owner, fee, period = "monthly", busy, onClose, onSubmit }: {
+  owner: Owner; fee: number; period?: FeePeriod; busy?: boolean; onClose: () => void;
   onSubmit: (amount: number, opts: { method: string; note?: string; paidOn?: string; reference?: string; request?: string }) => void;
 }) {
   /* معرّف واحد لهذه النافذة: إعادة الضغط بعد انقطاع الشبكة لا تسجّل دفعة ثانية.
@@ -1059,15 +1373,11 @@ function OwnerPaymentModal({ owner, fee, busy, onClose, onSubmit }: {
   const [paidOn, setPaidOn] = useState<string>(today());
   const amt = Math.round((Number(amount) || 0) * 100) / 100;
   /* نفس نموذج القاعدة: الرصيد = مقدَّم×الرسم + الجزئي − متأخر×الرسم */
-  const bal0 = prepaid0 * fee + already - owner.months_late * fee;
-  const bal = Math.round((bal0 + amt) * 100) / 100;
-  const after = fee > 0
-    ? bal >= 0
-      ? { late: 0, prepaid: Math.floor(bal / fee + 1e-9), partial: 0 }
-      : { late: Math.ceil(-bal / fee - 1e-9), prepaid: 0, partial: 0 }
-    : { late: owner.months_late, prepaid: prepaid0, partial: already };
-  if (fee > 0) after.partial = bal >= 0 ? Math.round((bal - after.prepaid * fee) * 100) / 100 : Math.round((after.late * fee + bal) * 100) / 100;
+  /* نفس نموذج القاعدة وتقسيمها بالهللات (lib/hoaMoney) — المعاينة = ما تسجّله القاعدة */
+  const bal = r2(ownerBalance(owner, fee) + amt);
+  const after = fee > 0 ? splitBalance(bal, fee) : { late: owner.months_late, prepaid: prepaid0, partial: already };
   const covered = (owner.months_late - after.late) + (after.prepaid - prepaid0);
+  const W = PERIOD_WORDS[period];
   const future = paidOn > today();
 
   return (
@@ -1077,13 +1387,13 @@ function OwnerPaymentModal({ owner, fee, busy, onClose, onSubmit }: {
       <p className="text-sm text-muted mb-4">{owner.name} · {owner.unit ? `وحدة ${owner.unit}` : "—"}</p>
 
       <div className="bg-paper2 border border-line rounded-xl p-3 mb-4 text-sm">
-        <div className="flex justify-between"><span className="text-muted">الاشتراك الشهري</span><b className="tabular-nums">{sar(fee)} ريال</b></div>
-        <div className="flex justify-between mt-1"><span className="text-muted">أشهر متأخرة</span><b className="tabular-nums text-late">{owner.months_late}</b></div>
+        <div className="flex justify-between"><span className="text-muted">{W.label}{owner.fee_override != null ? " (حسب الحصة)" : ""}</span><b className="tabular-nums">{sar(fee)} ريال</b></div>
+        <div className="flex justify-between mt-1"><span className="text-muted">{period === "annual" ? "سنوات متأخرة" : "أشهر متأخرة"}</span><b className="tabular-nums text-late">{owner.months_late}</b></div>
         {already > 0 && (
           <div className="flex justify-between mt-1"><span className="text-muted">{owner.months_late > 0 ? "مدفوع جزئيًّا سابقًا" : "رصيد له"}</span>
             <b className="tabular-nums text-[#9A5B00]">{sar(already)} ريال</b></div>
         )}
-        {prepaid0 > 0 && <div className="flex justify-between mt-1"><span className="text-muted">مدفوع مقدَّمًا</span><b className="tabular-nums text-paid">{prepaid0} شهر</b></div>}
+        {prepaid0 > 0 && <div className="flex justify-between mt-1"><span className="text-muted">مدفوع مقدَّمًا</span><b className="tabular-nums text-paid">{periodsAr(prepaid0, period)}</b></div>}
         <div className="flex justify-between mt-1 border-t border-line pt-1"><span className="text-muted">المستحق الآن</span><b className="tabular-nums">{sar(due)} ريال</b></div>
       </div>
 
@@ -1092,9 +1402,9 @@ function OwnerPaymentModal({ owner, fee, busy, onClose, onSubmit }: {
       </Field>
       <div className="flex gap-2 mt-2 flex-wrap">
         {owner.months_late > 0 && remaining > 0 && remaining !== fee && (
-          <button type="button" className="btn btn-ghost text-xs" onClick={() => setAmount(String(remaining))}>إكمال الشهر ({sar(remaining)})</button>
+          <button type="button" className="btn btn-ghost text-xs" onClick={() => setAmount(String(remaining))}>إكمال {period === "annual" ? "السنة" : "الشهر"} ({sar(remaining)})</button>
         )}
-        <button type="button" className="btn btn-ghost text-xs" onClick={() => setAmount(String(fee))}>شهر كامل ({sar(fee)})</button>
+        <button type="button" className="btn btn-ghost text-xs" onClick={() => setAmount(String(fee))}>{period === "annual" ? "سنة كاملة" : "شهر كامل"} ({sar(fee)})</button>
         {due > 0 && due !== fee && (
           <button type="button" className="btn btn-ghost text-xs" onClick={() => setAmount(String(due))}>كل المستحق ({sar(due)})</button>
         )}
@@ -1107,7 +1417,7 @@ function OwnerPaymentModal({ owner, fee, busy, onClose, onSubmit }: {
           </select>
         </Field>
         <Field label="تاريخ الاستلام">
-          <input className="fld" type="date" value={paidOn} max={today()} onChange={(e) => setPaidOn(e.target.value || today())} />
+          <DateField value={paidOn} onChange={(v) => setPaidOn(v || today())} />
         </Field>
         <Field label="رقم الحوالة/المرجع">
           <input className="fld" dir="ltr" value={reference} onChange={(e) => setReference(e.target.value)} />
@@ -1119,10 +1429,10 @@ function OwnerPaymentModal({ owner, fee, busy, onClose, onSubmit }: {
 
       {amt > 0 && fee > 0 && (
         <div className="bg-[#E6F4EC] border border-[#B7DFC7] rounded-xl p-3 mt-4 text-xs text-[#137a50] leading-relaxed">
-          {covered > 0 && <div>يغطّي <b>{covered}</b> شهر{after.prepaid > 0 ? ` (منها ${after.prepaid - prepaid0 > 0 ? after.prepaid - prepaid0 : 0} مقدَّمًا)` : ""}.</div>}
-          {after.late > 0 && <div>يبقى عليه <b>{after.late}</b> شهر{after.partial > 0 ? ` (دفع من آخرها ${sar(after.partial)} ريال)` : ""}.</div>}
-          {after.late === 0 && after.partial > 0 && <div>ويبقى له رصيد <b>{sar(after.partial)} ريال</b> يُخصم من الشهر القادم.</div>}
-          {covered === 0 && <div>لن يكتمل شهر — يُسجَّل المبلغ جزئيًّا.</div>}
+          {covered > 0 && <div>يغطّي <b>{periodsAr(covered, period)}</b>{after.prepaid > 0 ? ` (منها ${after.prepaid - prepaid0 > 0 ? after.prepaid - prepaid0 : 0} مقدَّمًا)` : ""}.</div>}
+          {after.late > 0 && <div>يبقى عليه <b>{periodsAr(after.late, period)}</b>{after.partial > 0 ? ` (دفع من آخرها ${sar(after.partial)} ريال)` : ""}.</div>}
+          {after.late === 0 && after.partial > 0 && <div>ويبقى له رصيد <b>{sar(after.partial)} ريال</b> يُخصم من {period === "annual" ? "السنة القادمة" : "الشهر القادم"}.</div>}
+          {covered === 0 && <div>لن يكتمل {W.one} — يُسجَّل المبلغ جزئيًّا.</div>}
           <div className="mt-1">يصدر سند قبض مرقَّم تلقائيًا.</div>
         </div>
       )}
@@ -1152,13 +1462,13 @@ function StatusPill({ k }: { k: OwnerKey }) {
 }
 
 /** قائمة إجراءات منسدلة — تُخفي الأزرار الثانوية */
-function RowMenu({ items }: { items: { label: string; run: () => void; danger?: boolean }[] }) {
+function RowMenu({ items, label }: { items: { label: string; run: () => void; danger?: boolean }[]; label?: string }) {
   const [open, setOpen] = useState(false);
   if (!items.length) return null;
   return (
     <div className="relative">
       <button type="button" onClick={() => setOpen((v) => !v)} aria-label="إجراءات أخرى"
-        className="btn btn-ghost text-xs px-2.5" title="المزيد">⋯</button>
+        className={`btn btn-ghost px-2.5 ${label ? "text-sm" : "text-xs"}`} title="المزيد">{label || "⋯"}</button>
       {open && (
         <>
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
@@ -1197,24 +1507,64 @@ function AddNote({ onAdd, placeholder }: { onAdd: (t: string) => void; placehold
   );
 }
 
-function FormModal({ open, title, initial, onClose, onSubmit, onDelete }: {
+function FormModal({ open, title, initial, onClose, onSubmit, onDelete, onArchive }: {
   open: boolean; title: string; initial?: Association;
-  onClose: () => void; onSubmit: (d: Partial<Association>) => void; onDelete?: () => void;
+  onClose: () => void; onSubmit: (d: Partial<Association>) => void; onDelete?: () => void; onArchive?: () => void;
 }) {
   const [d, setD] = useState<any>(initial || {});
   if (!open) return null;
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4" onClick={onClose}>
-      <div className="w-full max-w-md bg-white rounded-2xl shadow-xl p-6" onClick={(e) => e.stopPropagation()}>
+      {/* max-h + overflow: على جوال 390×844 كانت أزرار الحفظ تخرج عن الشاشة بلا تمرير */}
+      <div className="w-full max-w-md bg-white rounded-2xl shadow-xl p-6 max-h-[92vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
         <h2 className="font-display font-bold text-deep text-xl mb-4">{title}</h2>
         <div className="space-y-3">
           <Field label="اسم الجمعية"><input className="fld" value={d.name || ""} onChange={(e) => setD({ ...d, name: e.target.value })} /></Field>
           <div className="grid grid-cols-2 gap-3">
             <Field label="عدد الوحدات"><input className="fld" type="number" value={d.units || ""} onChange={(e) => setD({ ...d, units: +e.target.value })} /></Field>
-            <Field label="الاشتراك الشهري (ريال)"><input className="fld" type="number" value={d.fee || ""} onChange={(e) => setD({ ...d, fee: +e.target.value })} /></Field>
+            <Field label={`${PERIOD_WORDS[periodOf(d)].label} للوحدة (ريال)`}><input className="fld" type="number" value={d.fee || ""} onChange={(e) => setD({ ...d, fee: +e.target.value })} /></Field>
+          </div>
+          {/* خطة الرسوم (v63): الفترة وأساس التوزيع — تُطبَّق بدالة تُبقي رصيد كل مالك بالريال ثابتًا */}
+          <div className="rounded-xl border border-line p-3 space-y-3">
+            <div className="text-sm font-semibold">خطة الرسوم</div>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="فترة الاشتراك">
+                <select className="fld" value={periodOf(d)} onChange={(e) => setD({ ...d, fee_period: e.target.value })}>
+                  <option value="monthly">شهري</option>
+                  <option value="annual">سنوي</option>
+                </select>
+              </Field>
+              {periodOf(d) === "annual" ? (
+                <Field label="بداية السنة المالية">
+                  <select className="fld" value={Number(d.fiscal_start_month) || 1} onChange={(e) => setD({ ...d, fiscal_start_month: +e.target.value })}>
+                    {MONTHS_AR.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}
+                  </select>
+                </Field>
+              ) : <div />}
+            </div>
+            {initial && (
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="أساس التوزيع">
+                  <select className="fld" value={basisOf(d)} onChange={(e) => setD({ ...d, fee_basis: e.target.value })}>
+                    <option value="equal">متساوٍ لكل وحدة</option>
+                    <option value="share">حسب حصة الوحدة</option>
+                  </select>
+                </Field>
+                <Field label="الموازنة السنوية (ريال)">
+                  <input className="fld" type="number" min={0} value={d.total_budget ?? ""} placeholder={basisOf(d) === "share" ? "مطلوبة للحصص" : "اختياري"}
+                    onChange={(e) => setD({ ...d, total_budget: e.target.value === "" ? null : +e.target.value })} />
+                </Field>
+              </div>
+            )}
+            {initial && basisOf(d) === "share" && !(Number(d.total_budget) > 0) && <p className="text-xs text-late">التوزيع بالحصص يحتاج إجمالي الموازنة السنوية.</p>}
+            {initial && (periodOf(d) !== periodOf(initial) || basisOf(d) !== basisOf(initial) || (periodOf(d) === "annual" && (Number(d.fiscal_start_month) || 1) !== (Number(initial.fiscal_start_month) || 1))) && (
+              <p className="text-xs text-[#8a5a11] bg-[#FBF1DF] border border-[#EBD9AA] rounded-lg p-2 leading-relaxed">
+                يُستحق ما فات بالخطة الحالية أولًا، ثم تبدأ الخطة الجديدة من {periodOf(d) === "annual" ? "السنة المالية الحالية" : "الشهر الحالي"} بلا أثر رجعي. رصيد كل مالك بالريال يبقى كما هو ويُعاد تقسيمه على رسمه الجديد.
+              </p>
+            )}
           </div>
           <div className="grid grid-cols-2 gap-3">
-            <Field label="انتهاء الشهادة"><input className="fld" type="date" value={d.cert_expiry || ""} onChange={(e) => setD({ ...d, cert_expiry: e.target.value })} /></Field>
+            <Field label="انتهاء الشهادة"><DateField value={d.cert_expiry || ""} onChange={(v) => setD({ ...d, cert_expiry: v })} /></Field>
             <Field label={initial ? "رصيد الصندوق (تعديل يدوي يُوثَّق)" : "رصيد الصندوق الافتتاحي (ريال)"}><input className="fld" type="number" value={d.fund_balance ?? ""} onChange={(e) => setD({ ...d, fund_balance: +e.target.value })} /></Field>
             <div className="block">
               <span className="block text-sm font-semibold mb-1">فترة السماح (أيام)</span>
@@ -1240,22 +1590,43 @@ function FormModal({ open, title, initial, onClose, onSubmit, onDelete }: {
             onChange={(e) => setD({ ...d, iban: e.target.value })} /></Field>
           {d.iban && !ibanOk(d.iban) && <p className="text-xs text-late mt-1">الآيبان غير مكتمل — يبدأ بـ SA ويليه 22 رقمًا.</p>}
         </div>
+        <div className="mt-4 rounded-xl border border-line p-3 space-y-3">
+          <div className="text-sm font-semibold">بيانات الجمعية الرسمية <span className="text-xs text-muted font-normal">(تُطبع في السندات والخطابات)</span></div>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="رقم التسجيل في «ملاك»"><input className="fld" dir="ltr" maxLength={40} value={d.mullak_reg_no || ""} onChange={(e) => setD({ ...d, mullak_reg_no: e.target.value })} /></Field>
+            <Field label="الرقم الموحّد (700)"><input className="fld" dir="ltr" maxLength={40} value={d.unified_no || ""} onChange={(e) => setD({ ...d, unified_no: e.target.value })} /></Field>
+          </div>
+          <div className="text-sm font-semibold">النصاب — حسب النظام الأساسي للجمعية</div>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="الاجتماع الأول (٪ من الحصص)"><input className="fld" type="number" min={1} max={100} value={d.quorum_first_pct ?? 75}
+              onChange={(e) => setD({ ...d, quorum_first_pct: e.target.value === "" ? "" : +e.target.value })} /></Field>
+            <Field label="الاجتماع الثاني"><select className="fld" value={d.quorum_second_pct == null || d.quorum_second_pct === "" ? "" : String(d.quorum_second_pct)}
+              onChange={(e) => setD({ ...d, quorum_second_pct: e.target.value === "" ? null : +e.target.value })}>
+              <option value="">أي عدد من الحاضرين</option>
+              {[25, 50].map((x) => <option key={x} value={x}>{x}٪ من الحصص</option>)}
+            </select></Field>
+          </div>
+          <p className="text-xs text-muted">القيم الافتراضية من النظام الأساسي النموذجي — عدّلها لتطابق نظام جمعيتك المعتمد.</p>
+        </div>
         <label className="flex items-start gap-2 mt-4 text-sm cursor-pointer">
           <input type="checkbox" className="mt-1" checked={d.auto_accrue ?? !initial} onChange={(e) => setD({ ...d, auto_accrue: e.target.checked })} />
-          <span><b>استحقاق تلقائي أول كل شهر</b>
-            <span className="block text-xs text-muted">يُضاف اشتراك الشهر على كل مالك تلقائيًا (ويُخصم من المقدَّم إن وُجد). عند التفعيل يبدأ من الشهر القادم، ولا يُضاف شيء بأثر رجعي.</span></span>
+          <span><b>استحقاق تلقائي {periodOf(d) === "annual" ? "أول كل سنة مالية" : "أول كل شهر"}</b>
+            <span className="block text-xs text-muted">يُضاف اشتراك {periodOf(d) === "annual" ? "السنة" : "الشهر"} على كل مالك تلقائيًا (ويُخصم من المقدَّم إن وُجد). عند التفعيل يبدأ من {periodOf(d) === "annual" ? "السنة المالية القادمة" : "الشهر القادم"}، ولا يُضاف شيء بأثر رجعي.</span></span>
         </label>
         {!(d.name || "").trim() && (
           <p className="text-xs text-late mt-3">اسم الجمعية مطلوب لتفعيل الحفظ.</p>
         )}
         <div className="flex gap-2 mt-6">
           <button type="button" className="btn btn-ghost flex-1 justify-center" onClick={onClose}>إلغاء</button>
-          <button type="button" className="btn btn-gold flex-1 justify-center" disabled={!(d.name || "").trim() || (!!d.iban && !ibanOk(d.iban))}
+          <button type="button" className="btn btn-gold flex-1 justify-center" disabled={!(d.name || "").trim() || (!!d.iban && !ibanOk(d.iban)) || (!!initial && basisOf(d) === "share" && !(Number(d.total_budget) > 0))}
             title={!(d.name || "").trim() ? "أدخل اسم الجمعية أولًا" : "حفظ"}
             style={!(d.name || "").trim() ? { opacity: .5, cursor: "not-allowed" } : undefined}
             onClick={() => onSubmit(d)}>حفظ</button>
         </div>
-        {onDelete && <div className="text-center mt-3"><button className="text-late text-sm font-semibold underline" onClick={onDelete}>حذف الجمعية نهائيًّا</button></div>}
+        {onArchive && <div className="text-center mt-3"><button type="button" className="text-deep text-sm font-semibold underline" onClick={onArchive}>
+          {initial?.archived_at ? "إرجاع الجمعية من الأرشيف" : "أرشفة الجمعية (يبقى سجلّها المالي)"}</button></div>}
+        {onDelete && <div className="text-center mt-2"><button className="text-late text-sm font-semibold underline" onClick={onDelete}>حذف الجمعية نهائيًّا</button>
+          <div className="text-[.7rem] text-muted">الحذف متاح فقط لجمعية بلا دفعات ولا مصروفات.</div></div>}
       </div>
     </div>
   );
@@ -1281,7 +1652,11 @@ function BudgetModal({ assoc, budget, onClose, onSave, onPrint }: {
   const units = Number(assoc.units) || (Array.isArray(assoc.owners) ? assoc.owners.length : 0);
   const perMonth = units ? Math.round(total / units / 12) : 0;
   const currentFee = Number(assoc.fee) || 0;
-  const gap = total - currentFee * 12 * units;
+  /* الإيراد الحالي سنويًّا بالرسم الفعلي لكل مالك وبفترته (السنوي لا يُضرب في 12) */
+  const ownersArr = Array.isArray(assoc.owners) ? assoc.owners : [];
+  const ppy = periodOf(assoc) === "annual" ? 1 : 12;
+  const currentAnnual = ownersArr.length ? r2(ownersArr.reduce((sm, o) => sm + feeOf(o, assoc), 0) * ppy) : currentFee * ppy * units;
+  const gap = total - currentAnnual;
 
   const payload = { year: budget.year, items, reserve_pct: rp, notes };
   const setItem = (n: number, patch: Partial<BudgetItem>) =>
@@ -1364,7 +1739,7 @@ function BudgetModal({ assoc, budget, onClose, onSave, onPrint }: {
         {units > 0 && (
           <div className="bg-[#FBF1DF] border border-[#EBD9AA] rounded-xl p-3 mb-4 text-sm text-[#8a5a11] leading-relaxed">
             الاشتراك المقترح: <b>{sar(perMonth)} ريال</b> شهريًّا لكل وحدة ({sar(units ? Math.round(total / units) : 0)} ريال سنويًّا).
-            {currentFee > 0 && <> والاشتراك الحالي المعتمد <b>{sar(currentFee)}</b> ريال.</>}
+            {currentFee > 0 && <> والاشتراك الحالي المعتمد <b>{basisOf(assoc) === "share" ? "حسب حصة كل وحدة" : `${sar(currentFee)} ريال ${PERIOD_WORDS[periodOf(assoc)].every}`}</b>.</>}
             <div className="text-xs mt-1.5">يُحدَّد الاشتراك بقرار الجمعية العامة — هذا حساب استرشادي.</div>
           </div>
         )}
@@ -1390,12 +1765,16 @@ function MinutesModal({ assoc, onClose, onPrint, onSend }: {
   assoc: Association; onClose: () => void; onPrint: (d: any) => void; onSend?: (d: any) => void;
 }) {
   const units = Number(assoc.units) || (Array.isArray(assoc.owners) ? assoc.owners.length : 0);
+  const per = periodOf(assoc);
   const [d, setD] = useState<any>({
     meeting_date: today(), mode: "حضوري", place: "", attendees: "",
     total_units: units || "", president: "", manager: "", fee: assoc.fee || "",
-    due_day: "في الخامس من كل شهر", bank: "", year: new Date().getFullYear(), annual_budget: "",
+    due_day: per === "annual" ? `في أول ${MONTHS_AR[(Number(assoc.fiscal_start_month) || 1) - 1]} من كل سنة` : "في الخامس من كل شهر",
+    bank: "", year: Number(today().slice(0, 4)), annual_budget: assoc.total_budget || "",
   });
   const set = (k: string, v: any) => setD({ ...d, [k]: v });
+  const att = useAttendance(assoc);
+  const out = () => ({ ...d, ...att.payload(d) });
 
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4" onClick={onClose}>
@@ -1421,8 +1800,8 @@ function MinutesModal({ assoc, onClose, onPrint, onSend }: {
           </Field>
           <div className="grid grid-cols-2 gap-3">
             <Field label="عدد الحاضرين" hint="بعد انعقاد الاجتماع فقط">
-              <input className="fld" type="number" min={0} max={Number(d.total_units) || undefined}
-                value={d.attendees} placeholder="اتركه فارغًا قبل الاجتماع"
+              <input className="fld" type="number" min={0} max={Number(d.total_units) || undefined} disabled={att.track}
+                value={att.track ? "" : d.attendees} placeholder={att.track ? "من قائمة الحضور" : "اتركه فارغًا قبل الاجتماع"}
                 onChange={(e) => {
                   const cap = Number(d.total_units) || 0;
                   const v = e.target.value === "" ? "" : String(Math.max(0, Math.min(Number(e.target.value) || 0, cap || Infinity)));
@@ -1442,21 +1821,22 @@ function MinutesModal({ assoc, onClose, onPrint, onSend }: {
             </Field>
           </div>
           <div className="grid grid-cols-2 gap-3">
-            <Field label="اشتراك الوحدة (ريال)">
-              <input className="fld" type="number" min={0} value={d.fee} onChange={(e) => set("fee", e.target.value)} />
+            <Field label={basisOf(assoc) === "share" ? "الرسوم حسب حصة كل وحدة" : `${PERIOD_WORDS[per].label} للوحدة (ريال)`}>
+              <input className="fld" type="number" min={0} value={d.fee} disabled={basisOf(assoc) === "share"} onChange={(e) => set("fee", e.target.value)} />
             </Field>
             <Field label="موعد السداد">
               <input className="fld" value={d.due_day} onChange={(e) => set("due_day", e.target.value)} />
             </Field>
           </div>
           <div className="grid grid-cols-2 gap-3">
-            <Field label="إجمالي الموازنة المعتمدة (ريال)">
+            <Field label="إجمالي الموازنة السنوية (ريال)">
               <input className="fld" type="number" min={0} value={d.annual_budget} onChange={(e) => set("annual_budget", e.target.value)} placeholder="من نافذة الموازنة" />
             </Field>
             <Field label="البنك">
               <input className="fld" value={d.bank} onChange={(e) => set("bank", e.target.value)} placeholder="اسم البنك" />
             </Field>
           </div>
+          <AttendanceBlock att={att} d={d} items={["تأسيس الجمعية واعتماد النظام الأساسي", "انتخاب رئيس الجمعية", "تعيين مدير العقار", "اعتماد الموازنة التقديرية", "تحديد اشتراك الصيانة", "فتح الحساب البنكي", "التسجيل في «ملاك»"]} />
         </div>
 
         <p className="text-xs text-[#8a5a11] mt-4 bg-[#FBF1DF] border border-[#EBD9AA] rounded-lg p-2.5 leading-relaxed">
@@ -1469,8 +1849,8 @@ function MinutesModal({ assoc, onClose, onPrint, onSend }: {
 
         <div className="flex gap-2 mt-5">
           <button type="button" className="btn btn-ghost flex-1 justify-center" onClick={onClose}>إلغاء</button>
-          <button type="button" className="btn btn-gold flex-1 justify-center" onClick={() => onPrint(d)}>إنشاء المحضر</button>
-          {onSend && <button type="button" className="btn btn-ghost flex-1 justify-center" onClick={() => onSend(d)}
+          <button type="button" className="btn btn-gold flex-1 justify-center" onClick={() => onPrint(out())}>إنشاء المحضر</button>
+          {onSend && <button type="button" className="btn btn-ghost flex-1 justify-center" onClick={() => onSend(out())}
             title="يظهر في رابط كل مالك ليطّلع ويعتمد">📨 للملاك للاعتماد</button>}
         </div>
       </div>
@@ -1489,13 +1869,16 @@ function PortfolioStat({ v, l, tone }: { v: string; l: string; tone?: "warn" }) 
 }
 
 /** تعديل بيانات مالك — لم يكن ممكنًا قبل الآن */
-function OwnerModal({ owner, onClose, onSubmit }: {
-  owner: Owner; onClose: () => void; onSubmit: (d: any) => void;
+function OwnerModal({ owner, period = "monthly", onClose, onSubmit }: {
+  owner: Owner; period?: FeePeriod; onClose: () => void; onSubmit: (d: any) => void;
 }) {
   const [d, setD] = useState<any>({
     name: owner.name || "", unit: owner.unit || "",
     phone: owner.phone || "", months_late: owner.months_late || 0,
+    share_pct: owner.share_pct ?? "", area_m2: owner.area_m2 ?? "",
   });
+  const shareBad = String(d.share_pct) !== "" && !(Number(d.share_pct) >= 0 && Number(d.share_pct) <= 100);
+  const areaBad = String(d.area_m2) !== "" && !(Number(d.area_m2) > 0);
   const ready = String(d.name || "").trim().length > 0;
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4" onClick={onClose}>
@@ -1515,7 +1898,19 @@ function OwnerModal({ owner, onClose, onSubmit }: {
               <input className="fld" value={d.phone} onChange={(e) => setD({ ...d, phone: e.target.value })} placeholder="05xxxxxxxx" />
             </Field>
           </div>
-          <Field label="الأشهر المتأخرة" hint="اشتراكات شهرية لم تُدفع حتى اليوم">
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="الحصة ٪">
+              <input className="fld" type="number" inputMode="decimal" min={0} max={100} step="0.0001" value={d.share_pct}
+                onChange={(e) => setD({ ...d, share_pct: e.target.value })} placeholder="مثال 12.5" />
+            </Field>
+            <Field label="المساحة م²">
+              <input className="fld" type="number" inputMode="decimal" min={0} value={d.area_m2}
+                onChange={(e) => setD({ ...d, area_m2: e.target.value })} placeholder="اختياري" />
+            </Field>
+          </div>
+          {(shareBad || areaBad) && <p className="text-xs text-late">{shareBad ? "الحصة بين 0 و100٪. " : ""}{areaBad ? "المساحة أكبر من صفر." : ""}</p>}
+          <p className="text-xs text-muted -mt-1">الحصة لا تغيّر رسم المالك حتى تضغط «توزيع الرسوم حسب الحصص».</p>
+          <Field label={period === "annual" ? "السنوات المتأخرة" : "الأشهر المتأخرة"} hint={period === "annual" ? "اشتراكات سنوية لم تُدفع حتى اليوم" : "اشتراكات شهرية لم تُدفع حتى اليوم"}>
             <input className="fld" type="number" min={0} value={d.months_late}
               onChange={(e) => setD({ ...d, months_late: e.target.value })} />
           </Field>
@@ -1526,7 +1921,7 @@ function OwnerModal({ owner, onClose, onSubmit }: {
 
         <div className="flex gap-2 mt-6">
           <button type="button" className="btn btn-ghost flex-1 justify-center" onClick={onClose}>إلغاء</button>
-          <button type="button" className="btn btn-gold flex-1 justify-center" disabled={!ready}
+          <button type="button" className="btn btn-gold flex-1 justify-center" disabled={!ready || shareBad || areaBad}
             style={!ready ? { opacity: .5, cursor: "not-allowed" } : undefined}
             onClick={() => onSubmit(d)}>حفظ</button>
         </div>
@@ -1537,8 +1932,8 @@ function OwnerModal({ owner, onClose, onSubmit }: {
 }
 
 /** سجل المدفوعات — مع رقم السند، وعكس الدفعة الخاطئة (سطر عكس لا حذف) */
-function HistoryModal({ data, onClose, onReverse, onReceipt }: {
-  data: { owner: Owner; rows: any[] }; onClose: () => void;
+function HistoryModal({ data, period = "monthly", onClose, onReverse, onReceipt }: {
+  data: { owner: Owner; rows: any[] }; period?: FeePeriod; onClose: () => void;
   onReverse: (row: any) => void; onReceipt: (row: any) => void;
 }) {
   const { owner, rows } = data;
@@ -1548,49 +1943,42 @@ function HistoryModal({ data, onClose, onReverse, onReceipt }: {
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4" onClick={onClose}>
       <div className="w-full max-w-2xl bg-white rounded-2xl shadow-xl p-6 max-h-[90vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
         <h3 className="font-display font-bold text-deep text-lg mb-1">سجل المدفوعات — {owner.name}</h3>
-        <p className="text-sm text-muted mb-4">{owner.unit ? `وحدة ${owner.unit}` : "—"} · {rows.length} عملية · الصافي {sar(total)} ريال</p>
+        <p className="text-sm text-muted mb-4">{owner.unit ? `وحدة ${owner.unit}` : "—"} · {countWord(rows.length, "عملية واحدة", "عمليتان", "عمليات", "عملية")} · الصافي {riyalsAr(r2(total), sar)}</p>
         {!rows.length ? (
           <div className="text-center text-muted py-10 text-sm">
             لا مدفوعات مسجّلة بعد.
             <div className="text-xs mt-2">الدفعات التي تُسجّلها من الآن ستُحفظ هنا بتاريخها وطريقتها ورقم سندها.</div>
           </div>
         ) : (
-          <div className="border border-line rounded-xl overflow-auto max-h-[55vh]">
-            <table className="w-full text-sm min-w-[560px]">
-              <thead className="bg-paper2 sticky top-0"><tr>
-                <th className="p-2 text-right font-semibold">التاريخ</th>
-                <th className="p-2 text-right font-semibold">السند</th>
-                <th className="p-2 text-right font-semibold">المبلغ</th>
-                <th className="p-2 text-right font-semibold">الطريقة</th>
-                <th className="p-2 text-right font-semibold">أشهر</th>
-                <th className="p-2 text-right font-semibold">ملاحظة</th>
-                <th className="p-2"></th>
-              </tr></thead>
-              <tbody>
-                {rows.map((r) => {
-                  const isRev = !!r.reverses;
-                  const wasRev = reversed.has(String(r.id));
-                  return (
-                    <tr key={r.id} className={`border-t border-line ${isRev || wasRev ? "text-muted" : ""}`}>
-                      <td className="p-2 tabular-nums whitespace-nowrap">{r.paid_on}</td>
-                      <td className="p-2 tabular-nums text-xs" dir="ltr">{r.receipt_no || "—"}</td>
-                      <td className={`p-2 tabular-nums font-semibold ${wasRev ? "line-through" : ""}`}>{sar(r.amount)}</td>
-                      <td className="p-2">{isRev ? "عكس" : methodLabel(r.method)}</td>
-                      <td className="p-2 text-muted">{r.periods_covered || "—"}</td>
-                      <td className="p-2 text-muted text-xs">{[r.reference, r.note].filter(Boolean).join(" · ") || "—"}{wasRev ? " · (معكوسة)" : ""}</td>
-                      <td className="p-2 whitespace-nowrap">
-                        {!isRev && !wasRev && Number(r.amount) > 0 && (
-                          <span className="flex gap-1">
-                            <button type="button" className="btn btn-ghost text-xs px-2" onClick={() => onReceipt(r)}>سند</button>
-                            <button type="button" className="btn btn-ghost text-xs px-2 text-late" onClick={() => onReverse(r)}>عكس</button>
-                          </span>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+          /* بطاقات بدل جدول بعرض أدنى (كان يُمرَّر أفقيًّا على الجوال) */
+          <div className="flex flex-col gap-2 max-h-[60vh] overflow-auto">
+            {rows.map((r) => {
+              const isRev = !!r.reverses;
+              const wasRev = reversed.has(String(r.id));
+              const pc = Math.abs(Number(r.periods_covered) || 0);
+              return (
+                <div key={r.id} className={`rounded-xl border p-3 grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-1 ${isRev || wasRev ? "border-line bg-paper2 text-muted" : "border-line bg-paper"}`}>
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <b className={`tabular-nums ${wasRev ? "line-through" : ""}`}>{riyalsAr(Math.abs(Number(r.amount) || 0), sar)}</b>
+                      {isRev && <span className="text-[.7rem] font-semibold rounded-md px-1.5 py-0.5 bg-[#FBE9E7] text-[#a5322c]">عكس</span>}
+                      {wasRev && <span className="text-[.7rem] font-semibold rounded-md px-1.5 py-0.5 bg-[#FBE9E7] text-[#a5322c]">معكوسة</span>}
+                    </div>
+                    <div className="text-xs text-muted">
+                      {arDate(r.paid_on)}{r.receipt_no ? <> · <span dir="ltr">{r.receipt_no}</span></> : ""} · {isRev ? "سطر عكس" : methodLabel(r.method)}
+                      {pc ? ` · ${isRev ? "يُلغي " : ""}${periodsAr(pc, period)}` : ""}
+                    </div>
+                    {[r.reference, r.note].filter(Boolean).length > 0 && <div className="text-xs text-muted break-words">{[r.reference, r.note].filter(Boolean).join(" · ")}</div>}
+                  </div>
+                  {!isRev && !wasRev && Number(r.amount) > 0 && (
+                    <div className="flex flex-col gap-1">
+                      <button type="button" className="btn btn-ghost text-xs px-2.5" onClick={() => onReceipt(r)}>سند</button>
+                      <button type="button" className="btn btn-ghost text-xs px-2.5 text-late" onClick={() => onReverse(r)}>عكس</button>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         )}
         <button type="button" className="btn btn-ghost w-full justify-center mt-4" onClick={onClose}>إغلاق</button>
@@ -1612,11 +2000,12 @@ const STAGE_META = [
   { label: "أُنذر نهائيًّا", cls: "bg-[#F7DAD7] text-[#8f2b26]" },
 ];
 
-function CollectionsModal({ assoc, owners, only, fee, stageOf, logOf, dueOf, onClose, onRemind, onNotice, onFinal }: {
+function CollectionsModal({ assoc, owners, only, fee, period = "monthly", stageOf, logOf, dueOf, onClose, onRemind, onNotice, onFinal }: {
   assoc: Association;
   owners: Owner[];
   only?: Owner;
   fee: number;
+  period?: FeePeriod;
   stageOf: (o: Owner) => 0 | 1 | 2;
   logOf: (o: Owner) => Note[];
   dueOf: (o: Owner) => number;
@@ -1661,7 +2050,7 @@ function CollectionsModal({ assoc, owners, only, fee, stageOf, logOf, dueOf, onC
           </p>
           <div className="mt-3">
             <Field label="تاريخ قرار الجمعية العامة بتحديد الاشتراك" hint="يُذكر في الإنذار كسند للمطالبة — اختياري">
-              <input type="date" className="fld w-full sm:w-64" value={feeApprovedOn} onChange={(e) => setFeeApprovedOn(e.target.value)} />
+              <div className="w-full sm:w-64"><DateField value={feeApprovedOn} onChange={(v) => setFeeApprovedOn(v)} /></div>
             </Field>
           </div>
         </div>
@@ -1678,7 +2067,7 @@ function CollectionsModal({ assoc, owners, only, fee, stageOf, logOf, dueOf, onC
                   <span className="font-semibold">{o.name}</span>
                   <span className="text-xs text-muted">الوحدة {o.unit || "—"}</span>
                   <span className={`text-xs font-semibold rounded-lg px-2 py-0.5 ${meta.cls}`}>{meta.label}</span>
-                  <span className="text-sm font-bold text-late mr-auto">{sar(dueOf(o))} ريال · {o.months_late} فترة</span>
+                  <span className="text-sm font-bold text-late mr-auto">{sar(dueOf(o))} ريال · {periodsAr(o.months_late, period)}</span>
                 </div>
 
                 {log.length > 0 && (
@@ -1722,7 +2111,17 @@ function CollectionsModal({ assoc, owners, only, fee, stageOf, logOf, dueOf, onC
   );
 }
 
-function DocModal({ doc, onClose }: { doc: { title: string; body: string; kind?: "notice" | "final" | "file" }; onClose: () => void }) {
+function DocModal({ doc, onClose, onDelivered }: {
+  doc: { title: string; body: string; kind?: "notice" | "final" | "file"; owner?: Owner };
+  onClose: () => void;
+  /** يُوثَّق الخطاب في «سجل المطالبات» فقط حين يُسلَّم فعلًا (لا عند فتحه) */
+  onDelivered?: (via: "hand" | "wa") => Promise<void>;
+}) {
+  const [logged, setLogged] = useState<null | "hand" | "wa">(null);
+  const deliver = async (via: "hand" | "wa") => {
+    if (via === "wa" && doc.owner) openExternal(waLink(doc.owner.phone, doc.body));
+    if (!logged && onDelivered) { await onDelivered(via); setLogged(via); }
+  };
   const kind = doc.kind || "notice";
   const banner = kind === "file"
     ? <>هذا <b>ملف إداري مُجهَّز من بيانات لوحتك</b> ليستخدمه مدير العقار. رفع طلب السند التنفيذي في منصة «ملاك» واعتماده من الهيئة العامة للعقار ثم استكماله عبر «ناجز» — إجراءات يقوم بها <b>مدير العقار</b> نفسه. وثيق لا يرفع نيابةً عنك ولا يمثّلك أمام أي جهة ولا يستلم أي مبالغ.</>
@@ -1737,6 +2136,13 @@ function DocModal({ doc, onClose }: { doc: { title: string; body: string; kind?:
           {banner}
         </p>
         <pre className="whitespace-pre-wrap bg-paper border border-line rounded-xl p-4 text-sm leading-8 text-ink" style={{ fontFamily: "inherit" }}>{doc.body}</pre>
+        {onDelivered && (
+          <div className="grid grid-cols-[minmax(0,1fr)] sm:grid-cols-2 gap-2 mt-4">
+            <button type="button" className="btn btn-gold justify-center" disabled={!!logged} onClick={() => deliver("hand")}>
+              {logged ? "وُثّق في سجل المطالبات ✓" : "✓ سلّمته للمالك — وثّق التاريخ"}</button>
+            <button type="button" className="btn btn-wa justify-center" onClick={() => deliver("wa")}>إرسال للمالك عبر واتساب{logged ? "" : " وتوثيقه"}</button>
+          </div>
+        )}
         <div className="flex gap-2 mt-4">
           <button type="button" onClick={() => navigator.clipboard?.writeText(doc.body)} className="btn btn-primary flex-1 justify-center">نسخ النص</button>
           <button type="button" onClick={() => openDoc('<!doctype html><html dir="rtl"><meta charset="utf-8"><body><pre style="font-family:sans-serif;white-space:pre-wrap;padding:24px;line-height:1.9">' + doc.body.replace(/</g, "&lt;") + "</pre></body></html>")} className="btn btn-ghost flex-1 justify-center">طباعة</button>
@@ -1763,7 +2169,9 @@ function RenewalModal({ assoc, annualBudget, onClose, onEditBudget, onPrintBudge
   onEditBudget: () => void; onPrintBudget: () => void; onPrintMinutes: (d: any) => void; onSendMinutes?: (d: any) => void;
 }) {
   const units = Number(assoc.units) || (Array.isArray(assoc.owners) ? assoc.owners.length : 0);
-  const nextYear = new Date().getFullYear() + 1;
+  const nextYear = Number(today().slice(0, 4)) + 1;   /* سنة الرياض لا الجهاز */
+  const per = periodOf(assoc);
+  const att = useAttendance(assoc);
   const [d, setD] = useState<any>({
     meeting_date: today(), mode: "حضوري", place: "",
     attendees: "", total_units: units || "",
@@ -1772,6 +2180,7 @@ function RenewalModal({ assoc, annualBudget, onClose, onEditBudget, onPrintBudge
     collected: "", spent: "", fund_balance: assoc.fund_balance ?? "", notes: "",
   });
   const set = (k: string, v: any) => setD({ ...d, [k]: v });
+  const out = () => ({ ...d, ...att.payload(d) });
 
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4" onClick={onClose}>
@@ -1820,7 +2229,8 @@ function RenewalModal({ assoc, annualBudget, onClose, onEditBudget, onPrintBudge
             </div>
             <div className="grid grid-cols-2 gap-3">
               <Field label="عدد الحاضرين">
-                <input className="fld" type="number" min={0} value={d.attendees} onChange={(e) => set("attendees", e.target.value)} />
+                <input className="fld" type="number" min={0} disabled={att.track} value={att.track ? "" : d.attendees}
+                  placeholder={att.track ? "من قائمة الحضور" : ""} onChange={(e) => set("attendees", e.target.value)} />
               </Field>
               <Field label="إجمالي الوحدات">
                 <input className="fld" type="number" min={0} value={d.total_units} onChange={(e) => set("total_units", e.target.value)} />
@@ -1835,8 +2245,8 @@ function RenewalModal({ assoc, annualBudget, onClose, onEditBudget, onPrintBudge
               </Field>
             </div>
             <div className="grid grid-cols-2 gap-3">
-              <Field label={`اشتراك الوحدة لعام ${nextYear} (ريال)`}>
-                <input className="fld" type="number" min={0} value={d.fee} onChange={(e) => set("fee", e.target.value)} />
+              <Field label={basisOf(assoc) === "share" ? "الرسوم حسب حصة كل وحدة" : `${PERIOD_WORDS[per].label} للوحدة (ريال)`}>
+                <input className="fld" type="number" min={0} value={d.fee} disabled={basisOf(assoc) === "share"} onChange={(e) => set("fee", e.target.value)} />
               </Field>
               <Field label="إجمالي الموازنة المعتمدة (ريال)">
                 <input className="fld" type="number" min={0} value={d.annual_budget} onChange={(e) => set("annual_budget", e.target.value)} placeholder="يتعبّأ من الموازنة المحفوظة" />
@@ -1853,12 +2263,17 @@ function RenewalModal({ assoc, annualBudget, onClose, onEditBudget, onPrintBudge
             <Field label="بنود إضافية أُقرّت في الاجتماع">
               <input className="fld" value={d.notes} onChange={(e) => set("notes", e.target.value)} placeholder="اختياري" />
             </Field>
+            <AttendanceBlock att={att} d={d} items={["تقرير أعمال العام", "الموقف المالي", "اعتماد الموازنة التقديرية", "اشتراك الصيانة", "مدير العقار", "قرار الرسوم في «ملاك»", ...(d.notes ? ["البنود الإضافية"] : [])]} />
           </div>
+          <p className="text-xs text-[#8a5a11] mt-3 bg-[#FBF1DF] border border-[#EBD9AA] rounded-lg p-2.5 leading-relaxed">
+            <b>لا تُثبت وقائع لم تقع.</b> اترك الحضور والأسماء فراغات إن لم يُعقد الاجتماع بعد، ولا تعلّم «أُقرّ البند» إلا لما صُوّت عليه فعلًا.
+            المحضر مستند يُرفع لجهة رسمية، وإثبات ما لم يحصل يُعرّض مُصدِره للمساءلة. وثيق لا يقدّم خدمات قانونية — طابقه مع النظام الأساسي المعتمد.
+          </p>
 
-          <button type="button" className="btn btn-gold text-sm w-full justify-center mt-3" onClick={() => onPrintMinutes(d)}>
+          <button type="button" className="btn btn-gold text-sm w-full justify-center mt-3" onClick={() => onPrintMinutes(out())}>
             🖨 إنشاء محضر الاجتماع السنوي
           </button>
-          {onSendMinutes && <button type="button" className="btn btn-ghost text-sm w-full justify-center mt-2" onClick={() => onSendMinutes(d)}>
+          {onSendMinutes && <button type="button" className="btn btn-ghost text-sm w-full justify-center mt-2" onClick={() => onSendMinutes(out())}>
             📨 إرساله للملاك للاطّلاع والاعتماد
           </button>}
         </div>
@@ -1890,15 +2305,241 @@ function RenewalModal({ assoc, annualBudget, onClose, onEditBudget, onPrintBudge
   );
 }
 
+/** حضور الاجتماع بالأسماء والحصص — يُحتسب منه النصاب (lib/documents: hoaQuorum) */
+function useAttendance(assoc: Association) {
+  const owners = Array.isArray(assoc.owners) ? assoc.owners : [];
+  const [track, setTrack] = useState(false);
+  const [present, setPresent] = useState<Record<string, boolean>>({});
+  const [round, setRound] = useState<1 | 2>(1);
+  /** «عُقد الاجتماع وأُقرّ البند» لكل بند — بلا علامة يُطبع القرار فراغًا */
+  const [approved, setApproved] = useState<boolean[]>([]);
+  const list: HoaAttendance[] = owners.map((o) => ({ name: o.name, unit: o.unit, share_pct: o.share_pct ?? null, present: !!present[o.id] }));
+  const quorum = (d: any) => hoaQuorum({ attendance: track ? list : null, attendees: d.attendees, total_units: d.total_units, round,
+    first_pct: assoc.quorum_first_pct, second_pct: assoc.quorum_second_pct });
+  return {
+    owners, track, setTrack, present, setPresent, round, setRound, list, approved, setApproved, quorum,
+    firstPct: Number(assoc.quorum_first_pct) > 0 ? Number(assoc.quorum_first_pct) : 75,
+    secondPct: Number(assoc.quorum_second_pct) > 0 ? Number(assoc.quorum_second_pct) : null,
+    payload: (d: any) => ({
+      attendance: track ? list : undefined, round, attendees: track ? String(list.filter((x) => x.present).length) : d.attendees,
+      approved: quorum(d).met === true ? approved : [],
+      fee_period: assoc.fee_period || "monthly", fee_basis: assoc.fee_basis || "equal",
+    }),
+  };
+}
+
+function AttendanceBlock({ att, d, items }: { att: ReturnType<typeof useAttendance>; d: any; items?: string[] }) {
+  const q = att.quorum(d);
+  const hasShares = att.owners.length > 0 && att.owners.every((o) => Number(o.share_pct) > 0);
+  const pct = q.pct === null ? "—" : `${q.pct.toLocaleString("en-US", { maximumFractionDigits: 2 })}٪`;
+  return (
+    <div className="rounded-xl border border-line p-3 space-y-2">
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="الاجتماع">
+          <select className="fld" value={att.round} onChange={(e) => att.setRound(Number(e.target.value) === 2 ? 2 : 1)}>
+            <option value={1}>الأول — {att.firstPct}٪ من الحصص</option>
+            <option value={2}>الثاني — {att.secondPct ? `${att.secondPct}٪ من الحصص` : "أي عدد"}</option>
+          </select>
+        </Field>
+        {att.owners.length > 0 ? (
+          <label className="flex items-center gap-2 text-sm font-semibold self-end pb-2 cursor-pointer">
+            <input type="checkbox" checked={att.track} onChange={(e) => att.setTrack(e.target.checked)} />
+            تسجيل الحضور بالأسماء
+          </label>
+        ) : <div />}
+      </div>
+      {att.track && (
+        <div className="max-h-56 overflow-auto border border-line rounded-lg divide-y divide-line">
+          {att.owners.map((o) => (
+            <label key={o.id} className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 px-2.5 py-1.5 text-sm cursor-pointer">
+              <input type="checkbox" checked={!!att.present[o.id]} onChange={(e) => att.setPresent({ ...att.present, [o.id]: e.target.checked })} />
+              <span className="truncate">{o.name}{o.unit ? ` · ${o.unit}` : ""}</span>
+              <span className="text-xs text-muted tabular-nums">{o.share_pct != null ? `${Number(o.share_pct)}٪` : "—"}</span>
+            </label>
+          ))}
+        </div>
+      )}
+      {att.track && !hasShares && <p className="text-xs text-[#8a5a11]">لم تُدخل حصص كل الملاك — يُحتسب النصاب بعدد الوحدات ويُذكر ذلك في المحضر.</p>}
+      <div className={`text-xs rounded-lg p-2 font-semibold ${q.met === true ? "bg-[#E6F4EC] text-[#137a50]" : q.met === false ? "bg-[#FBE9E7] text-[#a5322c]" : "bg-paper2 text-muted"}`}>
+        {q.met === true ? `النصاب متحقق ✓ — ${q.basis === "shares" ? `الحاضرون يملكون ${pct} من الحصص` : `حضر ${q.present} من ${q.total} (${pct})`}`
+          : q.met === false ? `النصاب غير متحقق ✗ — ${q.basis === "shares" ? `${pct} من الحصص` : `${q.present} من ${q.total} (${pct})`}. لن تُطبع القرارات كمعتمدة، ويُدعى لاجتماع ثانٍ.`
+          : "النصاب يُحتسب عند إدخال الحضور — قبل الاجتماع تُطبع القرارات فراغات تُدوَّن بعد التصويت."}
+      </div>
+      <p className="text-[.7rem] text-muted">النسب حسب النظام الأساسي للجمعية (من الإعدادات).</p>
+      {items && items.length > 0 && (
+        <div className="rounded-lg border border-line p-2.5">
+          <div className="text-xs font-semibold mb-1.5">البنود المُقرّة فعلًا {q.met === true ? "" : <span className="text-muted font-normal">(تُفعَّل بعد تحقق النصاب)</span>}</div>
+          {items.map((label, i) => (
+            <label key={i} className={`flex items-start gap-2 text-xs py-1 ${q.met === true ? "cursor-pointer" : "opacity-50"}`}>
+              <input type="checkbox" className="mt-0.5" disabled={q.met !== true} checked={!!att.approved[i + 1]}
+                onChange={(e) => { const x = [...att.approved]; x[i + 1] = e.target.checked; att.setApproved(x); }} />
+              <span>عُقد الاجتماع وأُقرّ البند: {label}</span>
+            </label>
+          ))}
+          <p className="text-[.7rem] text-muted mt-1">ما لم تُعلَّم يُطبع قراره فراغًا يُدوَّن بعد التصويت — لا يُثبت المحضر ما لم يقع.</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** توزيع الرسوم حسب الحصص — معاينة كاملة قبل التطبيق (نفس حساب القاعدة بالهللة) */
+function SharesModal({ assoc, onClose, onShare, onApplied, notify }: {
+  assoc: Association; onClose: () => void;
+  onShare: (o: Owner, share: number | null, area: number | null) => Promise<boolean>;
+  onApplied: (r: any) => void; notify: (k: "ok" | "err", m: string) => void;
+}) {
+  const supabase = createClient();
+  const owners = Array.isArray(assoc.owners) ? assoc.owners : [];
+  const per = periodOf(assoc);
+  const W = PERIOD_WORDS[per];
+  const [total, setTotal] = useState<string>(assoc.total_budget != null ? String(assoc.total_budget) : "");
+  const [rows, setRows] = useState(() => owners.map((o) => ({ id: o.id, share: o.share_pct != null ? String(o.share_pct) : "", area: o.area_m2 != null ? String(o.area_m2) : "" })));
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const tot = r2(Number(total) || 0);
+  const sum = sharesSum(rows.map((r) => r.share));
+  const allHave = rows.length > 0 && rows.every((r) => Number(r.share) > 0);
+  const ok = allHave && sharesValid(sum) && tot > 0;
+  const newFee = (r: { share: string }) => shareFee(tot, Number(r.share) || 0, per);
+  const totalFees = r2(rows.reduce((s, r) => s + newFee(r), 0));
+  const setRow = (i: number, patch: Partial<{ share: string; area: string }>) => setRows(rows.map((r, j) => (j === i ? { ...r, ...patch } : r)));
+  const fromAreas = () => {
+    const sh = sharesFromAreas(rows.map((r) => Number(r.area) || 0));
+    if (!sh.some((x) => x > 0)) return setErr("أدخل مساحة كل وحدة أولًا.");
+    setErr(null); setRows(rows.map((r, i) => ({ ...r, share: sh[i] ? String(sh[i]) : "" })));
+  };
+  const saveShares = async (): Promise<boolean> => {
+    for (let i = 0; i < rows.length; i++) {
+      const o = owners[i], r = rows[i];
+      const sh = r.share.trim() === "" ? null : Math.round(Number(r.share) * 10000) / 10000;
+      const ar = r.area.trim() === "" ? null : r2(Number(r.area));
+      if ((sh ?? null) !== (o.share_pct == null ? null : Number(o.share_pct)) || (ar ?? null) !== (o.area_m2 == null ? null : Number(o.area_m2))) {
+        if (!(await onShare(o, sh, ar))) return false;
+      }
+    }
+    return true;
+  };
+  const apply = async () => {
+    if (!ok || busy) return;
+    if (!confirm(`تطبيق رسوم الحصص على ${owners.length} مالك (إجمالي ${sar(totalFees)} ريال ${W.every})؟ يبقى رصيد كل مالك بالريال كما هو.`)) return;
+    setBusy(true); setErr(null);
+    try {
+      if (!(await saveShares())) return;
+      const { data, error } = await supabase.rpc("watheq_assoc_apply_shares", { p_assoc: assoc.id, p_total_budget: tot });
+      if (error) { setErr(dbErr(String(error.message || ""))); return; }
+      onApplied(data); notify("ok", "وُزّعت الرسوم حسب الحصص — رصيد كل مالك بالريال كما هو."); onClose();
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4" onClick={() => !busy && onClose()}>
+      <div className="w-full max-w-2xl bg-white rounded-2xl shadow-xl p-5 max-h-[92vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
+        <h3 className="font-display font-bold text-deep text-xl mb-1">⚖️ توزيع الرسوم حسب الحصص</h3>
+        <p className="text-sm text-muted mb-3">رسم الوحدة {W.every} = الموازنة السنوية × حصتها ÷ {per === "annual" ? "100" : "100 ÷ 12"}. مجموع الحصص يجب أن يساوي 100٪. رصيد كل مالك بالريال لا يتغيّر.</p>
+        <div className="grid grid-cols-2 gap-3 mb-3">
+          <Field label="الموازنة السنوية (ريال)">
+            <input className="fld" type="number" min={0} value={total} onChange={(e) => setTotal(e.target.value)} />
+          </Field>
+          <div className={`rounded-xl p-2.5 text-center self-end ${sharesValid(sum) && allHave ? "bg-[#E6F4EC] text-[#137a50]" : "bg-[#FBE9E7] text-[#a5322c]"}`}>
+            <div className="font-display font-bold tabular-nums">{sum.toLocaleString("en-US", { maximumFractionDigits: 4 })}٪</div>
+            <div className="text-[.7rem]">مجموع الحصص</div>
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-2 mb-3">
+          <button type="button" className="btn btn-ghost text-xs" onClick={fromAreas}>احسب الحصص من المساحات</button>
+        </div>
+        <div className="flex flex-col gap-2">
+          {owners.map((o, i) => {
+            const cur = feeOf(o, assoc), nf = newFee(rows[i]);
+            return (
+              <div key={o.id} className="rounded-xl border border-line p-2.5 grid grid-cols-[minmax(0,1fr)_76px_76px] gap-2 items-end">
+                <div className="min-w-0 self-center">
+                  <div className="font-semibold text-sm truncate">{o.name}</div>
+                  <div className="text-xs text-muted tabular-nums">{o.unit ? `وحدة ${o.unit} · ` : ""}الآن {sar(cur)} ← <b className={nf !== cur ? "text-deep" : ""}>{tot > 0 && Number(rows[i].share) > 0 ? sar(nf) : "—"}</b>{W.per}</div>
+                </div>
+                <label className="block min-w-0"><span className="block text-[.7rem] text-muted">م²</span>
+                  <input className="fld text-xs px-2" type="number" inputMode="decimal" min={0} value={rows[i].area} onChange={(e) => setRow(i, { area: e.target.value })} /></label>
+                <label className="block min-w-0"><span className="block text-[.7rem] text-muted">الحصة ٪</span>
+                  <input className="fld text-xs px-2" type="number" inputMode="decimal" min={0} max={100} step="0.0001" value={rows[i].share} onChange={(e) => setRow(i, { share: e.target.value })} /></label>
+              </div>
+            );
+          })}
+          {!owners.length && <div className="text-center text-muted text-sm py-6">أضف الملاك أولًا.</div>}
+        </div>
+        {tot > 0 && allHave && (
+          <p className="text-xs text-muted mt-3">مجموع رسوم الوحدات {sar(totalFees)} ريال {W.every} ({sar(r2(totalFees * (per === "annual" ? 1 : 12)))} ريال سنويًّا مقابل موازنة {sar(tot)}) — الفرق هللات تقريب لكل وحدة.</p>
+        )}
+        {!allHave && owners.length > 0 && <p className="text-xs text-late mt-3">أدخل حصة أكبر من صفر لكل مالك.</p>}
+        {allHave && !sharesValid(sum) && <p className="text-xs text-late mt-3">مجموع الحصص {sum}٪ — يجب أن يساوي 100٪ (بفارق لا يتجاوز 0.01).</p>}
+        {err && <p className="text-sm text-late mt-3">{err}</p>}
+        <div className="flex gap-2 mt-5 flex-wrap">
+          <button type="button" className="btn btn-ghost flex-1 justify-center" disabled={busy} onClick={onClose}>إغلاق</button>
+          <button type="button" className="btn btn-primary flex-1 justify-center" disabled={busy}
+            onClick={async () => { setBusy(true); setErr(null); try { if (await saveShares()) notify("ok", "حُفظت الحصص والمساحات (لم تتغيّر الرسوم بعد)."); } finally { setBusy(false); } }}>حفظ الحصص فقط</button>
+          <button type="button" className="btn btn-gold flex-1 justify-center" disabled={!ok || busy} onClick={apply}>{busy ? "جارٍ التطبيق…" : "تطبيق التوزيع"}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** «حدّد المتأخرات الافتتاحية» — شاشة واحدة لكل الملاك الجدد (v64) */
+function OpeningModal({ owners, period, onClose, onSave }: {
+  owners: Owner[]; period: FeePeriod; onClose: () => void; onSave: (vals: Record<string, number>) => Promise<void>;
+}) {
+  const [vals, setVals] = useState<Record<string, string>>({});
+  const [busy, setBusy] = useState(false);
+  const parsed: Record<string, number> = {};
+  owners.forEach((o) => {
+    const v = String(vals[o.id] ?? "").replace(/[٠-٩]/g, (c) => String(c.charCodeAt(0) - 0x660)).trim();
+    if (v !== "" && /^\d{1,3}$/.test(v) && Number(v) <= 120) parsed[o.id] = Number(v);
+  });
+  const n = Object.keys(parsed).length;
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4" onClick={() => !busy && onClose()}>
+      <div className="w-full max-w-lg bg-white rounded-2xl shadow-xl p-5 max-h-[92vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
+        <h3 className="font-display font-bold text-deep text-xl mb-1">حدّد المتأخرات الافتتاحية</h3>
+        <p className="text-sm text-muted mb-3">كم {period === "annual" ? "سنة" : "شهرًا"} على كل مالك قبل بدء التسجيل هنا؟ اكتب <b>0</b> لمن لا متأخرات عليه.
+          لا يُحفظ إلا ما تكتبه، ويُوثَّق كتعديل يدوي. حتى يُحدَّد، تُظهر صفحة المالك «رصيدك قيد المراجعة».</p>
+        <div className="flex flex-col gap-2">
+          {owners.map((o) => (
+            <label key={o.id} className="grid grid-cols-[minmax(0,1fr)_88px] items-center gap-2 rounded-xl border border-line p-2.5">
+              <span className="min-w-0"><span className="block font-semibold text-sm truncate">{o.name}</span>
+                <span className="block text-xs text-muted">{o.unit ? `وحدة ${o.unit}` : "—"}</span></span>
+              <input className="fld text-center" type="number" inputMode="numeric" min={0} max={120} placeholder="—"
+                aria-label={`المتأخر الافتتاحي — ${o.name}`} value={vals[o.id] ?? ""} onChange={(e) => setVals({ ...vals, [o.id]: e.target.value })} />
+            </label>
+          ))}
+        </div>
+        <div className="flex gap-2 mt-4 flex-wrap">
+          <button type="button" className="btn btn-ghost flex-1 justify-center" disabled={busy} onClick={onClose}>لاحقًا</button>
+          <button type="button" className="btn btn-ghost flex-1 justify-center" disabled={busy}
+            onClick={() => { const z: Record<string, string> = { ...vals }; owners.forEach((o) => { if (!String(z[o.id] ?? "").trim()) z[o.id] = "0"; }); setVals(z); }}>البقية بلا متأخرات (0)</button>
+          <button type="button" className="btn btn-gold flex-1 justify-center" disabled={busy || !n}
+            onClick={async () => { setBusy(true); try { await onSave(parsed); } finally { setBusy(false); } }}>{busy ? "جارٍ الحفظ…" : `حفظ (${n})`}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /** لصق قائمة ملّاك — سطر لكل مالك: «الاسم، الوحدة، الجوال» بأي فاصل شائع */
 function BulkOwnersModal({ onClose, onSubmit }: {
-  onClose: () => void; onSubmit: (rows: { name: string; unit: string | null; phone: string | null }[]) => void;
+  onClose: () => void; onSubmit: (rows: { name: string; unit: string | null; phone: string | null; months?: number | null }[]) => void;
 }) {
   const [text, setText] = useState("");
 
   /** يحلّل كل سطر: يقبل الفاصلة العربية/الإنجليزية أو Tab أو الشرطة */
   const rows = text.split(/\n+/).map((line) => {
-    const parts = line.split(/[،,\t]| - /).map((s) => s.trim()).filter(Boolean);
+    const raw = line.split(/[،,\t]| - /).map((s) => s.trim());
+    /* العمود الرابع اختياري: «المتأخر بالأشهر» — عدد صحيح 0–120 في الخانة الرابعة */
+    let months: number | null = null;
+    if (raw.length >= 4) {
+      const m4 = String(raw[3]).replace(/[٠-٩]/g, (c) => String(c.charCodeAt(0) - 0x660));
+      if (/^\d{1,3}$/.test(m4) && Number(m4) <= 120) { months = Number(m4); raw.splice(3, 1); }
+    }
+    const parts = raw.filter(Boolean);
     if (!parts.length) return null;
     // يلتقط الجوال (أرقام 9+) والوحدة (رقم/رمز قصير) أينما وُضعا
     let name = "", unit: string | null = null, phone: string | null = null;
@@ -1908,19 +2549,19 @@ function BulkOwnersModal({ onClose, onSubmit }: {
       else if (!unit && p.length <= 6 && /[0-9]/.test(p)) unit = p;
       else name = name ? `${name} ${p}` : p;
     }
-    return name ? { name, unit, phone } : null;
-  }).filter(Boolean) as { name: string; unit: string | null; phone: string | null }[];
+    return name ? { name, unit, phone, months } : null;
+  }).filter(Boolean) as { name: string; unit: string | null; phone: string | null; months: number | null }[];
 
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4" onClick={onClose}>
       <div className="w-full max-w-xl bg-white rounded-2xl shadow-xl p-6 max-h-[92vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
         <h3 className="font-display font-bold text-deep text-xl mb-1">📋 إضافة ملّاك دفعة واحدة</h3>
         <p className="text-sm text-muted mb-3">
-          الصق قائمتك — سطر لكل مالك بصيغة: <b>الاسم، الوحدة، الجوال</b> (الوحدة والجوال اختياريان).
+          الصق قائمتك — سطر لكل مالك بصيغة: <b>الاسم، الوحدة، الجوال، المتأخر بالأشهر</b> (كلها اختيارية بعد الاسم؛ المتأخر رقم في الخانة الرابعة).
         </p>
         <textarea className="fld min-h-[180px] font-mono text-sm leading-relaxed" dir="rtl"
           value={text} onChange={(e) => setText(e.target.value)}
-          placeholder={"محمد العتيبي، 101، 05XXXXXXXX\nسارة القحطاني، 102\nخالد الشمري"} />
+          placeholder={"محمد العتيبي، 101، 05XXXXXXXX، 2\nسارة القحطاني، 102، ، 0\nخالد الشمري"} />
 
         {rows.length > 0 && (
           <div className="bg-paper2 border border-line rounded-xl p-3 mt-3 text-xs max-h-[160px] overflow-auto">
@@ -1930,6 +2571,7 @@ function BulkOwnersModal({ onClose, onSubmit }: {
                 <span className="flex-1 truncate">{r.name}</span>
                 <span className="text-muted">{r.unit ? `وحدة ${r.unit}` : "—"}</span>
                 <span className="text-muted tabular-nums">{r.phone || "—"}</span>
+                <span className="text-muted tabular-nums">{r.months != null ? `متأخر ${r.months}` : "رصيد لاحقًا"}</span>
               </div>
             ))}
             {rows.length > 30 && <div className="text-muted pt-1">… و{rows.length - 30} آخرون</div>}
@@ -1947,12 +2589,14 @@ function BulkOwnersModal({ onClose, onSubmit }: {
 }
 
 /** تذكير جماعي — يفتح واتساب لكل متأخر واحدًا تلو الآخر مع تتبّع من أُرسل له */
-function RemindAllOwnersModal({ owners, fee, linkOf, onClose }: {
-  owners: Owner[]; fee: number; linkOf: (o: Owner) => string; onClose: () => void;
+function RemindAllOwnersModal({ owners, dueOf, period, onSend, sentToday, onClose }: {
+  owners: Owner[]; dueOf: (o: Owner) => number; period: FeePeriod; onSend: (o: Owner) => Promise<void>;
+  /** «أُرسل» من سجل التواصل (تذكير موثَّق اليوم) — لا من حالة محلية تضيع عند الإغلاق */
+  sentToday: (o: Owner) => boolean; onClose: () => void;
 }) {
-  const [sent, setSent] = useState<Record<string, boolean>>({});
-  const sentCount = Object.values(sent).filter(Boolean).length;
+  const [busy, setBusy] = useState<string | null>(null);
   const withPhone = owners.filter((o) => o.phone);
+  const sentCount = withPhone.filter(sentToday).length;
   const noPhone = owners.length - withPhone.length;
 
   return (
@@ -1960,34 +2604,30 @@ function RemindAllOwnersModal({ owners, fee, linkOf, onClose }: {
       <div className="w-full max-w-lg bg-white rounded-2xl shadow-xl p-6 max-h-[92vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
         <h3 className="font-display font-bold text-deep text-xl mb-1">💬 تذكير جماعي بالسداد</h3>
         <p className="text-sm text-muted mb-4">
-          واتساب لا يسمح بالإرسال الجماعي الآلي — لكن كل زر هنا يفتح محادثة برسالة جاهزة بتفاصيل ذلك المالك.
-          أرسلها بضغطة، وارجع للتالي. أُرسل {sentCount} من {withPhone.length}.
+          واتساب لا يسمح بالإرسال الجماعي الآلي — كل زر يفتح محادثة برسالة جاهزة بتفاصيل المالك ورابط صفحته،
+          ويُوثَّق التذكير في سجل العمارة. أُرسل اليوم {sentCount} من {withPhone.length}.
         </p>
-
         <div className="flex flex-col gap-2">
           {withPhone.map((o) => {
-            const owed = Math.max(0, o.months_late * fee - (Number(o.partial_amount) || 0));
+            const sent = sentToday(o);
             return (
-              <div key={o.id} className={`flex items-center gap-3 rounded-xl border p-3 ${sent[o.id] ? "border-[#B7DFC7] bg-[#F2FAF5]" : "border-line bg-paper"}`}>
-                <div className="min-w-0 flex-1">
+              <div key={o.id} className={`grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-xl border p-3 ${sent ? "border-[#B7DFC7] bg-[#F2FAF5]" : "border-line bg-paper"}`}>
+                <div className="min-w-0">
                   <div className="font-semibold truncate text-sm">{o.name}</div>
-                  <div className="text-xs text-muted">{o.unit ? `وحدة ${o.unit} · ` : ""}{o.months_late} شهر · {sar(owed)} ريال</div>
+                  <div className="text-xs text-muted">{o.unit ? `وحدة ${o.unit} · ` : ""}{periodsAr(o.months_late, period)} · {sar(dueOf(o))} ريال{sent ? " · ✓ أُرسل اليوم" : ""}</div>
                 </div>
-                {sent[o.id] && <span className="text-xs font-bold text-paid">✓ أُرسل</span>}
-                <a href={linkOf(o)} target="_blank" rel="noreferrer" className="btn btn-wa text-xs"
-                  onClick={(e) => { e.preventDefault(); openExternal(linkOf(o)); setSent((s) => ({ ...s, [o.id]: true })); }}>فتح واتساب</a>
+                <button type="button" className="btn btn-wa text-xs" disabled={busy === o.id}
+                  onClick={async () => { setBusy(o.id); try { await onSend(o); } finally { setBusy(null); } }}>{sent ? "إعادة" : "فتح واتساب"}</button>
               </div>
             );
           })}
           {!withPhone.length && <div className="text-center text-muted text-sm py-6">لا يوجد متأخرون لديهم أرقام جوال مسجّلة.</div>}
         </div>
-
         {noPhone > 0 && (
           <p className="text-xs text-[#8a5a11] mt-3 bg-[#FBF1DF] border border-[#EBD9AA] rounded-lg p-2.5">
-            {noPhone} مالك متأخر بلا رقم جوال — أضف أرقامهم من «تعديل البيانات» ليظهروا هنا.
+            {ownersAr(noPhone)} متأخرون بلا رقم جوال — أضف أرقامهم من «تعديل البيانات» ليظهروا هنا.
           </p>
         )}
-
         <button type="button" className="btn btn-ghost w-full justify-center mt-4" onClick={onClose}>إغلاق</button>
       </div>
     </div>

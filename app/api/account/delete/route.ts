@@ -76,6 +76,14 @@ export async function POST(req: Request) {
       }
     } catch { /* لا صور، أو الحاوية غير موجودة */ }
 
+    /* (3أ) الجمعيات (v64): دالة واحدة بالترتيب الصحيح — القرارات ← المستندات ← الروابط
+       ← المصروفات ← دفعات الجمعيات ← الملاك والملاحظات والموازنات ← الجمعيات ← التدقيق.
+       الجداول الإلحاقية تمنع الحذف المباشر، فالدالة (لمفتاح الخدمة وحده) هي الطريق. */
+    {
+      const { error: pe } = await db.rpc("watheq_purge_office_hoa", { p_office: uid });
+      if (pe && !/Could not find|does not exist|schema cache/i.test(pe.message)) throw new Error(`تعذّر حذف بيانات الجمعيات: ${pe.message}`);
+    }
+
     // (3) الجداول التابعة للعقار/الجمعية أولًا (مفاتيحها إلى الأب)، ثم الأب
     const { data: props } = await db.from("properties").select("id").eq("user_id", uid);
     const { data: assocs } = await db.from("associations").select("id").eq("user_id", uid);

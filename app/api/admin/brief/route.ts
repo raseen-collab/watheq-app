@@ -13,6 +13,7 @@ const page = (db: any, t: string, cols: string) =>
   fetchAllRows(db, t, cols).then((data) => ({ data, error: null as any }), (e) => ({ data: [] as any[], error: e }));
 
 export const dynamic = "force-dynamic";
+export const fetchCache = "force-no-store";
 export const maxDuration = 60;
 
 /**
@@ -109,6 +110,7 @@ export async function POST() {
 
   try {
     const res = await fetch("https://api.anthropic.com/v1/messages", {
+      cache: "no-store",
       method: "POST",
       headers: { "content-type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01" },
       body: JSON.stringify({

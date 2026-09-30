@@ -66,6 +66,8 @@ export default async function AssociationPage() {
       initial={associations || []}
       issuer={{
         billing_name: profile?.billing_name ?? null,
+        /* ترويسة مستندات الجمعية والسندات: اسم الفوترة ثم اسم المنشأة — لا بيانات وثيق */
+        org_name: profile?.org_name ?? null,
         vat_number: profile?.vat_number ?? null,
         cr_number: profile?.cr_number ?? null,
         billing_phone: profile?.billing_phone ?? null,

@@ -114,6 +114,7 @@ export async function POST(req: Request) {
 
   try {
     const res = await fetch("https://api.anthropic.com/v1/messages", {
+      cache: "no-store",
       method: "POST",
       headers: {
         "content-type": "application/json",

@@ -22,6 +22,15 @@
 -- ═══════════════════════════════════════════════════════════════════
 begin;
 
+-- حارس إعادة التشغيل (أُضيف 30 سبتمبر 2026): إعادة هذا الملف بعد v62/v63 كانت ستُرجع
+-- دوال المال والحراس إلى نسختها الأقدم. التشغيل الأول (قبلها) لا يتأثر.
+do $$ begin
+  if to_regprocedure('public.watheq_assoc_set_fee_plan(uuid, numeric, text, text, numeric, integer)') is not null
+     or to_regprocedure('public.watheq_record_assoc_expense(uuid, numeric, text, text, date, text, text, boolean, uuid)') is not null then
+    raise exception 'نسخة أحدث مطبَّقة — لا تُعِد تشغيل هذا الملف';
+  end if;
+end $$;
+
 -- ── ٠) يوم الرياض ──────────────────────────────────────────────
 create or replace function public.watheq_today()
 returns date language sql stable set search_path = public as $$
@@ -460,14 +469,20 @@ create trigger watheq_freeze_user_id before update of user_id on public.properti
   for each row execute function public.watheq_freeze_user_id();
 
 -- ── ٨) الموازنة والدفعة تتبعان مكتب الجمعية ───────────────────
+-- (30 سبتمبر 2026) نسخة الحارس المصحَّحة (كما في v60a/v62): النسخة الأولى كانت تقرأ
+-- new.owner_id في جدول الموازنات فيفشل كل حفظ موازنة — لا تُعاد بإعادة تشغيل هذا الملف.
 create or replace function public.watheq_guard_assoc_office()
 returns trigger language plpgsql security definer set search_path = public as $$
-declare aoff uuid;
+declare aoff uuid; n_owner uuid; o_owner uuid;
 begin
+  if tg_table_name = 'payments' then
+    n_owner := nullif(to_jsonb(new)->>'owner_id', '')::uuid;
+    if tg_op = 'UPDATE' then o_owner := nullif(to_jsonb(old)->>'owner_id', '')::uuid; end if;
+  end if;
   -- فكّ الروابط عند الحذف (set null) أو تعديل لا يغيّر الانتماء: لا فحص
   if tg_op = 'UPDATE' and new.user_id is not distinct from old.user_id
      and (new.association_id is null or new.association_id is not distinct from old.association_id)
-     and (tg_table_name <> 'payments' or new.owner_id is null or new.owner_id is not distinct from old.owner_id) then
+     and (n_owner is null or n_owner is not distinct from o_owner) then
     return new;
   end if;
   if new.association_id is not null then
@@ -476,9 +491,9 @@ begin
       raise exception 'الجمعية لا تتبع هذا المكتب' using errcode = '42501';
     end if;
   end if;
-  if tg_table_name = 'payments' and new.owner_id is not null then
+  if n_owner is not null then
     if not exists (select 1 from owners o join associations a on a.id = o.association_id
-                   where o.id = new.owner_id and a.user_id = new.user_id
+                   where o.id = n_owner and a.user_id = new.user_id
                      and (new.association_id is null or o.association_id = new.association_id)) then
       raise exception 'المالك لا يتبع هذا المكتب' using errcode = '42501';
     end if;
