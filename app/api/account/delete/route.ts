@@ -90,6 +90,10 @@ export async function POST(req: Request) {
     const propIds = (props || []).map((p) => p.id);
     const assocIds = (assocs || []).map((a) => a.id);
 
+    /* v70: بلاغات روابط المستأجرين وروابطهم وسجلها — صريحًا قبل الوحدات (تُحذف بالتسلسل أيضًا) */
+    for (const t of ["tenant_payment_claims", "tenant_requests", "tenant_portal_links", "tenant_portal_audit"]) {
+      try { await db.from(t).delete().eq("user_id", uid); } catch { /* جدول غير منشأ */ }
+    }
     if (propIds.length) {
       await db.from("tenants").delete().in("property_id", propIds);
       await db.from("property_notes").delete().in("property_id", propIds);

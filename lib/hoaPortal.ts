@@ -104,7 +104,7 @@ export function riyadhStamp(ts?: string | null): string {
   const time = new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Riyadh", hour: "2-digit", minute: "2-digit", hour12: false }).format(d);
   return `${gDate(day)} · ${time}`;
 }
-const riyadhDay = (ts: string) => {
+export const riyadhDay = (ts: string) => {
   const d = new Date(ts);
   return isNaN(d.getTime()) ? "" : new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Riyadh", year: "numeric", month: "2-digit", day: "2-digit" }).format(d);
 };
@@ -204,7 +204,7 @@ details.more summary{cursor:pointer;font-weight:700;color:#0E3A37;min-height:44p
 @media print{.noprint{display:none!important}body{background:#fff}.card{border-color:#ccc}}
 `;
 
-function frame(title: string, head: string, body: string, nonce: string, script = ""): string {
+export function frame(title: string, head: string, body: string, nonce: string, script = ""): string {
   return `<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="robots" content="noindex,nofollow"><meta name="referrer" content="no-referrer">
@@ -212,7 +212,7 @@ function frame(title: string, head: string, body: string, nonce: string, script 
 ${head}<main class="wrap">${body}</main>${script ? `<script nonce="${esc(nonce)}">${script}</script>` : ""}</body></html>`;
 }
 
-const topBar = (org: string | null | undefined, assoc: string, who: string, label = "بوابة المالك") => `
+export const topBar = (org: string | null | undefined, assoc: string, who: string, label = "بوابة المالك") => `
 <header class="top"><div class="in">
   <div class="org">${org ? esc(org) + " · " : ""}${esc(label)}</div>
   <h1>${esc(assoc)}</h1>

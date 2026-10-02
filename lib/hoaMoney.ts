@@ -129,6 +129,8 @@ export const REQUEST_CATEGORIES: { v: string; l: string }[] = [
 ];
 export const requestCatAr = (v?: string | null) => REQUEST_CATEGORIES.find((c) => c.v === v)?.l || "أخرى";
 export const REQUEST_STATUS_AR: Record<string, string> = { new: "جديد", in_progress: "قيد التنفيذ", done: "أُنجز", rejected: "مرفوض" };
+/** v70: مراحل طلب المستأجر كما يقرؤها هو والمكتب (الجمعيات تبقى على التسميات أعلاه) */
+export const TENANT_REQUEST_STATUS_AR: Record<string, string> = { new: "تم استلام الطلب", in_progress: "تمت المراجعة — جارٍ التنفيذ", done: "تمت الصيانة ✓", rejected: "مرفوض" };
 export const requestLocAr = (v?: string | null) => (v === "unit" ? "داخل الوحدة" : "الأجزاء المشتركة");
 export const CLAIM_STATUS_AR: Record<string, string> = { pending: "بانتظار المراجعة", approved: "اعتُمدت", rejected: "رُفضت" };
 

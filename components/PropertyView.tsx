@@ -28,6 +28,7 @@ import UnitInvoicesModal from "@/components/UnitInvoicesModal";
 import CollectionStatementModal from "@/components/CollectionStatementModal";
 import ExpensesModal from "@/components/ExpensesModal";
 import OwnerLinkModal from "@/components/OwnerLinkModal";
+import { TenantLinkModal, TenantPortalInbox, type TenantClaim } from "@/components/TenantPortal";
 import type { ExpenseRow } from "@/lib/expenses";
 import DateField from "@/components/DateField";
 
@@ -336,7 +337,11 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
   const [paying, setPaying] = useState<Tenant | null>(null);
   /** (جولة 4) دفعات المستأجر الأخيرة لحارس «دفعة مشابهة»، ومبلغ مقترح حين يحوّل ✔ إلى النافذة */
   const [payRecent, setPayRecent] = useState<any[] | null>(null);
-  const [payInit, setPayInit] = useState<{ amount: number; why: string } | null>(null);
+  const [payInit, setPayInit] = useState<{ amount: number; why: string; paidOn?: string; reference?: string | null } | null>(null);
+  /* v70: رابط المستأجر — نافذة الرابط، والحوالة المُبلَّغ عنها قيد الاعتماد، ومفتاح تحديث صندوق البلاغات */
+  const [tenantLinkFor, setTenantLinkFor] = useState<Tenant | null>(null);
+  const [payClaim, setPayClaim] = useState<TenantClaim | null>(null);
+  const [inboxKey, setInboxKey] = useState(0);
   /** (جولة 4) تجديد مبكر: سؤال داخل التطبيق قبل فتح نافذة التجديد */
   const [renewAsk, setRenewAsk] = useState<Tenant | null>(null);
   const renewAcked = useRef<string | null>(null);
@@ -495,6 +500,54 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
   }
 
   /**
+   * v70: «اعتماد وتسجيل» حوالة أبلغ عنها المستأجر من رابطه.
+   * تفتح نافذة التسجيل المعتادة (بحرّاس «يزيد على المتبقي» و«يشبه دفعة») بمبلغ
+   * البلاغ وتاريخه ومرجعه. في «مضافة فوق الإيجار» يُقترح المبلغ قبل الضريبة —
+   * فكل تسجيل في وثيق بوحدة الإيجار — مع ذكر ما حوّله المستأجر فعلًا.
+   */
+  function startClaimApprove(c: TenantClaim) {
+    const prop = items.find((x) => x.id === c.property_id);
+    const t = prop?.tenants.find((x) => x.id === c.tenant_id);
+    if (!prop || !t) return notify("err", "الوحدة غير موجودة في القائمة — حدّث الصفحة ثم أعد المحاولة.");
+    const v = unitVat(t, prop);
+    const exVat = v.enabled && !v.inclusive;
+    const amt = exVat ? Math.round((Number(c.amount) / (1 + (Number(v.rate) || 15) / 100)) * 100) / 100 : Number(c.amount);
+    setActiveId(prop.id);
+    setPayInit({
+      amount: amt,
+      why: exVat
+        ? `بلاغ حوالة من المستأجر: ${sar(Number(c.amount))} ريال شاملة الضريبة — يُسجَّل قبل الضريبة ${sar(amt)}`
+        : `بلاغ حوالة من المستأجر بتاريخ ${c.transfer_date} — طابقه مع كشف البنك`,
+      paidOn: c.transfer_date, reference: c.bank_ref,
+    });
+    setPayClaim(c);
+    setPaying(t);
+  }
+  async function approveClaimPayment(t: Tenant, c: TenantClaim, amount: number, method: string, note?: string, paidOn?: string, reference?: string) {
+    const amt = Math.max(0, Number(amount) || 0);
+    if (!amt) return;
+    return once(`pay:${t.id}`, async () => {
+      const { data, error } = await supabase.rpc("watheq_tenant_claim_approve", {
+        p_claim: c.id, p_amount: amt, p_method: method, p_note: note || null, p_paid_on: paidOn || c.transfer_date, p_reference: reference || null,
+      });
+      if (error) {
+        const m = String(error.message || "");
+        return notify("err", /not authorized/.test(m) ? "هذا الإجراء يحتاج صلاحية أعلى — اطلبه من صاحب المكتب."
+          : /does not exist|schema cache|Could not find/.test(m) ? "شغّل schema-v70 في قاعدة البيانات أولًا." : m);
+      }
+      const r = data as { duplicate?: boolean; paid_periods?: number; partial_amount?: number; completed?: number };
+      setInboxKey((k) => k + 1);
+      if (r?.duplicate) return notify("ok", "هذا البلاغ معتمد سابقًا — لم تُسجَّل دفعة جديدة.");
+      setItems((list) => list.map((p) => p.id === c.property_id ? {
+        ...p,
+        collected: (p.collected || 0) + amt,
+        tenants: p.tenants.map((x) => (x.id === t.id ? { ...x, paid_periods: r.paid_periods ?? x.paid_periods, partial_amount: r.partial_amount ?? x.partial_amount } : x)),
+      } : p));
+      notify("ok", `اعتُمدت حوالة ${t.name} وسُجّل ${sar(amt)} ريال${(r.completed || 0) > 0 ? ` — اكتملت ${r.completed} دفعة` : " كسداد جزئي"}`);
+    });
+  }
+
+  /**
    * زرّ ✔ (30 سبتمبر 2026): «استلمتُ ما يُكمل الدفعة الحالية».
    * كان يسجّل الإيجار كاملًا ولو على الدفعة جزئيٌّ مدفوع — فمستأجر دفع 1,000 من
    * 3,000 ثم أكمل 2,000 يُسجَّل له 3,000، ويظهر 1,000 زائدًا على الدفعة التالية.
@@ -609,6 +662,8 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
        الجاري، وبدون ذكره يظن المكتب أن تحصيل هذا الشهر نقص بلا سبب. */
     /* رصيد افتتاحي: لا نقد في الدفتر عُكس — صُحّح العدّاد وحده (v42).
        كان «|| amt» يُظهر «خُصم 13,000» والدالة لم تخصم شيئًا. */
+    /* v70: دفعة جاءت من بلاغ حوالة ⇒ عاد البلاغ «بانتظار المراجعة» — نحدّث الصندوق */
+    setInboxKey((k) => k + 1);
     notify("ok", r.opening_balance
       ? "صُحّح عدّاد الدفعات — كانت دفعة سُدّدت قبل وثيق، فلا تُسجَّل في الدفتر"
       : ((r.reversed || amt) ? `تم التراجع — خُصم ${sar(r.reversed || amt)} ريال` : "تم التراجع")
@@ -1703,6 +1758,11 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
         </div>
       )}
 
+      <TenantPortalInbox db={supabase} enabled={!demo} reloadKey={inboxKey} notify={notify}
+        propertyName={(id) => items.find((x) => x.id === id)?.name || "—"}
+        canDecide={may("record_payments")} canEditReq={may("edit_units") || may("record_payments")}
+        onApprove={startClaimApprove} />
+
       {items.length > 1 && (
 
         <div className="bg-deep text-[#EAF1EE] rounded-2xl p-4 mb-5 flex flex-wrap items-center gap-x-6 gap-y-3">
@@ -2122,6 +2182,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
 
                                   { sep: "✉️ مراسلة" } as any,
                                   ...(st.unpaid > 0 && may("send_reminders") ? [{ label: "خطاب إشعار رسمي", run: () => makeNotice(t) }] : []),
+                                  ...(!isVacant(t) && may("record_payments") ? [{ label: "🔑 رابط المستأجر", run: () => setTenantLinkFor(t) }] : []),
                                   { label: "ناقش مع الفريق", run: () => window.dispatchEvent(new CustomEvent("watheq:chat", { detail: { propertyId: active?.id, propertyName: active?.name, tenantId: t.id, tenantName: t.name, unit: t.unit } })) },
 
                                   ...(may("edit_tenants") || may("renew_contracts") || may("move_out") || may("undo_actions") || isManager
@@ -2324,6 +2385,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
 
                       { sep: "✉️ مراسلة" } as any,
                       ...(st.unpaid > 0 && may("send_reminders") ? [{ label: "خطاب إشعار رسمي", run: () => makeNotice(t) }] : []),
+                      ...(!isVacant(t) && may("record_payments") ? [{ label: "🔑 رابط المستأجر", run: () => setTenantLinkFor(t) }] : []),
                       { label: "ناقش مع الفريق", run: () => window.dispatchEvent(new CustomEvent("watheq:chat", { detail: { propertyId: active?.id, propertyName: active?.name, tenantId: t.id, tenantName: t.name, unit: t.unit } })) },
 
                       ...(may("edit_tenants") || may("renew_contracts") || may("move_out") || may("undo_actions") || isManager
@@ -2468,10 +2530,18 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
         onClose={() => setEnforcing(null)}
         onSubmit={async (no, order) => {   /* تُغلق بعد نجاح الحفظ — كانت تُغلق فورًا فيضيع ما كُتب إن فشل */
           if (await patchTenant(enforcing.id, { litigation: true, enforcement_no: no || null, enforcement_order: order || null })) setEnforcing(null); }} />}
-      {paying && <PaymentModal tenant={paying} unitWord={ul} onClose={() => { setPaying(null); setPayInit(null); }}
+      {paying && <PaymentModal tenant={paying} unitWord={ul} onClose={() => { setPaying(null); setPayInit(null); setPayClaim(null); }}
         st={contractState(paying, { graceDays: Number(active?.grace_days) || 0, ...windowsOf(active) })}
         recent={payRecent} vat={active ? unitVat(paying, active) : null} init={payInit}
-        onSubmit={(amt, method, note, paidOn, reference, guarded) => { recordPayment(paying, amt, method, note, paidOn, reference, guarded); setPaying(null); setPayInit(null); }} />}
+        onSubmit={(amt, method, note, paidOn, reference, guarded) => {
+          if (payClaim) approveClaimPayment(paying, payClaim, amt, method, note, paidOn, reference);
+          else recordPayment(paying, amt, method, note, paidOn, reference, guarded);
+          setPaying(null); setPayInit(null); setPayClaim(null); }} />}
+      {tenantLinkFor && active && (
+        <TenantLinkModal tenant={tenantLinkFor} propertyName={active.name} unitWord={ul}
+          orgName={(issuer as any)?.billing_name || orgName || null} db={supabase} demo={demo}
+          onClose={() => setTenantLinkFor(null)} />
+      )}
       {renewAsk && (() => {
         const end = contractState(renewAsk).endDate;
         return (
@@ -2495,7 +2565,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       {turnover && <TurnoverModal key={turnover.id} tenant={turnover} unitWord={ul} onClose={() => setTurnover(null)}
         vat={active ? { enabled: unitVatApplies(turnover, active), rate: Number(active.vat_rate) || 15, inclusive: active.vat_inclusive !== false } : undefined}
         onSubmit={(d) => saveTurnover(turnover, d)} />}
-      {history && <HistoryModal data={history} unitWord={ul} db={db} canEdit={may("undo_actions")} onChanged={() => router.refresh()} onClose={() => setHistory(null)} />}
+      {history && <HistoryModal data={history} unitWord={ul} db={db} canEdit={may("undo_actions")} onChanged={() => { setInboxKey((k) => k + 1); router.refresh(); }} onClose={() => setHistory(null)} />}
       {remindAll && <RemindAllModal rows={lateRows} unitWord={ul} linkOf={remindLink} demo={demo} dueOf={(r) => dueWithVat(r.st, r.t, active)}
         onClose={() => setRemindAll(false)} />}
       {doc && <DocModal doc={doc} onClose={() => setDoc(null)} />}
@@ -2556,7 +2626,7 @@ function PaymentModal({ tenant, unitWord, onClose, onSubmit, st, recent = null, 
   /** ضريبة الوحدة — لعرض المتبقي شاملًا الضريبة حين تكون مضافة */
   vat?: any;
   /** مبلغ مقترح وسبب حين حوّل زرّ ✔ إلى هنا */
-  init?: { amount: number; why: string } | null;
+  init?: { amount: number; why: string; paidOn?: string; reference?: string | null } | null;
   onSubmit: (amount: number, method: string, note?: string, paidOn?: string, reference?: string, guarded?: boolean) => void;
 }) {
   const rent = Number(tenant.rent_amount) || 0;
@@ -2571,8 +2641,8 @@ function PaymentModal({ tenant, unitWord, onClose, onSubmit, st, recent = null, 
   const [method, setMethod] = useState("transfer");
   const [note, setNote] = useState("");
   /* تاريخ وصول المال ومرجع الحوالة — أساس مطابقة كشف البنك */
-  const [paidOn, setPaidOn] = useState(today());
-  const [reference, setReference] = useState("");
+  const [paidOn, setPaidOn] = useState(init?.paidOn || today());
+  const [reference, setReference] = useState(init?.reference || "");
   const amt = Number(amount) || 0;
   const pool = already + amt;
   const completed = rent > 0 ? Math.floor(pool / rent) : 0;
