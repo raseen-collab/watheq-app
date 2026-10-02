@@ -121,7 +121,10 @@ export default function ExportData() {
         "الاستخدام": ({ families: "سكني — عوائل", singles: "سكني — عزّاب", mixed: "سكني تجاري", commercial: "تجاري" } as any)[p.usage] || "",
         "نسبة الضريبة": p.vat_rate ?? "", "الضريبة شاملة": p.vat_inclusive === false ? "لا" : "نعم",
         "نافذة قريب (يوم)": p.soon_days ?? "", "نافذة مستحق (يوم)": p.imminent_days ?? "", "تنبيه انتهاء العقد (يوم)": p.expiring_days ?? "",
-      })), [24, 12, 12, 20, 18, 18, 10, 10, 10, 10, 18, 10, 12, 14, 14, 18]);
+        // عدادات العقار الرئيسية (schema-v68): «كهرباء — المصعد: 3001234 · ماء: 4005678»
+        "عدادات العقار": (Array.isArray(p.meters) ? p.meters : [])
+          .map((m: any) => `${m.type === "water" ? "ماء" : "كهرباء"}${m.label ? ` — ${m.label}` : ""}: ${m.account}`).join(" · "),
+      })), [24, 12, 12, 20, 18, 18, 10, 10, 10, 10, 18, 10, 12, 14, 14, 18, 40]);
 
       add("الوحدات والمستأجرون", tenants.map((t) => ({
         "العقار": pName[t.property_id] || "", "الوحدة": t.unit || "", "المستأجر": t.name, "رقم العقد": t.contract_no || "", "الجوال": t.phone || "",

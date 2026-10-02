@@ -9,6 +9,7 @@ import { defaultTermPeriods } from "./contracts";
 import { unitStatus, unitStatusLabel, arrearsOf, statusWindows, isPartialOnly } from "./contract-state";
 import { daysAr, monthsAr, today as riyadhTodayISO } from "./utils";
 import { moneySigned } from "./hoaMoney";
+import { metersCountLine, METER_TYPE_AR, type PropertyMeter } from "./meters";
 
 const sar = (n: number) => {
   const v = Number(n) || 0;
@@ -157,6 +158,26 @@ function unitDesc(t: any, p: any): string {
   const type = t.unit_type ? (UNIT_TYPE_AR[t.unit_type] || "وحدة") : unitLabel(p?.property_type);
   return `${type} رقم (${t.unit || "—"})${unitSpecs(t) ? ` — ${unitSpecs(t)}` : ""}`;
 }
+/**
+ * عدادات العقار الرئيسية (schema-v68) — جدول بعددها ونوعها ووصفها ورقم حسابها.
+ * يصل العقار هنا معقَّمًا (scrub)، فلا يُعاد تنظيف النص (القصّ قد يقطع كيانًا).
+ * عقار بلا عدادات = لا شيء، فلا يتغيّر مستنده عمّا كان.
+ */
+function propertyMetersHTML(p: any, heading: (t: string) => string): string {
+  const list: PropertyMeter[] = (Array.isArray(p?.meters) ? p.meters : [])
+    .filter((m: any) => m && String(m.account || "").trim());
+  if (!list.length) return "";
+  return `
+${heading("عدادات العقار الرئيسية")}
+<div class="sub" style="margin-bottom:6px">${metersCountLine(list)} — العدادات المشتركة للعقار، غير عدادات الوحدات.</div>
+<table>
+  <thead><tr><th>النوع</th><th>الوصف</th><th>رقم الحساب</th></tr></thead>
+  <tbody>
+    ${list.map((m) => `<tr><td>${METER_TYPE_AR[m.type === "water" ? "water" : "elec"]}</td><td>${m.label || "—"}</td><td dir="ltr"><b>${m.account}</b></td></tr>`).join("")}
+  </tbody>
+</table>`;
+}
+
 /** المواصفات بالعدد الصحيح: «غرفتان · دورة مياه واحدة · 3 مكيفات» (كانت «2 غرف · 1 دورات مياه · 1 مكيف») */
 function unitSpecs(t: any): string {
   return [Number(t?.rooms) > 0 ? countAr(t.rooms, "غرفة") : "", Number(t?.baths) > 0 ? countAr(t.baths, "دورة مياه") : "",
@@ -586,6 +607,9 @@ function unitsRegisterHTML(p: any, tenants: any[], g: any, issuer: any = {}): st
         : st.inGrace ? `<span style="color:#9A4B00">لا شيء بعد — فترة سماح ${st.graceDaysLeft > 0 ? `(${daysAr(st.graceDaysLeft, true)})` : ""}</span>`
         : `<span style="color:#137a50">لا شيء</span>`);
     }
+    /* عدادا الوحدة (v15) — للشاغرة والمؤجّرة: الرقم يتبع الوحدة لا المستأجر */
+    if (t.elec_account) body += KV("عداد الكهرباء", `<span dir="ltr">${t.elec_account}</span>`);
+    if (t.water_account) body += KV("عداد الماء", `<span dir="ltr">${t.water_account}</span>`);
     return `<div style="border:1px solid #D9E2DF;border-radius:10px;padding:8px 10px;break-inside:avoid;page-break-inside:avoid">
       <div style="display:flex;justify-content:space-between;align-items:center;gap:6px"><b>${type} ${t.unit || "—"}</b>${pill}</div>
       ${desc ? `<div style="font-size:.78em;color:#5C6B67;margin:2px 0 4px">${desc}</div>` : `<div style="height:4px"></div>`}
@@ -1227,7 +1251,8 @@ ${mode === "full" ? `
     ${Number(p.grace_days) > 0 ? `<div class="r"><span>فترة السماح</span><span>${daysAr(Number(p.grace_days))}</span></div>` : ""}
     ${p.vat_enabled ? `<div class="r"><span>ضريبة القيمة المضافة</span><span>${Number(p.vat_rate) || 15}% على الوحدات التجارية</span></div>` : ""}
   </div>
-</div>` : ""}
+</div>
+${propertyMetersHTML(p, (t) => `<h1 style="font-size:1rem">${t}</h1>`)}` : ""}
 
 ${totalDue > 0 ? `<div class="due"><span class="l">إجمالي الإيجار المتأخر${totalVat > 0 ? ` (منه ضريبة ${sar(totalVat)} ريال)` : ""}</span><span class="v">${sar(totalDue)} ريال</span></div>` : ""}
 ${/* (30 سبتمبر 2026) الدين المرحَّل ودين المستأجرين السابقين كانا يُذكران فقط إن
@@ -1241,7 +1266,7 @@ ${/* (30 سبتمبر 2026) الدين المرحَّل ودين المستأج�
   <tbody>
     ${rows.map(({ t, st }) => { const vc = isVacant(t); return `<tr>
       <td><b>${t.unit || "—"}</b></td>
-      ${mode === "full" ? `<td>${t.unit_type ? (UNIT_TYPE_AR[String(t.unit_type)] || "—") : unitLabel(p.property_type)}${unitSpecs(t) ? `<div style="font-size:.68rem;color:#5C6B67">${unitSpecs(t)}</div>` : ""}${(t as any).elec_account ? `<div style="font-size:.65rem;color:#5C6B67" dir="ltr">كهرباء ${(t as any).elec_account}</div>` : ""}</td>` : ""}
+      ${mode === "full" ? `<td>${t.unit_type ? (UNIT_TYPE_AR[String(t.unit_type)] || "—") : unitLabel(p.property_type)}${unitSpecs(t) ? `<div style="font-size:.68rem;color:#5C6B67">${unitSpecs(t)}</div>` : ""}${(t as any).elec_account ? `<div style="font-size:.65rem;color:#5C6B67">كهرباء <span dir="ltr">${(t as any).elec_account}</span></div>` : ""}${(t as any).water_account ? `<div style="font-size:.65rem;color:#5C6B67">ماء <span dir="ltr">${(t as any).water_account}</span></div>` : ""}</td>` : ""}
       <td>${vc ? "<span style='color:#5C6B67'>— شاغرة —</span>" : t.name}</td>
       ${mode === "full" ? `<td dir="ltr">${vc ? "—" : (t.phone || "—")}</td><td dir="ltr">${t.contract_no || "—"}</td>` : ""}
       <td>${vc ? "—" : sar(splitVat(Number(t.rent_amount) || 0, vatOf(p, t)).total)}</td>
@@ -2428,7 +2453,8 @@ ${mode === "full" ? `
     ${extra.fee_pct ? `<div class="r"><span>أتعاب الإدارة</span><span>${extra.fee_pct}%</span></div>` : ""}
     ${Number(p.grace_days) > 0 ? `<div class="r"><span>فترة السماح</span><span>${daysAr(Number(p.grace_days))}</span></div>` : ""}
   </div>
-</div>` : ""}
+</div>
+${propertyMetersHTML(p, (t) => `<h2>${t}</h2>`)}` : ""}
 
 ${(fin.feeExceedsCollected || (fin.feePct !== null && fin.feePct >= 30)) ? `
 <div class="note" style="border-inline-start-color:#a5322c;background:#FBE9E7;color:#a5322c">
@@ -2751,7 +2777,8 @@ ${rows.map((r) => `
 <div class="sub" style="margin-bottom:6px">${typeLabel(r.s.property.property_type)}${r.s.property.city ? ` · ${r.s.property.city}` : ""}${r.s.property.address ? ` · ${r.s.property.address}` : ""}${r.s.property.usage ? ` · ${USAGE_AR[String(r.s.property.usage)] || r.s.property.usage}` : ""} · ${countAr(r.units, "وحدة")} (${r.units - r.vacant} مؤجّرة، ${r.vacant} شاغرة)</div>
 ${detail === "full" ? `
 <h3 style="font-size:.85rem;margin:10px 0 4px">الوحدات — وصفها وإيجارها وحالتها</h3>
-${unitsRegisterHTML(r.s.property, r.s.property.tenants || [], winOf(r.s.property, issuer), issuer)}` : ""}
+${unitsRegisterHTML(r.s.property, r.s.property.tenants || [], winOf(r.s.property, issuer), issuer)}
+${propertyMetersHTML(r.s.property, (t) => `<h3 style="font-size:.85rem;margin:10px 0 4px">${t}</h3>`)}` : ""}
 ${ownerVisiblePayments(r.s.payments as any[]).length ? `<div class="scrollx"><table>
   <thead><tr><th>التاريخ</th><th>المستأجر</th><th>${unitLabel(r.s.property.property_type)}</th><th>المبلغ</th><th>الطريقة</th></tr></thead>
   <tbody>

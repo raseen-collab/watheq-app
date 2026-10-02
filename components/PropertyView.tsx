@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import Icon from "@/components/Icon";
 import { createClient } from "@/lib/supabase-client";
+import { cleanMeters, metersCountLine, METER_TYPE_AR, MAX_METERS, type PropertyMeter } from "@/lib/meters";
 import { officeId, getOffice, ROLE_LABEL, OWNER_PERMS } from "@/lib/office";
 import { arDate, termRentPaidOf, pastVatOf } from "@/lib/documents";
 import { annualRentRoll } from "@/lib/income";
@@ -73,6 +74,8 @@ type Property = {
   vat_enabled?: boolean | null; vat_rate?: number | null; vat_inclusive?: boolean | null;
   mgmt_fee_pct?: number | null;
   owner_name?: string | null;
+  /** عدادات العقار الرئيسية (schema-v68) — المصعد، الخدمات، الماء… */
+  meters?: PropertyMeter[] | null;
   tenants: Tenant[]; property_notes: Note[];
 };
 
@@ -735,6 +738,8 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       mgmt_fee_pct: Number(d.mgmt_fee_pct) > 0 && Number(d.mgmt_fee_pct) <= 100 ? Number(d.mgmt_fee_pct) : null,
       // اسم المالك يجمع عقاراته في كشف واحد (schema-v10) — يُقصّ حتى لا تتشتت الأسماء بمسافات
       owner_name: (d.owner_name || "").trim() || null,
+      // عدادات العقار الرئيسية: الصف بلا رقم حساب يُسقط، والفارغ يُحفظ null
+      meters: cleanMeters(d.meters),
     };
     if (id) {
       const { data: _u1, error } = await supabase.from("properties").update(payload).eq("id", id).select("id");
@@ -1853,6 +1858,28 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       {/* التحصيل شهرًا بشهر والدخل المتوقع انتقلا إلى «نظرة عامة».
           صفحة العقار للعمل اليومي: من تأخّر ومن أُحصّل منه. وتلك أرقامٌ
           تُراجَع آخر الشهر — وجودها هنا كان يزاحم الجدول بلا داعٍ. */}
+
+      {/* عدادات العقار الرئيسية فوق جدول الوحدات (طلب مكتب عمرو، 2 أكتوبر 2026):
+          المحصّل أو الموظف يحتاج رقم حساب عداد المصعد أو الخزان وهو يتابع العمارة،
+          لا أن يفتح الإعدادات كل مرة. لا يظهر شيء لعقار بلا عدادات. */}
+      {active && (active.meters || []).length > 0 && (
+        <div className="bg-white border border-line rounded-2xl shadow-sm px-4 py-3 mb-4">
+          <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
+            <div className="text-sm font-semibold text-deep">
+              ⚡ عدادات العقار الرئيسية <span className="text-xs text-muted font-normal">— {metersCountLine(active.meters)}</span>
+            </div>
+            {isManager && <button type="button" className="text-xs text-muted hover:text-deep underline" onClick={() => setModal({ kind: "editProp" })}>تعديل</button>}
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {(active.meters || []).map((m, i) => (
+              <div key={i} className="text-xs border border-line rounded-lg px-2.5 py-1.5 bg-paper">
+                <span className="text-muted">{METER_TYPE_AR[m.type === "water" ? "water" : "elec"]}{m.label ? ` — ${m.label}` : ""}:</span>{" "}
+                <b dir="ltr" className="select-all tabular-nums">{m.account}</b>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 gap-5 items-start">
         <div className="bg-white border border-line rounded-2xl shadow-sm">
@@ -3190,6 +3217,52 @@ function Shell({ children, onClose, wide }: { children: React.ReactNode; onClose
   );
 }
 
+/**
+ * عدادات العقار الرئيسية (schema-v68): المصعد والخدمات والماء — غير عدادات الشقق.
+ * مطويّة افتراضيًّا لعقار بلا عدادات: أغلب العقارات لا تحتاجها، والنموذج طويل.
+ */
+function MetersEditor({ value, onChange }: { value: PropertyMeter[] | null | undefined; onChange: (m: PropertyMeter[]) => void }) {
+  const list: PropertyMeter[] = Array.isArray(value) ? value : [];
+  const saved = cleanMeters(list);
+  const set = (i: number, patch: Partial<PropertyMeter>) => onChange(list.map((m, j) => (j === i ? { ...m, ...patch } : m)));
+  const add = (type: "elec" | "water") => list.length < MAX_METERS && onChange([...list, { type, label: "", account: "" }]);
+  return (
+    <details open={list.length > 0} className="border border-line rounded-xl p-3 bg-paper">
+      <summary className="cursor-pointer text-sm font-semibold text-deep">
+        عدادات العقار الرئيسية{" "}
+        <span className="text-xs text-muted font-normal">— {saved ? metersCountLine(saved) : "المصعد، الخدمات، الماء… تظهر في تقرير المالك"}</span>
+      </summary>
+      <div className="space-y-2 mt-3">
+        <p className="text-xs text-muted leading-relaxed">
+          عدادات العمارة المشتركة فقط. عدادا كل شقة يُكتبان في بيانات الوحدة نفسها.
+        </p>
+        {list.map((m, i) => (
+          <div key={i} className="grid grid-cols-[96px_1fr_36px] gap-2 items-center pb-2 border-b border-line last:border-b-0">
+            <select className="fld text-sm" value={m.type} aria-label="نوع العداد"
+              onChange={(e) => set(i, { type: e.target.value === "water" ? "water" : "elec" })}>
+              <option value="elec">{METER_TYPE_AR.elec}</option>
+              <option value="water">{METER_TYPE_AR.water}</option>
+            </select>
+            <input className="fld text-sm" value={m.label || ""} maxLength={40} aria-label="وصف العداد"
+              onChange={(e) => set(i, { label: e.target.value })} placeholder={m.type === "water" ? "مثال: الخزان الرئيسي" : "مثال: المصعد"} />
+            <input className="fld text-sm col-span-3 order-last" dir="ltr" inputMode="numeric" value={m.account || ""} maxLength={40} aria-label="رقم الحساب"
+              onChange={(e) => set(i, { account: e.target.value })} placeholder="رقم الحساب" />
+            <button type="button" className="w-9 h-9 grid place-items-center rounded-lg text-muted hover:text-late hover:bg-[#FBE9E7]"
+              aria-label="حذف العداد" title="حذف العداد" onClick={() => onChange(list.filter((_, j) => j !== i))}>✕</button>
+          </div>
+        ))}
+        {list.some((m) => !String(m.account || "").trim()) && (
+          <p className="text-xs text-[#9A5B00]">العداد بلا رقم حساب لا يُحفظ.</p>
+        )}
+        <div className="flex gap-2 flex-wrap">
+          <button type="button" className="btn btn-ghost text-xs" onClick={() => add("elec")} disabled={list.length >= MAX_METERS}>+ عداد كهرباء</button>
+          <button type="button" className="btn btn-ghost text-xs" onClick={() => add("water")} disabled={list.length >= MAX_METERS}>+ عداد ماء</button>
+        </div>
+      </div>
+    </details>
+  );
+}
+
 function PropertyModal({ open, initial, orgName, ownerNames = [], officeSoon = 10, officeImminent = 5, officeExpiring = 60, onClose, onSubmit, onDelete }: {
   open: boolean; initial?: Property; orgName: string; ownerNames?: string[]; officeSoon?: number; officeImminent?: number; officeExpiring?: number; onClose: () => void;
   onSubmit: (d: any) => void; onDelete?: () => void;
@@ -3233,6 +3306,7 @@ function PropertyModal({ open, initial, orgName, ownerNames = [], officeSoon = 1
             </select>
           </Field>
         )}
+        <MetersEditor value={d.meters} onChange={(m) => setD({ ...d, meters: m })} />
         {/* نوافذ التنبيه لهذا العقار: الافتراضي من إعدادات المكتب — تُغيَّر نادرًا */}
         <details open={d.expiring_days != null || d.soon_days != null || d.imminent_days != null} className="border border-line rounded-xl p-3 bg-paper">
           <summary className="cursor-pointer text-sm font-semibold text-deep">إعدادات التنبيه لهذا العقار <span className="text-xs text-muted font-normal">— اختيارية، الافتراضي من إعدادات المكتب</span></summary>

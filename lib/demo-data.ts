@@ -51,6 +51,8 @@ export type DemoProperty = {
   owner_name: string; grace_days: number; mgmt_fee_pct: number | null;
   vat_enabled: boolean; vat_rate: number; vat_inclusive: boolean;
   soon_days: number | null; imminent_days: number | null; expiring_days: number | null;
+  /** عدادات العقار الرئيسية (schema-v68) — للعمارة الأولى فقط، أرقام وهمية ظاهرة */
+  meters?: { type: "elec" | "water"; label: string | null; account: string }[] | null;
   tenants: DemoTenant[];
   expenses: { spent_on: string; amount: number; category: string; unit: string | null; note: string; vendor: string | null; billable: boolean; paid_by: string; status: string }[];
   notes: { text: string; kind: string; due_date: string | null; note_date: string }[];
@@ -107,6 +109,11 @@ export function buildDemo(today = new Date()): DemoProperty[] {
       property_type: "residential", usage: "families", owner_name: "عبدالله بن سعد الحربي",
       grace_days: 3, mgmt_fee_pct: 7.5, vat_enabled: false, vat_rate: 15, vat_inclusive: true,
       soon_days: 10, imminent_days: 5, expiring_days: 49, tenants: t,
+      meters: [
+        { type: "elec", label: "المصعد", account: "DEMO-E-LIFT" },
+        { type: "elec", label: "الخدمات والإنارة", account: "DEMO-E-SERV" },
+        { type: "water", label: "الخزان الرئيسي", account: "DEMO-W-MAIN" },
+      ],
       expenses: [
         { spent_on: shift(-12), amount: 1850, category: "maintenance", unit: "103", note: "إصلاح تسريب دورة مياه", vendor: "مؤسسة الصيانة السريعة", billable: true, paid_by: "collections", status: "paid" },
         { spent_on: shift(-25), amount: 650, category: "cleaning", unit: null, note: "نظافة الدرج والمدخل — شهري", vendor: "شركة الإتقان للنظافة", billable: true, paid_by: "collections", status: "paid" },
