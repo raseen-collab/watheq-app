@@ -1,9 +1,9 @@
 "use client";
 
 import { riyadhDate } from "@/lib/utils";
-import { useMemo, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
 import { openDoc, subscriptionInvoiceHTML } from "@/lib/documents";
-import { recordSubPayment } from "@/app/admin/subs/actions";
+import { recordSubPayment, setSubInvoiceBillTo } from "@/app/admin/subs/actions";
 
 export type SubRow = {
   id: string;
@@ -30,6 +30,9 @@ export type PayRow = {
   note: string | null;
   paid_at: string;
   extended_to: string | null;
+  /** «إلى» على الفاتورة (v72) — فارغ = اسم الحساب ومنشأته */
+  bill_to_name?: string | null;
+  bill_to_org?: string | null;
 };
 
 /** أسماء الباقات كما تُعرض للعميل — تختلف بحسب نوع الحساب */
@@ -128,6 +131,34 @@ export default function SubsAdmin({ rows, pays, paysFailed }: { rows: SubRow[]; 
   const [method, setMethod] = useState("transfer");
   const [note, setNote] = useState("");
 
+  /* تعديل «إلى» لفاتورة دفعة بعينها (v72). التعديلات المحفوظة تُحفظ محليًّا أيضًا
+     فتظهر فورًا دون انتظار إعادة تحميل الصفحة. */
+  const [billTo, setBillTo] = useState<Record<string, { name: string | null; org: string | null }>>({});
+  const [editPay, setEditPay] = useState<string | null>(null);
+  const [bName, setBName] = useState("");
+  const [bOrg, setBOrg] = useState("");
+  const [bBusy, setBBusy] = useState(false);
+  const [bErr, setBErr] = useState<string | null>(null);
+  const billOf = (p: PayRow) => billTo[p.id] ?? { name: p.bill_to_name ?? null, org: p.bill_to_org ?? null };
+
+  function openBillEdit(p: PayRow, r?: SubRow) {
+    const b = billOf(p);
+    setEditPay(editPay === p.id ? null : p.id); setBErr(null);
+    setBName(b.name ?? r?.full_name ?? ""); setBOrg(b.org ?? r?.org_name ?? "");
+  }
+  async function saveBill(p: PayRow, r: SubRow | undefined, thenPrint: boolean) {
+    setBBusy(true); setBErr(null);
+    /* مطابق لاسم الحساب = لا تخصيص (يُحفظ فارغًا) فيتبع الحساب إن تغيّر اسمه لاحقًا */
+    const n = bName.trim() === (r?.full_name || "").trim() ? "" : bName;
+    const o = bOrg.trim() === (r?.org_name || "").trim() ? "" : bOrg;
+    const res = await setSubInvoiceBillTo(p.id, n, o);
+    setBBusy(false);
+    if (!res.ok) { setBErr(res.error); return; }
+    setBillTo((m) => ({ ...m, [p.id]: { name: res.name, org: res.org } }));
+    setEditPay(null);
+    if (thenPrint && r) invoice(r, p, { name: res.name, org: res.org });
+  }
+
   const paysByUser = useMemo(() => {
     const m: Record<string, PayRow[]> = {};
     pays.forEach((p) => { (m[p.user_id] = m[p.user_id] || []).push(p); });
@@ -164,14 +195,16 @@ export default function SubsAdmin({ rows, pays, paysFailed }: { rows: SubRow[]; 
   }
 
   /** إصدار فاتورة من دفعة مسجَّلة */
-  function invoice(r: SubRow, p: PayRow) {
+  function invoice(r: SubRow, p: PayRow, over?: { name: string | null; org: string | null }) {
+    const b = over ?? billOf(p);
     const from = new Date(p.extended_to || p.paid_at);
     from.setMonth(from.getMonth() - (p.months || 1));
     openDoc(
       subscriptionInvoiceHTML({
         invoice_no: p.invoice_no || `WTQ-${day(p.paid_at)}`,
-        to_name: r.full_name || "—",
-        to_org: r.org_name,
+        /* «إلى» المخصّص لهذه الفاتورة (v72) إن وُجد، وإلا اسم الحساب ومنشأته */
+        to_name: b.name || r.full_name || "—",
+        to_org: b.name || b.org ? b.org : r.org_name,
         to_phone: r.billing_phone,
         /* الحساب المزدوج: باقة الأملاك + باقة الجمعيات (v67) — لا باقة الأملاك وحدها */
         plan_label: r.account_type === "both"
@@ -348,19 +381,67 @@ export default function SubsAdmin({ rows, pays, paysFailed }: { rows: SubRow[]; 
                   <th className="p-2.5 text-right font-semibold">المدة</th>
                   <th className="p-2.5 text-right font-semibold">المبلغ</th>
                   <th className="p-2.5 text-right font-semibold">يمتد إلى</th>
+                  <th className="p-2.5 text-right font-semibold">الفاتورة باسم</th>
                 </tr></thead>
                 <tbody>
                   {pays.map((p) => {
                     const r = rows.find((x) => x.id === p.user_id);
+                    const b = billOf(p);
+                    const custom = !!(b.name || b.org);
                     return (
-                      <tr key={p.id} className="border-t border-line">
+                      <Fragment key={p.id}>
+                      <tr className="border-t border-line align-top">
                         <td className="p-2.5 text-xs whitespace-nowrap">{arDate(p.paid_at)}</td>
                         <td className="p-2.5 text-xs whitespace-nowrap">{p.invoice_no || "—"}</td>
                         <td className="p-2.5 text-xs">{r?.full_name || "—"}</td>
                         <td className="p-2.5 text-xs whitespace-nowrap">{durLabel(p.months)}</td>
                         <td className="p-2.5 text-xs whitespace-nowrap">{sar(Number(p.amount))} ريال</td>
                         <td className="p-2.5 text-xs whitespace-nowrap">{arDate(p.extended_to)}</td>
+                        <td className="p-2.5 text-xs">
+                          <div className={custom ? "font-semibold text-deep" : "text-muted"}>
+                            {b.name || r?.full_name || "—"}
+                            {(custom ? b.org : r?.org_name) ? <div className="font-normal text-muted">{custom ? b.org : r?.org_name}</div> : null}
+                          </div>
+                          <div className="flex gap-1.5 mt-1.5">
+                            {r && <button onClick={() => invoice(r, p)} className="btn btn-ghost text-xs px-2">🧾 فاتورة</button>}
+                            <button onClick={() => openBillEdit(p, r)} className="btn btn-ghost text-xs px-2">
+                              {editPay === p.id ? "إلغاء" : "✏️ غيّر الاسم"}
+                            </button>
+                          </div>
+                        </td>
                       </tr>
+                      {editPay === p.id && (
+                        <tr className="bg-paper2">
+                          <td colSpan={7} className="p-3">
+                            <div className="text-xs text-muted mb-2">
+                              الاسم والمنشأة في خانة «إلى» على فاتورة <b dir="ltr">{p.invoice_no || "—"}</b> فقط — الحساب نفسه لا يتغيّر.
+                              اتركهما كما هما لاسم الحساب.
+                            </div>
+                            <div className="grid sm:grid-cols-2 gap-2 mb-2">
+                              <label className="text-xs">الاسم
+                                <input value={bName} onChange={(e) => setBName(e.target.value)} maxLength={120}
+                                  placeholder="مثال: أملاك ورثة سعيد محمد باعبدالله"
+                                  className="w-full mt-1 border border-line rounded-lg px-2.5 py-1.5 text-sm bg-white" />
+                              </label>
+                              <label className="text-xs">المنشأة (اختياري)
+                                <input value={bOrg} onChange={(e) => setBOrg(e.target.value)} maxLength={120}
+                                  placeholder="مثال: بإدارة عمرو باعبدالله"
+                                  className="w-full mt-1 border border-line rounded-lg px-2.5 py-1.5 text-sm bg-white" />
+                              </label>
+                            </div>
+                            {bErr && <div className="text-xs text-late mb-2">{bErr}</div>}
+                            <div className="flex gap-2 flex-wrap">
+                              <button disabled={bBusy} onClick={() => saveBill(p, r, true)} className="btn btn-primary text-xs disabled:opacity-60">
+                                {bBusy ? "…" : "احفظ واطبع الفاتورة"}
+                              </button>
+                              <button disabled={bBusy} onClick={() => saveBill(p, r, false)} className="btn btn-ghost text-xs disabled:opacity-60">احفظ فقط</button>
+                              <button disabled={bBusy} onClick={() => { setBName(r?.full_name || ""); setBOrg(r?.org_name || ""); }}
+                                className="btn btn-ghost text-xs disabled:opacity-60">إرجاع اسم الحساب</button>
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                      </Fragment>
                     );
                   })}
                 </tbody>

@@ -44,7 +44,8 @@ export default async function AdminSubsPage() {
       .order("created_at", { ascending: false })
       .limit(1000)),
     withClockSkewRetry(() => db.from("subscription_payments")
-      .select("id,user_id,invoice_no,months,amount,plan,method,note,paid_at,extended_to")
+      /* «*»: bill_to_name/bill_to_org (v72) — قائمة تذكرهما تُسقط الجدول كله قبل الترحيل */
+      .select("*")
       .order("paid_at", { ascending: false })
       .limit(500)),
     /* على دفعات: وحدات المنصة كلها وعقاراتها تتجاوز 1000 (كل حساب جرّب التجربة

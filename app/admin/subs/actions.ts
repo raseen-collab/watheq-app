@@ -140,3 +140,25 @@ export async function recordSubPayment(input: {
   revalidatePath("/admin");
   return { ok: true, extendedTo: riyadhDate(extended), invoiceNo };
 }
+
+/**
+ * اسم ومنشأة «إلى» لفاتورة دفعة واحدة (schema-v72).
+ * يُحفظ على الدفعة لا على الحساب — فإعادة الطباعة تخرج بالاسم نفسه.
+ * فارغ = يعود لاسم الحساب ومنشأته.
+ */
+export async function setSubInvoiceBillTo(
+  paymentId: string, name: string, org: string,
+): Promise<{ ok: true; name: string | null; org: string | null } | { ok: false; error: string }> {
+  try { await requireAdmin(); } catch { return { ok: false, error: "غير مصرّح" }; }
+  const clean = (v: string) => String(v || "").replace(/\s+/g, " ").trim().slice(0, 120) || null;
+  const n = clean(name), o = clean(org);
+  const { data, error } = await serviceDb().from("subscription_payments")
+    .update({ bill_to_name: n, bill_to_org: o }).eq("id", paymentId).select("id");
+  if (error) {
+    const missing = /bill_to_(name|org)|schema cache|does not exist/i.test(error.message || "");
+    return { ok: false, error: missing ? "شغّل schema-v72-sub-invoice-billto.sql في Supabase أولًا." : error.message };
+  }
+  if (!data?.length) return { ok: false, error: "الدفعة غير موجودة — حدّث الصفحة." };
+  revalidatePath("/admin/subs");
+  return { ok: true, name: n, org: o };
+}
