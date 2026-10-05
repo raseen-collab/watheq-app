@@ -18,6 +18,7 @@ import { annualRentRoll } from "@/lib/income";
 import { isPartialOnly } from "@/lib/contract-state";
 import { sar, waLink, today, daysAr, normalizeSearch } from "@/lib/utils";
 import { arDate } from "@/lib/documents";
+import { endNoticeText } from "@/lib/tenant-messages";
 import { getOffice } from "@/lib/office";
 import { alertCount, complianceState, KIND_META, type ComplianceItem } from "@/lib/compliance";
 import ComplianceModal from "@/components/ComplianceModal";
@@ -159,15 +160,43 @@ export default function PortfolioView({ properties, windows, compliance, orgName
       const n = Number(st.unpaid) || 0;
       const what = n > 1 ? `${n} دفعات مستحقة` : "الدفعة المستحقة";
       const who = issuer?.billing_name || orgName || (p as any).manager || "إدارة الأملاك";
+      const unitTxt = `${UNIT_AR[p.property_type] || "الوحدة"} ${t.unit || ""}`;
+      /* قائمة «مستحق قريبًا»: لا متأخر بعد — كانت الرسالة تقول «الدفعة المستحقة
+         بمبلغ 0 ريال لم تصلنا بعد». الآن: الدفعة القادمة بتاريخها وقيمتها. */
+      if (n === 0) {
+        const one = splitVat(Number(t.rent_amount) || 0, v);
+        const U = [
+          `السلام عليكم ${t.name}`, "",
+          `تذكير ودّي بأن الدفعة القادمة عن ${unitTxt} بعقار ${p.name} تستحق بتاريخ ${arDate(st.nextDueDate)}${one.total ? ` بمبلغ ${sar(one.total)} ريال${v.enabled ? " (شامل الضريبة)" : ""}` : ""}.`,
+          ...(carried > 0 ? [`ويتبقّى عليكم دين مرحَّل من مدة سابقة: ${sar(carried)} ريال.`] : []),
+          "وإن كان السداد قد تم فنعتذر ونرجو إرسال ما يثبته.", "",
+          "شكرًا لتعاونكم،", who,
+        ];
+        return waLink(t.phone, U.join("\n"));
+      }
       const L = [
         `السلام عليكم ${t.name}`, "",
-        `تذكير ودّي بأن ${what} عن ${UNIT_AR[p.property_type] || "الوحدة"} ${t.unit || ""} بعقار ${p.name} بمبلغ ${sar(rentOwed)} ريال${v.enabled ? " (شامل الضريبة)" : ""} لم تصلنا بعد.`,
+        `تذكير ودّي بأن ${what} عن ${unitTxt} بعقار ${p.name} بمبلغ ${sar(rentOwed)} ريال${v.enabled ? " (شامل الضريبة)" : ""} لم تصلنا بعد.`,
         ...(carried > 0 ? [`ويتبقّى عليكم دين مرحَّل من مدة سابقة: ${sar(carried)} ريال — الإجمالي ${sar(Math.round((rentOwed + carried) * 100) / 100)} ريال.`] : []),
         "نرجو السداد في أقرب وقت، وإن كان السداد قد تم فنعتذر ونرجو إرسال ما يثبته.", "",
         "شكرًا لتعاونكم،", who,
       ];
       return waLink(t.phone, L.join("\n"));
     })();
+
+  const endNotice = (p: Property, t: Tenant, st: any) => {
+    const v = { enabled: unitVatApplies(t, p), rate: Number((p as any).vat_rate) || 15, inclusive: (p as any).vat_inclusive !== false };
+    const one = splitVat(Number(t.rent_amount) || 0, v);
+    return waLink(t.phone, endNoticeText({
+      mode: "end", tenantName: t.name || "",
+      unitText: `${UNIT_AR[p.property_type] || "الوحدة"} (${t.unit || "—"})`, propertyName: p.name,
+      endDate: st.endDate, daysToEnd: st.daysToEnd, hijri: (t as any).calendar === "hijri",
+      overdue: v.enabled ? splitVat(Number(st.amountDue) || 0, v).total : (Number(st.amountDue) || 0), overdueVat: v.enabled,
+      unpaid: Number(st.unpaid) || 0, carried: Math.max(0, Number((t as any).carried_debt) || 0),
+      upcomingDate: st.unpaid === 0 ? st.nextDueDate : st.upcomingDate, upcomingAmount: one.total,
+      signer: issuer?.billing_name || orgName || (p as any).manager || "إدارة الأملاك",
+    }));
+  };
 
   const Item = ({ p, t, st, note, tone }: { p: Property; t: Tenant; st: any; note: string; tone?: "late" | "due" | "exp" }) => (
     <div className="flex items-center justify-between gap-3 bg-white text-deep border border-line rounded-lg px-3 py-2 text-sm">
@@ -177,6 +206,8 @@ export default function PortfolioView({ properties, windows, compliance, orgName
       </div>
       <div className="flex gap-1.5 shrink-0">
         {tone !== "exp" && t.phone && <a className="btn btn-wa text-xs px-2.5" href={remind(p, t, st)} target="_blank" rel="noreferrer" title="تذكير واتساب">💬</a>}
+        {/* عقود تنتهي: إشعار بانتهاء العقد مع حالة المستحقات (lib/tenant-messages) */}
+        {tone === "exp" && t.phone && <a className="btn btn-wa text-xs px-2.5" href={endNotice(p, t, st)} target="_blank" rel="noreferrer" title="إشعار انتهاء العقد (واتساب)">📅</a>}
         <Link className="btn btn-ghost text-xs" href={`/dashboard/property?p=${p.id}&q=${encodeURIComponent(t.unit || t.name)}`}>فتح</Link>
       </div>
     </div>

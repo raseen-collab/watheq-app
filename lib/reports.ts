@@ -13,6 +13,7 @@ import { annualRentRoll } from "@/lib/income";
 import { fetchAllRows } from "@/lib/fetch-all";
 import { createHash } from "crypto";
 import { arDate } from "@/lib/documents";
+import { endNoticeText } from "@/lib/tenant-messages";
 import { deriveState, STATE_ORDER, stateMeta, stateLabel, renewalTooEarly, type StateKey } from "./contract-state";
 
 type DB = SupabaseClient<any, any, any>;
@@ -541,7 +542,7 @@ function owedFor(t: any, prop: any, st: any) {
    فتصل مطالبة من المكتب موقّعة باسم المالك. كالمستندات: اسم المُصدِر أولًا. */
 const signer = (profile: any, prop: any) => profile?.billing_name || profile?.org_name || prop?.manager || "إدارة الأملاك";
 
-export async function buildNotice(db: DB, profile: any, tenantId: string, kind: "claim" | "nonrenewal"): Promise<{ ok: boolean; text: string; url?: string }> {
+export async function buildNotice(db: DB, profile: any, tenantId: string, kind: "claim" | "nonrenewal" | "expiry"): Promise<{ ok: boolean; text: string; url?: string }> {
   try {
     const { data: t } = await db.from("tenants").select("*").eq("id", tenantId).maybeSingle();
     if (!t) return { ok: false, text: "العقد غير موجود." };
@@ -578,16 +579,18 @@ export async function buildNotice(db: DB, profile: any, tenantId: string, kind: 
       ].filter(Boolean);
       msg = L.join("\n");
     } else {
-      title = "إشعار عدم تجديد";
-      msg = [
-        `السلام عليكم ورحمة الله، ${t.name || ""}`,
-        "",
-        `نفيدكم برغبتنا بعدم تجديد عقد إيجار ${unit} بعقار ${prop.name || ""}${st.endDate ? `، المنتهي بتاريخ ${arDate(st.endDate)}` : ""}.`,
-        "ونأمل ترتيب الإخلاء وتسوية أي مستحقّات قبل ذلك التاريخ.",
-        "",
-        "شاكرين لكم حسن التعامل،",
-        who,
-      ].join("\n");
+      /* عدم التجديد / انتهاء العقد: النص المشترك مع اللوحة (lib/tenant-messages) —
+         يذكر المستحقات صراحةً، لا «تسوية أي مستحقّات» دون أن يقول هل عليه شيء */
+      title = kind === "expiry" ? "إشعار انتهاء العقد" : "إشعار عدم تجديد";
+      const one = splitVat(Number(t.rent_amount) || 0, { enabled: ow.vat, rate: Number(prop.vat_rate) || 15, inclusive: prop.vat_inclusive !== false });
+      msg = endNoticeText({
+        mode: kind === "expiry" ? "end" : "nonrenewal",
+        tenantName: t.name || "", unitText: unit, propertyName: prop.name || "",
+        endDate: st.endDate, daysToEnd: st.daysToEnd, hijri: t.calendar === "hijri",
+        overdue: ow.due, overdueVat: ow.vat, unpaid: st.unpaid, carried: ow.carried,
+        upcomingDate: st.unpaid === 0 ? st.nextDueDate : st.upcomingDate, upcomingAmount: one.total,
+        signer: who,
+      });
     }
 
     const url = `https://wa.me/${digits}?text=${encodeURIComponent(msg)}`;

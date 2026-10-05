@@ -14,6 +14,7 @@ import type { ComplianceItem } from "@/lib/compliance";
 import { fetchAllRows } from "@/lib/fetch-all";
 import { hijriShort, hijriText, parseHijriInput } from "@/lib/hijri";
 import { sar, waLink, today, WATHEQ_WA, openExternal, daysAr, countAr, normalizeSearch, csvCell } from "@/lib/utils";
+import { endNoticeText } from "@/lib/tenant-messages";
 import { contractState, expectedNext12, buildSchedule, FREQUENCIES, freqLabel, freqShort, derivedEndDate, renewContract, needsRenewal, applyPayment, splitVat, isCommercial, isVacant, settleDeposit, unitVatApplies,
   vacancyDays, TURNOVER_CHECKLIST, defaultTermPeriods, parseDate, dueWithVat, rentWithVat, withVat, unitVat, firstDueGap, type Frequency } from "@/lib/contracts";
 import { PROPERTY_TYPES, typeLabel, unitLabel, typeIcon } from "@/lib/domain";
@@ -1476,7 +1477,9 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
          وعدد الأيام لأن «1 ديسمبر» وحدها لا تقول إن أمامه شهرين. */
       const dueTxt = `${arDate(st.nextDueDate)}${t.calendar === "hijri" && st.nextDueDate ? ` (${hijriText(st.nextDueDate)})` : ""}`;
       const inDays = st.daysToNextDue;
-      L.push(`تذكير ودّي بأن الدفعة القادمة عن ${unit} بعقار ${active.name} تستحق بتاريخ ${dueTxt}${
+      /* صف ناقص البيانات بلا تاريخ استحقاق: كانت الرسالة تقول «تستحق بتاريخ —» */
+      if (!st.nextDueDate) L.push(`نودّ التواصل معكم بخصوص عقد ${unit} بعقار ${active.name}.`);
+      else L.push(`تذكير ودّي بأن الدفعة القادمة عن ${unit} بعقار ${active.name} تستحق بتاريخ ${dueTxt}${
         inDays !== null && inDays > 0 ? ` — بعد ${inDays === 1 ? "يوم واحد" : inDays === 2 ? "يومين" : inDays <= 10 ? `${inDays} أيام` : `${inDays} يومًا`}` : inDays === 0 ? " — اليوم" : ""}.`);
       if (one.total) L.push(`• قيمة الدفعة: ${sar(one.total)} ريال${one.vat > 0 ? ` (منها ${sar(one.vat)} ريال ضريبة قيمة مضافة)` : ""}`);
       if (carried > 0) L.push(`• ويتبقّى عليكم دين مرحَّل من مدة سابقة: ${sar(carried)} ريال`);
@@ -1495,6 +1498,11 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       if (st.nextDueDate) L.push(`• مستحقّة منذ: ${arDate(st.nextDueDate)}${t.calendar === "hijri" ? ` (${hijriText(st.nextDueDate)})` : ""}`);
       if (st.upcomingDate) L.push(`• والدفعة القادمة تستحق بتاريخ: ${arDate(st.upcomingDate)}${t.calendar === "hijri" ? ` (${hijriText(st.upcomingDate)})` : ""}`);
     }
+    /* العقد منتهٍ أو قريب الانتهاء: يُذكر في رسالة السداد نفسها حتى لا تُرسل مطالبة
+       كأن العقد ممتدّ وهو ينتهي بعد أيام */
+    if (st.endDate && st.daysToEnd !== null && (st.daysToEnd < 0 || st.expiringSoon)) {
+      L.push(`• علمًا بأن العقد ${st.daysToEnd < 0 ? "انتهى" : "ينتهي"} بتاريخ ${arDate(st.endDate)}${t.calendar === "hijri" ? ` (${hijriText(st.endDate)})` : ""}`);
+    }
 
     L.push("");
     L.push("ويكون السداد بالوسيلة المتفق عليها في العقد.");
@@ -1504,6 +1512,36 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
     L.push("شاكرين لكم حسن تعاونكم،");
     L.push(who);
     return waLink(t.phone, L.join("\n"));
+  }
+
+  /** هل يظهر «إشعار انتهاء العقد»؟ عقد منتهٍ أو داخل نافذة «ينتهي قريبًا» للمكتب */
+  function endNoticeDue(t: Tenant, st: ReturnType<typeof contractState>) {
+    return !isVacant(t) && !t.litigation && !!st.endDate && st.daysToEnd !== null
+      && (st.daysToEnd < 0 || st.expiringSoon) && may("send_reminders");
+  }
+
+  /** واتساب: إشعار بانتهاء العقد (أو قربه) مع حالة المستحقات صريحة — lib/tenant-messages */
+  function endNoticeLink(t: Tenant) {
+    if (!active) return "#";
+    const st = contractState(t, { graceDays: Number(active?.grace_days) || 0, ...windowsOf(active) });
+    const who = (issuer as any)?.billing_name || orgName || active.manager || "إدارة الأملاك";
+    const v = { enabled: !!active.vat_enabled, rate: Number(active.vat_rate) || 15, inclusive: active.vat_inclusive !== false };
+    const vUnit = unitVatApplies(t, active) ? v : { ...v, enabled: false };
+    const one = splitVat(Number(t.rent_amount) || 0, vUnit);
+    return waLink(t.phone, endNoticeText({
+      mode: "end",
+      tenantName: t.name || "",
+      unitText: `${unitLabel(active.property_type)} (${t.unit || "—"})`,
+      propertyName: active.name,
+      endDate: st.endDate, daysToEnd: st.daysToEnd,
+      hijri: t.calendar === "hijri",
+      overdue: vUnit.enabled ? splitVat(st.amountDue, vUnit).total : st.amountDue,
+      overdueVat: vUnit.enabled, unpaid: st.unpaid,
+      carried: Math.max(0, Number((t as any).carried_debt) || 0),
+      upcomingDate: st.unpaid === 0 ? st.nextDueDate : st.upcomingDate,
+      upcomingAmount: one.total,
+      signer: who,
+    }));
   }
 
   /** إشعار مكتوب — يوضّح المطالبة والمسار النظامي عبر «إيجار» و«ناجز» */
@@ -2167,6 +2205,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                                   {canCollect && !st.fullyPaid && !((st.daysToEnd ?? 0) < 0 && st.unpaid === 0) && <QuickBtn title={isBusy(`pay:${t.id}`) ? "جارٍ التسجيل…" : st.hasPartial ? "تأكيد استلام باقي الدفعة" : "تأكيد استلام الدفعة كاملة"} cls={`btn-primary ${isBusy(`pay:${t.id}`) ? "opacity-50 pointer-events-none" : ""}`} onClick={() => quickPay(t, st)}>&#10004;</QuickBtn>}
                                   {canCollect && <QuickBtn title="سداد جزئي" cls="btn-ghost" onClick={() => setPaying(t)}>&#189;</QuickBtn>}
                                   {may("send_reminders") && !st.fullyPaid && !((st.daysToEnd ?? 0) < 0 && st.unpaid === 0) && <a href={remindLink(t)} target="_blank" rel="noreferrer" className="btn btn-wa text-xs px-2.5" title="إرسال تذكير واتساب" onClick={(e) => { e.preventDefault(); openExternal(remindLink(t)); }}>&#128172;</a>}
+                                  {endNoticeDue(t, st) && <a href={endNoticeLink(t)} target="_blank" rel="noreferrer" className="btn btn-wa text-xs px-2.5" title="إشعار انتهاء العقد (واتساب)" onClick={(e) => { e.preventDefault(); openExternal(endNoticeLink(t)); }}>&#128197;</a>}
                                 </>)}
                                 <RowMenu items={[
                                   /* ثلاث مجموعات بترتيب الاستعمال لا بترتيب البناء:
@@ -2181,6 +2220,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                                   ...(isVacant(t) ? [{ label: "مخالصة الإخلاء", run: () => openSettlement(t) }] : []),
 
                                   { sep: "✉️ مراسلة" } as any,
+                                  ...(endNoticeDue(t, st) ? [{ label: "📅 إشعار انتهاء العقد (واتساب)", run: () => openExternal(endNoticeLink(t)) }] : []),
                                   ...(st.unpaid > 0 && may("send_reminders") ? [{ label: "خطاب إشعار رسمي", run: () => makeNotice(t) }] : []),
                                   ...(!isVacant(t) && may("record_payments") ? [{ label: "🔑 رابط المستأجر", run: () => setTenantLinkFor(t) }] : []),
                                   { label: "ناقش مع الفريق", run: () => window.dispatchEvent(new CustomEvent("watheq:chat", { detail: { propertyId: active?.id, propertyName: active?.name, tenantId: t.id, tenantName: t.name, unit: t.unit } })) },
@@ -2350,6 +2390,8 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                         </QuickBtn>
                       )}
                       {primaryRenew && <button className="btn text-xs" style={{ background: "#0E3A37", color: "#F6F1E4" }} onClick={() => askRenew(t)}>تجديد</button>}
+                      {/* إشعار انتهاء العقد: ظاهر على الجوال أيضًا حين لا زر سداد — هو الإجراء الطبيعي لعقد منتهٍ */}
+                      {endNoticeDue(t, st) && <a href={endNoticeLink(t)} target="_blank" rel="noreferrer" className={`btn btn-wa text-xs px-2.5 ${primaryPay ? wide : ""}`} title="إشعار انتهاء العقد (واتساب)" onClick={(e) => { e.preventDefault(); openExternal(endNoticeLink(t)); }}><span className="whitespace-nowrap">&#128197; إشعار الانتهاء</span></a>}
                       {primaryEdit && <button className="btn btn-gold text-xs" onClick={() => setModal({ kind: "tenant", id: t.id })}>إكمال البيانات</button>}
                       {/* الثانوي — على الشاشة الأوسع فقط؛ على الجوال كله في ⋯ */}
                       {canPay && !primaryPay && (
@@ -2384,6 +2426,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                       ...(isVacant(t) ? [{ label: "مخالصة الإخلاء", run: () => openSettlement(t) }] : []),
 
                       { sep: "✉️ مراسلة" } as any,
+                      ...(endNoticeDue(t, st) ? [{ label: "📅 إشعار انتهاء العقد (واتساب)", run: () => openExternal(endNoticeLink(t)) }] : []),
                       ...(st.unpaid > 0 && may("send_reminders") ? [{ label: "خطاب إشعار رسمي", run: () => makeNotice(t) }] : []),
                       ...(!isVacant(t) && may("record_payments") ? [{ label: "🔑 رابط المستأجر", run: () => setTenantLinkFor(t) }] : []),
                       { label: "ناقش مع الفريق", run: () => window.dispatchEvent(new CustomEvent("watheq:chat", { detail: { propertyId: active?.id, propertyName: active?.name, tenantId: t.id, tenantName: t.name, unit: t.unit } })) },
@@ -4493,7 +4536,8 @@ function RemindAllModal({ rows, unitWord, linkOf, onClose, demo = false, dueOf =
               </div>
               {sent[t.id] && <span className="text-xs font-bold text-paid">✓ أُرسل</span>}
               <a href={linkOf(t)} target="_blank" rel="noreferrer" className="btn btn-wa text-xs"
-                onClick={() => setSent((s) => ({ ...s, [t.id]: true }))}>فتح واتساب</a>
+                /* openExternal كأزرار الصفوف — رابط عادي داخل تطبيق تليجرام يُفسد العربية بترميز مزدوج */
+                onClick={(e) => { e.preventDefault(); openExternal(linkOf(t)); setSent((s) => ({ ...s, [t.id]: true })); }}>فتح واتساب</a>
             </div>
           ))}
           {!withPhone.length && <div className="text-center text-muted text-sm py-6">لا يوجد متأخرون لديهم أرقام جوال مسجّلة.</div>}

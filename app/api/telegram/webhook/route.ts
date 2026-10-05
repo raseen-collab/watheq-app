@@ -338,6 +338,7 @@ async function handleCallback(db: DB, cq: any) {
     case "renewok": return doRenew(db, chatId, messageId, p, a1);
     case "claim": return doNotice(db, chatId, messageId, p, a1, "claim");
     case "nonrenew": return doNotice(db, chatId, messageId, p, a1, "nonrenewal");
+    case "endnote": return doNotice(db, chatId, messageId, p, a1, "expiry");
     default: return;
   }
 }
@@ -397,7 +398,8 @@ function cardButtons(c: any): TgKeyboard {
   } else if (k === "due_soon") {
     rows.push([{ text: "🔔 ذكّر ودّيًا", callback_data: `remind:status:${id}` }, { text: "✅ سجّل دفعة", callback_data: `payt:${id}` }]);
   } else if (k === "expiring") {
-    rows.push([{ text: "🔄 جدّد سنة", callback_data: `renew:${id}` }, { text: "📄 إشعار عدم تجديد", callback_data: `nonrenew:${id}` }]);
+    rows.push([{ text: "🔄 جدّد سنة", callback_data: `renew:${id}` }, { text: "📅 إشعار انتهاء العقد", callback_data: `endnote:${id}` }]);
+    rows.push([{ text: "📄 إشعار عدم تجديد", callback_data: `nonrenew:${id}` }]);
   }
   // active / litigation: بلا أزرار فعل (منتظم = هدوء، التنفيذ = تجميد)
   rows.push([{ text: "⬅️ رجوع", callback_data: "back:status" }]);
@@ -523,7 +525,7 @@ async function doRenew(db: DB, chatId: number, messageId: number, p: any, tenant
 }
 
 /** إشعار رسمي (مطالبة / عدم تجديد) عبر واتساب */
-async function doNotice(db: DB, chatId: number, messageId: number, p: any, tenantId: string, kind: "claim" | "nonrenewal") {
+async function doNotice(db: DB, chatId: number, messageId: number, p: any, tenantId: string, kind: "claim" | "nonrenewal" | "expiry") {
   const r = await buildNotice(db, p, tenantId, kind);
   if (!r.ok) return tgEdit(chatId, messageId, r.text, [[{ text: "⬅️ رجوع", callback_data: "back:status" }]]);
   const buttons: TgKeyboard = [
