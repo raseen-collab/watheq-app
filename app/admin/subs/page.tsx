@@ -4,6 +4,8 @@ import { redirect, notFound } from "next/navigation";
 import Link from "next/link";
 import SubsBoard from "@/components/SubsBoard";
 import SubsAdmin, { type SubRow, type PayRow } from "@/components/SubsAdmin";
+import SignaturePanel from "@/components/SignaturePanel";
+import { isSignatureDataUrl } from "@/lib/documents";
 import { fetchAllRows } from "@/lib/fetch-all";
 import { splitDemo } from "@/lib/real-data";
 import { withClockSkewRetry } from "@/lib/db-retry";
@@ -83,6 +85,10 @@ export default async function AdminSubsPage() {
     .filter((r: any) => !memberIds.has(r.id) && !allowed.includes(r.id));
   const pays = (payRes.data || []) as PayRow[];
 
+  /* توقيعك على فواتير الاشتراك (v72). قبل الترحيل: لا توقيع ولا خطأ */
+  const { data: sigRow } = await db.from("platform_settings").select("value").eq("key", "invoice_signature").maybeSingle();
+  const signature = isSignatureDataUrl((sigRow as any)?.value) ? (sigRow as any).value as string : null;
+
   return (
     <div className="max-w-6xl mx-auto p-5">
       <div className="flex flex-wrap items-center gap-2 mb-5">
@@ -107,7 +113,8 @@ export default async function AdminSubsPage() {
       <SubsBoard accounts={rows.map((r: any) => ({ ...r, ...sizeOf(r.id) }))} bankText={bankBlock()} />
 
       <h2 className="font-display font-bold text-deep text-lg mt-8 mb-3">كل الحسابات وسجل التجديدات</h2>
-      <SubsAdmin rows={rows} pays={pays} paysFailed={!!payRes.error} />
+      <SignaturePanel initial={signature} />
+      <SubsAdmin rows={rows} pays={pays} paysFailed={!!payRes.error} signature={signature} />
     </div>
   );
 }

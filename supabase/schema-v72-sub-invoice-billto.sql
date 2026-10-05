@@ -25,8 +25,32 @@ begin
   end if;
 end $$;
 
--- تحقّق: يجب أن يعيد صفّين (bill_to_name, bill_to_org)
-select column_name from information_schema.columns
- where table_schema = 'public' and table_name = 'subscription_payments'
-   and column_name in ('bill_to_name', 'bill_to_org')
- order by column_name;
+
+-- ============================================================
+-- توقيع صاحب المنصة على فواتير الاشتراك (5 أكتوبر 2026)
+-- صورة PNG/JPEG واحدة تُحفظ مرة، وتُطبع تلقائيًّا في خانة «التوقيع».
+-- جدول إعدادات عام للمنصة، يُقرأ ويُكتب بمفتاح الخدمة من لوحة الإدارة فقط:
+-- RLS مفعّل بلا أي سياسة = لا قراءة ولا كتابة لأي مستخدم عادي.
+-- ============================================================
+create table if not exists public.platform_settings (
+  key        text primary key,
+  value      text,
+  updated_at timestamptz not null default now()
+);
+alter table public.platform_settings enable row level security;
+revoke all on public.platform_settings from anon, authenticated;
+
+do $$
+begin
+  if not exists (select 1 from pg_constraint where conname = 'platform_settings_value_len') then
+    alter table public.platform_settings
+      add constraint platform_settings_value_len check (coalesce(char_length(value), 0) <= 400000);
+  end if;
+end $$;
+
+-- تحقّق (صفّ واحد): bill_to_columns = 2 و platform_settings_ready = true
+select
+  (select count(*) from information_schema.columns
+    where table_schema = 'public' and table_name = 'subscription_payments'
+      and column_name in ('bill_to_name', 'bill_to_org'))         as bill_to_columns,
+  to_regclass('public.platform_settings') is not null              as platform_settings_ready;

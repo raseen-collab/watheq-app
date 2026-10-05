@@ -162,3 +162,27 @@ export async function setSubInvoiceBillTo(
   revalidatePath("/admin/subs");
   return { ok: true, name: n, org: o };
 }
+
+/**
+ * توقيع صاحب المنصة على فواتير الاشتراك (schema-v72 · platform_settings).
+ * صورة PNG/JPEG واحدة؛ null = حذف التوقيع والعودة لخط التوقيع الفارغ.
+ */
+export async function saveInvoiceSignature(
+  dataUrl: string | null,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  try { await requireAdmin(); } catch { return { ok: false, error: "غير مصرّح" }; }
+  const v = dataUrl ? String(dataUrl) : null;
+  if (v && !(v.length <= 400000 && /^data:image\/(png|jpeg);base64,[A-Za-z0-9+/=]+$/.test(v))) {
+    return { ok: false, error: "الصورة غير صالحة أو كبيرة — استعمل PNG أو JPG أصغر." };
+  }
+  const db = serviceDb();
+  const { error } = v
+    ? await db.from("platform_settings").upsert({ key: "invoice_signature", value: v, updated_at: new Date().toISOString() })
+    : await db.from("platform_settings").delete().eq("key", "invoice_signature");
+  if (error) {
+    const missing = /platform_settings|schema cache|does not exist/i.test(error.message || "");
+    return { ok: false, error: missing ? "شغّل schema-v72-sub-invoice-billto.sql في Supabase أولًا." : error.message };
+  }
+  revalidatePath("/admin/subs");
+  return { ok: true };
+}

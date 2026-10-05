@@ -2219,7 +2219,13 @@ export type SubInvoice = {
   vat_rate?: number | null;
   /** تاريخ الإصدار المحفوظ (YYYY-MM-DD) — عند إعادة الطباعة لا يصير تاريخ اليوم */
   issue_date?: string | null;
+  /** توقيع المُصدِر صورةً (data:image/png|jpeg;base64,…) — يُطبع بدل خط التوقيع الفارغ */
+  signature?: string | null;
 };
+
+/** صورة توقيع مقبولة فقط: data URL لـ PNG/JPEG بلا أي محتوى آخر */
+export const isSignatureDataUrl = (v?: string | null): v is string =>
+  !!v && v.length <= 400000 && /^data:image\/(png|jpeg);base64,[A-Za-z0-9+/=]+$/.test(v);
 
 /**
  * فاتورة/إيصال اشتراك تُسلَّم للمشترك.
@@ -2299,7 +2305,9 @@ ${hasVat ? `<div class="note" style="border-inline-start-color:#D0453F;backgroun
 </div>`}
 
 <div class="sign">
-  <div>المُصدِر: وثيق<br><br>التوقيع: ________________</div>
+  <div>المُصدِر: وثيق<br>${isSignatureDataUrl(inv.signature)
+    ? `<div style="margin-top:6px">التوقيع:</div><img src="${inv.signature}" alt="التوقيع" style="display:block;max-height:70px;max-width:220px;margin-top:4px">`
+    : `<br>التوقيع: ________________`}</div>
   <div>تاريخ الإصدار: ${arDate(issued)}<br><br>رقم الفاتورة: ${inv.invoice_no}</div>
 </div>
 ${footer()}`;

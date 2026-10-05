@@ -119,7 +119,7 @@ function stateOf(r: SubRow): { s: State; label: string; tone: string } {
   return { s: "trial_ended", label: "انتهت التجربة بلا اشتراك", tone: "text-late" };
 }
 
-export default function SubsAdmin({ rows, pays, paysFailed }: { rows: SubRow[]; pays: PayRow[]; paysFailed?: boolean }) {
+export default function SubsAdmin({ rows, pays, paysFailed, signature }: { rows: SubRow[]; pays: PayRow[]; paysFailed?: boolean; signature?: string | null }) {
   const [openFor, setOpenFor] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
@@ -221,6 +221,8 @@ export default function SubsAdmin({ rows, pays, paysFailed }: { rows: SubRow[]; 
         paid_at: day(p.paid_at),
         // اترك vat_number فارغًا ما دمتَ غير مسجَّل في ضريبة القيمة المضافة
         vat_number: null,
+        /* توقيعك المحفوظ (v72) — يُطبع بدل خط التوقيع الفارغ */
+        signature: signature || null,
       })
     );
   }
