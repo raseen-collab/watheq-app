@@ -10,6 +10,7 @@ import { unitStatus, unitStatusLabel, arrearsOf, statusWindows, isPartialOnly } 
 import { daysAr, monthsAr, today as riyadhTodayISO } from "./utils";
 import { moneySigned } from "./hoaMoney";
 import { metersCountLine, METER_TYPE_AR, type PropertyMeter } from "./meters";
+import { riyalsInWords } from "./tafqit";
 
 const sar = (n: number) => {
   const v = Number(n) || 0;
@@ -3266,3 +3267,48 @@ function portalMinutes(kind: "founding" | "renewal", a: AssociationDoc, d: Minut
 }
 export const foundingMinutesPortalHTML = (a: AssociationDoc, d: MinutesInput) => portalMinutes("founding", a, d);
 export const renewalMinutesPortalHTML = (a: AssociationDoc, d: MinutesInput) => portalMinutes("renewal", a, d);
+
+/**
+ * سند صرف مصروف عقار (schema-v74 — طلب مكتب، 6 أكتوبر 2026).
+ *
+ * المكتب يصرف من حساب العقار لصيانة أو غيرها، ويسلّم المبلغ لشخص يكتب
+ * اسمه يدويًا (مستأجر، أحد الورثة، فنّي). السند: رقم متسلسل من القاعدة،
+ * المبلغ رقمًا وبالحروف، البيان، وخانتا توقيع المستلم والمكتب.
+ * المصروف نفسه يبقى في المصروفات ويدخل صافي المالك كما هو.
+ */
+export type ExpenseVoucher = ExpenseRow & {
+  voucher_no?: string | null; payee_name?: string | null; payee_ref?: string | null;
+};
+export function expenseVoucherHTML(e: ExpenseVoucher, p: { name: string; property_type?: string | null; owner_name?: string | null }, issuer: Issuer = {}) {
+  e = scrub(e); p = scrub(p); issuer = scrub(issuer);
+  const who = issuerName(issuer) || "إدارة الأملاك";
+  const amount = Number(e.amount) || 0;
+  const ul = unitLabel(p.property_type as any);
+  const body = `
+${header("سند صرف", e.voucher_no || "—", issuer, e.spent_on)}
+<h1>سند صرف</h1>
+<div class="sub">${p.name}${e.unit ? ` · ${ul} ${e.unit}` : ""}</div>
+
+<div class="box" style="margin-top:10px">
+  <div class="r"><span>رقم السند</span><span dir="ltr" style="font-family:monospace;font-weight:700">${e.voucher_no || "—"}</span></div>
+  <div class="r"><span>التاريخ</span><span>${arDateH(e.spent_on)}</span></div>
+  <div class="r"><span>صُرف إلى</span><span style="font-weight:700">${e.payee_name || "—"}</span></div>
+  ${e.payee_ref ? `<div class="r"><span>هوية / جوال المستلم</span><span dir="ltr">${e.payee_ref}</span></div>` : ""}
+  <div class="r"><span>المبلغ</span><span style="font-weight:700;font-size:1.1em">${sar(amount)} ريال</span></div>
+  <div class="r"><span>المبلغ بالحروف</span><span>${riyalsInWords(amount)}</span></div>
+  <div class="r"><span>البند</span><span>${catLabel(e.category)}</span></div>
+  ${e.note ? `<div class="r"><span>البيان</span><span style="overflow-wrap:anywhere">${e.note}</span></div>` : ""}
+  ${e.vendor ? `<div class="r"><span>المورّد</span><span>${e.vendor}</span></div>` : ""}
+  ${e.invoice_no ? `<div class="r"><span>رقم الفاتورة</span><span dir="ltr">${e.invoice_no}</span></div>` : ""}
+  <div class="r"><span>مصدر الصرف</span><span>${PAID_BY[String(e.paid_by || "collections")] || PAID_BY.collections}${isBillable(e) ? (p.owner_name ? ` — يُخصم من صافي ${p.owner_name}` : " — يُخصم من صافي المالك") : " — على المكتب"}</span></div>
+</div>
+
+<div class="note">أقرّ أنا المستلم بأنني استلمت المبلغ الموضح أعلاه كاملًا للغرض المذكور في البيان.</div>
+
+<div class="sign">
+  <div>المستلم: ${e.payee_name || "________________"}<br><br>التوقيع: ________________<br><br>التاريخ: ____ / ____ / ________</div>
+  <div>عن ${who}<br><br>التوقيع والختم: ________________</div>
+</div>
+${footer(issuer)}`;
+  return SHELL(`سند صرف ${e.voucher_no || ""} — ${p.name}`, body, markOf(issuer));
+}

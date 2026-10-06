@@ -9,17 +9,21 @@ import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase-client";
 import { officeId } from "@/lib/office";
 import { sar, today } from "@/lib/utils";
-import { arDate } from "@/lib/documents";
+import { arDate, openDoc, expenseVoucherHTML, type ExpenseVoucher } from "@/lib/documents";
 import { EXPENSE_CATS, catIcon, catLabel, sumExpenses, type ExpenseRow, type ExpenseCategory } from "@/lib/expenses";
 import DateField from "@/components/DateField";
 
 const AR_MONTHS = ["يناير","فبراير","مارس","أبريل","مايو","يونيو","يوليو","أغسطس","سبتمبر","أكتوبر","نوفمبر","ديسمبر"];
 const ymLabel = (ym: string) => /^\d{4}-\d{2}$/.test(ym) ? `${AR_MONTHS[Number(ym.slice(5, 7)) - 1] || ym} ${ym.slice(0, 4)}` : ym;
 
-type Row = ExpenseRow & { id: string };
+type Row = ExpenseVoucher & { id: string };
 
-export default function ExpensesModal({ propertyId, propertyName, unitWord, onClose, db }: {
+export default function ExpensesModal({ propertyId, propertyName, unitWord, onClose, db, issuer, propertyType, ownerName, payeeHints }: {
   propertyId: string; propertyName: string; unitWord: string; onClose: () => void; db?: any;
+  /** لسند الصرف (v74): هوية المكتب في الترويسة، ونوع العقار واسم المالك في المتن */
+  issuer?: any; propertyType?: string | null; ownerName?: string | null;
+  /** أسماء مقترحة للمستلم: مستأجرو العقار والمالك — والكتابة اليدوية مفتوحة */
+  payeeHints?: string[];
 }) {
   const supabase: any = db || createClient();
   const thisMonth = today().slice(0, 7);
@@ -33,6 +37,8 @@ export default function ExpensesModal({ propertyId, propertyName, unitWord, onCl
 
   function friendly(e: any) {
     const t = String(e?.message || e);
+    if (/payee_name|payee_ref|voucher_no/.test(t) && /(column|schema cache)/i.test(t))
+      return "سند الصرف يحتاج تشغيل schema-v74 في Supabase أولًا — سجّل المصروف بلا سند الآن، أو اطلب التحديث.";
     return /expenses/.test(t) && /(not exist|relation|schema cache)/i.test(t)
       ? "شغّل ملف schema-v8.sql في Supabase أولًا ثم أعد المحاولة" : t;
   }
@@ -75,18 +81,43 @@ export default function ExpensesModal({ propertyId, propertyName, unitWord, onCl
       if (error) throw error;
       // إن كان تاريخ المصروف داخل الشهر المعروض أظهره فورًا
       if (String((data as Row).spent_on || "").startsWith(ym)) setRows([data as Row, ...(rows || [])]);
-      flash("ok", "سُجّل المصروف");
+      const vno = (data as Row).voucher_no;
+      flash("ok", vno ? `سُجّل المصروف · سند صرف ${vno}` : "سُجّل المصروف");
       setAdding(false);
+      if (vno) printVoucher(data as Row);
     } catch (e) { flash("err", friendly(e)); } finally { setBusy(false); }
   }
 
   async function remove(x: Row) {
-    if (!confirm(`حذف مصروف «${catLabel(x.category)} — ${sar(Number(x.amount))} ريال»؟`)) return;
+    if (!confirm(`حذف مصروف «${catLabel(x.category)} — ${sar(Number(x.amount))} ريال»؟${x.voucher_no ? `\n\nله سند صرف ${x.voucher_no} — يُلغى معه، ولا يُعاد استعمال رقمه.` : ""}`)) return;
     const { data: _del, error } = await supabase.from("expenses").delete().eq("id", x.id).select("id");
     /* حذف رفضته السياسات يرجع بلا خطأ وبصفر صفوف — لا نوهم الموظف أنه نجح */
     if (!error && (!_del || _del.length === 0)) { flash("err", "هذا الإجراء يحتاج صلاحية أعلى — اطلبه من صاحب المكتب."); return; }
     if (error) return flash("err", friendly(error));
     setRows((rows || []).filter((r) => r.id !== x.id));
+  }
+
+  function printVoucher(x: Row) {
+    openDoc(expenseVoucherHTML(x, { name: propertyName, property_type: propertyType, owner_name: ownerName }, issuer || {}));
+  }
+
+  /* إصدار سند لمصروف سُجّل قبل ذلك بلا مستلم: القاعدة تعطي الرقم عند إضافة الاسم */
+  const [issuing, setIssuing] = useState<{ id: string; name: string; ref: string } | null>(null);
+  async function issueVoucher() {
+    if (!issuing || !issuing.name.trim()) return;
+    setBusy(true);
+    try {
+      const { data, error } = await supabase.from("expenses")
+        .update({ payee_name: issuing.name.trim(), payee_ref: issuing.ref.trim() || null })
+        .eq("id", issuing.id).select("*");
+      if (error) throw error;
+      const row = (data || [])[0] as Row | undefined;
+      if (!row) { flash("err", "هذا الإجراء يحتاج صلاحية تسجيل المصروفات — اطلبه من صاحب المكتب."); return; }
+      setRows((rows || []).map((r) => (r.id === row.id ? row : r)));
+      setIssuing(null);
+      flash("ok", row.voucher_no ? `صدر سند الصرف ${row.voucher_no}` : "حُفظ المستلم");
+      if (row.voucher_no) printVoucher(row);
+    } catch (e) { flash("err", friendly(e)); } finally { setBusy(false); }
   }
 
   return (
@@ -119,7 +150,10 @@ export default function ExpensesModal({ propertyId, propertyName, unitWord, onCl
           <button className="btn btn-gold text-sm" onClick={() => setAdding(true)}>+ مصروف</button>
         </div>
 
-        {adding && <ExpenseForm unitWord={unitWord} busy={busy} onCancel={() => setAdding(false)} onSave={save} />}
+        {adding && <ExpenseForm unitWord={unitWord} busy={busy} payeeHints={payeeHints || []} onCancel={() => setAdding(false)} onSave={save} />}
+        {(payeeHints || []).length > 0 && (
+          <datalist id="wq-payee-hints">{Array.from(new Set(payeeHints)).map((n) => <option key={n} value={n} />)}</datalist>
+        )}
 
         {rows === null ? (
           <p className="text-sm text-muted mt-4">جارٍ التحميل…</p>
@@ -130,14 +164,35 @@ export default function ExpensesModal({ propertyId, propertyName, unitWord, onCl
         ) : (
           <div className="mt-4 flex flex-col gap-2">
             {rows.map((x) => (
-              <div key={x.id} className="rounded-xl border border-line bg-paper p-3 flex items-center gap-3">
-                <span className="text-lg" aria-hidden>{catIcon(x.category)}</span>
-                <div className="min-w-0 flex-1">
-                  <div className="text-sm font-semibold">{catLabel(x.category)}{x.unit ? ` — ${unitWord} ${x.unit}` : ""}</div>
-                  <div className="text-xs text-muted">{arDate(x.spent_on)}{x.note ? ` · ${x.note}` : ""}</div>
+              <div key={x.id} className="rounded-xl border border-line bg-paper p-3">
+                <div className="flex items-center gap-3 flex-wrap">
+                  <span className="text-lg" aria-hidden>{catIcon(x.category)}</span>
+                  <div className="min-w-0 flex-1">
+                    <div className="text-sm font-semibold">{catLabel(x.category)}{x.unit ? ` — ${unitWord} ${x.unit}` : ""}</div>
+                    <div className="text-xs text-muted">{arDate(x.spent_on)}{x.note ? ` · ${x.note}` : ""}</div>
+                    {x.voucher_no && (
+                      <div className="text-xs text-deep mt-0.5">🧾 سند <span dir="ltr" className="font-mono">{x.voucher_no}</span> · المستلم: <b>{x.payee_name}</b></div>
+                    )}
+                  </div>
+                  <div className="font-bold text-sm shrink-0">{sar(Number(x.amount))}</div>
+                  {x.voucher_no
+                    ? <button className="btn btn-ghost text-xs shrink-0" onClick={() => printVoucher(x)}>🧾 سند الصرف</button>
+                    : <button className="btn btn-ghost text-xs shrink-0" onClick={() => setIssuing({ id: x.id, name: "", ref: "" })}>🧾 إصدار سند</button>}
+                  <button className="btn btn-ghost text-xs text-late shrink-0" onClick={() => remove(x)}>حذف</button>
                 </div>
-                <div className="font-bold text-sm shrink-0">{sar(Number(x.amount))}</div>
-                <button className="btn btn-ghost text-xs text-late shrink-0" onClick={() => remove(x)}>حذف</button>
+                {issuing?.id === x.id && (
+                  <div className="mt-2 grid sm:grid-cols-[1fr_180px_auto] gap-2 items-end border-t border-line pt-2">
+                    <label className="block"><span className="block text-xs font-semibold mb-1">اسم المستلم</span>
+                      <input className="fld" list="wq-payee-hints" autoFocus value={issuing.name} onChange={(e) => setIssuing({ ...issuing, name: e.target.value })} placeholder="المستأجر أو أحد الورثة أو الفني" maxLength={120} /></label>
+                    <label className="block"><span className="block text-xs font-semibold mb-1">هوية / جوال <span className="font-normal text-muted">— اختياري</span></span>
+                      <input className="fld" dir="ltr" value={issuing.ref} onChange={(e) => setIssuing({ ...issuing, ref: e.target.value })} maxLength={60} /></label>
+                    <div className="flex gap-1">
+                      <button className="btn btn-gold text-xs" disabled={busy || !issuing.name.trim()} onClick={issueVoucher}>إصدار</button>
+                      <button className="btn btn-ghost text-xs" onClick={() => setIssuing(null)}>إلغاء</button>
+                    </div>
+                    <p className="sm:col-span-3 text-[11px] text-muted">بعد الإصدار لا يُعدَّل المبلغ ولا التاريخ ولا المستلم — التصحيح بحذف المصروف وتسجيله من جديد.</p>
+                  </div>
+                )}
               </div>
             ))}
           </div>
@@ -147,12 +202,13 @@ export default function ExpensesModal({ propertyId, propertyName, unitWord, onCl
   );
 }
 
-function ExpenseForm({ unitWord, busy, onSave, onCancel }: {
-  unitWord: string; busy: boolean; onSave: (d: Partial<ExpenseRow>) => void; onCancel: () => void;
+function ExpenseForm({ unitWord, busy, onSave, onCancel, payeeHints }: {
+  unitWord: string; busy: boolean; onSave: (d: Partial<ExpenseVoucher>) => void; onCancel: () => void; payeeHints: string[];
 }) {
   const [d, setD] = useState<any>({ category: "maintenance", amount: "", spent_on: today(), unit: "", note: "",
-    billable: true, paid_by: "collections", status: "paid", vendor: "", invoice_no: "" });
-  const ready = Number(d.amount) > 0 && !!d.spent_on;
+    billable: true, paid_by: "collections", status: "paid", vendor: "", invoice_no: "",
+    voucher: false, payee_name: "", payee_ref: "" });
+  const ready = Number(d.amount) > 0 && !!d.spent_on && (!d.voucher || !!String(d.payee_name || "").trim());
   return (
     <div className="mt-4 border border-line rounded-xl p-4 bg-paper space-y-3">
       <div>
@@ -203,14 +259,32 @@ function ExpenseForm({ unitWord, busy, onSave, onCancel }: {
         </label>
       </div>
 
-      <label className="flex items-center gap-2 text-sm cursor-pointer">
+      {!d.voucher && <label className="flex items-center gap-2 text-sm cursor-pointer">
         <input type="checkbox" className="w-4 h-4" checked={d.status === "due"}
           onChange={(e) => setD({ ...d, status: e.target.checked ? "due" : "paid" })} />
         <span>مستحقة ولم تُدفع بعد <span className="text-[11px] text-muted">— تظهر تنبيهًا ولا تُعدّ نقدًا خارجًا</span></span>
-      </label>
+      </label>}
 
-      <label className="block"><span className="block text-sm font-semibold mb-1">ملاحظة <span className="text-muted text-xs font-normal">— اختياري</span></span>
+      <label className="block"><span className="block text-sm font-semibold mb-1">{d.voucher ? "البيان" : "ملاحظة"} <span className="text-muted text-xs font-normal">— {d.voucher ? "يُطبع في السند" : "اختياري"}</span></span>
         <input className="fld" value={d.note} onChange={(e) => setD({ ...d, note: e.target.value })} placeholder="إصلاح تسريب دورة مياه شقة 12" /></label>
+
+      {/* أمر صرف مع سند (v74): المبلغ يُسلَّم لشخص يُكتب اسمه يدويًا، ويصدر سند مرقّم للتوقيع */}
+      <div className={`rounded-lg border p-3 ${d.voucher ? "border-gold bg-[#FBF1DF]" : "border-line bg-white"}`}>
+        <label className="flex items-center gap-2 text-sm font-semibold cursor-pointer">
+          <input type="checkbox" className="w-4 h-4" checked={!!d.voucher} onChange={(e) => setD({ ...d, voucher: e.target.checked, status: e.target.checked ? "paid" : d.status })} />
+          🧾 إصدار سند صرف <span className="text-[11px] text-muted font-normal">— المبلغ سُلِّم لشخص ويوقّع على استلامه</span>
+        </label>
+        {d.voucher && (
+          <div className="grid sm:grid-cols-[1fr_200px] gap-3 mt-3">
+            <label className="block"><span className="block text-sm font-semibold mb-1">اسم المستلم</span>
+              <input className="fld" list="wq-payee-hints" value={d.payee_name} maxLength={120}
+                onChange={(e) => setD({ ...d, payee_name: e.target.value })} placeholder={payeeHints.length ? "اختر أو اكتب الاسم" : "المستأجر أو أحد الورثة أو الفني"} /></label>
+            <label className="block"><span className="block text-sm font-semibold mb-1">هوية / جوال <span className="text-muted text-xs font-normal">— اختياري</span></span>
+              <input className="fld" dir="ltr" value={d.payee_ref} maxLength={60} onChange={(e) => setD({ ...d, payee_ref: e.target.value })} /></label>
+            <p className="sm:col-span-2 text-[11px] text-muted">يصدر رقم سند متسلسل ويُفتح السند للطباعة. المصروف يدخل المصروفات وصافي المالك كالمعتاد.</p>
+          </div>
+        )}
+      </div>
       <div className="flex gap-2 justify-end">
         <button className="btn btn-ghost text-sm" onClick={onCancel} disabled={busy}>إلغاء</button>
         <button className="btn btn-gold text-sm" disabled={!ready || busy}
@@ -221,9 +295,10 @@ function ExpenseForm({ unitWord, busy, onSave, onCancel }: {
             invoice_no: (d.invoice_no || "").trim() || null,
             billable: d.billable !== false,
             paid_by: d.paid_by || "collections",
-            status: d.status === "due" ? "due" : "paid",
+            status: d.voucher ? "paid" : d.status === "due" ? "due" : "paid",
+            ...(d.voucher ? { payee_name: String(d.payee_name || "").trim(), payee_ref: String(d.payee_ref || "").trim() || null } : {}),
           })}>
-          {busy ? "…" : "تسجيل"}
+          {busy ? "…" : d.voucher ? "تسجيل وإصدار السند" : "تسجيل"}
         </button>
       </div>
     </div>

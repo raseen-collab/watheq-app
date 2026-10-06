@@ -101,3 +101,34 @@ export function endNoticeText(i: EndNoticeInput): string {
   L.push("", "شاكرين لكم حسن تعاونكم،", i.signer);
   return L.join("\n");
 }
+
+/**
+ * إشعار تسجيل عداد الكهرباء باسم المستأجر (طلب مكتب، 6 أكتوبر 2026).
+ *
+ * المكتب يريد أن يُبلَّغ المستأجر كتابةً برقم حساب عداد وحدته، ويُطلب منه
+ * تسجيله باسمه لدى الشركة السعودية للكهرباء — «عشان يكون ما لنا حجة»:
+ * فاتورة متراكمة على اسم المالك بعد خروج مستأجر لم يسجّل العداد خلاف
+ * متكرر. الرسالة نفسها في واتساب هي الإثبات، واللوحة تحفظ تاريخ آخر إرسال.
+ */
+export type MeterNoticeInput = {
+  tenantName: string;
+  unitText: string;
+  propertyName: string;
+  account: string;
+  /** المهلة بالأيام — 0 = بلا مهلة */
+  days?: number;
+  signer: string;
+};
+
+export function meterNoticeText(i: MeterNoticeInput): string {
+  const days = Math.max(0, Math.round(Number(i.days ?? 7)) || 0);
+  const L: string[] = [
+    `السلام عليكم ورحمة الله، ${i.tenantName || ""}`.trim(), "",
+    `نفيدكم بأن ${i.unitText} بعقار ${i.propertyName} مرتبطة بعداد كهرباء رقم حسابه:`,
+    i.account, "",
+    `ونأمل منكم تسجيل العداد باسمكم بصفتكم المستأجر لدى الشركة السعودية للكهرباء${days ? ` خلال ${daysPhrase(days)} من تاريخه` : ""}، حتى تصدر فواتير الاستهلاك باسمكم طوال مدة العقد.`,
+    "", "ونرجو تزويدنا بما يفيد إتمام التسجيل.",
+    "", "شاكرين لكم حسن تعاونكم،", i.signer,
+  ];
+  return L.join("\n");
+}

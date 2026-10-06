@@ -14,7 +14,7 @@ import type { ComplianceItem } from "@/lib/compliance";
 import { fetchAllRows } from "@/lib/fetch-all";
 import { hijriShort, hijriText, parseHijriInput } from "@/lib/hijri";
 import { sar, waLink, today, WATHEQ_WA, openExternal, daysAr, countAr, normalizeSearch, csvCell } from "@/lib/utils";
-import { endNoticeText } from "@/lib/tenant-messages";
+import { endNoticeText, meterNoticeText } from "@/lib/tenant-messages";
 import { contractState, expectedNext12, buildSchedule, FREQUENCIES, freqLabel, freqShort, derivedEndDate, renewContract, needsRenewal, applyPayment, splitVat, isCommercial, isVacant, settleDeposit, unitVatApplies,
   vacancyDays, TURNOVER_CHECKLIST, defaultTermPeriods, parseDate, dueWithVat, rentWithVat, withVat, unitVat, firstDueGap, type Frequency } from "@/lib/contracts";
 import { PROPERTY_TYPES, typeLabel, unitLabel, typeIcon } from "@/lib/domain";
@@ -49,6 +49,8 @@ type Tenant = {
   deposit_amount?: number | null; deposit_deductions?: number | null; deposit_notes?: string | null;
   meter_elec_in?: string | null; meter_elec_out?: string | null;
   elec_account?: string | null; water_account?: string | null;
+  /** آخر إشعار «سجّل العداد باسمك» وعدد مراته (schema-v74) */
+  elec_notice_at?: string | null; elec_notice_count?: number | null;
   contract_no?: string | null; calendar?: string | null; first_due?: string | null; vat_mode?: string | null;
   carried_debt?: number | null; carried_debt_note?: string | null;
   unit_type?: string | null; rooms?: number | null; baths?: number | null; acs?: number | null;
@@ -1544,6 +1546,36 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
     }));
   }
 
+  /** ⚡ إشعار تسجيل عداد الكهرباء باسم المستأجر (v74) — للوحدة المؤجّرة ولها رقم حساب وجوال */
+  function meterNoticeDue(t: Tenant) {
+    return !isVacant(t) && !t.litigation && !!String(t.elec_account || "").trim() && !!t.phone && may("send_reminders");
+  }
+  async function sendMeterNotice(t: Tenant) {
+    if (!active) return;
+    const who = (issuer as any)?.billing_name || orgName || active.manager || "إدارة الأملاك";
+    /* يُفتح واتساب أولًا وبنقرة المستخدم نفسها — بعد انتظار الشبكة يحجبه المتصفح */
+    openExternal(waLink(t.phone, meterNoticeText({
+      tenantName: t.name || "",
+      unitText: `${unitLabel(active.property_type)} (${t.unit || "—"})`,
+      propertyName: active.name,
+      account: String(t.elec_account || "").trim(),
+      days: 7, signer: who,
+    })));
+    /* ثم يُحفظ تاريخ الإرسال على الوحدة — هو الإثبات في اللوحة إن احتجّ المستأجر لاحقًا */
+    const { data, error } = await supabase.rpc("watheq_log_meter_notice", { p_tenant: t.id });
+    if (error) {
+      const m = String(error.message || "");
+      return notify("err", /watheq_log_meter_notice|function|schema cache/i.test(m)
+        ? "فُتحت الرسالة، لكن حفظ تاريخ الإرسال يحتاج تشغيل schema-v74 في Supabase."
+        : `فُتحت الرسالة، ولم يُحفظ تاريخ الإرسال: ${m}`);
+    }
+    const at = String(data || new Date().toISOString());
+    setItems((list) => list.map((p) => p.id === active.id ? {
+      ...p, tenants: p.tenants.map((x) => (x.id === t.id ? { ...x, elec_notice_at: at, elec_notice_count: (Number(x.elec_notice_count) || 0) + 1 } : x)),
+    } : p));
+    notify("ok", `حُفظ تاريخ إشعار العداد لـ${t.name || "المستأجر"} — أرسل الرسالة من واتساب.`);
+  }
+
   /** إشعار مكتوب — يوضّح المطالبة والمسار النظامي عبر «إيجار» و«ناجز» */
   function makeNotice(t: Tenant) {
     if (!active) return;
@@ -2148,6 +2180,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                               ) : null}
                               <div className={`font-medium ${key === "vacant" ? "hidden" : ""}`}>{t.name}{msgCount[t.id] > 0 && <span className="ms-1 text-[10px] bg-deep text-goldSoft rounded-full px-1.5 py-0.5" title="رسائل الفريق على هذه الوحدة">💬 {msgCount[t.id]}</span>}</div>
                               {t.contract_no && <div className="text-[11px] text-muted" dir="ltr">عقد {t.contract_no}</div>}
+                              {key !== "vacant" && <MeterLine t={t} onSend={meterNoticeDue(t) ? () => { void sendMeterNotice(t); } : undefined} />}
                             </td>
                             <td className={`px-3 ${cellY} whitespace-nowrap tabular-nums ${key === "vacant" ? "text-muted/70" : "text-muted"}`}>{sar(t.rent_amount)} / {freqShort(t.payment_frequency)}{key === "vacant" && <div className="text-[10px]">الإيجار المطلوب</div>}</td>
                             <td className={`px-3 ${cellY} whitespace-nowrap tabular-nums`}>
@@ -2221,6 +2254,8 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
 
                                   { sep: "✉️ مراسلة" } as any,
                                   ...(endNoticeDue(t, st) ? [{ label: "📅 إشعار انتهاء العقد (واتساب)", run: () => openExternal(endNoticeLink(t)) }] : []),
+                                  ...(meterNoticeDue(t) ? [{ label: "⚡ إشعار تسجيل عداد الكهرباء (واتساب)", run: () => { void sendMeterNotice(t); } }] : []),
+                                  ...(!isVacant(t) && !String(t.elec_account || "").trim() && may("edit_tenants") ? [{ label: "⚡ أضف رقم عداد الكهرباء", run: () => setModal({ kind: "tenant", id: t.id }) }] : []),
                                   ...(st.unpaid > 0 && may("send_reminders") ? [{ label: "خطاب إشعار رسمي", run: () => makeNotice(t) }] : []),
                                   ...(!isVacant(t) && may("record_payments") ? [{ label: "🔑 رابط المستأجر", run: () => setTenantLinkFor(t) }] : []),
                                   { label: "ناقش مع الفريق", run: () => window.dispatchEvent(new CustomEvent("watheq:chat", { detail: { propertyId: active?.id, propertyName: active?.name, tenantId: t.id, tenantName: t.name, unit: t.unit } })) },
@@ -2286,6 +2321,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                         {t.contract_no && <span className="hidden sm:inline"> · عقد <span dir="ltr">{t.contract_no}</span></span>}
                         {msgCount[t.id] > 0 && <span className="ms-1 text-[10px] bg-deep text-goldSoft rounded-full px-1.5 py-0.5" title="رسائل الفريق على هذه الوحدة">💬 {msgCount[t.id]}</span>}
                       </div>
+                      {key !== "vacant" && <MeterLine t={t} onSend={meterNoticeDue(t) ? () => { void sendMeterNotice(t); } : undefined} />}
                       {active && unitVatApplies(t, active) && (() => { const v = splitVat(Number(t.rent_amount) || 0, vat); return (
                         <div className="text-[.7rem] text-muted mt-0.5 hidden sm:block">
                           أساسي {sar(v.base)} + ضريبة {sar(v.vat)} = <b className="text-deep">{sar(v.total)}</b>
@@ -2427,6 +2463,8 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
 
                       { sep: "✉️ مراسلة" } as any,
                       ...(endNoticeDue(t, st) ? [{ label: "📅 إشعار انتهاء العقد (واتساب)", run: () => openExternal(endNoticeLink(t)) }] : []),
+                      ...(meterNoticeDue(t) ? [{ label: "⚡ إشعار تسجيل عداد الكهرباء (واتساب)", run: () => { void sendMeterNotice(t); } }] : []),
+                      ...(!isVacant(t) && !String(t.elec_account || "").trim() && may("edit_tenants") ? [{ label: "⚡ أضف رقم عداد الكهرباء", run: () => setModal({ kind: "tenant", id: t.id }) }] : []),
                       ...(st.unpaid > 0 && may("send_reminders") ? [{ label: "خطاب إشعار رسمي", run: () => makeNotice(t) }] : []),
                       ...(!isVacant(t) && may("record_payments") ? [{ label: "🔑 رابط المستأجر", run: () => setTenantLinkFor(t) }] : []),
                       { label: "ناقش مع الفريق", run: () => window.dispatchEvent(new CustomEvent("watheq:chat", { detail: { propertyId: active?.id, propertyName: active?.name, tenantId: t.id, tenantName: t.name, unit: t.unit } })) },
@@ -2559,7 +2597,10 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
         <OwnerReportModal property={active} unitWord={ul} issuer={issuer || {}} db={db} onClose={() => setReporting(false)} />
       )}
       {expensesOpen && active && (
-        <ExpensesModal propertyId={active.id} propertyName={active.name} unitWord={ul} db={db} onClose={() => { setExpensesOpen(false); setExpKey((k) => k + 1); }} />
+        <ExpensesModal propertyId={active.id} propertyName={active.name} unitWord={ul} db={db}
+          issuer={issuer} propertyType={active.property_type} ownerName={active.owner_name}
+          payeeHints={[...(active.tenants || []).filter((x) => !isVacant(x) && x.name).map((x) => String(x.name)), ...(active.owner_name ? [String(active.owner_name)] : [])]}
+          onClose={() => { setExpensesOpen(false); setExpKey((k) => k + 1); }} />
       )}
       {ownerLinkOpen && active && (
         <OwnerLinkModal propertyId={active.id} propertyName={active.name} ownerName={active.owner_name} db={db} demo={demo}
@@ -2646,6 +2687,30 @@ function Stat({ v, l, kpi = "plain", icon, onClick, active }: {
 }
 
 /** زر إجراء سريع أيقوني */
+/**
+ * ⚡ سطر عداد الكهرباء في خانة الوحدة (طلب مكتب، 6 أكتوبر 2026): رقم الحساب
+ * ظاهرًا، وزرّ إشعار المستأجر بتسجيله باسمه، وتاريخ آخر إشعار — الإثبات أنه بُلِّغ.
+ */
+function MeterLine({ t, onSend }: { t: Tenant; onSend?: () => void }) {
+  const acc = String(t.elec_account || "").trim();
+  if (!acc) return null;
+  const sent = t.elec_notice_at ? String(t.elec_notice_at).slice(0, 10) : null;
+  return (
+    <div className="text-[11px] text-muted mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
+      <span>⚡ عداد <bdi dir="ltr" className="tabular-nums">{acc}</bdi></span>
+      {sent
+        ? <span className="text-[#137a50]">· أُشعر بالتسجيل {arDate(sent)}{Number(t.elec_notice_count) === 2 ? " (مرتان)" : Number(t.elec_notice_count) > 2 ? ` (${t.elec_notice_count} مرات)` : ""}</span>
+        : <span className="text-[#9A4B00]">· لم يُشعَر بتسجيله</span>}
+      {onSend && (
+        <button type="button" className="underline text-deep font-semibold hover:text-gold" onClick={onSend}
+          title="رسالة واتساب للمستأجر برقم الحساب وطلب تسجيل العداد باسمه لدى شركة الكهرباء">
+          {sent ? "أعد الإشعار" : "أرسل إشعار التسجيل"}
+        </button>
+      )}
+    </div>
+  );
+}
+
 function QuickBtn({ children, title, cls, onClick }: { children: React.ReactNode; title: string; cls: string; onClick: () => void }) {
   return (
     <button type="button" title={title} aria-label={title} onClick={onClick}

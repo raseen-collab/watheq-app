@@ -63,11 +63,20 @@ function table(store: SandboxStore, name: keyof SandboxStore) {
         if (pending?.op === "insert") {
           const items = Array.isArray(pending.payload) ? pending.payload : [pending.payload];
           const added = items.map((x: Row) => ({ id: `sb_${name}_${Math.random().toString(36).slice(2, 10)}`, created_at: new Date().toISOString(), ...x }));
+          /* سند الصرف (v74): القاعدة تُصدر الرقم عند وجود المستلم — نحاكيها في التجربة */
+          if (name === "expenses") for (const x of added as any[]) if (String(x.payee_name || "").trim() && !x.voucher_no)
+            x.voucher_no = `PV-${String((store.expenses || []).filter((e) => e.voucher_no).length + 1).padStart(5, "0")}`;
           store[name] = [...added, ...rows];
           data = clone(added);
         } else if (pending?.op === "update") {
           const ids = new Set(filtered.map((r) => r.id));
-          store[name] = rows.map((r) => (ids.has(r.id) ? { ...r, ...pending!.payload } : r));
+          store[name] = rows.map((r) => {
+            if (!ids.has(r.id)) return r;
+            const next = { ...r, ...pending!.payload };
+            if (name === "expenses" && !r.voucher_no && String(next.payee_name || "").trim())
+              next.voucher_no = `PV-${String(rows.filter((e) => e.voucher_no).length + 1).padStart(5, "0")}`;
+            return next;
+          });
           data = clone(store[name].filter((r) => ids.has(r.id)));
         } else if (pending?.op === "delete") {
           const ids = new Set(filtered.map((r) => r.id));
@@ -247,6 +256,13 @@ export function sandboxClient(store: SandboxStore) {
       /* بصيغة القاعدة نفسها — رقمٌ خام كان يُسقط الواجهة إلى رقم افتراضي */
       if (fn === "next_invoice_no")                    // التالي بعد ما صدر في التجربة
         return { data: `INV-${new Date().getFullYear()}-${String((store.invoices || []).length + 1).padStart(4, "0")}`, error: null };
+      if (fn === "watheq_log_meter_notice") {
+        const t = store.tenants.find((x) => x.id === args.p_tenant);
+        if (!t) return { data: null, error: { message: "الوحدة غير موجودة" } };
+        const at = new Date().toISOString();
+        t.elec_notice_at = at; t.elec_notice_count = (Number(t.elec_notice_count) || 0) + 1;
+        return { data: at, error: null };
+      }
       if (fn === "watheq_my_office") return { data: [{ office: "demo-user", role: "owner", perms: {} }], error: null };
       return { data: null, error: null };
     },

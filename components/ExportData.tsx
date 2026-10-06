@@ -198,7 +198,7 @@ export default function ExportData() {
         "يُخصم من المالك": x.billable === false ? "لا" : "نعم",
         "من دفعه": PAID_BY_AR[x.paid_by] || x.paid_by || "",
         "الحالة": x.status === "due" ? "مستحق" : "مدفوع",
-        "المورّد": x.vendor || "", "رقم الفاتورة": x.invoice_no || "",
+        "المورّد": x.vendor || "", "رقم الفاتورة": x.invoice_no || "", "رقم سند الصرف": x.voucher_no || "", "المستلم": x.payee_name || "",
         "ملاحظة": x.note || "",
       })), [12, 22, 10, 14, 12, 14, 14, 10, 18, 14, 30]);
 
