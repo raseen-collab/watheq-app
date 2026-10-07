@@ -115,7 +115,7 @@ async function handleMessage(db: DB, msg: any) {
     if (p && allExpired(p as any)) {
       return tgSend(chatId,
         "⏳ <b>اشتراكك في وثيق منتهٍ.</b>\n\nبياناتك محفوظة كما هي، وأوامر البوت متوقّفة حتى التجديد.",
-        [[{ text: "💬 تجديد الاشتراك", url: "https://wa.me/966596300591?text=" + encodeURIComponent("أبغى أجدد اشتراكي في وثيق") }]]);
+        [[{ text: "💳 جدّد الاشتراك", url: "https://app.watheqapp.com/subscribe" }]]);
     }
     if (p) return tgSend(chatId, "أهلًا بك من جديد 👋 اختر من القائمة:", navButtons());
     return tgSend(chatId, "أهلًا بك في <b>وثيق</b> 👋\n\nلربط حسابك: افتح <b>الإعدادات</b> في المنصة، اضغط «ربط تليجرام»، وأرسل الرمز الظاهر هنا.");
@@ -166,8 +166,8 @@ async function handleMessage(db: DB, msg: any) {
     return tgSend(chatId,
       "⏳ <b>اشتراكك في وثيق منتهٍ.</b>\n\n"
       + "بياناتك محفوظة كما هي ولم يُحذف منها شيء، لكن تنبيهات البوت وأوامره متوقّفة حتى التجديد.\n\n"
-      + "للتجديد راسلنا على واتساب: +966596300591",
-      [[{ text: "💬 تجديد الاشتراك", url: "https://wa.me/966596300591?text=" + encodeURIComponent("أبغى أجدد اشتراكي في وثيق") }]]);
+      + "للتجديد اضغط الزر أدناه، أو راسلنا على واتساب: +966596300591",
+      [[{ text: "💳 جدّد الاشتراك", url: "https://app.watheqapp.com/subscribe" }]]);
   }
 
   /* تنبيهات البوت لصاحب المكتب وحده: المتأخرات والتحصيل أرقام مكتب يقرّر

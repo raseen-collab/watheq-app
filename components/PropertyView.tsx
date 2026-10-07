@@ -3882,7 +3882,7 @@ function TenantModal({ open, initial, unitWord, error, saving, onClose, onSubmit
             <span className="text-xs text-muted font-normal"> — اختيارية: رقم العقد، الهوية، دين سابق{vatEnabled ? "، الضريبة" : ""}، الكهرباء والماء</span></summary>
           <div className="space-y-3 mt-3">
           <Field label="رقم العقد" hint="رقمه لديكم أو في «إيجار» — يظهر في كشوف الحساب والخطابات"><input className="fld" dir="ltr" value={d.contract_no || ""} onChange={(e) => setD({ ...d, contract_no: e.target.value })} /></Field>
-          <Field label="رقم الهوية / السجل" hint="للخطابات"><input className="fld" value={d.national_id || ""} onChange={(e) => setD({ ...d, national_id: e.target.value })} /></Field>
+          <Field label="رقم الهوية / السجل" hint="اختياري — أدخله فقط إن احتجته في الخطابات"><input className="fld" value={d.national_id || ""} onChange={(e) => setD({ ...d, national_id: e.target.value })} /></Field>
           <Field label="دين مرحَّل (ريال)" hint="متأخرات من عقد سابق أو مستأجر سابق — تظهر في الكشوف ولا تدخل في دفعات العقد الجاري">
             <input className="fld" type="number" min={0} value={d.carried_debt ?? ""} onChange={(e) => setD({ ...d, carried_debt: e.target.value })} placeholder="0" />
           </Field>

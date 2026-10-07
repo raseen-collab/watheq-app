@@ -6,6 +6,7 @@ import SubsBoard from "@/components/SubsBoard";
 import SubsAdmin, { type SubRow, type PayRow } from "@/components/SubsAdmin";
 import SignaturePanel from "@/components/SignaturePanel";
 import { isSignatureDataUrl } from "@/lib/documents";
+import SubClaimsPanel, { type AdminClaim } from "@/components/SubClaimsPanel";
 import { fetchAllRows } from "@/lib/fetch-all";
 import { splitDemo } from "@/lib/real-data";
 import { withClockSkewRetry } from "@/lib/db-retry";
@@ -85,6 +86,17 @@ export default async function AdminSubsPage() {
     .filter((r: any) => !memberIds.has(r.id) && !allowed.includes(r.id));
   const pays = (payRes.data || []) as PayRow[];
 
+  /* طلبات «أرسلت الحوالة» من /subscribe (v71). قبل تشغيل الترحيل: لا شيء يُعرض */
+  const { data: claimRows } = await withClockSkewRetry(() => db.from("subscription_claims")
+    .select("id,user_id,account_type,prop_plan,hoa_plan,months,amount,payer_name,bank_ref,transfer_date,status,created_at")
+    .in("status", ["pending", "processing"])
+    .order("created_at", { ascending: true }));
+  const nameOf = (id: string) => {
+    const r: any = (profRes.data || []).find((x: any) => x.id === id);
+    return r ? (r.org_name || r.full_name || r.billing_name || "—") : "—";
+  };
+  const claims: AdminClaim[] = ((claimRows || []) as any[]).map((c) => ({ ...c, name: nameOf(c.user_id) }));
+
   /* توقيعك على فواتير الاشتراك (v72). قبل الترحيل: لا توقيع ولا خطأ */
   const { data: sigRow } = await db.from("platform_settings").select("value").eq("key", "invoice_signature").maybeSingle();
   const signature = isSignatureDataUrl((sigRow as any)?.value) ? (sigRow as any).value as string : null;
@@ -108,6 +120,8 @@ export default async function AdminSubsPage() {
           </div>
         </div>
       )}
+
+      <SubClaimsPanel claims={claims} />
 
       {/* لوحة التشغيل أولًا: من أتواصل معه اليوم — ثم الجدول الكامل للمراجعة */}
       <SubsBoard accounts={rows.map((r: any) => ({ ...r, ...sizeOf(r.id) }))} bankText={bankBlock()} />

@@ -8,7 +8,7 @@ import type { SubState } from "@/lib/subscription";
 import OfficeChat from "@/components/OfficeChat";
 import { daysAr } from "@/lib/utils";
 
-const WA_RENEW = "https://wa.me/966596300591?text=" + encodeURIComponent("أبغى أجدّد اشتراكي في وثيق");
+/* أزرار التجديد والاشتراك تفتح صفحة /subscribe (v71) بدل واتساب */
 
 export default function DashboardShell({
   userName, accountType, showSwitcher, trialEndsAt, sub: subAll, subs, isOwner = true, children,
@@ -115,20 +115,20 @@ export default function DashboardShell({
       {sub?.kind === "paid_soon" && sub.subDaysLeft !== null && (
         <div className="text-center text-sm py-2 px-4 bg-[#FBF1DF] text-[#8a5a11] border-b border-[#EBD9AA]">
           💳 اشتراكك ينتهي {sub.subDaysLeft <= 0 ? "اليوم" : sub.subDaysLeft === 1 ? "غدًا" : `خلال ${daysAr(sub.subDaysLeft)}`}.
-          {" "}<a href={WA_RENEW} target="_blank" rel="noreferrer" className="underline font-bold">جدّد الآن</a> ولا ينقطع شيء.
+          {" "}<Link href="/subscribe" className="underline font-bold">جدّد الآن</Link> ولا ينقطع شيء.
         </div>
       )}
       {sub?.grace && sub.graceDaysLeft !== null && (
         <div className="text-center text-sm py-2 px-4 bg-[#FBE9E7] text-[#8f2b26] border-b border-[#F5C6C2]">
           ⏳ انتهى اشتراكك — كل المزايا تعمل لـ<b>{sub.graceDaysLeft}</b> {sub.graceDaysLeft === 1 ? "يوم" : "أيام"} أخرى، ثم يصير الحساب للقراءة والتصدير فقط حتى التجديد.
-          {" "}<a href={WA_RENEW} target="_blank" rel="noreferrer" className="underline font-bold">جدّد الآن</a>
+          {" "}<Link href="/subscribe" className="underline font-bold">جدّد الآن</Link>
         </div>
       )}
       {sub?.expired && (
         <div className="text-center text-sm py-2 px-4 bg-[#FBE9E7] text-[#8f2b26] border-b border-[#F5C6C2]">
           🔒 {sub.planPaid ? <>انتهى اشتراكك</> : <>انتهت تجربتك المجانية</>} — الحساب الآن <b>للقراءة والتصدير فقط</b>:
           بياناتك كلها محفوظة وتستطيع عرضها وتصديرها، والإضافة والتعديل تعود فور التفعيل.{" "}
-          <a href={WA_RENEW} target="_blank" rel="noreferrer" className="underline font-bold">راسلنا للتفعيل</a>
+          <Link href="/subscribe" className="underline font-bold">اشترك الآن</Link>
         </div>
       )}
 
@@ -137,7 +137,8 @@ export default function DashboardShell({
           days <= 5 ? "bg-[#FBE9E7] text-[#8f2b26] border-b border-[#F5C6C2]"
                     : "bg-[#FBF1DF] text-[#8a5a11] border-b border-[#EBD9AA]"}`}>
           🎁 تجربتك المجانية — متبقٍ <b>{days}</b> يومًا من أصل ٣٠. كل المزايا مفعّلة.
-          {days <= 5 && <> بعدها يصير الحساب للقراءة والتصدير فقط حتى تشترك — <a href={WA_RENEW} target="_blank" rel="noreferrer" className="underline font-bold">اختر باقتك</a></>}
+          {days > 5 && <> <Link href="/subscribe" className="underline font-bold">اختر باقتك</Link></>}
+          {days <= 5 && <> بعدها يصير الحساب للقراءة والتصدير فقط حتى تشترك — <Link href="/subscribe" className="underline font-bold">اختر باقتك</Link></>}
         </div>
       )}
 

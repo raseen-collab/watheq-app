@@ -49,7 +49,13 @@ export async function recordSubPayment(input: {
   } catch {
     return { ok: false, error: "غير مصرّح" };
   }
+  return applySubPayment(input);
+}
 
+type PaymentInput = Parameters<typeof recordSubPayment>[0];
+
+/** جوهر التسجيل — بلا فحص صلاحية: لا يُستدعى إلا من إجراء فحصها قبله */
+async function applySubPayment(input: PaymentInput): Promise<RecordResult> {
   const months = Math.floor(Number(input.months) || 0);
   if (months < 1 || months > 36) return { ok: false, error: "عدد الأشهر غير صالح" };
 
@@ -161,6 +167,60 @@ export async function setSubInvoiceBillTo(
   if (!data?.length) return { ok: false, error: "الدفعة غير موجودة — حدّث الصفحة." };
   revalidatePath("/admin/subs");
   return { ok: true, name: n, org: o };
+}
+
+/* ═══ طلبات «أرسلت الحوالة» من صفحة /subscribe (schema-v71) ═══ */
+
+const PROP_PRICE: Record<string, string> = { basic: "باقة المالك", full: "باقة المكتب" };
+
+/**
+ * اعتماد طلب: يحجزه أولًا (pending → processing) فلا يعتمده ضغطان مرتين،
+ * ثم يسجّل الدفعة بالمسار نفسه للتسجيل اليدوي، ثم يربطه بها.
+ * فشل التسجيل يعيد الطلب «معلّقًا» كما كان.
+ */
+export async function approveSubClaim(claimId: string): Promise<RecordResult> {
+  try { await requireAdmin(); } catch { return { ok: false, error: "غير مصرّح" }; }
+  const db = serviceDb();
+  const { data: claim, error: ce } = await db.from("subscription_claims")
+    .update({ status: "processing" }).eq("id", claimId).eq("status", "pending")
+    .select("*").maybeSingle();
+  if (ce) return { ok: false, error: ce.message };
+  if (!claim) return { ok: false, error: "الطلب غير موجود أو عولج من قبل — حدّث الصفحة." };
+  const c = claim as any;
+
+  // حساب الجمعيات وحدها يحفظ باقته في plan؛ المزدوج في hoa_plan
+  const isHoaOnly = c.account_type === "hoa_manager";
+  const plan = isHoaOnly ? c.hoa_plan : c.prop_plan;
+  const hoaPlan = c.account_type === "both" ? c.hoa_plan : null;
+  const label = [c.prop_plan ? PROP_PRICE[c.prop_plan] || c.prop_plan : "", c.hoa_plan ? `جمعيات: ${c.hoa_plan}` : ""].filter(Boolean).join(" + ");
+
+  const res = await applySubPayment({
+    userId: c.user_id, months: c.months, amount: Number(c.amount),
+    plan: plan || null, hoaPlan, method: "تحويل بنكي",
+    note: [`طلب من صفحة الاشتراك (${label})`, `المحوِّل: ${c.payer_name}`, c.bank_ref ? `المرجع: ${c.bank_ref}` : "", `تاريخ التحويل: ${c.transfer_date}`].filter(Boolean).join(" · "),
+  });
+  if (!res.ok) {
+    await db.from("subscription_claims").update({ status: "pending" }).eq("id", claimId).eq("status", "processing");
+    return res;
+  }
+  const { data: pay } = await db.from("subscription_payments").select("id").eq("invoice_no", res.invoiceNo).maybeSingle();
+  await db.from("subscription_claims")
+    .update({ status: "approved", decided_at: new Date().toISOString(), payment_id: (pay as any)?.id ?? null })
+    .eq("id", claimId);
+  revalidatePath("/admin/subs");
+  return res;
+}
+
+export async function rejectSubClaim(claimId: string, reason: string): Promise<{ ok: boolean; error?: string }> {
+  try { await requireAdmin(); } catch { return { ok: false, error: "غير مصرّح" }; }
+  const r = String(reason || "").trim().slice(0, 200) || null;
+  const { data, error } = await serviceDb().from("subscription_claims")
+    .update({ status: "rejected", reject_reason: r, decided_at: new Date().toISOString() })
+    .eq("id", claimId).eq("status", "pending").select("id");
+  if (error) return { ok: false, error: error.message };
+  if (!data?.length) return { ok: false, error: "الطلب غير موجود أو عولج من قبل — حدّث الصفحة." };
+  revalidatePath("/admin/subs");
+  return { ok: true };
 }
 
 /**

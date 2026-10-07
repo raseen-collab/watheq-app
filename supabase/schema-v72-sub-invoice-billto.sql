@@ -39,6 +39,8 @@ create table if not exists public.platform_settings (
 );
 alter table public.platform_settings enable row level security;
 revoke all on public.platform_settings from anon, authenticated;
+-- Supabase من 30 أكتوبر 2026 لا يمنح الجداول الجديدة تلقائيًّا: الصلاحية صريحة لمفتاح الخدمة
+grant select, insert, update, delete on public.platform_settings to service_role;
 
 do $$
 begin
