@@ -117,7 +117,7 @@ export function addDaysIso(iso: string, days: number): string {
   return new Date(t).toISOString().slice(0, 10);
 }
 
-const METHOD_AR: Record<string, string> = { transfer: "تحويل بنكي", cash: "نقدًا", pos: "شبكة", cheque: "شيك", other: "أخرى" };
+const METHOD_AR: Record<string, string> = { transfer: "تحويل بنكي", ejar: "منصة إيجار", cash: "نقدًا", pos: "شبكة", cheque: "شيك", other: "أخرى" };
 export const methodAr = (m?: string | null) => METHOD_AR[String(m || "")] || "—";
 const KIND_AR: Record<string, string> = { minutes: "محضر", notice: "إشعار", circular: "تعميم", budget: "موازنة", other: "مستند" };
 export const kindAr = (k?: string | null) => KIND_AR[String(k || "")] || "مستند";

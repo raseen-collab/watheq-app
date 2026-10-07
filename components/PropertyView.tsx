@@ -2732,7 +2732,10 @@ function QuickBtn({ children, title, cls, onClick }: { children: React.ReactNode
 
 /** نافذة تسجيل مبلغ مستلم — كامل أو جزئي */
 const METHODS: { v: string; l: string }[] = [
-  { v: "transfer", l: "تحويل بنكي" }, { v: "cash", l: "نقدًا" },
+  { v: "transfer", l: "تحويل بنكي" },
+  /* منصة إيجار (طلب مكتب، 7 أكتوبر 2026): المستأجر يسدّد عبر «إيجار» والمبلغ يصل بعدها — تظهر باسمها في الكشوف والتقارير */
+  { v: "ejar", l: "منصة إيجار" },
+  { v: "cash", l: "نقدًا" },
   { v: "pos", l: "شبكة" }, { v: "cheque", l: "شيك" }, { v: "other", l: "أخرى" },
 ];
 export const methodLabel = (v?: string | null) => METHODS.find((m) => m.v === v)?.l || "أخرى";

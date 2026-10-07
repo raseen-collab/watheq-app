@@ -23,7 +23,7 @@ type Entry = {
   payer_name?: string | null; unit_label?: string | null;
 };
 
-const METHOD_AR: Record<string, string> = { transfer: "تحويل", cash: "نقدًا", pos: "شبكة", cheque: "شيك", other: "أخرى" };
+const METHOD_AR: Record<string, string> = { transfer: "تحويل", ejar: "منصة إيجار", cash: "نقدًا", pos: "شبكة", cheque: "شيك", other: "أخرى" };
 const sar = (n: number) => (Number(n) || 0).toLocaleString("en-US");
 
 /** الوقت بتوقيت السعودية، ميلادي، بأرقام لاتينية — لا اجتهاد للمتصفح */

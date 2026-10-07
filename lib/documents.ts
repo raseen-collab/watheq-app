@@ -143,7 +143,7 @@ export type PaymentRow = {
   method?: string | null; periods_covered?: number | null; note?: string | null;
 };
 const METHOD_AR: Record<string, string> = {
-  transfer: "تحويل بنكي", cash: "نقدًا", pos: "شبكة", cheque: "شيك", other: "أخرى",
+  transfer: "تحويل بنكي", ejar: "منصة إيجار", cash: "نقدًا", pos: "شبكة", cheque: "شيك", other: "أخرى",
 };
 const methodAr = (m?: string | null) => METHOD_AR[String(m || "")] || "—";
 /** صف السجل: الدفعة السالبة تراجعٌ موثّق — تُسمّى باسمها لا «أخرى» */
