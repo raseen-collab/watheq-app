@@ -51,6 +51,8 @@ type Tenant = {
   elec_account?: string | null; water_account?: string | null;
   /** آخر إشعار «سجّل العداد باسمك» وعدد مراته (schema-v74) */
   elec_notice_at?: string | null; elec_notice_count?: number | null;
+  /** لمن أُرسل وعلى أي عداد (v74b) — بعد إعادة التأجير لا يُحسب إشعار السابق للجديد */
+  elec_notice_name?: string | null; elec_notice_account?: string | null;
   contract_no?: string | null; calendar?: string | null; first_due?: string | null; vat_mode?: string | null;
   carried_debt?: number | null; carried_debt_note?: string | null;
   unit_type?: string | null; rooms?: number | null; baths?: number | null; acs?: number | null;
@@ -1571,7 +1573,9 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
     }
     const at = String(data || new Date().toISOString());
     setItems((list) => list.map((p) => p.id === active.id ? {
-      ...p, tenants: p.tenants.map((x) => (x.id === t.id ? { ...x, elec_notice_at: at, elec_notice_count: (Number(x.elec_notice_count) || 0) + 1 } : x)),
+      ...p, tenants: p.tenants.map((x) => (x.id === t.id ? { ...x, elec_notice_at: at,
+        elec_notice_count: meterNoticeValid(x) ? (Number(x.elec_notice_count) || 0) + 1 : 1,
+        elec_notice_name: String(x.name || "").trim(), elec_notice_account: String(x.elec_account || "").trim() } : x)),
     } : p));
     notify("ok", `حُفظ تاريخ إشعار العداد لـ${t.name || "المستأجر"} — أرسل الرسالة من واتساب.`);
   }
@@ -2691,10 +2695,18 @@ function Stat({ v, l, kpi = "plain", icon, onClick, active }: {
  * ⚡ سطر عداد الكهرباء في خانة الوحدة (طلب مكتب، 6 أكتوبر 2026): رقم الحساب
  * ظاهرًا، وزرّ إشعار المستأجر بتسجيله باسمه، وتاريخ آخر إشعار — الإثبات أنه بُلِّغ.
  */
+/** الإشعار يخصّ المستأجر الحالي وعداده؟ (السجلات قبل v74b بلا اسم تُقبل) */
+function meterNoticeValid(t: Tenant): boolean {
+  if (!t.elec_notice_at) return false;
+  const nm = t.elec_notice_name, ac = t.elec_notice_account;
+  if (nm != null && nm !== String(t.name || "").trim()) return false;
+  if (ac != null && ac !== String(t.elec_account || "").trim()) return false;
+  return true;
+}
 function MeterLine({ t, onSend }: { t: Tenant; onSend?: () => void }) {
   const acc = String(t.elec_account || "").trim();
   if (!acc) return null;
-  const sent = t.elec_notice_at ? String(t.elec_notice_at).slice(0, 10) : null;
+  const sent = meterNoticeValid(t) ? String(t.elec_notice_at).slice(0, 10) : null;
   return (
     <div className="text-[11px] text-muted mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
       <span>⚡ عداد <bdi dir="ltr" className="tabular-nums">{acc}</bdi></span>

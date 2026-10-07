@@ -260,7 +260,9 @@ export function sandboxClient(store: SandboxStore) {
         const t = store.tenants.find((x) => x.id === args.p_tenant);
         if (!t) return { data: null, error: { message: "الوحدة غير موجودة" } };
         const at = new Date().toISOString();
-        t.elec_notice_at = at; t.elec_notice_count = (Number(t.elec_notice_count) || 0) + 1;
+        const same = (t.elec_notice_name ?? "") === String(t.name || "").trim() && (t.elec_notice_account ?? "") === String(t.elec_account || "").trim();
+        t.elec_notice_at = at; t.elec_notice_count = same ? (Number(t.elec_notice_count) || 0) + 1 : 1;
+        t.elec_notice_name = String(t.name || "").trim(); t.elec_notice_account = String(t.elec_account || "").trim();
         return { data: at, error: null };
       }
       if (fn === "watheq_my_office") return { data: [{ office: "demo-user", role: "owner", perms: {} }], error: null };
