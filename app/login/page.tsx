@@ -3,6 +3,7 @@ import { Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase-client";
 import { CHOSEN_SOURCES, isSignupSource, sourceFromReferrer, sourceLabel } from "@/lib/signup-sources";
+import { track, funnelSrc } from "@/lib/track";
 
 /**
  * تنظيف وجهة ما بعد الدخول.
@@ -66,8 +67,10 @@ function LoginInner() {
     else {
       /* لا `?src=` في الرابط: من وصل مباشرةً من بحث أو من تويتر يُعرف من
          `document.referrer`. القادم من watheqapp.com تعود فارغة — سكربت
-         الموقع هناك هو من يمرّر المصدر في الرابط. */
-      const inf = sourceFromReferrer(typeof document === "undefined" ? "" : document.referrer);
+         الموقع هناك هو من يمرّر المصدر في الرابط. وإن لم يُعرف من هذا ولا
+         ذاك، فمصدر الجلسة المحفوظ (من زار التجربة قادمًا من حراج ثم ضغط
+         «دخول» بلا معامل) خيرٌ من الفراغ. */
+      const inf = sourceFromReferrer(typeof document === "undefined" ? "" : document.referrer) || funnelSrc();
       if (isSignupSource(inf)) setInferred(inf);
     }
     if (searchParams.get("mode") === "signup") setMode("signup");
@@ -75,6 +78,9 @@ function LoginInner() {
     const err = searchParams.get("err");
     if (err) setError(err.includes("access_denied") ? "أُلغي الدخول بقوقل." : err);
   }, [searchParams]);
+
+  /* محطة القمع: ظهور نموذج إنشاء الحساب — مرة واحدة للجلسة (track يمنع التكرار) */
+  useEffect(() => { if (mode === "signup") track("signup_view"); }, [mode]);
 
   /**
    * ينقل مصدر التسجيل من بيانات الحساب إلى الملف الشخصي عند أول دخول.
@@ -102,6 +108,7 @@ function LoginInner() {
    */
   async function signInWithGoogle() {
     setError(null); setInfo(null); setGoogleLoading(true);
+    if (mode === "signup") track("signup_submit");
     try {
       const supabase = createClient();
       const { error } = await supabase.auth.signInWithOAuth({
@@ -150,6 +157,7 @@ function LoginInner() {
         return;
       }
       if (mode === "signup") {
+        track("signup_submit");
         const { data, error } = await supabase.auth.signUp({
           email, password,
           /* فارغ لا يعني «أرفض الذكر»: القائمة لا تحوي خيار التخطي أصلًا.

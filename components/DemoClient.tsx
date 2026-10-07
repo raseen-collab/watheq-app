@@ -6,6 +6,7 @@ import PropertyView from "@/components/PropertyView";
 import DemoGuide from "@/components/DemoGuide";
 import { buildDemo, demoPayments, setDemoPhone } from "@/lib/demo-data";
 import { sandboxClient, type SandboxStore } from "@/lib/sandbox-db";
+import { track, funnelSrc } from "@/lib/track";
 
 /** يبني المكتب التجريبي في الذاكرة بالشكل الذي تتوقّعه اللوحة */
 function buildStore(): { store: SandboxStore; properties: any[] } {
@@ -41,6 +42,11 @@ export default function DemoClient() {
   const { store, properties } = useMemo(buildStore, []);
   const db = useMemo(() => sandboxClient(store), [store]);
   const [joinOpen, setJoinOpen] = useState(false);
+  /* مصدر الزائر الأصلي (حراج، بحث…) يُمرَّر لصفحة التسجيل بدل «demo» الثابت:
+     كان كل من سجّل عبر التجربة يُنسب إلى «النسخة التجريبية» فتختفي القناة
+     التي جابته. فتح التجربة نفسه صار محطة مستقلة في القمع (demo_open). */
+  const [signupSrc, setSignupSrc] = useState("demo");
+  useEffect(() => { track("demo_open"); setSignupSrc(funnelSrc() || "demo"); }, []);
   /* أي دعوة للتسجيل من داخل اللوحة (زر «ابدأ ببياناتي» مثلًا) تفتح النافذة */
   useEffect(() => {
     const open = () => setJoinOpen(true);
@@ -97,7 +103,7 @@ export default function DemoClient() {
               ونجهّز حسابك كاملًا خلال يوم، بلا رسوم.
             </p>
             <div className="space-y-2">
-              <Link href="/login?mode=signup&src=demo" className="btn btn-gold w-full justify-center">أنشئ حسابي مجانًا</Link>
+              <Link href={`/login?mode=signup&src=${encodeURIComponent(signupSrc)}`} className="btn btn-gold w-full justify-center">أنشئ حسابي مجانًا</Link>
               <a className="btn btn-wa w-full justify-center"
                 href="https://wa.me/966596300591?text=%D8%A7%D9%84%D8%B3%D9%84%D8%A7%D9%85%20%D8%B9%D9%84%D9%8A%D9%83%D9%85%D8%8C%20%D8%AC%D8%B1%D9%91%D8%A8%D8%AA%20%D9%88%D8%AB%D9%8A%D9%82%20%D9%88%D8%A3%D8%A8%D8%BA%D9%89%20%D8%A3%D8%AC%D9%87%D9%91%D8%B2%20%D8%AD%D8%B3%D8%A7%D8%A8%D9%8A"
                 target="_blank" rel="noreferrer">💬 جهّزوا لي حسابي</a>

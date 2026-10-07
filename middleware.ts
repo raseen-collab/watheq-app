@@ -43,6 +43,13 @@ export async function middleware(request: NextRequest) {
     url.pathname = "/login";
     url.search = "";
     url.searchParams.set("next", path);
+    /* مصدر الزائر ومعرّف جلسة القمع يعبران التحويل — كانت أزرار «ابدأ مجانًا»
+       في الموقع تفتح جذر التطبيق فيضيع ?src= هنا ويُسجَّل الحساب بلا قناة.
+       بنمط صارم: لا يُنقل نص حر إلى صفحة الدخول. */
+    const src = request.nextUrl.searchParams.get("src");
+    const wv = request.nextUrl.searchParams.get("wv");
+    if (src && /^[a-z]{2,20}$/.test(src)) url.searchParams.set("src", src);
+    if (wv && /^[A-Za-z0-9]{10,40}$/.test(wv)) url.searchParams.set("wv", wv);
     return redirectTo(url);
   }
   if (isLogin && user) {
