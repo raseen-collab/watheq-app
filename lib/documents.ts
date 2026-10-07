@@ -2,7 +2,7 @@ import { contractState, buildSchedule, freqLabel, splitVat, settleDeposit, vacan
 import { complianceState, brokerageEnd, expectedCommission, UI_LEGAL, LEGAL_DISCLAIMER, DEFAULT_COMMISSION_PCT, type ComplianceItem } from "./compliance";
 import { KIND_META as L_KIND, OFFER_LABEL, STATUS_META, freshness, pricePerMeter, shortDesc, sortListings, summarize, STALE_DAYS, type Listing } from "./listings";
 import { ownerNet, sumByCategory, catLabel, sumAllExpenses, sumDue, isBillable, PAID_BY, type ExpenseRow } from "./expenses";
-import { unitLabel, typeLabel } from "./domain";
+import { unitLabel, typeLabel, unitWordFor } from "./domain";
 import { hijriText, hijriShort } from "@/lib/hijri";
 import { annualRentRoll } from "./income";
 import { defaultTermPeriods } from "./contracts";
@@ -314,6 +314,7 @@ const SHELL = (title: string, inner: string, mark: Mark = "none") => {
 const SHELL_RAW = (title: string, inner: string, mark: Mark = "none") => `<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8">
 <meta http-equiv="Content-Security-Policy" content="${NONCE_MARK}">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&display=swap">
 <title>${title}</title>
 <style>
   @page{size:A4;margin:14mm}
@@ -714,7 +715,7 @@ export function statementHTML(t: Tenant, p: Property, issuer: Issuer = {}, payme
   const shownPays = visiblePayments(payments as any[]);
   const st = contractState(t, winOf(p, issuer));
   const rows = buildSchedule(t);
-  const ul = unitLabel(p.property_type);
+  const ul = unitWordFor((t as any).unit_type, p.property_type);
   const who = issuer.billing_name || issuer.org_name || p.manager || "إدارة الأملاك";
   const v = vatOf(p, t);
   const unit = splitVat(Number(t.rent_amount) || 0, v);      // تفصيل الدفعة الواحدة
@@ -894,7 +895,7 @@ export function invoiceHTML(
   p = scrub(p);
   inv = scrub(inv);
   issuer = scrub(issuer);
-  const ul = unitLabel(p.property_type);
+  const ul = unitWordFor((t as any).unit_type, p.property_type);
   const who = issuer.billing_name || issuer.org_name || p.manager || "إدارة الأملاك";
   const v = vatOf(p, t);
   const x = splitVat(Number(inv.amount) || 0, v);
@@ -1023,7 +1024,7 @@ export function quotationHTML(p: Property, q: QuoteInput, issuer: Issuer = {}) {
   p = scrub(p);
   q = scrub(q);
   issuer = scrub(issuer);
-  const ul = unitLabel(p.property_type);
+  const ul = unitWordFor((q as any).unit_type, p.property_type);
   const who = issuer.billing_name || issuer.org_name || p.manager || "إدارة الأملاك";
   const v = vatOf(p, { unit_type: q.unit_type, vat_mode: q.vat_mode });
   const periods = Math.max(1, Number(q.contract_periods) || 1);
@@ -1957,7 +1958,7 @@ export function moveOutSettlementHTML(
   p = scrub(p);
   issuer = scrub(issuer);
   const st = contractState(t as any, winOf(p, issuer));
-  const ul = unitLabel(p.property_type);
+  const ul = unitWordFor((t as any).unit_type, p.property_type);
   const who = issuer.billing_name || issuer.org_name || p.manager || "إدارة الأملاك";
   /* كل ما على المستأجر — متأخر المدة شاملًا الضريبة المضافة + الدين المرحَّل
      (مراجعة 29 سبتمبر 2026). كان متأخر المدة وحده قبل الضريبة. */

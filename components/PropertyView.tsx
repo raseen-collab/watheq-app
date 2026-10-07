@@ -17,7 +17,7 @@ import { sar, waLink, today, WATHEQ_WA, openExternal, daysAr, countAr, normalize
 import { endNoticeText, meterNoticeText } from "@/lib/tenant-messages";
 import { contractState, expectedNext12, buildSchedule, FREQUENCIES, freqLabel, freqShort, derivedEndDate, renewContract, needsRenewal, applyPayment, splitVat, isCommercial, isVacant, settleDeposit, unitVatApplies,
   vacancyDays, TURNOVER_CHECKLIST, defaultTermPeriods, parseDate, dueWithVat, rentWithVat, withVat, unitVat, firstDueGap, type Frequency } from "@/lib/contracts";
-import { PROPERTY_TYPES, typeLabel, unitLabel, typeIcon } from "@/lib/domain";
+import { PROPERTY_TYPES, typeLabel, unitLabel, typeIcon, unitWordFor } from "@/lib/domain";
 import { statementHTML, invoiceHTML, propertyStatementHTML, moveOutSettlementHTML, quotationHTML, ownerReportHTML, DEFAULT_CHARGES, openDoc, type ChargeRow, type OwnerReportPayment } from "@/lib/documents";
 import OwnerStatementModal from "@/components/OwnerStatementModal";
 import ActivityLog from "@/components/ActivityLog";
@@ -1463,7 +1463,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
        تكتب فيه مكاتب اسم المالك، فتصل مطالبة المكتب موقّعة باسم المالك.
        البوت أُصلح بهذا سابقًا (lib/reports.ts: signer) وبقيت هذه الرسالة. */
     const who = (issuer as any)?.billing_name || orgName || active.manager || "إدارة الأملاك";
-    const ul = unitLabel(active.property_type);
+    const ul = unitWordFor(t.unit_type, active.property_type);
     const unit = `${ul} (${t.unit || "—"})`;
     const v = { enabled: !!active.vat_enabled, rate: Number(active.vat_rate) || 15, inclusive: active.vat_inclusive !== false };
     const vUnit = active && unitVatApplies(t, active) ? v : { ...v, enabled: false };
@@ -1535,7 +1535,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
     return waLink(t.phone, endNoticeText({
       mode: "end",
       tenantName: t.name || "",
-      unitText: `${unitLabel(active.property_type)} (${t.unit || "—"})`,
+      unitText: `${unitWordFor(t.unit_type, active.property_type)} (${t.unit || "—"})`,
       propertyName: active.name,
       endDate: st.endDate, daysToEnd: st.daysToEnd,
       hijri: t.calendar === "hijri",
@@ -1558,7 +1558,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
     /* يُفتح واتساب أولًا وبنقرة المستخدم نفسها — بعد انتظار الشبكة يحجبه المتصفح */
     openExternal(waLink(t.phone, meterNoticeText({
       tenantName: t.name || "",
-      unitText: `${unitLabel(active.property_type)} (${t.unit || "—"})`,
+      unitText: `${unitWordFor(t.unit_type, active.property_type)} (${t.unit || "—"})`,
       propertyName: active.name,
       account: String(t.elec_account || "").trim(),
       days: 7, signer: who,
@@ -1585,7 +1585,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
     if (!active) return;
     const st = contractState(t, { graceDays: Number(active?.grace_days) || 0, ...windowsOf(active) });
     const who = (issuer as any)?.billing_name || orgName || active.manager || "إدارة الأملاك";
-    const ul = unitLabel(active.property_type);
+    const ul = unitWordFor(t.unit_type, active.property_type);
     const v = { enabled: !!active.vat_enabled, rate: Number(active.vat_rate) || 15, inclusive: active.vat_inclusive !== false };
     const one = splitVat(Number(t.rent_amount) || 0, active && unitVatApplies(t, active) ? v : { ...v, enabled: false });
     const totalDue = splitVat(st.amountDue, active && unitVatApplies(t, active) ? v : { ...v, enabled: false });
@@ -4274,7 +4274,15 @@ function QuoteModal({ property, unitWord, issuer, onClose }: {
         <Field label="دورة السداد">
           <div className="grid grid-cols-3 gap-2">
             {FREQUENCIES.map((f) => (
-              <button key={f.value} type="button" onClick={() => setD({ ...d, payment_frequency: f.value })}
+              <button key={f.value} type="button" onClick={() => {
+                /* المدة محفوظة كعدد دفعات، فتغيير الدورة وحده كان يغيّر المدة بصمت:
+                   «سنة» ثم «كل 6 أشهر» = دفعة واحدة = عرض بنصف القيمة. نثبّت المدة
+                   بالأشهر ونعيد حساب العدد — كنموذج الوحدة. */
+                const PY: Record<string, number> = { daily: 365, weekly: 52, monthly: 12, quarterly: 4, trimester: 3, semiannual: 2, annual: 1 };
+                const oldPY = PY[d.payment_frequency || "monthly"] || 12, newPY = PY[f.value] || 12;
+                const months = (Number(d.contract_periods) || 1) * 12 / oldPY;
+                setD({ ...d, payment_frequency: f.value, contract_periods: Math.max(1, Math.round(months * newPY / 12)) });
+              }}
                 className={`border-2 rounded-lg py-2 text-xs font-semibold transition ${
                   d.payment_frequency === f.value ? "border-gold bg-[#FBF1DF]" : "border-line hover:border-goldSoft"}`}>
                 {f.label}

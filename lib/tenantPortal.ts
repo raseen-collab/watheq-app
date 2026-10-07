@@ -10,7 +10,7 @@ import { REQUEST_CATEGORIES, TENANT_REQUEST_STATUS_AR, requestCatAr, requestLocA
 import { contractState, splitVat, unitVatApplies, freqLabel } from "./contracts";
 import { statusWindows } from "./contract-state";
 import { visiblePayments } from "./documents";
-import { unitLabel } from "./domain";
+import { unitLabel, unitWordFor } from "./domain";
 import { waNumber } from "./utils";
 
 export type TenantPortalData = {
@@ -86,7 +86,7 @@ function reqSteps(r: TenantPortalData["requests"][number]): string {
 export function renderTenantPage(d: TenantPortalData, opts: { nonce: string; base: string; flash?: string | null }): string {
   const t = d.tenant, p = d.property, o = d.office || {};
   const base = opts.base;
-  const ul = unitLabel(p.property_type);
+  const ul = unitWordFor((t as any).unit_type, p.property_type);
   const f = tenantFigures(d);
   const st = f.st;
   const org = String(o.billing_name || o.org_name || "").trim();

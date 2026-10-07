@@ -15,6 +15,21 @@ export const typeLabel = (t?: string | null) =>
 export const unitLabel = (t?: string | null) =>
   PROPERTY_TYPES.find((x) => x.value === t)?.unitLabel ?? "وحدة";
 
+/**
+ * اسم الوحدة لمستأجر بعينه (7 أكتوبر 2026).
+ *
+ * في العمارة المختلطة (شقق ومحلات) كان كل مستند ورسالة لمستأجر يأخذ اسم
+ * الوحدة من نوع العقار، فوصل لمستأجر المحل «شاغل شقة رقم (م2)» في خطاب
+ * المطالبة وكشف الحساب والفاتورة — بينما سطر «الوحدة» في المستند نفسه يقول
+ * «محل رقم (م2)». نوع الوحدة إن حُدِّد أولى، وإلا فنوع العقار كما كان.
+ */
+const UNIT_TYPE_WORD: Record<string, string> = {
+  apartment: "شقة", annex: "شقة ملحق", studio: "استديو", room: "غرفة", shop: "محل",
+  office: "مكتب", warehouse: "مستودع", land: "أرض", villa: "فيلا",
+};
+export const unitWordFor = (unitType?: string | null, propertyType?: string | null) =>
+  (unitType && UNIT_TYPE_WORD[unitType]) || unitLabel(propertyType);
+
 export const typeIcon = (t?: string | null) =>
   PROPERTY_TYPES.find((x) => x.value === t)?.icon ?? "🏢";
 
