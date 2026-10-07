@@ -1,4 +1,5 @@
 "use client";
+import { friendlyError } from "@/lib/friendlyError";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase-client";
@@ -112,7 +113,7 @@ export default function OnboardingPage() {
       saved = ins.data; error = ins.error;
     }
 
-    if (error) { setError(error.message); setSaving(false); return; }
+    if (error) { console.error("Watheq onboarding error:", error); setError(friendlyError(error)); setSaving(false); return; }
     if (!saved?.account_type) {
       setError("لم يُحفظ نوع الحساب. حدّث الصفحة وحاول مرة أخرى، وإن تكرر راسلنا على watheqdocs@gmail.com");
       setSaving(false);

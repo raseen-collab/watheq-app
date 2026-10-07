@@ -1,4 +1,5 @@
 "use client";
+import { friendlyError } from "@/lib/friendlyError";
 import { LIMIT_MSG, atLimit, type LimitsWire } from "@/lib/entitlements";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -214,7 +215,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
     } catch { /* */ }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  const [modal, setModal] = useState<null | { kind: "newProp" | "editProp" | "tenant"; id?: string }>(null);
+  const [modal, setModal] = useState<null | { kind: "newProp" | "editProp" | "tenant" | "afterProp"; id?: string }>(null);
   const [quoteOpen, setQuoteOpen] = useState(false);
   // ⚖️ التزامات المكتب: تُدار محليًّا وتُزامَن مع بيانات السيرفر عند كل refresh
   const [ownerStmtOpen, setOwnerStmtOpen] = useState(false);
@@ -715,6 +716,17 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
    * غيّر الاسم ونسي الجوال أرسل تذكيرات الجديد إلى جوال السابق.
    */
   function reLet(t: Tenant) {
+    /* v78: وحدة شاغرة لم تُؤجَّر قط (أُنشئت شاغرة، بلا عقد ولا دفعات): لا سابق
+       يُؤرشف ولا دين يُسأل عنه — تُملأ مباشرة بنموذج المستأجر الجديد كاملًا، بسؤال
+       «ساكن الآن؟» و«مسدَّد حتى». كانت تمرّ بالأرشفة فيظهر «شاغرة» مستأجرًا سابقًا،
+       ويُفتح النموذج بلا سؤال السكن فيُسجَّل الساكن منذ سنة عقدًا يبدأ اليوم. */
+    if (isVacant(t) && !t.contract_start && !(Number(t.paid_periods) > 0) && !(Number((t as any).carried_debt) > 0)) {
+      setModal({ kind: "tenant", id: t.id, preset: {
+        _fill: true, name: "", phone: "", national_id: "", status: "active", move_out_date: null,
+        contract_start: today(), paid_periods: 0, partial_amount: 0,
+      } } as any);
+      return;
+    }
     const st = contractState(t, { graceDays: Number(active?.grace_days) || 0, ...windowsOf(active) });
     /* (30 سبتمبر 2026) تاريخ إخلاء غير صالح يجعل المتأخر تقديرًا — لا يُؤرشف دين على تقدير */
     if (st.incomplete && isVacant(t)) {
@@ -803,7 +815,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
     };
     if (id) {
       const { data: _u1, error } = await supabase.from("properties").update(payload).eq("id", id).select("id");
-      if (error) { console.error("Watheq save error:", error); return notify("err", error.message); }
+      if (error) { console.error("Watheq save error:", error); return notify("err", friendlyError(error)); }
       if (!_u1 || _u1.length === 0) return notify("err", "هذا الإجراء يحتاج صلاحية أعلى — اطلبه من صاحب المكتب.");
       setItems(items.map((p) => (p.id === id ? { ...p, ...payload } as Property : p)));
     } else {
@@ -811,11 +823,49 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       if (!uid) return notify("err", "انتهت الجلسة — أعد تسجيل الدخول ثم حاول مرة أخرى.");
       const { data, error } = await supabase.from("properties")
         .insert({ ...payload, collected: 0, user_id: uid }).select("*").single();
-      if (error) { console.error("Watheq save error:", error); return notify("err", error.message); }
+      if (error) { console.error("Watheq save error:", error); return notify("err", friendlyError(error)); }
       const next = { ...(data as any), tenants: [], property_notes: [] };
       setItems([next, ...items]); setActiveId(next.id);
+      /* v78: عقار جديد ⇒ الخطوة التالية أمامه مباشرة. كان النموذج يُغلق بلا كلمة،
+         فيرى «لا توجد وحدات بعد» ولا يعرف أنه في الخطوة ٢ من ٣ — مستخدمان
+         وقفا عند «عقار · 0 وحدة». */
+      setModal({ kind: "afterProp", id: next.id });
+      return;
     }
     setModal(null);
+  }
+
+  /**
+   * إنشاء وحدات شاغرة دفعة واحدة (v78).
+   *
+   * عمارة 20 شقة كانت تعني 20 نموذجًا كاملًا قبل أن يرى المكتب شيئًا. هنا:
+   * عدد + أول رقم + إيجار معتاد ⇒ صفوف «شاغرة» مرقّمة، ثم يؤجّر كل وحدة
+   * بزر «إعادة تأجير» حين يصل لها. الشاغرة نفسها نمط قائم (مربع «الوحدة
+   * شاغرة») — لا عمود ولا دالة جديدة.
+   */
+  async function bulkVacant(count: number, startNo: number, rent: number, prefix: string) {
+    if (!active) return false;
+    if (limits?.readOnly) { notify("err", LIMIT_MSG.readOnly); return false; }
+    const n = Math.max(1, Math.min(200, Math.floor(count) || 0));
+    const first = Math.max(0, Math.floor(startNo) || 1);
+    const taken = new Set(active.tenants.map((t) => String(t.unit || "").trim()));
+    const pre = String(prefix || "").trim().slice(0, 10);
+    const rows = Array.from({ length: n }, (_, i) => `${pre}${first + i}`)
+      .filter((u) => !taken.has(u))
+      .map((u) => ({
+        property_id: active.id, name: "شاغرة", unit: u, status: "vacated", move_out_date: today(),
+        rent_amount: Math.max(0, Number(rent) || 0), payment_frequency: "monthly",
+        paid_periods: 0, partial_amount: 0, contract_start: null, calendar: "gregorian", vat_mode: "auto",
+      }));
+    if (!rows.length) { notify("err", "كل هذه الأرقام موجودة من قبل في العقار."); return false; }
+    const { data, error } = await supabase.from("tenants").insert(rows).select("*");
+    if (error) { console.error("Watheq bulk vacant error:", error); notify("err", friendlyError(error)); return false; }
+    const added = (Array.isArray(data) ? data : []) as Tenant[];
+    setItems(items.map((p) => (p.id === active.id ? { ...p, tenants: [...p.tenants, ...added] } : p)));
+    notify("ok", `أُنشئت ${added.length} ${added.length === 1 ? "وحدة شاغرة" : "وحدات شاغرة"}`
+      + (rows.length < n ? ` (تُركت ${n - rows.length} رقمًا موجودًا من قبل)` : "")
+      + " — اضغط «🔑 تأجير» على كل وحدة لتسجيل مستأجرها.");
+    return true;
   }
 
   async function deleteProperty() {
@@ -1040,7 +1090,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       /* إعادة التأجير طريقها زرّ «إعادة تأجير» وحده. كان أي حفظ لوحدة شاغرة
          يُعدّ إعادة تأجير: «تعديل البيانات» لتصحيح رقم عدّاد مثلًا يُعيد
          المستأجر الذي غادر «مؤجّرًا» بعدّاد صفر — فيبدو مطالَبًا بالعقد كله. */
-      if (reletting && payload.status === "active") {
+      if (reletting && payload.status === "active" && !(d as any)._fill) {
         return fail("لتأجير الوحدة لمستأجر جديد استعمل «إعادة تأجير» من قائمة الوحدة — تحفظ المستأجر السابق ودينه ودفعاته. والتعديل هنا يُبقي الوحدة شاغرة.");
       }
       /* تعديل ينقل البداية للأمام ويصفّر المسدَّد وعلى المدة متأخرات: يُحفظ تصحيحًا
@@ -1685,26 +1735,22 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
         </div>
 
         {/**
-          * الزائر من إعلان لا وقت عنده ليدخل بياناته ليرى شيئًا — فيغادر أمام
-          * لوحة فارغة. البيانات التجريبية تعطيه مكتبًا حيًّا في ثلاث ثوانٍ:
-          * خمسة عقارات وثمانون وحدة بكل الحالات، تُحذف بضغطة أو تلقائيًّا
-          * حين يضيف أول عقار حقيقي.
+          * v78 (7 أكتوبر 2026): الزر الأساسي «إضافة عقار» لا «التجربة».
+          *
+          * كان الزر الذهبي العريض «جرّب ببيانات تجريبية» و«إضافة عقار» رماديًّا
+          * صغيرًا تحته — فاثنان من أربعة توقّفوا بعد الترحيب شغّلوا المكتب
+          * التجريبي وخرجوا بلا عقار حقيقي. التجربة باقية، لكنها خيار ثانوي.
           */}
-        <div className="bg-[#FBF1DF] border border-goldSoft rounded-xl p-4 mb-4 text-right">
-          <div className="font-semibold text-deep text-sm mb-1">🎯 تبغى تشوفها تشتغل قبل ما تدخل بياناتك؟</div>
-          <p className="text-xs text-muted mb-3 leading-relaxed">
-            نجهّز لك مكتبًا تجريبيًّا: 5 عقارات و80 وحدة بحالات حقيقية — متأخرون ومنتظمون وشواغر
-            وتقارير مُلّاك ومصروفات. تتجوّل فيه، وتحذفه بضغطة وتبدأ ببياناتك.
-          </p>
-          <button className="btn btn-gold w-full justify-center" disabled={seeding} onClick={seedDemo}>
-            {seeding ? "جارٍ التجهيز…" : "🚀 جرّب ببيانات تجريبية"}
+        <button className="btn btn-gold w-full justify-center text-base py-3 mb-3" onClick={openNewProperty}>+ أضف عقارك الأول</button>
+        <div className="flex gap-2 justify-center flex-wrap mb-1">
+          <Link href="/dashboard/property/import" className="btn btn-ghost text-sm">رفع من ملف Excel</Link>
+          <button className="btn btn-ghost text-sm" disabled={seeding} onClick={seedDemo}>
+            {seeding ? "جارٍ التجهيز…" : "🎯 جرّب ببيانات تجريبية أولًا"}
           </button>
         </div>
-
-        <div className="flex gap-2 justify-center flex-wrap">
-          <button className="btn btn-ghost" onClick={openNewProperty}>+ إضافة عقار</button>
-          <Link href="/dashboard/property/import" className="btn btn-ghost">رفع من ملف Excel</Link>
-        </div>
+        <p className="text-[11.5px] text-muted mb-1 leading-relaxed">
+          التجريبية: 5 عقارات و80 وحدة بحالات حقيقية تتجوّل فيها، وتنحذف بضغطة أو تلقائيًّا حين تضيف عقارك.
+        </p>
 
         {/* أقوى عرض عندنا — وكان غائبًا عن أهم شاشة في المنتج */}
         <div className="bg-paper border border-line rounded-xl p-3 mt-5 text-sm text-right">
@@ -2179,7 +2225,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                               {key === "vacant" ? (
                                 <>
                                   <div className="text-muted">— شاغرة —</div>
-                                  {t.name && <div className="text-[11px] text-muted">آخر مستأجر: {t.name}</div>}
+                                  {t.name && !(t.name === "شاغرة" && !t.contract_start) && <div className="text-[11px] text-muted">آخر مستأجر: {t.name}</div>}
                                 </>
                               ) : null}
                               <div className={`font-medium ${key === "vacant" ? "hidden" : ""}`}>{t.name}{msgCount[t.id] > 0 && <span className="ms-1 text-[10px] bg-deep text-goldSoft rounded-full px-1.5 py-0.5" title="رسائل الفريق على هذه الوحدة">💬 {msgCount[t.id]}</span>}</div>
@@ -2577,6 +2623,12 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       {modal?.kind === "editProp" && active && (
         <PropertyModal open initial={active} orgName={orgName} ownerNames={ownerNames} officeSoon={officeSoon} officeImminent={officeImminent} officeExpiring={officeExpiring}
           onClose={() => setModal(null)} onSubmit={(d) => saveProperty(d, active.id)} onDelete={deleteProperty} />
+      )}
+      {modal?.kind === "afterProp" && active && active.id === modal.id && (
+        <AfterPropModal propertyName={active.name} unitWord={ul} demo={demo}
+          onAddUnit={() => setModal({ kind: "tenant" })}
+          onBulk={async (n, start, rent, prefix) => { const ok = await bulkVacant(n, start, rent, prefix); if (ok) setModal(null); }}
+          onClose={() => setModal(null)} />
       )}
       {modal?.kind === "tenant" && (
         <TenantModal open initial={editing} unitWord={ul} error={saveErr} saving={saving} vatEnabled={!!active?.vat_enabled} property={active} payInfo={editPayInfo}
@@ -3458,9 +3510,13 @@ function MetersEditor({ value, onChange }: { value: PropertyMeter[] | null | und
 
 function PropertyModal({ open, initial, orgName, ownerNames = [], officeSoon = 10, officeImminent = 5, officeExpiring = 60, onClose, onSubmit, onDelete }: {
   open: boolean; initial?: Property; orgName: string; ownerNames?: string[]; officeSoon?: number; officeImminent?: number; officeExpiring?: number; onClose: () => void;
-  onSubmit: (d: any) => void; onDelete?: () => void;
+  onSubmit: (d: any) => void | Promise<void>; onDelete?: () => void;
 }) {
   const [d, setD] = useState<any>(initial || { property_type: "residential", manager: orgName });
+  /* v78: ضغطتان سريعتان على «حفظ» كانتا تُنشئان عقارين — الزر يتعطّل حتى ينتهي الحفظ */
+  const [busy, setBusy] = useState(false);
+  /* الحالة تتأخر رسمةً واحدة — ضغطتان في اللحظة نفسها تريان busy=false كلتاهما. المرجع فوري. */
+  const busyRef = useRef(false);
   if (!open) return null;
   return (
     <Shell onClose={onClose}>
@@ -3574,10 +3630,10 @@ function PropertyModal({ open, initial, orgName, ownerNames = [], officeSoon = 1
       </div>
       <div className="flex gap-2 mt-6">
         <button type="button" className="btn btn-ghost flex-1 justify-center" onClick={onClose}>إلغاء</button>
-        <button type="button" className="btn btn-gold flex-1 justify-center" disabled={!(d.name || "").trim()}
+        <button type="button" className="btn btn-gold flex-1 justify-center" disabled={!(d.name || "").trim() || busy}
           title={!(d.name || "").trim() ? "أدخل اسم العقار أولًا" : "حفظ"}
           style={!(d.name || "").trim() ? { opacity: .5, cursor: "not-allowed" } : undefined}
-          onClick={() => onSubmit(d)}>حفظ</button>
+          onClick={async () => { if (busyRef.current) return; busyRef.current = true; setBusy(true); try { await onSubmit(d); } finally { busyRef.current = false; setBusy(false); } }}>{busy ? "جارٍ الحفظ…" : "حفظ"}</button>
       </div>
       {!(d.name || "").trim() && <p className="text-xs text-late mt-3 text-center">اسم العقار مطلوب لتفعيل الحفظ.</p>}
       {/* كان رابطًا أحمر ملاصقًا لزرّي حفظ وإلغاء بلا فاصل — وحذف العقار
@@ -3595,6 +3651,65 @@ function PropertyModal({ open, initial, orgName, ownerNames = [], officeSoon = 1
           </button>
         </div>
       )}
+    </Shell>
+  );
+}
+
+/**
+ * الخطوة ٢ من ٣ بعد إضافة العقار (v78).
+ *
+ * ثلاثة طرق للوحدات بحسب حال المكتب: وحدة بمستأجرها الآن، أو ملف Excel
+ * لمن عنده قائمة، أو «عمارة جديدة/فاضية» تُنشأ وحداتها مرقّمة دفعة واحدة.
+ */
+function AfterPropModal({ propertyName, unitWord, demo, onAddUnit, onBulk, onClose }: {
+  propertyName: string; unitWord: string; demo?: boolean;
+  onAddUnit: () => void; onBulk: (count: number, start: number, rent: number, prefix: string) => Promise<void>; onClose: () => void;
+}) {
+  const [bulkOpen, setBulkOpen] = useState(false);
+  const [count, setCount] = useState("10");
+  const [start, setStart] = useState("101");
+  const [prefix, setPrefix] = useState("");
+  const [rent, setRent] = useState("");
+  const [busy, setBusy] = useState(false);
+  const busyRef = useRef(false);
+  const n = Math.floor(Number(count) || 0), first = Math.floor(Number(start) || 0);
+  const valid = n >= 1 && n <= 200 && first >= 0;
+  return (
+    <Shell onClose={onClose}>
+      <div className="text-center">
+        <div className="text-3xl mb-1">✅</div>
+        <h2 className="font-display font-bold text-deep text-xl">أُضيف «{propertyName}»</h2>
+        <p className="text-muted text-sm mt-1">الخطوة ٢ من ٣: أدخل {unitWord === "شقة" ? "شققه" : "وحداته"} — ثم سجّل أول دفعة.</p>
+      </div>
+      <div className="flex flex-col gap-2 mt-5">
+        <button type="button" className="btn btn-gold w-full justify-center py-3" onClick={onAddUnit}>+ أضف أول {unitWord} بمستأجرها</button>
+        <Link href="/dashboard/property/import" className="btn btn-ghost w-full justify-center"
+          onClick={(e) => { if (demo) { e.preventDefault(); onClose(); } }}>عندك قائمة؟ ارفعها من Excel دفعة واحدة</Link>
+        <button type="button" className="btn btn-ghost w-full justify-center" onClick={() => setBulkOpen(!bulkOpen)} aria-expanded={bulkOpen}>
+          {bulkOpen ? "▾" : "◂"} عمارة جديدة أو وحدات فاضية؟ أنشئها مرقّمة مرة وحدة
+        </button>
+      </div>
+      {bulkOpen && (
+        <div className="border border-line rounded-xl p-3 mt-3 bg-paper text-right">
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="كم وحدة؟"><input className="fld" type="number" min={1} max={200} value={count} onChange={(e) => setCount(e.target.value)} /></Field>
+            <Field label="أول رقم"><input className="fld" type="number" min={0} value={start} onChange={(e) => setStart(e.target.value)} /></Field>
+            <Field label="بادئة (اختياري)" hint="مثل: م للمحلات ← م1، م2"><input className="fld" maxLength={10} value={prefix} onChange={(e) => setPrefix(e.target.value)} /></Field>
+            <Field label="الإيجار المعتاد (ريال)" hint="اختياري — يُعدَّل لكل وحدة"><input className="fld" type="number" min={0} value={rent} onChange={(e) => setRent(e.target.value)} placeholder="2500" /></Field>
+          </div>
+          {valid && (
+            <p className="text-[12px] text-muted mt-2 leading-relaxed">
+              تُنشأ {n} {n === 1 ? "وحدة" : "وحدات"} شاغرة: {prefix.trim()}{first}{n > 1 ? ` … ${prefix.trim()}${first + n - 1}` : ""}.
+              بعدها اضغط «🔑 تأجير» على كل وحدة لتسجيل مستأجرها حين تصل لها.
+            </p>
+          )}
+          <button type="button" className="btn btn-gold w-full justify-center mt-3" disabled={!valid || busy}
+            onClick={async () => { if (busyRef.current) return; busyRef.current = true; setBusy(true); try { await onBulk(n, first, Number(rent) || 0, prefix); } finally { busyRef.current = false; setBusy(false); } }}>
+            {busy ? "جارٍ الإنشاء…" : valid ? `أنشئ ${n} ${n === 1 ? "وحدة" : "وحدات"}` : "أدخل عددًا من 1 إلى 200"}
+          </button>
+        </div>
+      )}
+      <button type="button" className="text-sm text-muted underline underline-offset-4 mt-4 w-full" onClick={onClose}>لاحقًا</button>
     </Shell>
   );
 }
@@ -3643,7 +3758,15 @@ function TenantModal({ open, initial, unitWord, error, saving, onClose, onSubmit
    * والكشف يقول «المسدَّد 0» لمستأجر منتظم منذ أشهر.
    */
   const startISO = String(d.contract_start || "").slice(0, 10);
-  const askOcc = !initial && String(d.status) !== "vacated";
+  /* v78: «تأجير» وحدة أُنشئت شاغرة ولم تُؤجَّر قط = إضافة مستأجر جديد فعليًّا */
+  const isFill = !!(initial as any)?._fill;
+  const isNew = !initial || isFill;
+  const askOcc = isNew && String(d.status) !== "vacated";
+  /* v78: الإيجار شرط للوحدة المؤجّرة الجديدة — كانت تُحفظ «0 / شهر» بصمت ثم يرفض ✔ */
+  const rentMissing = isNew && String(d.status) !== "vacated" && !(Number(d.rent_amount) > 0);
+  /* v78: «مسدَّد حتى» اختيار صريح للساكن الحالي — كان الافتراضي «لم يدفع» فيظهر
+     مستأجر منتظم منذ مارس متأخرًا 20,000 ريال لمن لم ينتبه للخانة */
+  const paidUnpicked = askOcc && occ === "current" && !d._paidPicked;
   const futureStartQ = !!startISO && startISO > today() && !(Number(d.paid_periods) > 0)
     && String(d.status) !== "vacated" && !startIsNew && !askOcc;
   const startTooLate = askOcc && occ === "current" && !!startISO && startISO > today();
@@ -3657,7 +3780,7 @@ function TenantModal({ open, initial, unitWord, error, saving, onClose, onSubmit
   const totalValue = (Number(d.rent_amount) || 0) * (Number(d.contract_periods) || defPeriods);
   return (
     <Shell onClose={onClose}>
-      <h2 className="font-display font-bold text-deep text-xl mb-1">{initial ? "تعديل الوحدة" : `${unitWord} جديدة`}</h2>
+      <h2 className="font-display font-bold text-deep text-xl mb-1">{isFill ? `تأجير ${unitWord} ${initial?.unit || ""}`.trim() : initial ? "تعديل الوحدة" : `${unitWord} جديدة`}</h2>
       {/**
         * وحدة شاغرة بلا مستأجر.
         *
@@ -3701,7 +3824,7 @@ function TenantModal({ open, initial, unitWord, error, saving, onClose, onSubmit
           <Field label={`رقم ${unitWord}`}><input className="fld" value={d.unit || ""} onChange={(e) => setD({ ...d, unit: e.target.value })} placeholder="101" /></Field>
         </div>
         <div className="grid grid-cols-2 gap-3">
-          <Field label="قيمة الدفعة (ريال)" hint={(() => {
+          <Field label={isNew && String(d.status) !== "vacated" ? "قيمة الدفعة (ريال) *" : "قيمة الدفعة (ريال)"} hint={(() => {
             const st = ({ monthly: 1, quarterly: 3, trimester: 4, semiannual: 6, annual: 12 } as any)[d.payment_frequency || "monthly"];
             const r = Number(d.rent_amount) || 0;
             return r > 0 && st ? `= ${sar(Math.round(r * 12 / st))} سنويًّا` : undefined;
@@ -3820,12 +3943,13 @@ function TenantModal({ open, initial, unitWord, error, saving, onClose, onSubmit
           </div>
         ) : (
         <Field label="مسدَّد حتى: آخر دفعة دفعها المستأجر"
-          hint={initial
+          hint={initial && !isFill
             ? "لتصحيح خطأ فقط. الدفعة الجديدة تُسجَّل بزر ✔ «استلام» وتظهر هنا تلقائيًّا"
             : "اختر تاريخ آخر دفعة دفعها، ولو كانت قبل أن تبدأ مع وثيق — ووثيق يحسب منها القادمة والمتأخرة"}>
           {sched.length > 0 ? (
-            <select className="fld" value={String(Number(d.paid_periods) || 0)}
-              onChange={(e) => setD({ ...d, paid_periods: Number(e.target.value) })}>
+            <select className={`fld ${paidUnpicked ? "border-late" : ""}`} value={paidUnpicked ? "" : String(Number(d.paid_periods) || 0)}
+              onChange={(e) => setD({ ...d, paid_periods: Number(e.target.value), _paidPicked: true })}>
+              {paidUnpicked && <option value="" disabled>— اختر آخر دفعة دفعها —</option>}
               <option value="0">لم يدفع أي دفعة من هذا العقد</option>
               {sched.map((x) => {
                 const ORD = ["الأولى", "الثانية", "الثالثة", "الرابعة", "الخامسة", "السادسة", "السابعة", "الثامنة", "التاسعة", "العاشرة", "الحادية عشرة", "الثانية عشرة"];
@@ -3988,6 +4112,8 @@ function TenantModal({ open, initial, unitWord, error, saving, onClose, onSubmit
             ? { opacity: .5, cursor: "not-allowed" } : undefined}
           onClick={() => {
             if (askOcc && !occ) { setLocalErr("اختر أولًا: المستأجر ساكن في الوحدة الآن، أم عقد جديد لم يبدأ؟"); return; }
+            if (rentMissing) { setLocalErr("أدخل «قيمة الدفعة» — بدونها لا تُحسب الاستحقاقات ولا تُسجَّل دفعة."); return; }
+            if (paidUnpicked && sched.length > 0) { setLocalErr("اختر من «مسدَّد حتى» آخر دفعة دفعها المستأجر — أو «لم يدفع أي دفعة» إن كان فعلًا لم يدفع."); return; }
             if (startTooLate) { setLocalErr(`بداية العقد ${arDate(startISO)} بعد اليوم، والمستأجر ساكن الآن. اكتب تاريخ بداية العقد من إيجار — لا موعد الدفعة القادمة.`); return; }
             setLocalErr(null);
             /* أول استحقاق يختلف عن البداية: سؤال عند إدخاله أو تغييره فقط — لا في كل

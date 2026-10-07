@@ -31,6 +31,8 @@ create index if not exists site_events_at on public.site_events (at);
 
 alter table public.site_events enable row level security;
 revoke all on public.site_events from anon, authenticated;
+-- Supabase من 30 أكتوبر 2026 لا يمنح الجداول الجديدة تلقائيًّا: الصلاحية صريحة لمفتاح الخدمة
+grant select, insert, update, delete on public.site_events to service_role;
 
 -- ─── التحقق (صف واحد — المتوقع: true · true · 0) ───
 select
