@@ -17,6 +17,8 @@ export const CHOSEN_SOURCES: SignupSource[] = [
   { v: "haraj",    l: "حراج",                      adminLabel: "حراج" },
   { v: "group",    l: "قروب واتساب أو تليجرام",     adminLabel: "قروب" },
   { v: "twitter",  l: "تويتر / X",                  adminLabel: "تويتر" },
+  { v: "tiktok",   l: "تيك توك",                    adminLabel: "تيك توك" },
+  { v: "linkedin", l: "لينكدإن",                    adminLabel: "لينكدإن" },
   { v: "search",   l: "بحث في جوجل",                adminLabel: "بحث جوجل" },
   { v: "referral", l: "توصية من شخص",               adminLabel: "توصية" },
   { v: "direct",   l: "تواصل مباشر معكم",           adminLabel: "تواصل مباشر" },
@@ -68,6 +70,8 @@ export function sourceFromReferrer(ref?: string | null): string {
       || h.startsWith("search.yahoo.")) return "search";
   if (has("twitter") || h === "x.com" || h === "t.co") return "twitter";
   if (has("haraj")) return "haraj";
+  if (has("tiktok")) return "tiktok";
+  if (has("linkedin") || h === "lnkd.in") return "linkedin";
   if (has("whatsapp") || h === "wa.me" || has("telegram") || h === "t.me") return "group";
   return "";
 }

@@ -36,7 +36,18 @@ eq("كل مصدر له تسميتان", S.ALL_SOURCES.every((s) => s.l && s.admi
 
 // المجهول يبقى مجهولًا — لا يُنسب حساب بلا مصدر إلى قناة
 eq("مصدر فارغ", S.sourceAdminLabel(null), "غير معروف");
-eq("مصدر غير معروف", S.sourceAdminLabel("tiktok"), "غير معروف");
+eq("مصدر غير معروف", S.sourceAdminLabel("snapchat"), "غير معروف");
+
+// تيك توك ولينكدإن (8 أكتوبر 2026): كانا يُسجَّلان «غير معروف» فلا تُقاس القناتان
+eq("tiktok مقبولة", S.isSignupSource("tiktok"), true);
+eq("tiktok تسمية", S.sourceAdminLabel("tiktok"), "تيك توك");
+eq("linkedin مقبولة", S.isSignupSource("linkedin"), true);
+eq("linkedin تسمية", S.sourceAdminLabel("linkedin"), "لينكدإن");
+eq("referrer tiktok", S.sourceFromReferrer("https://www.tiktok.com/@watheqapp"), "tiktok");
+eq("referrer vm.tiktok", S.sourceFromReferrer("https://vm.tiktok.com/abc"), "tiktok");
+eq("referrer linkedin", S.sourceFromReferrer("https://www.linkedin.com/feed/"), "linkedin");
+eq("referrer lnkd.in", S.sourceFromReferrer("https://lnkd.in/xyz"), "linkedin");
+eq("referrer شبيه مزيف", S.sourceFromReferrer("https://tiktok-fake.example.com/"), "");
 
 /* ═══ الاستنتاج من الصفحة السابقة ═══
    نفس الحالات مُختبَرة في المتصفح على سكربت الموقع التسويقي. إن اختلف
