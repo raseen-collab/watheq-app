@@ -1,5 +1,5 @@
 "use client";
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase-client";
 import { derivedEndDate, FREQUENCIES, parseDate } from "@/lib/contracts";
@@ -10,11 +10,31 @@ import { waLink, WATHEQ_WA } from "@/lib/utils";
 
 import {
   HEADERS, NOTE_HEADER, EXAMPLE_MARK, parseCSV, gridFromSheetRows, parseGrid, markExisting, unitKey,
-  type Prop, type Row, type ColumnInfo,
+  analyzeColumns, initialConfig, rentBasisFromHeader, paidBasisFromHeader, mappingProblems, configToOptions, headerSignature, validSavedConfig, columnSamples, columnLetter,
+  FIELDS, FIELD_LABEL, REQUIRED_FIELDS,
+  type Prop, type Row, type ColumnInfo, type ColumnAnalysis, type MapConfig, type Field,
 } from "@/lib/importParse";
+import type { Frequency } from "@/lib/contracts";
 
 /* التحليل كله في lib/importParse (دوال نقية مختبَرة) — هنا الواجهة والحفظ فقط (30 سبتمبر 2026) */
 const blocked = (r: Row) => !!(r._error || r._exists);
+
+type Sheet = { name: string; grid: string[][] };
+/* مطابقة المكتب لملفه تُتذكّر في متصفحه (بصمة العناوين فقط — لا بيانات) فلا يُسأل
+   كل شهر عن الملف نفسه. التخزين قد يُمنع (تصفح خاص): الفشل صامت والسؤال يعود. */
+const MAP_KEY = "wq_import_map_v1:";
+function loadSavedMap(a: ColumnAnalysis): MapConfig | null {
+  const sig = headerSignature(a);
+  if (!sig) return null;
+  try { const v = localStorage.getItem(MAP_KEY + sig); return v ? validSavedConfig(a, JSON.parse(v)) : null; }
+  catch { return null; }
+}
+function saveMap(a: ColumnAnalysis, c: MapConfig) {
+  const sig = headerSignature(a);
+  if (!sig) return;
+  try { localStorage.setItem(MAP_KEY + sig, JSON.stringify(c)); } catch { /* تخزين ممنوع — لا بأس */ }
+}
+const firstRowOf = (g: string[][]) => g.find((r) => (r || []).some((c) => String(c ?? "").trim())) || [];
 
 export default function ImportView({ properties }: { properties: Prop[] }) {
   const router = useRouter();
@@ -35,6 +55,13 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
   const [colInfo, setColInfo] = useState<ColumnInfo | null>(null);
   const [checking, setChecking] = useState(false);
   const checkSeq = useRef(0);
+  /* «طابق أعمدتك»: الملف يُقرأ في المتصفح، وما فيه لبس يُسأل عنه قبل المعاينة (9 أكتوبر 2026) */
+  const [sheets, setSheets] = useState<Sheet[]>([]);
+  const [sheetIdx, setSheetIdx] = useState(0);
+  const [analysis, setAnalysis] = useState<ColumnAnalysis | null>(null);
+  const [cfg, setCfg] = useState<MapConfig | null>(null);
+  const [stage, setStage] = useState<"idle" | "map" | "preview">("idle");
+  const grid = sheets[sheetIdx]?.grid || [];
 
   const activeProp = properties.find((p) => p.id === propId);
   const ul = unitLabel(activeProp?.property_type);
@@ -59,34 +86,29 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
   }
 
   /**
-   * قراءة ملف إكسل مباشرة — بلا خطوة «احفظ CSV».
-   * SheetJS يُحمَّل عند الحاجة فقط (import ديناميكي) فلا يثقل الصفحة
-   * على من يرفع CSV. ورقة «الوحدات» تُقرأ إن وُجدت — وهي ورقة قالبنا —
-   * وإلا فأول ورقة، حتى يعمل ملف المستخدم القديم أيضًا.
-   *
-   * raw:false + dateNF: نأخذ النص المعروض لا القيمة الخام، فتخرج
-   * تواريخ إكسل الحقيقية بصيغة yyyy-mm-dd التي يفهمها المحلل أدناه،
-   * ويبقى تاريخ قالبنا النصي كما هو. جوال حُفظ رقمًا (سقط صفره) يُعاد
-   * صفره هنا — أشهر تلف يصيب الجوالات في إكسل.
+   * قراءة ملف إكسل مباشرة — بلا خطوة «احفظ CSV». داخل المتصفح فقط: لا يُرفع
+   * الملف لأي خادم. SheetJS يُحمَّل عند الحاجة (import ديناميكي) فلا يثقل الصفحة
+   * على من يرفع CSV. كل الأوراق تُقرأ، والافتراضي ورقة «الوحدات» (قالبنا) أو الأكثر صفوفًا.
    */
-  async function readGrid(f: File): Promise<string[][]> {
+  async function readSheets(f: File): Promise<Sheet[]> {
     if (/\.(xlsx|xls)$/i.test(f.name)) {
       const XLSX = await loadXlsx();
       const wb = XLSX.read(await f.arrayBuffer(), { cellDates: true });
-      const sheet = wb.Sheets["الوحدات"] || wb.Sheets[wb.SheetNames[0]];
-      /**
-       * raw:true عمدًا: raw:false يُخرج التاريخ بصيغة الخلية الأصلية
-       * (مثل 1/1/26) وهي ملتبسة يوم/شهر — فنأخذ القيم الخام ونحوّل
-       * كائن التاريخ بأنفسنا إلى yyyy-mm-dd بلا لبس، بالمكوّنات
-       * المحلية لا toISOString حتى لا ينزاح يومًا مع فارق التوقيت.
-       */
-      const rows = XLSX.utils.sheet_to_json(sheet, {
-        header: 1, raw: true, defval: "", blankrows: false,
-      }) as any[][];
-      // صفر الجوال المفقود يُعاد في المحلّل بعد معرفة عمود الجوال بالاسم لا بالموضع
-      return gridFromSheetRows(rows);
+      return (wb.SheetNames as string[]).map((name) => ({ name, grid: sheetGrid(XLSX, wb.Sheets[name]) }))
+        .filter((s) => s.grid.some((r) => r.some((c) => String(c).trim())));
     }
-    return parseCSV(await f.text());
+    return [{ name: "", grid: parseCSV(await f.text()) }];
+  }
+
+  /**
+   * raw:true عمدًا: raw:false يُخرج التاريخ بصيغة الخلية الأصلية (مثل 1/1/26)
+   * وهي ملتبسة يوم/شهر — فنأخذ القيم الخام ونحوّل كائن التاريخ بأنفسنا إلى
+   * yyyy-mm-dd بلا لبس، بالمكوّنات المحلية لا toISOString حتى لا ينزاح يومًا.
+   * صفر الجوال المفقود يُعاد في المحلّل بعد معرفة عمود الجوال.
+   */
+  function sheetGrid(XLSX: any, sheet: any): string[][] {
+    const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: true, defval: "", blankrows: false }) as any[][];
+    return gridFromSheetRows(rows);
   }
 
   /**
@@ -112,19 +134,53 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
 
   async function handleFile(f: File) {
     setFileName(f.name); setDone(null);
-    let grid: string[][] = [];
-    try { grid = await readGrid(f); }
+    setRows([]); setColInfo(null); setStage("idle"); setAnalysis(null); setCfg(null); setSheets([]);
+    let list: Sheet[] = [];
+    try { list = await readSheets(f); }
     catch (e: any) {
       // السبب الفعلي يظهر للمستخدم — لا رسالة عامة تخفي المشكلة
       setFileName(`${f.name} — تعذّرت قراءته: ${e?.message || e}`);
       return;
     }
-    if (!grid.length) return;
+    if (!list.length) { setFileName(`${f.name} — الملف فارغ`); return; }
+    /* ورقة «الوحدات» (قالبنا) إن وُجدت، وإلا الأكثر صفوفًا — لا الأولى عمياء */
+    let idx = list.findIndex((s) => s.name === "الوحدات");
+    if (idx < 0) idx = list.reduce((b, s, i) => s.grid.length > list[b].grid.length ? i : b, 0);
+    setSheets(list); setSheetIdx(idx);
+    startSheet(list[idx].grid, false);
+  }
 
-    const { rows: parsed, info } = parseGrid(grid, properties, today());
+  /**
+   * ما فُهم بيقين يذهب للمعاينة مباشرة (قالبنا، أو ملف طابقه المكتب من قبل).
+   * وما فيه لبس — عمود مجهول، ترتيب بلا عناوين، «الإيجار» لا نعرف أسنوي هو —
+   * يمرّ بخطوة المطابقة. التخمين هنا يصنع متأخرات وهمية بعشرات الآلاف.
+   */
+  function startSheet(g: string[][], forceMap: boolean) {
+    const a = analyzeColumns(g);
+    const saved = loadSavedMap(a);
+    const c = saved || initialConfig(a);
+    setAnalysis(a); setCfg(c);
+    const sure = !mappingProblems(c).length && (saved ? true : !a.reasons.length);
+    if (sure && !forceMap) runParse(g, c, !saved);
+    else { setRows([]); setColInfo(null); setStage("map"); }
+  }
+
+  /** auto = الاكتشاف بالعناوين كما هو (معلومات الأعمدة تقول «بالعنوان»)؛ وإلا مطابقة المكتب */
+  function runParse(g: string[][], c: MapConfig, auto: boolean) {
+    const opts = auto
+      ? { rentBasis: c.rentBasis || undefined, paidBasis: c.paidBasis || undefined }
+      : configToOptions(c);
+    const { rows: parsed, info } = parseGrid(g, properties, today(), opts);
     setColInfo(info);
     setRows(parsed); setFutureOk(false); setDueChoice(null);   // ملف جديد = سؤال جديد
+    setStage("preview");
     checkExisting(parsed, propId);
+  }
+
+  function confirmMapping() {
+    if (!analysis || !cfg || mappingProblems(cfg).length) return;
+    saveMap(analysis, cfg);
+    runParse(grid, cfg, false);
   }
 
   /**
@@ -263,11 +319,12 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
   }
 
   /* عدّ بمرور واحد — 2000 صف تُعاد رسمها مع كل تغيير */
-  let validCount = 0, warnCount = 0, dueCount = 0, existsCount = 0;
+  let validCount = 0, warnCount = 0, dueCount = 0, existsCount = 0, partialCount = 0;
   for (const r of rows) {
     if (r._exists && !r._error) existsCount++;
     if (blocked(r)) continue;
     validCount++;
+    if (r._note && r._note.includes("جزئي —")) partialCount++;
     if (r._warn) warnCount++;
     if (r._due) dueCount++;
   }
@@ -298,7 +355,7 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
             <div className="border border-line rounded-xl p-3">
               <div className="text-xs font-bold text-goldInk mb-1">٣</div>
               <div className="text-sm font-semibold text-deep mb-2">ارجع وارفع</div>
-              <span className="text-[11px] text-muted">كل صف يذهب لعقاره تلقائيًّا</span>
+              <span className="text-[11px] text-muted">كل صف يذهب لعقاره تلقائيًّا — وملفك بأعمدته هو يُطابَق معك ويُقرأ داخل جهازك</span>
             </div>
           </div>
           <div className="bg-paper border border-line rounded-xl p-3 text-sm">
@@ -318,8 +375,8 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
                 <button onClick={downloadTemplate} className="btn btn-ghost text-xs">⬇ قالب CSV مجرّد</button>
               </div>
             </StepCard>
-            <StepCard n="٢" title="املأ بياناتك" desc="افتحه بـ Excel واملأ صفًّا لكل وحدة — القوائم المنسدلة تمنع الخطأ." />
-            <StepCard n="٣" title="ارفعه هنا" desc="سنتحقق من البيانات ونعرضها لك قبل الحفظ." />
+            <StepCard n="٢" title="املأ بياناتك — أو استعمل ملفك" desc="عندك ملف إكسل بأعمدتك؟ ارفعه كما هو: نطابق أعمدته معك خطوة بخطوة." />
+            <StepCard n="٣" title="ارفعه هنا" desc="يُقرأ داخل متصفحك — لا يُحفظ شيء حتى تراجع المعاينة وتضغط «حفظ»." />
           </div>
 
           <div className="bg-white border border-line rounded-2xl p-5 mb-5">
@@ -330,10 +387,11 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
 
             <label className="block border-2 border-dashed border-line rounded-xl p-8 text-center cursor-pointer hover:border-goldSoft transition">
               <input type="file" accept=".csv,.txt,.xlsx,.xls" className="hidden"
-                onChange={(e) => e.target.files?.[0] && handleFile(e.target.files[0])} />
+                onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) handleFile(f); }} />
               <div className="text-3xl mb-2">📄</div>
               <div className="font-semibold text-deep">{fileName || "اضغط لاختيار ملف Excel أو CSV"}</div>
               <div className="text-xs text-muted mt-1">‎.xlsx يُقرأ مباشرة — لا حاجة لتحويله. Numbers: صدّره Excel أو CSV أولًا</div>
+              <div className="text-[11px] text-muted mt-1">🔒 الملف يُقرأ داخل جهازك ولا يُرسل لأي مكان — لا يُحفظ شيء قبل ضغطك «حفظ»</div>
             </label>
           </div>
 
@@ -344,7 +402,23 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
             </div>
           )}
 
-          {rows.length > 0 && (
+          {stage === "map" && analysis && cfg && (
+            <MappingStep grid={grid} analysis={analysis} cfg={cfg} setCfg={setCfg} properties={properties}
+              sheets={sheets} sheetIdx={sheetIdx}
+              onSheet={(i) => { setSheetIdx(i); startSheet(sheets[i].grid, true); }}
+              onConfirm={confirmMapping} />
+          )}
+
+          {stage === "preview" && rows.length === 0 && done === null && (
+            /* ملف كل صفوفه أمثلة أو فارغة: كان لا يظهر شيء إطلاقًا فيظن المكتب أن الرفع تعطّل */
+            <div className="bg-[#FFF6E5] border border-[#F2D49B] rounded-xl p-4 mb-5 text-sm leading-relaxed">
+              <b className="text-deep">لم نجد صفوف مستأجرين في الملف.</b>
+              {colInfo && colInfo.examples > 0 && <> تجاهلنا {colInfo.examples} صفوف أمثلة (المعلَّمة «مثال») — أضف بياناتك تحتها أو مكانها ثم ارفعه من جديد.</>}
+              {analysis && <> · <button type="button" onClick={() => setStage("map")} className="text-goldInk font-semibold underline underline-offset-2">✎ مطابقة الأعمدة</button></>}
+            </div>
+          )}
+
+          {stage === "preview" && rows.length > 0 && (
             <div className="bg-white border border-line rounded-2xl overflow-hidden mb-5">
               <div className="px-5 py-4 border-b border-line flex items-center justify-between flex-wrap gap-2">
                 <div>
@@ -355,6 +429,7 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
                     {existsCount > 0 && <> · <span className="text-late font-semibold">{existsCount} موجودة أصلًا في العقار — لن تُرفع</span></>}
                     {checking && <> · <span>جارٍ فحص الوحدات الموجودة…</span></>}
                     {warnCount > 0 && <> · <span className="text-[#8a5a11] font-semibold">{warnCount} بدايتها بعد اليوم — تحقّق منها</span></>}
+                    {partialCount > 0 && <> · <span className="text-[#8a5a11] font-semibold">{partialCount} فيها مبلغ جزئي — سجّله بعد الرفع</span></>}
                   </div>
                   {colInfo && (
                     /* ما فهمناه من الملف ظاهرًا: عمود بعنوان غير معروف كان يُقرأ بموضعه بصمت (30 سبتمبر 2026) */
@@ -362,8 +437,12 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
                       {colInfo.mode === "headers"
                         ? <>الأعمدة المقروءة بالعنوان ({colInfo.recognized.length}): {colInfo.recognized.join("، ")}
                             {colInfo.ignored.length > 0 && <> · <b className="text-[#8a5a11]">تُجوهل ({colInfo.ignored.length}): {colInfo.ignored.join("، ")}</b></>}</>
+                        : colInfo.mode === "manual"
+                        ? <>مطابقتك ({colInfo.recognized.length}): {colInfo.recognized.join("، ")}
+                            {colInfo.ignored.length > 0 && <> · <b className="text-[#8a5a11]">لا تُرفع: {colInfo.ignored.join("، ")}</b></>}</>
                         : <>لم نجد عناوين معروفة — قُرئت الأعمدة بترتيب القالب: {HEADERS.slice(0, 9).join("، ")}…</>}
                       {colInfo.examples > 0 && <> · <b>تم تجاهل {colInfo.examples} صفوف أمثلة</b> (المعلَّمة «مثال»)</>}
+                      {analysis && <> · <button type="button" onClick={() => setStage("map")} className="text-goldInk font-semibold underline underline-offset-2">✎ تعديل مطابقة الأعمدة</button></>}
                     </div>
                   )}
                 </div>
@@ -422,7 +501,8 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
                           ? <span className="text-late font-semibold">{r._error || r._exists}</span>
                           : r._warn
                             ? <span className="text-[#8a5a11] text-[12px] leading-relaxed"><b>⚠ تحقّق:</b> {r._warn}</span>
-                            : <span className="text-paid font-semibold">جاهزة</span>}</td>
+                            : <span className="text-paid font-semibold">جاهزة</span>}
+                          {!blocked(r) && r._note && <div className={`text-[11px] leading-relaxed mt-0.5 ${r._note.includes("جزئي —") ? "text-[#8a5a11] font-semibold" : "text-muted"}`}>{r._note}</div>}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -432,6 +512,7 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
           )}
 
           <div className="bg-paper2 border border-line rounded-xl p-4 text-sm text-muted leading-relaxed">
+            <b className="text-deep">ملفك بأعمدة أخرى؟</b> ارفعه كما هو — نعرض لك أعمدته لتطابقها، ونسألك إن كان المبلغ سنويًّا أو قيمة الدفعة، والمسدَّد عددًا أو مبلغًا. كل ذلك داخل متصفحك.{" "}
             <b className="text-deep">ملاحظات:</b> الأعمدة: {HEADERS.join(" · ")} · <b>العقار</b> (اختياري — لرفع كل المحفظة من ملف واحد؛ الاسم كما هو في اللوحة). <b>«بداية العقد»</b>: التاريخ المكتوب في عقد إيجار — <b>لا موعد الدفعة القادمة</b>، ولو كان العقد بدأ قبل سنة.
             {" "}<b>«الدفعات المسدّدة»</b>: كم دفعة دفعها المستأجر من هذا العقد حتى اليوم — مثال الصف الأول: عقد شهري بدأ 1 يناير 2026 ودفع حتى أغسطس = 8. وثيق يحسب منها الدفعة القادمة والمتأخرات.
             {" "}<b>«عدد الدفعات»</b> و<b>«مدة العقد (أشهر)»</b> للمعلومة نفسها: املأ أحدهما — وإن مُلئا معًا يُعتمد «عدد الدفعات». <b>«العقار»</b> اختياري: اكتب اسم العقار كما هو في وثيق ليذهب الصف إليه — فترفع كل عقاراتك من ملف واحد؛ والفارغ يذهب للعقار المختار أعلاه.
@@ -451,6 +532,184 @@ function StepCard({ n, title, desc, children }: { n: string; title: string; desc
       <div className="font-semibold text-deep mt-2 mb-1">{title}</div>
       <div className="text-xs text-muted leading-relaxed">{desc}</div>
       {children}
+    </div>
+  );
+}
+
+/* المبلغ والمسدَّد يُختاران هنا بلا افتراض أساسهما — الأساس يُحدَّد تحت القائمة */
+const MAP_LABEL: Partial<Record<Field, string>> = { rent: "مبلغ الإيجار (أساسه تحت)", paid: "المسدَّد (عدد أو مبلغ — تحت)" };
+const RENT_BASIS: { v: "payment" | "annual" | "monthly"; l: string; d: string }[] = [
+  { v: "payment", l: "قيمة كل دفعة (القسط)", d: "المبلغ الذي يدفعه المستأجر كل مرة" },
+  { v: "annual", l: "الإيجار السنوي", d: "نقسمه على عدد الدفعات في السنة: 30,000 بدورة كل 3 أشهر = 7,500" },
+  { v: "monthly", l: "الإيجار الشهري", d: "نحوّله حسب الدورة: 2,500 بدورة كل 3 أشهر = 7,500" },
+];
+const PAID_BASIS: { v: "count" | "amount"; l: string; d: string }[] = [
+  { v: "count", l: "عدد الدفعات المسدَّدة", d: "مثل 8 — كم دفعة دفعها من هذا العقد" },
+  { v: "amount", l: "المبلغ المسدَّد بالريال", d: "مثل 20,000 — نحوّله لعدد دفعات كاملة وننبّهك على الجزئي" },
+];
+
+/**
+ * خطوة «طابق أعمدتك»: كل عمود في ملف المكتب ← حقل في وثيق (أو لا يُرفع)،
+ * وأساس المبلغ والمسدَّد يُختار صراحةً متى لم يحسمه العنوان. معاينة أول الصفوف
+ * تتحدّث مع كل اختيار — يرى المكتب الرقم الذي سيُحفظ قبل أن يتجاوز هذه الخطوة.
+ */
+function MappingStep({ grid, analysis, cfg, setCfg, properties, sheets, sheetIdx, onSheet, onConfirm }: {
+  grid: string[][]; analysis: ColumnAnalysis; cfg: MapConfig; setCfg: (c: MapConfig) => void; properties: Prop[];
+  sheets: Sheet[]; sheetIdx: number; onSheet: (i: number) => void; onConfirm: () => void;
+}) {
+  const first = useMemo(() => firstRowOf(grid).map((c) => String(c ?? "").trim()), [grid]);
+  const samples = useMemo(() => columnSamples(grid, cfg.headerRow, analysis.width, 2), [grid, cfg.headerRow, analysis.width]);
+  const problems = mappingProblems(cfg);
+  const has = (f: Field) => cfg.fields.includes(f);
+  /* معاينة حيّة لأول 4 صفوف — بنفس المحلّل الذي سيحفظ */
+  const mini = useMemo(() => {
+    if (problems.length) return null;
+    const ne = grid.filter((r) => (r || []).some((c) => String(c ?? "").trim()));
+    return parseGrid(ne.slice(0, (cfg.headerRow ? 1 : 0) + 4), properties, today(), configToOptions(cfg)).rows;
+  }, [grid, cfg, properties, problems.length]);
+  const set = (patch: Partial<MapConfig>) => setCfg({ ...cfg, ...patch });
+  const setField = (i: number, f: Field | null) => {
+    const fields = [...cfg.fields];
+    fields[i] = f;
+    /* عمود المبلغ/المسدَّد تغيّر: أساسه يُسأل من جديد ما لم يحسمه عنوان العمود الجديد */
+    const patch: Partial<MapConfig> = { fields };
+    const h = cfg.headerRow ? first[i] || "" : "";
+    if (f === "rent" || cfg.fields[i] === "rent") patch.rentBasis = f === "rent" ? rentBasisFromHeader(h) : null;
+    if (f === "paid" || cfg.fields[i] === "paid") patch.paidBasis = f === "paid" ? paidBasisFromHeader(h) : null;
+    set(patch);
+  };
+  const cols = Array.from({ length: analysis.width }, (_, i) => i)
+    .filter((i) => (cfg.headerRow && first[i]) || samples[i].length || cfg.fields[i]);
+
+  return (
+    <div className="bg-white border border-line rounded-2xl p-4 sm:p-5 mb-5">
+      <h2 className="font-display font-bold text-deep text-lg">طابق أعمدتك</h2>
+      <p className="text-sm text-muted mt-1 leading-relaxed">ملفك لا يشبه قالبنا تمامًا — لا بأس. حدّد ماذا يحوي كل عمود، ونقرأه كما تقصد بالضبط.
+        {analysis.reasons.length > 0 && <span className="block text-[12.5px] text-[#8a5a11] mt-1">{analysis.reasons.join(" · ")}</span>}</p>
+      <div className="text-[11.5px] text-muted mt-2 bg-paper border border-line rounded-lg px-3 py-2">🔒 الملف يُقرأ داخل متصفحك فقط — لا يُرسل ولا يُحفظ منه شيء حتى تراجع المعاينة وتضغط «حفظ».</div>
+
+      {sheets.length > 1 && (
+        <label className="block mt-4">
+          <span className="block text-sm font-semibold mb-1">الورقة</span>
+          <select className="fld" value={sheetIdx} onChange={(e) => onSheet(Number(e.target.value))}>
+            {sheets.map((s, i) => <option key={i} value={i}>{s.name} ({s.grid.length} صف)</option>)}
+          </select>
+        </label>
+      )}
+
+      <label className="flex items-center gap-2 mt-4 cursor-pointer min-h-[44px] text-sm">
+        <input type="checkbox" className="w-4 h-4" checked={cfg.headerRow} onChange={(e) => set({ headerRow: e.target.checked })} />
+        <span>الصف الأول عناوين أعمدة (لا يُرفع كمستأجر)</span>
+      </label>
+
+      <div className="mt-2 border border-line rounded-xl divide-y divide-line">
+        {cols.map((i) => {
+          const f = cfg.fields[i];
+          return (
+            <div key={i} className={`p-3 flex flex-wrap items-center gap-2 ${!f && samples[i].length ? "bg-[#FFFBF2]" : ""}`}>
+              <div className="min-w-0 flex-1 basis-[180px]">
+                <div className="text-sm font-semibold text-deep truncate">
+                  <span className="text-[11px] text-muted font-normal ml-1.5" dir="ltr">{columnLetter(i)}</span>
+                  {(cfg.headerRow && first[i]) || <span className="text-muted font-normal">بلا عنوان</span>}
+                </div>
+                <div className="text-[11.5px] text-muted truncate">{samples[i].length ? samples[i].join(" · ") : "لا بيانات"}</div>
+              </div>
+              <select className="fld flex-1 basis-[200px] sm:flex-none sm:w-60" value={f || ""} aria-label={`العمود ${columnLetter(i)}`}
+                onChange={(e) => setField(i, (e.target.value || null) as Field | null)}>
+                <option value="">— لا يُرفع —</option>
+                {FIELDS.map((k) => {
+                  const taken = cfg.fields.some((x, j) => x === k && j !== i);
+                  return <option key={k} value={k} disabled={taken}>{MAP_LABEL[k] || FIELD_LABEL[k]}{REQUIRED_FIELDS.includes(k) ? " *" : ""}{taken ? " (مختار)" : ""}</option>;
+                })}
+              </select>
+            </div>
+          );
+        })}
+      </div>
+
+      {has("rent") && (
+        <fieldset className="mt-4 border border-line rounded-xl p-3">
+          <legend className="text-sm font-semibold text-deep px-1">مبلغ الإيجار في ملفك هو…</legend>
+          {RENT_BASIS.map((o) => (
+            <label key={o.v} className="flex items-start gap-2 cursor-pointer min-h-[44px] py-1">
+              <input type="radio" name="rentBasis" className="w-4 h-4 mt-1" checked={cfg.rentBasis === o.v} onChange={() => set({ rentBasis: o.v })} />
+              <span className="text-sm"><b>{o.l}</b>{analysis.rentHint === o.v && <span className="text-[11px] text-paid font-semibold"> (من عنوان العمود)</span>}
+                <span className="block text-[11.5px] text-muted">{o.d}</span></span>
+            </label>
+          ))}
+        </fieldset>
+      )}
+
+      {has("paid") && (
+        <fieldset className="mt-3 border border-line rounded-xl p-3">
+          <legend className="text-sm font-semibold text-deep px-1">عمود المسدَّد في ملفك هو…</legend>
+          {PAID_BASIS.map((o) => (
+            <label key={o.v} className="flex items-start gap-2 cursor-pointer min-h-[44px] py-1">
+              <input type="radio" name="paidBasis" className="w-4 h-4 mt-1" checked={cfg.paidBasis === o.v} onChange={() => set({ paidBasis: o.v })} />
+              <span className="text-sm"><b>{o.l}</b>
+                {analysis.paidHint === o.v ? <span className="text-[11px] text-paid font-semibold"> (من عنوان العمود)</span>
+                  : !analysis.paidHint && analysis.paidSuggest === o.v ? <span className="text-[11px] text-[#8a5a11] font-semibold"> (الأرجح من قيم ملفك)</span> : null}
+                <span className="block text-[11.5px] text-muted">{o.d}</span></span>
+            </label>
+          ))}
+        </fieldset>
+      )}
+
+      {(!has("freq") || !has("calendar")) && (
+        <div className="mt-3 grid sm:grid-cols-2 gap-3">
+          {!has("freq") && (
+            <label className="block">
+              <span className="block text-sm font-semibold mb-1">ملفك بلا عمود دورة سداد — الدورة لكل الصفوف *</span>
+              <select className="fld" value={cfg.defFreq || ""} onChange={(e) => set({ defFreq: (e.target.value || null) as Frequency | null })}>
+                <option value="">— اختر —</option>
+                {FREQUENCIES.map((x) => <option key={x.value} value={x.value}>{x.label}</option>)}
+              </select>
+            </label>
+          )}
+          {!has("calendar") && (
+            <label className="block">
+              <span className="block text-sm font-semibold mb-1">تقويم العقود</span>
+              <select className="fld" value={cfg.defCal || ""} onChange={(e) => set({ defCal: (e.target.value || null) as MapConfig["defCal"] })}>
+                <option value="">تلقائي — حسب صيغة كل تاريخ</option>
+                <option value="hijri">هجري لكل العقود</option>
+                <option value="gregorian">ميلادي لكل العقود</option>
+              </select>
+            </label>
+          )}
+        </div>
+      )}
+
+      {mini && mini.length > 0 && (
+        <div className="mt-4">
+          <div className="text-sm font-semibold text-deep mb-1">هكذا سنقرأ أول الصفوف</div>
+          <div className="overflow-x-auto border border-line rounded-xl">
+            <table className="w-full text-[12.5px] min-w-[480px]">
+              <thead className="bg-paper2"><tr>
+                <th className="p-2 text-right font-semibold">المستأجر</th><th className="p-2 text-right font-semibold">الدفعة</th>
+                <th className="p-2 text-right font-semibold">الدورة</th><th className="p-2 text-right font-semibold">المسدَّد</th>
+                <th className="p-2 text-right font-semibold">ملاحظة</th>
+              </tr></thead>
+              <tbody>{mini.map((r, k) => (
+                <tr key={k} className={`border-t border-line ${r._error ? "bg-[#FBE9E7]" : ""}`}>
+                  <td className="p-2">{r.name || "—"}</td>
+                  <td className="p-2">{sar(r.rent_amount)}</td>
+                  <td className="p-2">{FREQUENCIES.find((x) => x.value === r.payment_frequency)?.label}</td>
+                  <td className="p-2">{r.paid_periods} {r.paid_periods === 1 ? "دفعة" : "دفعات"}</td>
+                  <td className="p-2">{r._error ? <span className="text-late font-semibold">{r._error}</span> : <span className="text-muted">{r._note || "—"}</span>}</td>
+                </tr>))}</tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {problems.length > 0 && (
+        <ul className="mt-4 rounded-xl border border-[#F2D49B] bg-[#FFF6E5] p-3 text-[12.5px] leading-relaxed list-disc pr-5">
+          {problems.map((p, k) => <li key={k}>{p}</li>)}
+        </ul>
+      )}
+      <button type="button" onClick={onConfirm} disabled={problems.length > 0} className="btn btn-gold text-sm mt-4 w-full sm:w-auto justify-center disabled:opacity-40">
+        عرض معاينة كل الصفوف ←
+      </button>
     </div>
   );
 }

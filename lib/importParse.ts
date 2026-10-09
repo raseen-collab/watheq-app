@@ -38,6 +38,8 @@ export type Row = {
   _due?: string;
   /** الوحدة موجودة أصلًا في العقار الهدف — تُعامل كخطأ ولا تُرفع (30 سبتمبر 2026) */
   _exists?: string;
+  /** ملاحظة لا تمنع الرفع ولا تحتاج قرارًا: تحويل المبلغ من سنوي/شهري، أو مبلغ جزئي من المسدَّد (9 أكتوبر 2026) */
+  _note?: string;
 };
 
 const FREQ_MAP: Record<string, Frequency> = {
@@ -168,8 +170,14 @@ export function parseCSV(text: string): string[][] {
 export function gridFromSheetRows(rows: any[][]): string[][] {
   const pad = (n: number) => String(n).padStart(2, "0");
   return rows.map((r) => (r || []).map((c) => {
-    if (c instanceof Date && !isNaN(c.getTime()))
-      return `${c.getFullYear()}-${pad(c.getMonth() + 1)}-${pad(c.getDate())}`;
+    if (c instanceof Date && !isNaN(c.getTime())) {
+      /* SheetJS 0.18 يُخرج تاريخ إكسل في توقيت الرياض «23:59:08 من اليوم السابق»
+         (فرق التوقيت المحلي التاريخي 52 ثانية) — فكان كل تاريخ حقيقي في ملف إكسل
+         يُرفع قبل يومه بيوم: بداية العقد ويوم الدفع كلاهما (9 أكتوبر 2026).
+         نضيف ساعة قبل أخذ اليوم: منتصف الليل يبقى يومه، و23:59 تعود لليوم الصحيح. */
+      const d = new Date(c.getTime() + 3600000);
+      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+    }
     return String(c ?? "").trim();
   }));
 }
@@ -192,15 +200,19 @@ export function headerKey(v: string): string {
 
 /* مرادفات العناوين: المكاتب تعيد تسمية الأعمدة، وملفات أنظمة أخرى تأتي بأسمائها */
 const SYNONYMS: Record<Field, string[]> = {
-  name: ["اسم المستأجر", "المستأجر", "الاسم", "اسم", "اسم العميل", "name", "tenant", "tenant name"],
+  name: ["اسم المستأجر", "المستأجر", "الاسم", "اسم", "اسم العميل", "الساكن", "اسم الساكن", "name", "tenant", "tenant name"],
   unit: ["رقم الوحدة", "الوحدة", "رقم الشقة", "الشقة", "unit", "unit no"],
-  rent: ["قيمة الدفعة", "الدفعة", "مبلغ الدفعة", "الإيجار", "قيمة الإيجار", "مبلغ الإيجار", "rent", "amount"],
+  rent: ["قيمة الدفعة", "الدفعة", "مبلغ الدفعة", "الإيجار", "قيمة الإيجار", "مبلغ الإيجار", "rent", "amount",
+    /* أسماء تحمل أساس المبلغ في عنوانها — تُقرأ ويُحوَّل المبلغ إلى قيمة الدفعة (9 أكتوبر 2026) */
+    "الإيجار السنوي", "قيمة الإيجار السنوي", "الإيجار الشهري", "قيمة الإيجار الشهري",
+    "القسط", "قيمة القسط", "مبلغ القسط", "annual rent", "monthly rent"],
   freq: ["دورة السداد", "الدورة", "دورية السداد", "طريقة السداد", "نظام السداد", "frequency"],
-  start: ["بداية العقد", "تاريخ البداية", "تاريخ بداية العقد", "البداية", "بداية", "start", "start date", "contract start"],
+  start: ["بداية العقد", "تاريخ البداية", "تاريخ بداية العقد", "تاريخ العقد", "تاريخ بدء العقد", "بداية الإيجار", "البداية", "بداية", "start", "start date", "contract start"],
   periods: ["عدد الدفعات", "الدفعات", "periods"],
   phone: ["الجوال", "جوال", "رقم الجوال", "الهاتف", "رقم الهاتف", "جوال المستأجر", "phone", "mobile"],
   nid: ["رقم الهوية", "الهوية", "رقم الهوية/السجل", "رقم السجل", "national id", "id"],
-  paid: ["الدفعات المسدّدة", "المسدد", "دفعات مسددة", "عدد الدفعات المسددة", "المسدد دفعات", "paid", "paid periods"],
+  paid: ["الدفعات المسدّدة", "المسدد", "دفعات مسددة", "عدد الدفعات المسددة", "المسدد دفعات", "paid", "paid periods",
+    "المبلغ المسدد", "المبلغ المدفوع", "المدفوع", "إجمالي المدفوع", "إجمالي المسدد", "paid amount"],
   prop: ["العقار", "اسم العقار", "العمارة", "property"],
   elec: ["حساب الكهرباء", "رقم حساب الكهرباء", "الكهرباء", "عداد الكهرباء"],
   water: ["حساب الماء", "حساب المياه", "رقم حساب الماء", "الماء", "المياه", "عداد الماء"],
@@ -225,7 +237,8 @@ export const HEADER_LOOKUP: Record<string, Field> = (() => {
 })();
 
 export type ColumnInfo = {
-  mode: "headers" | "position";
+  /** manual = طابقها المكتب بنفسه في خطوة «طابق أعمدتك» */
+  mode: "headers" | "position" | "manual";
   /** العناوين التي فُهمت (كما كُتبت في الملف) */
   recognized: string[];
   /** عناوين موجودة لم تُفهم فتُجوهلت */
@@ -268,6 +281,194 @@ export function isExampleRow(r: string[]): boolean {
 
 const PER_YEAR: Record<string, number> = { daily: 365, weekly: 52, monthly: 12, quarterly: 4, trimester: 3, semiannual: 2, annual: 1 };
 
+/* ============================================================
+   «طابق أعمدتك» (9 أكتوبر 2026)
+   ملف المكتب لا يشبه قالبنا: أعمدة بأسماء أخرى، «الإيجار» سنوي لا قيمة الدفعة،
+   و«المسدَّد» مبلغ بالريال لا عدد دفعات. التخمين الصامت هنا يصنع متأخرات وهمية
+   بعشرات الآلاف. فالقاعدة: ما نعرفه بيقين يُقرأ وحده، وما فيه لبس يُسأل عنه المكتب
+   مرة واحدة قبل المعاينة — والملف كله يبقى في متصفحه لا يُرسل لأي مكان.
+   ============================================================ */
+
+/** أساس مبلغ عمود «الإيجار»: قيمة كل دفعة (القسط) أو الإيجار السنوي أو الشهري */
+export type RentBasis = "payment" | "annual" | "monthly";
+/** أساس عمود «المسدَّد»: عدد الدفعات المسدَّدة أو المبلغ المسدَّد بالريال */
+export type PaidBasis = "count" | "amount";
+export type ColumnMap = Partial<Record<Field, number>>;
+export type ParseOptions = {
+  /** خريطة صريحة (من خطوة المطابقة) تتقدّم على الاكتشاف */
+  map?: ColumnMap;
+  headerRow?: boolean;
+  rentBasis?: RentBasis;
+  paidBasis?: PaidBasis;
+  /** قيمة ثابتة لكل صف خانته فارغة — لملف بلا عمود دورة سداد أو تقويم */
+  defaults?: { freq?: Frequency; calendar?: "hijri" | "gregorian" };
+};
+
+/** تسمية الحقل للمكتب — هي عناوين القالب نفسها */
+export const FIELD_LABEL: Record<Field, string> = Object.fromEntries(FIELDS.map((f, i) => [f, HEADERS[i]])) as Record<Field, string>;
+/** بدونها لا يُفهم العقد: الاسم والمبلغ والدورة (الدورة تقبل قيمة ثابتة بدل العمود) */
+export const REQUIRED_FIELDS: Field[] = ["name", "rent", "freq"];
+
+/** أساس الإيجار من عنوان العمود — null = العنوان لا يحسم («الإيجار»، «rent») */
+export function rentBasisFromHeader(h: string): RentBasis | null {
+  const k = arKey(cleanCell(h));   // لا headerKey: «الإيجار (سنوي)» يحمل الأساس بين القوسين
+  if (!k) return null;
+  if (/سنوي|سنه|annual|year/.test(k)) return "annual";
+  if (/شهري|monthly/.test(k)) return "monthly";
+  if (/دفعه|قسط|installment|payment/.test(k)) return "payment";
+  return null;
+}
+
+/** أساس المسدَّد من عنوان العمود — null = العنوان لا يحسم («المسدد»، «paid») */
+export function paidBasisFromHeader(h: string): PaidBasis | null {
+  const k = arKey(cleanCell(h));   // لا headerKey: «الإيجار (سنوي)» يحمل الأساس بين القوسين
+  if (!k) return null;
+  if (/مبلغ|ريال|قيمه|مدفوع|اجمالي|amount|sar/.test(k)) return "amount";
+  if (/عدد|دفعات|periods|count/.test(k)) return "count";
+  return null;
+}
+
+/** حرف عمود إكسل: 0 → A، 26 → AA */
+export function columnLetter(i: number): string {
+  let s = "", n = i + 1;
+  while (n > 0) { const r = (n - 1) % 26; s = String.fromCharCode(65 + r) + s; n = Math.floor((n - 1) / 26); }
+  return s;
+}
+
+const isNoteHeader = (h: string) => !!h && headerKey(h) === headerKey(NOTE_HEADER);
+const nonEmptyRows = (grid: string[][]) => grid.filter((r) => (r || []).some((c) => cleanCell(c)));
+
+/** أول n قيم غير فارغة لكل عمود من صفوف البيانات (بلا صف العناوين ولا صفوف «مثال») */
+export function columnSamples(grid: string[][], headerRow: boolean, width: number, n = 3): string[][] {
+  const out: string[][] = Array.from({ length: width }, () => []);
+  const rows = nonEmptyRows(grid).slice(headerRow ? 1 : 0);
+  let left = width;
+  for (const r of rows) {
+    if (!left) break;
+    if (isExampleRow(r)) continue;
+    for (let i = 0; i < width; i++) {
+      if (out[i].length >= n) continue;
+      const v = cleanCell(r[i]);
+      if (v) { out[i].push(v); if (out[i].length === n) left--; }
+    }
+  }
+  return out;
+}
+
+export type ColumnAnalysis = {
+  mode: "headers" | "position";
+  headerRow: boolean;
+  width: number;
+  /** نص الصف الأول لكل عمود (فارغ إن لم يكن صف عناوين) */
+  headers: string[];
+  /** الحقل المقترح لكل عمود — null = تجاهل */
+  fields: (Field | null)[];
+  rentHint: RentBasis | null;
+  paidHint: PaidBasis | null;
+  /** اقتراح من القيم حين لا يحسم العنوان — يُعرض «الأرجح» ولا يُختار نيابةً عن المكتب */
+  paidSuggest: PaidBasis | null;
+  /** هل يغيّر أساس الإيجار شيئًا؟ لا، إن كانت كل العقود سنوية (الدفعة = السنوي) */
+  rentMatters: boolean;
+  /** لماذا نعرض خطوة المطابقة (فارغة = الملف مفهوم بيقين) */
+  reasons: string[];
+};
+
+export type MapConfig = {
+  fields: (Field | null)[];
+  headerRow: boolean;
+  rentBasis: RentBasis | null;
+  paidBasis: PaidBasis | null;
+  defFreq: Frequency | null;
+  defCal: "hijri" | "gregorian" | null;
+};
+
+/** قراءة الملف قبل التحليل: ماذا فهمنا من كل عمود، وأين اللبس */
+export function analyzeColumns(grid: string[][]): ColumnAnalysis {
+  const rows = nonEmptyRows(grid);
+  const width = rows.slice(0, 500).reduce((m, r) => Math.max(m, (r || []).length), 0);
+  const first = rows.length ? rows[0].map((c) => cleanCell(c)) : [];
+  const { map, headerRow, info } = detectColumns(first.map(String));
+  const fields: (Field | null)[] = Array.from({ length: width }, () => null);
+  (Object.keys(map) as Field[]).forEach((f) => { const i = map[f]!; if (i < width) fields[i] = f; });
+  const headers = Array.from({ length: width }, (_, i) => headerRow ? (first[i] || "") : "");
+  const samples = columnSamples(rows, headerRow, width, 12);
+
+  const rentI = fields.indexOf("rent"), paidI = fields.indexOf("paid"), freqI = fields.indexOf("freq");
+  const rentHint = rentI >= 0 && headerRow ? rentBasisFromHeader(headers[rentI]) : null;
+  const paidHint = paidI >= 0 && headerRow ? paidBasisFromHeader(headers[paidI]) : null;
+  let paidSuggest: PaidBasis | null = null;
+  if (paidI >= 0 && !paidHint) {
+    const vals = samples[paidI].map(parseNum).filter((n) => !isNaN(n));
+    if (vals.length) paidSuggest = vals.some((n) => n > 120 || !Number.isInteger(n)) ? "amount" : "count";
+  }
+  const freqVals = freqI >= 0 ? samples[freqI] : [];
+  const rentMatters = !(freqVals.length > 0 && freqVals.every((v) => FREQ_LOOKUP[arKey(v)] === "annual"));
+
+  const reasons: string[] = [];
+  if (info.mode === "position") reasons.push("لم نجد عناوين أعمدة نعرفها — حدّد ماذا يحوي كل عمود");
+  else {
+    const unknown = fields.map((f, i) => (!f && samples[i].length && !isNoteHeader(headers[i])) ? (headers[i] || `العمود ${columnLetter(i)}`) : "").filter(Boolean);
+    if (unknown.length) reasons.push(`أعمدة فيها بيانات لم نتعرّف عليها: ${unknown.join("، ")}`);
+  }
+  return { mode: info.mode as "headers" | "position", headerRow, width, headers, fields, rentHint, paidHint, paidSuggest, rentMatters, reasons };
+}
+
+/** الإعداد الأوّلي من التحليل: ما لا يحسمه العنوان يبقى null حتى يختاره المكتب */
+export function initialConfig(a: ColumnAnalysis): MapConfig {
+  return {
+    fields: [...a.fields], headerRow: a.headerRow,
+    rentBasis: a.rentHint ?? (a.rentMatters ? null : "payment"),
+    paidBasis: a.paidHint,
+    defFreq: null, defCal: null,
+  };
+}
+
+/** ما يمنع المعاينة — نفس القائمة تُعرض للمكتب وتُختبر */
+export function mappingProblems(cfg: MapConfig): string[] {
+  const out: string[] = [];
+  const count = new Map<Field, number>();
+  cfg.fields.forEach((f) => { if (f) count.set(f, (count.get(f) || 0) + 1); });
+  count.forEach((n, f) => { if (n > 1) out.push(`«${FIELD_LABEL[f]}» مختار لأكثر من عمود — اختره لعمود واحد`); });
+  if (!count.has("name")) out.push("حدّد عمود «اسم المستأجر»");
+  if (!count.has("rent")) out.push("حدّد عمود المبلغ («قيمة الدفعة» أو الإيجار)");
+  if (!count.has("freq") && !cfg.defFreq) out.push("حدّد عمود «دورة السداد» — أو اختر دورة واحدة لكل الصفوف");
+  if (count.has("rent") && !cfg.rentBasis) out.push("حدّد: مبلغ الإيجار في ملفك قيمة كل دفعة أم سنوي أم شهري؟");
+  if (count.has("paid") && !cfg.paidBasis) out.push("حدّد: عمود المسدَّد عدد دفعات أم مبلغ بالريال؟");
+  return out;
+}
+
+/** الإعداد → خيارات parseGrid */
+export function configToOptions(cfg: MapConfig): ParseOptions {
+  const map: ColumnMap = {};
+  cfg.fields.forEach((f, i) => { if (f && map[f] === undefined) map[f] = i; });
+  return {
+    map, headerRow: cfg.headerRow,
+    rentBasis: cfg.rentBasis || "payment", paidBasis: cfg.paidBasis || "count",
+    defaults: { freq: cfg.defFreq || undefined, calendar: cfg.defCal || undefined },
+  };
+}
+
+/** بصمة عناوين الملف — لتذكّر مطابقة المكتب لملفه نفسه في المرة القادمة */
+export function headerSignature(a: ColumnAnalysis): string {
+  return a.headerRow ? `${a.width}:` + a.headers.map(headerKey).join("|") : "";
+}
+
+/** المطابقة المحفوظة صالحة لهذا الملف؟ (العرض نفسه، والحقول معروفة) */
+export function validSavedConfig(a: ColumnAnalysis, saved: unknown): MapConfig | null {
+  const c = saved as MapConfig;
+  if (!c || !Array.isArray(c.fields) || c.fields.length !== a.width) return null;
+  if (!c.fields.every((f) => f === null || (FIELDS as readonly string[]).includes(f))) return null;
+  const okR = c.rentBasis === null || ["payment", "annual", "monthly"].includes(c.rentBasis as string);
+  const okP = c.paidBasis === null || ["count", "amount"].includes(c.paidBasis as string);
+  const okF = c.defFreq === null || c.defFreq in PER_YEAR;
+  const okC = c.defCal === null || c.defCal === "hijri" || c.defCal === "gregorian";
+  if (!okR || !okP || !okF || !okC) return null;
+  return { fields: c.fields, headerRow: !!c.headerRow, rentBasis: c.rentBasis, paidBasis: c.paidBasis, defFreq: c.defFreq, defCal: c.defCal };
+}
+
+const fmtN = (n: number) => n.toLocaleString("en-US", { maximumFractionDigits: 2 });
+const round2 = (n: number) => Math.round(n * 100) / 100;
+
 /** مفتاح رقم الوحدة للمقارنة: «١٠١» = «101» و«شقة 1» = «شقه 1» */
 export const unitKey = (u: string) => arKey(cleanCell(u));
 
@@ -275,10 +476,36 @@ export const unitKey = (u: string) => arKey(cleanCell(u));
  * تحليل الشبكة كاملة إلى صفوف جاهزة للمعاينة. O(n) — ملف 2000 صف لا يتباطأ:
  * العقارات في Map، والتكرار في Map.
  */
-export function parseGrid(grid: string[][], properties: Prop[], todayIso: string): { rows: Row[]; info: ColumnInfo } {
+export function parseGrid(grid: string[][], properties: Prop[], todayIso: string, opts: ParseOptions = {}): { rows: Row[]; info: ColumnInfo } {
   const nonEmpty = grid.filter((r) => (r || []).some((c) => cleanCell(c)));
-  if (!nonEmpty.length) return { rows: [], info: { mode: "position", recognized: [], ignored: [], examples: 0 } };
-  const { map, headerRow, info } = detectColumns(nonEmpty[0].map(String));
+  if (!nonEmpty.length) return { rows: [], info: { mode: opts.map ? "manual" : "position", recognized: [], ignored: [], examples: 0 } };
+  const detected = detectColumns(nonEmpty[0].map(String));
+  let map: ColumnMap, headerRow: boolean, info: Omit<ColumnInfo, "examples">;
+  if (opts.map) {
+    /* مطابقة المكتب الصريحة: لا اكتشاف ولا موضع — ما اختاره هو ما يُقرأ */
+    map = opts.map; headerRow = opts.headerRow ?? detected.headerRow;
+    const first = nonEmpty[0].map((c) => cleanCell(c));
+    const used = new Set(Object.values(map));
+    const label = (i: number) => (headerRow && first[i]) || `العمود ${columnLetter(i)}`;
+    info = {
+      mode: "manual",
+      recognized: (Object.keys(map) as Field[]).sort((a, b) => map[a]! - map[b]!).map((f) => `${label(map[f]!)} ← ${
+        f === "rent" && opts.rentBasis === "annual" ? "الإيجار السنوي (يُقسم على الدفعات)"
+        : f === "rent" && opts.rentBasis === "monthly" ? "الإيجار الشهري (يُحوَّل للدفعة)"
+        : f === "paid" && opts.paidBasis === "amount" ? "المبلغ المسدَّد (يُحوَّل لدفعات)"
+        : FIELD_LABEL[f]}`),
+      ignored: headerRow ? first.map((h, i) => (h && !used.has(i) && !isNoteHeader(h)) ? h : "").filter(Boolean) : [],
+    };
+  } else {
+    ({ map, headerRow, info } = detected);
+    if (opts.headerRow !== undefined) headerRow = opts.headerRow;
+  }
+  /* أساس المبلغ والمسدَّد: الصريح أولًا، ثم ما يحسمه عنوان العمود («الإيجار السنوي»)،
+     وإلا السلوك القديم (قيمة الدفعة، وعدد دفعات) — فلا يتغيّر شيء على القوالب القائمة */
+  const hdr = (f: Field) => headerRow && map[f] !== undefined ? cleanCell(nonEmpty[0][map[f]!]) : "";
+  const rentBasis: RentBasis = opts.rentBasis || rentBasisFromHeader(hdr("rent")) || "payment";
+  const paidBasis: PaidBasis = opts.paidBasis || paidBasisFromHeader(hdr("paid")) || "count";
+  const defFreq = opts.defaults?.freq, defCal = opts.defaults?.calendar;
   const norm = (x: string) => x.replace(/\s+/g, " ").trim();
   const propByName = new Map<string, Prop>();
   properties.forEach((p) => { if (!propByName.has(norm(p.name))) propByName.set(norm(p.name), p); });
@@ -289,9 +516,9 @@ export function parseGrid(grid: string[][], properties: Prop[], todayIso: string
     if (isExampleRow(r)) { examples++; continue; }
     const g = (f: Field) => { const i = map[f]; return i === undefined ? "" : cleanCell(r[i]); };
     const [name, unit, rent, freq, startDate, periods, phoneRaw, nid, paid, propName] =
-      [g("name"), g("unit"), g("rent"), g("freq"), g("start"), g("periods"), g("phone"), g("nid"), g("paid"), g("prop")];
+      [g("name"), g("unit"), g("rent"), g("freq") || defFreq || "", g("start"), g("periods"), g("phone"), g("nid"), g("paid"), g("prop")];
     const [elecAcc, waterAcc, contractNo, unitTypeTxt, roomsTxt, bathsTxt, acsTxt, firstDueTxt, vatTxt, calTxt, monthsTxt, carriedTxt] =
-      [g("elec"), g("water"), g("contract_no"), g("unit_type"), g("rooms"), g("baths"), g("acs"), g("first_due"), g("vat"), g("calendar"), g("months"), g("carried")];
+      [g("elec"), g("water"), g("contract_no"), g("unit_type"), g("rooms"), g("baths"), g("acs"), g("first_due"), g("vat"), g("calendar") || defCal || "", g("months"), g("carried")];
 
     const rentN0 = parseNum(rent);
     const rentN = isNaN(rentN0) ? 0 : rentN0;
@@ -314,8 +541,33 @@ export function parseGrid(grid: string[][], properties: Prop[], todayIso: string
     const prFromMonths = monthsN > 0 ? Math.max(1, Math.round(monthsN * (PER_YEAR[frequency] || 12) / 12)) : null;
     const prN = periods ? parseNum(periods) : NaN;
     const pr = (prN > 0 ? prN : null) || prFromMonths;
+    /* المبلغ المكتوب → قيمة الدفعة. السنوي ÷ عدد الدفعات في السنة، والشهري × 12 ÷ عددها.
+       الناتج يظهر في المعاينة بحسبته — المكتب يرى «سنوي 30,000 ÷ 4 = 7,500» قبل الحفظ. */
+    const notes: string[] = [];
+    let rentPay = rentN;
+    if (rentN > 0 && rentBasis !== "payment" && FREQ_LOOKUP[fk]) {
+      const per = PER_YEAR[frequency] || 12;
+      const exact = (rentBasis === "annual" ? rentN : rentN * 12) / per;
+      rentPay = round2(exact);
+      if (rentPay !== rentN || rentBasis === "monthly" && per !== 12)
+        notes.push(rentBasis === "annual"
+          ? `الدفعة = السنوي ${fmtN(rentN)} ÷ ${per} = ${fmtN(rentPay)}`
+          : `الدفعة = الشهري ${fmtN(rentN)} × 12 ÷ ${per} = ${fmtN(rentPay)}`);
+      if (Math.abs(exact - rentPay) > 1e-9) notes.push("مقرَّبة لأقرب هللة");
+    }
     const paidN = paid ? parseNum(paid) : 0;
-    const pd = isNaN(paidN) ? 0 : Math.max(0, Math.floor(paidN));
+    /* المسدَّد مبلغًا: الدفعات الكاملة تُعدّ، والباقي جزئي يُنبَّه عليه — لا يُقرَّب لدفعة كاملة
+       (التقريب للأعلى يخفي متأخرات حقيقية، وللأسفل يُسقط مالًا دُفع) */
+    let pd: number, paidRem = 0;
+    if (paidBasis === "amount") {
+      const amt = isNaN(paidN) ? 0 : Math.max(0, paidN);
+      pd = rentPay > 0 ? Math.floor(amt / rentPay + 1e-9) : 0;
+      paidRem = rentPay > 0 ? round2(amt - pd * rentPay) : 0;
+      if (paidRem < 0.01) paidRem = 0;
+      if (amt > 0 && rentPay > 0)
+        notes.push(`المسدَّد ${fmtN(amt)} = ${pd} ${pd === 1 ? "دفعة كاملة" : "دفعات كاملة"}`
+          + (paidRem ? ` + ${fmtN(paidRem)} جزئي — سجّل الجزئي من صفحة المستأجر بعد الرفع` : ""));
+    } else pd = isNaN(paidN) ? 0 : Math.max(0, Math.floor(paidN));
     const carriedN = carriedTxt ? parseNum(carriedTxt) : NaN;
     const fd = firstDueTxt ? parseAnyDate(firstDueTxt).iso : "";
     const intOk = (n: number) => !isNaN(n) && Number.isInteger(n);
@@ -325,6 +577,7 @@ export function parseGrid(grid: string[][], properties: Prop[], todayIso: string
     else if (!rent) err = "قيمة الدفعة مفقودة";
     else if (isNaN(rentN0)) err = `قيمة الدفعة غير مفهومة: «${rent}» — اكتب رقمًا مثل 2500`;
     else if (!rentN) err = "قيمة الدفعة مفقودة";
+    else if (rentPay < 0.01) err = `قيمة الدفعة بعد التحويل أقل من هللة: «${rent}»`;
     else if (startDate && !cs) err = "تاريخ غير مفهوم";
     // لا نمرّر تاريخًا مستحيلًا (2026-13-45): كان يُحفظ كما هو ويفسد كل الحسابات
     else if (cs && !isRealDate(cs)) err = `تاريخ غير صحيح: ${startDate}`;
@@ -332,10 +585,13 @@ export function parseGrid(grid: string[][], properties: Prop[], todayIso: string
     else if (!freq) err = "دورة السداد مفقودة";
     /* خانة غير فارغة لا رقم فيها = خطأ صريح، لا صفر صامت (30 سبتمبر 2026) */
     else if (periods && !intOk(prN)) err = `«عدد الدفعات» غير مفهوم: «${periods}» — اكتب رقمًا صحيحًا مثل 12`;
-    else if (paid && !intOk(paidN)) err = `«الدفعات المسدّدة» غير مفهومة: «${paid}» — اكتب رقمًا صحيحًا مثل 8`;
+    else if (paid && paidBasis === "amount" && isNaN(paidN)) err = `المبلغ المسدَّد غير مفهوم: «${paid}» — اكتب المبلغ رقمًا مثل 15000`;
+    else if (paid && paidBasis === "count" && !intOk(paidN)) err = `«الدفعات المسدّدة» غير مفهومة: «${paid}» — اكتب رقمًا صحيحًا مثل 8`;
     else if (monthsTxt && isNaN(monthsN)) err = `«مدة العقد» غير مفهومة: «${monthsTxt}» — اكتب عدد الأشهر مثل 12`;
     else if (carriedTxt && isNaN(carriedN)) err = `«دين مرحَّل» غير مفهوم: «${carriedTxt}» — اكتب المبلغ رقمًا`;
     else if (firstDueTxt && !(fd && isRealDate(fd))) err = `«أول استحقاق» غير مفهوم: ${firstDueTxt}`;
+    else if (pr && paidBasis === "amount" && (pd > pr || (pd === pr && paidRem > 0)))
+      err = `المبلغ المسدَّد ${fmtN(paidN)} أكثر من قيمة العقد كله (${pr} × ${fmtN(rentPay)}) — تأكّد من عمود المبلغ وأساسه`;
     else if (pr && pd > pr) err = "الدفعات المسدّدة أكثر من عدد دفعات العقد";
     const target = propName ? propByName.get(norm(propName)) : undefined;
     if (propName && !target && !err) err = `العقار «${propName}» غير موجود — أنشئه أولًا أو صحّح الاسم`;
@@ -351,7 +607,7 @@ export function parseGrid(grid: string[][], properties: Prop[], todayIso: string
       : /تطبق|خاضع|^نعم$|^(on|yes)$/.test(vatK) ? "on" : undefined;
 
     rows.push({
-      name, unit, rent_amount: rentN, phone, national_id: toEnDigits(nid),
+      name, unit, rent_amount: rentPay, phone, national_id: toEnDigits(nid),
       contract_start: cs, payment_frequency: frequency, contract_periods: pr, paid_periods: pd,
       elec_account: toEnDigits(elecAcc) || undefined, water_account: toEnDigits(waterAcc) || undefined,
       contract_no: contractNo || undefined, calendar,
@@ -368,6 +624,7 @@ export function parseGrid(grid: string[][], properties: Prop[], todayIso: string
       _warn: !err && cs && cs > todayIso && !(pd > 0)
         ? "البداية بعد اليوم ولا دفعات — إن كان العقد ساريًا من قبل فاكتب بدايته الفعلية من العقد وعدد الدفعات المسدَّدة، لا موعد الدفعة القادمة"
         : undefined,
+      _note: !err && notes.length ? notes.join(" · ") : undefined,
     });
   }
 
