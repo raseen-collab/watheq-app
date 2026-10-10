@@ -10,7 +10,7 @@ import { cleanMeters, metersCountLine, METER_TYPE_AR, MAX_METERS, type PropertyM
 import { officeId, getOffice, ROLE_LABEL, OWNER_PERMS } from "@/lib/office";
 import { arDate, termRentPaidOf, pastVatOf } from "@/lib/documents";
 import { annualRentRoll } from "@/lib/income";
-import { unitStatus, unitStatusLabel, arrearsOf, firstDueOutOfRange, dateDistanceAr, contractRemaining, excessOverRemaining, nearDuplicatePayment, renewalTooEarly, gregorianAr, recentCovers, vatInclusiveSlip } from "@/lib/contract-state";
+import { unitStatus, unitStatusLabel, arrearsOf, firstDueOutOfRange, dateDistanceAr, contractRemaining, excessOverRemaining, nearDuplicatePayment, renewalTooEarly, gregorianAr, recentCovers, vatInclusiveSlip, renewalDue } from "@/lib/contract-state";
 import type { ComplianceItem } from "@/lib/compliance";
 import { fetchAllRows } from "@/lib/fetch-all";
 import { hijriShort, hijriText, parseHijriInput } from "@/lib/hijri";
@@ -1827,8 +1827,9 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
   const pct = allRows.length ? Math.round(((allRows.length - lateRows.length) / allRows.length) * 100) : 100;
 
 
+  /* المنتهي ولم يُجدَّد يتقدّم على ما يقترب (أيام سالبة أولًا) — كان الشريط لا يذكره أصلًا */
   const expiringSoon = allRows
-    .filter((r) => r.st.expiringSoon && !r.t.litigation)
+    .filter((r) => renewalDue(r.t, r.st) && !r.t.litigation)
     .sort((a, b) => (a.st.daysToEnd || 0) - (b.st.daysToEnd || 0))[0];
   const editingBase = modal?.kind === "tenant" && modal.id ? tenants.find((t) => t.id === modal.id) : undefined;
   /* عند التأجير الجديد نمرّر الدين المرحَّل مُهيّأً في النموذج فلا يُنسى */
@@ -1955,7 +1956,9 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       {expiringSoon && (
         <div className={`flex flex-wrap items-center gap-3 rounded-xl p-3.5 mb-4 border text-sm ${
           (expiringSoon.st.daysToEnd || 0) <= 30 ? "bg-[#FBE9E7] border-[#F5C6C2] text-[#8f2b26]" : "bg-[#FBF1DF] border-[#EBD9AA] text-[#8a5a11]"}`}>
-          <span>عقد {expiringSoon.t.name} ({ul} {expiringSoon.t.unit || "—"}) ينتهي خلال <b>{plural(expiringSoon.st.daysToEnd ?? 0, "يوم واحد", "يومين", "أيام", "يومًا")}</b> (<bdi dir="ltr" className="whitespace-nowrap">{expiringSoon.st.endDate}</bdi>). جهّز التجديد أو الإخلاء.</span>
+          <span>عقد {expiringSoon.t.name} ({ul} {expiringSoon.t.unit || "—"}) {(expiringSoon.st.daysToEnd ?? 0) < 0
+            ? <>انتهى منذ <b>{plural(-(expiringSoon.st.daysToEnd ?? 0), "يوم واحد", "يومين", "أيام", "يومًا")}</b> (<bdi dir="ltr" className="whitespace-nowrap">{expiringSoon.st.endDate}</bdi>) ولم يُجدَّد. جدّده أو سجّل الإخلاء.</>
+            : <>ينتهي خلال <b>{plural(expiringSoon.st.daysToEnd ?? 0, "يوم واحد", "يومين", "أيام", "يومًا")}</b> (<bdi dir="ltr" className="whitespace-nowrap">{expiringSoon.st.endDate}</bdi>). جهّز التجديد أو الإخلاء.</>}</span>
           <button className="btn btn-ghost text-xs mr-auto" onClick={() => askRenew(expiringSoon.t)}>تجديد الآن</button>
         </div>
       )}

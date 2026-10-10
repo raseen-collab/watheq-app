@@ -6,7 +6,7 @@ import { unitLabel, typeLabel, unitWordFor } from "./domain";
 import { hijriText, hijriShort } from "@/lib/hijri";
 import { annualRentRoll } from "./income";
 import { defaultTermPeriods } from "./contracts";
-import { unitStatus, unitStatusLabel, arrearsOf, statusWindows, isPartialOnly } from "./contract-state";
+import { unitStatus, unitStatusLabel, arrearsOf, statusWindows, isPartialOnly, renewalDue } from "./contract-state";
 import { daysAr, monthsAr, today as riyadhTodayISO } from "./utils";
 import { moneySigned } from "./hoaMoney";
 import { metersCountLine, METER_TYPE_AR, type PropertyMeter } from "./meters";
@@ -1201,7 +1201,7 @@ export function propertyStatementHTML(
   const pFin = ownerNet(periodCollected + pvt.onTop, periodExpRows, (p as any).mgmt_fee_pct,
     pvt.inside + pvt.onTop, issuer.vat_number ? (Number(p.vat_rate) || 15) : 0);
   const periodVat = pvt.inside + pvt.onTop;
-  const expiringCount = rows.filter((r) => r.st.expiringSoon && !isVacant(r.t)).length;
+  const expiringCount = rows.filter((r) => renewalDue(r.t, r.st)).length;
 
   const body = `
 ${header(mode === "full" ? "كشف حساب عقار — شامل" : "كشف حساب عقار", p.name, issuer)}
@@ -1306,7 +1306,7 @@ ${mode === "full" ? `
 <table>
   <thead><tr><th>الحالة</th><th>عدد الوحدات</th><th>النسبة</th></tr></thead>
   <tbody>
-    ${[["مؤجّرة ومنتظمة", occupied - late - soonCount], ["تستحق قريبًا", soonCount], ["متأخرة", late], ["عقود تنتهي قريبًا", expiringCount], ["شاغرة", vacantCount]]
+    ${[["مؤجّرة ومنتظمة", occupied - late - soonCount], ["تستحق قريبًا", soonCount], ["متأخرة", late], ["عقود انتهت أو تنتهي قريبًا", expiringCount], ["شاغرة", vacantCount]]
       .filter(([, n]) => Number(n) > 0)
       .map(([l, n]) => `<tr><td>${l}</td><td>${n}</td><td>${p.tenants.length ? Math.round((Number(n) / p.tenants.length) * 100) : 0}%</td></tr>`).join("")}
   </tbody>

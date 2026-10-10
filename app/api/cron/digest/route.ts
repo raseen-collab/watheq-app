@@ -3,7 +3,7 @@ import { allExpired } from "@/lib/entitlements";
 import * as Sentry from "@sentry/nextjs";
 import { createClient as createAdmin } from "@supabase/supabase-js";
 import { sendTelegram } from "@/lib/telegram";
-import { statusWindows } from "@/lib/contract-state";
+import { statusWindows, renewalDue } from "@/lib/contract-state";
 import { contractState, withVat } from "@/lib/contracts";
 import { unitLabel } from "@/lib/domain";
 import { complianceDigestLines, type ComplianceItem } from "@/lib/compliance";
@@ -149,8 +149,11 @@ export async function GET(req: Request) {
         } else if (st.daysToNextDue !== null && st.daysToNextDue >= 0 && st.daysToNextDue <= within) {
           dueSoon.push(`• ${esc(t.name)} — ${ul} ${esc(t.unit || "—")} — ${sar(withVat(Number(t.rent_amount) || 0, t, prop))} ريال بتاريخ ${arDate(st.nextDueDate)}`);
         }
-        if (st.expiringSoon) {
-          expiring.push(`• ${esc(t.name)} — ${ul} ${esc(t.unit || "—")} — ينتهي خلال ${st.daysToEnd} يومًا (${arDate(st.endDate)})`);
+        if (renewalDue(t, st)) {
+          const d = st.daysToEnd ?? 0;
+          expiring.push(d < 0
+            ? `• ${esc(t.name)} — ${ul} ${esc(t.unit || "—")} (${esc(prop.name)}) — <b>انتهى العقد منذ ${-d} يومًا</b> (${arDate(st.endDate)}) ولم يُجدَّد ولا سُجّل إخلاء`
+            : `• ${esc(t.name)} — ${ul} ${esc(t.unit || "—")} (${esc(prop.name)}) — ينتهي خلال ${d} يومًا (${arDate(st.endDate)})`);
         }
       }
     }
@@ -210,9 +213,25 @@ export async function GET(req: Request) {
       } catch { /* جدول الطلبات غير منشأ بعد */ }
     } catch { /* الجدول غير منشأ بعد — نتجاهل القسم */ }
 
+    /* تحصيل أمس (10 أكتوبر 2026 — طلب مكتب التميز): سطر واحد أول الملخّص. بتاريخ الدفع
+       المسجَّل وبعد طرح التراجعات، كـ«المحصَّل هذا الشهر» في اللوحة. داخل try: لا يُسقط الملخّص. */
+    let yLine = "";
+    try {
+      const propIds = (props || []).map((x: any) => x.id);
+      if (propIds.length) {
+        const yd = new Date(`${todayISO()}T00:00:00Z`); yd.setUTCDate(yd.getUTCDate() - 1);
+        const y = yd.toISOString().slice(0, 10);
+        const yRows = await fetchAllRows(db as any, "payments", "amount", (q: any) => q.in("property_id", propIds).eq("paid_on", y));
+        const net = yRows.reduce((s: number, r: any) => s + (Number(r.amount) || 0), 0);
+        const n = yRows.filter((r: any) => (Number(r.amount) || 0) > 0).length;
+        yLine = n ? `💰 <b>تحصيل أمس: ${sar(net)} ريال</b> (${n} ${n === 1 ? "دفعة" : "دفعات"})` : "💰 تحصيل أمس: لا دفعات مسجّلة";
+      }
+    } catch { /* ثانوي */ }
+
     if (!dueSoon.length && !lateList.length && !expiring.length && !compliance.length && !listings.length && !matchLines.length && !hoa.length) return "skip";
 
     const parts = [`🗂️ <b>ملخّص وثيق اليومي</b>${p.org_name ? ` — ${esc(p.org_name)}` : ""}`, ""];
+    if (yLine) parts.push(yLine, "");
     // أقصى 12 سطرًا لكل قسم مع ذكر المتبقي — مكتب كبير لا يظن أن القائمة اكتملت
     const more = (n: number) => n > 12 ? [`… و${n - 12} أخرى في اللوحة`] : [];
     if (dueSoon.length) parts.push(`🟡 <b>تستحق خلال ${daysAr(within)} (${dueSoon.length})</b>`, ...dueSoon.slice(0, 12), ...more(dueSoon.length), "");
@@ -223,7 +242,7 @@ export async function GET(req: Request) {
       `🔴 <b>متأخرة: ${lateList.length}</b> — إجمالي ${sar(totalDue)} ريال`,
       ...(newLate.length ? [gap > 1 ? `<i>تأخّر منذ آخر ملخّص:</i>` : `<i>تأخّر اليوم:</i>`, ...newLate.slice(0, 12), ...more(newLate.length)] : [gap > 1 ? `<i>لا متأخر جديد منذ آخر ملخّص.</i>` : `<i>لا متأخر جديد اليوم.</i>`]),
       `القائمة كاملة: /late`, "");
-    if (expiring.length) parts.push(`📄 <b>عقود تنتهي قريبًا (${expiring.length})</b>`, ...expiring.slice(0, 12), ...more(expiring.length), "");
+    if (expiring.length) parts.push(`📄 <b>عقود انتهت أو تنتهي قريبًا — جدّد أو سجّل الإخلاء (${expiring.length})</b>`, ...expiring.slice(0, 12), ...more(expiring.length), "");
     /* الثابت لا يُكرَّر بالأسماء كل صباح — سطر واحد، والتفاصيل من اللوحة */
     if (legacyList.length) parts.push(`💼 ديون على مستأجرين سابقين: <b>${legacyList.length}</b> — «الديون المرحَّلة» في اللوحة`, "");
     if (tasks.length) parts.push(`🔧 <b>مهام العقارات (${tasks.length})</b>`, ...tasks.slice(0, 10), ...more(tasks.length), "");

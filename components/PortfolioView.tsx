@@ -15,7 +15,7 @@ import { fetchAllRows } from "@/lib/fetch-all";
 import { createClient } from "@/lib/supabase-client";
 import { contractState, isVacant, splitVat, unitVatApplies, dueWithVat, type Frequency } from "@/lib/contracts";
 import { annualRentRoll } from "@/lib/income";
-import { isPartialOnly } from "@/lib/contract-state";
+import { isPartialOnly, renewalDue } from "@/lib/contract-state";
 import { sar, waLink, today, daysAr, normalizeSearch } from "@/lib/utils";
 import { arDate } from "@/lib/documents";
 import { endNoticeText } from "@/lib/tenant-messages";
@@ -65,6 +65,26 @@ export default function PortfolioView({ properties, windows, compliance, orgName
     );
   const cut = <T,>(k: string, arr: T[]) => (showAll[k] ? arr : arr.slice(0, CAP));
   const [monthCollected, setMonthCollected] = useState<Record<string, number> | null>(null);
+  /* تحصيل اليوم وأمس (10 أكتوبر 2026 — طلب مكتب التميز: «صاحب المكتب يبغى يشوف تحصيل
+     اليوم أو أمس»). من الاستعلام نفسه، بتاريخ الدفع (paid_on) كما في «المحصَّل هذا الشهر»،
+     والتراجعات (مبالغ سالبة) تُطرح فيساوي الرقمُ ما بقي فعلًا. */
+  const [dayPays, setDayPays] = useState<{ today: any[]; yesterday: any[] } | null>(null);
+  const [dayOpen, setDayOpen] = useState<null | "today" | "yesterday" | "custom">(null);
+  /* أي يوم يختاره المكتب — استعلام مستقل لذلك اليوم وحده */
+  const [pickDate, setPickDate] = useState("");
+  const [pickPays, setPickPays] = useState<any[] | null>(null);
+  const [pickErr, setPickErr] = useState("");
+  useEffect(() => {
+    if (!pickDate) { setPickPays(null); return; }
+    const ids = properties.map((p) => p.id);
+    if (!ids.length) { setPickPays([]); return; }
+    let live = true;
+    setPickPays(null); setPickErr("");
+    fetchAllRows(supabase as any, "payments", "id, property_id, tenant_id, amount, paid_on, method, created_at", (q) => q.in("property_id", ids).eq("paid_on", pickDate))
+      .then((data) => { if (live) setPickPays([...data].sort((a: any, b: any) => String(b.created_at || "").localeCompare(String(a.created_at || "")))); })
+      .catch((e) => { if (live) setPickErr(e?.message || "تعذّر التحميل"); });
+    return () => { live = false; };
+  }, [pickDate, properties, supabase]);
   const [expOpen, setExpOpen] = useState(false);
   /* جدول العقارات بلا ترقيم: مكتب بمئة عقار يرسم 100 صف دفعة واحدة ويطيل
      الصفحة بلا فائدة — الأهم أعلاها (مرتّبة بالأكثر متأخرات). */
@@ -74,19 +94,30 @@ export default function PortfolioView({ properties, windows, compliance, orgName
   useEffect(() => {
     /* حدود الشهر بتوقيت الرياض، حتى اليوم — كصفحة العقار، فيساوي المجموعُ مجموعَ خلاياها */
     const to = today(), from = `${to.slice(0, 7)}-01`;
+    /* أمس بتوقيت الرياض: حساب على التاريخ نفسه (UTC) فلا ينزاح يومًا مع فرق التوقيت */
+    const yd = new Date(`${to}T00:00:00Z`); yd.setUTCDate(yd.getUTCDate() - 1);
+    const yesterday = yd.toISOString().slice(0, 10);
+    const qFrom = yesterday < from ? yesterday : from;
     const ids = properties.map((p) => p.id);
-    if (!ids.length) { setMonthCollected({}); setExpMonth({ owner: 0, office: 0 }); return; }
+    if (!ids.length) { setMonthCollected({}); setExpMonth({ owner: 0, office: 0 }); setDayPays({ today: [], yesterday: [] }); return; }
     fetchAllRows(supabase as any, "expenses", "id, amount, billable", (q) => q.in("property_id", ids).gte("spent_on", from).lte("spent_on", to))
       .then((data) => { let owner = 0, office = 0;
         data.forEach((e: any) => { if (e.billable === false) office += Number(e.amount) || 0; else owner += Number(e.amount) || 0; });
         setExpMonth({ owner, office }); })
       .catch((e) => console.error("month expenses", e?.message));
     /* على دفعات، والفشل يُبقي «…» — كان يعرض «0 محصَّل» رقمًا خاطئًا */
-    fetchAllRows(supabase as any, "payments", "id, property_id, amount", (q) => q.in("property_id", ids).gte("paid_on", from).lte("paid_on", to))
+    fetchAllRows(supabase as any, "payments", "id, property_id, tenant_id, amount, paid_on, method, created_at", (q) => q.in("property_id", ids).gte("paid_on", qFrom).lte("paid_on", to))
       .then((data) => {
         const m: Record<string, number> = {};
-        data.forEach((x: any) => { m[x.property_id] = (m[x.property_id] || 0) + (Number(x.amount) || 0); });
+        const td: any[] = [], yy: any[] = [];
+        data.forEach((x: any) => {
+          const d = String(x.paid_on || "").slice(0, 10);
+          if (d >= from) m[x.property_id] = (m[x.property_id] || 0) + (Number(x.amount) || 0);
+          if (d === to) td.push(x); else if (d === yesterday) yy.push(x);
+        });
+        const byTime = (a: any, b: any) => String(b.created_at || "").localeCompare(String(a.created_at || ""));
         setMonthCollected(m);
+        setDayPays({ today: td.sort(byTime), yesterday: yy.sort(byTime) });
       })
       .catch((e) => console.error("month collected", e?.message));
   }, [properties, supabase]);
@@ -113,7 +144,7 @@ export default function PortfolioView({ properties, windows, compliance, orgName
       if (t.litigation) T.litigation++;
       else if (st.status === "late") { isPartialOnly(st) ? T.partial++ : T.late++; T.overdue += dueWithVat(st, t, p); }
       else if (st.status === "soon") { st.soonTier === "near" ? T.soon++ : T.due++; }
-      if (st.expiringSoon) T.expiring++;
+      if (renewalDue(t, st)) T.expiring++;
       T.monthly += (Number(t.rent_amount) || 0) * (PER_MONTH[t.payment_frequency || "monthly"] || 1);
     });
     return T;
@@ -130,7 +161,8 @@ export default function PortfolioView({ properties, windows, compliance, orgName
 
   const late = rows.filter(({ t, st }) => !isVacant(t) && !t.litigation && st.status === "late").sort((a, b) => dueWithVat(b.st, b.t, b.p) - dueWithVat(a.st, a.t, a.p));
   const due = rows.filter(({ t, st }) => !isVacant(t) && st.status === "soon" && st.soonTier !== "near").sort((a, b) => (a.st.daysToNextDue ?? 0) - (b.st.daysToNextDue ?? 0));
-  const expiring = rows.filter(({ t, st }) => !isVacant(t) && st.expiringSoon).sort((a, b) => (a.st.daysToEnd ?? 0) - (b.st.daysToEnd ?? 0));
+  /* المنتهي (أيام سالبة) أولًا ثم الأقرب انتهاءً */
+  const expiring = rows.filter(({ t, st }) => renewalDue(t, st)).sort((a, b) => (a.st.daysToEnd ?? 0) - (b.st.daysToEnd ?? 0));
   const vacant = rows.filter(({ t }) => isVacant(t));
 
   const perProperty = properties.map((p) => {
@@ -143,7 +175,7 @@ export default function PortfolioView({ properties, windows, compliance, orgName
          يضمّ وحدات التنفيذ فيخالف الإجمالي فوقه في الصفحة نفسها */
       overdue: occ.reduce((a, r) => a + (!r.t.litigation && r.st.status === "late" ? dueWithVat(r.st, r.t, r.p) : 0), 0),
       due: occ.filter((r) => r.st.status === "soon").length,
-      expiring: occ.filter((r) => r.st.expiringSoon).length,
+      expiring: occ.filter((r) => renewalDue(r.t, r.st)).length,
       monthly: occ.reduce((a, r) => a + (Number(r.t.rent_amount) || 0) * (PER_MONTH[r.t.payment_frequency || "monthly"] || 1), 0),
       collected: monthCollected?.[p.id] ?? null,
     };
@@ -250,6 +282,71 @@ export default function PortfolioView({ properties, windows, compliance, orgName
           </div>
         );
       })()}
+      {/* ═══ تحصيل اليوم وأمس — بالأسماء عند الضغط ═══ */}
+      {(() => {
+        const sum = (a: any[]) => a.reduce((s, x) => s + (Number(x.amount) || 0), 0);
+        const cnt = (a: any[]) => a.filter((x) => (Number(x.amount) || 0) > 0).length;
+        const who: Record<string, { t: Tenant; p: Property }> = {};
+        rows.forEach(({ p, t }) => { who[t.id] = { t, p }; });
+        const METHOD: Record<string, string> = { cash: "نقدًا", transfer: "تحويل بنكي", ejar: "منصة إيجار", card: "بطاقة", pos: "شبكة", cheque: "شيك" };
+        const listOf = (k: "today" | "yesterday" | "custom") => k === "custom" ? pickPays : dayPays ? dayPays[k] : null;
+        const Btn = ({ k, label }: { k: "today" | "yesterday"; label: string }) => {
+          const list = dayPays?.[k] || [];
+          const on = dayOpen === k;
+          return (
+            <button type="button" onClick={() => setDayOpen(on ? null : k)} aria-expanded={on}
+              className={`flex-1 min-w-[150px] text-start bg-white border rounded-xl px-4 py-3 transition ${on ? "border-[#137a50]" : "border-line hover:border-[#137a50]/50"}`}>
+              <div className="text-[12px] text-muted">{label}</div>
+              <div className="text-xl font-bold tabular-nums mt-0.5 text-[#137a50]">
+                {dayPays === null ? "…" : sar(Math.round(sum(list)))} <span className="text-xs font-normal text-muted">ريال</span></div>
+              <div className="text-[11px] text-muted mt-0.5">{dayPays === null ? "" : cnt(list) ? `${cnt(list)} ${cnt(list) === 1 ? "دفعة" : "دفعات"} · ${on ? "إخفاء" : "اضغط للتفاصيل"}` : "لا دفعات مسجّلة"}</div>
+            </button>
+          );
+        };
+        const open = (dayOpen && listOf(dayOpen)) || [];
+        const loading = dayOpen ? listOf(dayOpen) === null : false;
+        const pickOn = dayOpen === "custom";
+        const dayWord = dayOpen === "today" ? "اليوم" : dayOpen === "yesterday" ? "أمس" : pickDate ? `يوم ${arDate(pickDate)}` : "";
+        return (
+          <div className="mb-3">
+            <div className="flex flex-wrap gap-3">
+              <Btn k="today" label="تحصيل اليوم" />
+              <Btn k="yesterday" label="تحصيل أمس" />
+              <div className={`flex-1 min-w-[150px] bg-white border rounded-xl px-4 py-3 ${pickOn ? "border-[#137a50]" : "border-line"}`}>
+                <label htmlFor="pickDay" className="text-[12px] text-muted block">تحصيل يوم معيّن</label>
+                <input id="pickDay" type="date" className="fld !py-1 mt-1 text-sm" max={today()} value={pickDate}
+                  onChange={(e) => { setPickDate(e.target.value); setDayOpen(e.target.value ? "custom" : null); }} />
+                {pickDate && <div className="text-[11px] text-muted mt-1">{pickPays === null ? (pickErr ? <span className="text-late">{pickErr}</span> : "…")
+                  : <button type="button" className="underline underline-offset-2" onClick={() => setDayOpen(pickOn ? null : "custom")}>
+                      <b className="text-[#137a50] tabular-nums">{sar(Math.round(sum(pickPays)))} ريال</b> · {cnt(pickPays) ? `${cnt(pickPays)} ${cnt(pickPays) === 1 ? "دفعة" : "دفعات"}` : "لا دفعات"} · {hijriShort(pickDate)}</button>}</div>}
+              </div>
+            </div>
+            {dayOpen && !loading && (
+              <div className="bg-white border border-line rounded-xl mt-2 overflow-hidden">
+                {open.length === 0 ? <p className="text-sm text-muted p-3">لا دفعات مسجّلة {dayWord}.</p> : (
+                  <div className="divide-y divide-line">
+                    {open.map((x: any) => {
+                      const w = who[x.tenant_id];
+                      const amt = Number(x.amount) || 0;
+                      return (
+                        <div key={x.id} className="flex items-center justify-between gap-3 px-3 py-2 text-sm">
+                          <div className="min-w-0">
+                            <div className="font-medium truncate">{w ? w.t.name : "مستأجر سابق"}</div>
+                            <div className="text-[11px] text-muted truncate">{w ? `${w.p.name} · ${UNIT_AR[w.p.property_type] || "وحدة"} ${w.t.unit || "—"}` : ""}{x.method && METHOD[x.method] ? ` · ${METHOD[x.method]}` : ""}</div>
+                          </div>
+                          <div className={`tabular-nums font-semibold whitespace-nowrap ${amt < 0 ? "text-late" : "text-[#137a50]"}`}>
+                            {amt < 0 ? `تراجع ${sar(Math.round(-amt))}` : sar(Math.round(amt))}</div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+                <p className="text-[11px] text-muted px-3 py-2 border-t border-line">بتاريخ الدفع المسجَّل. من سجّل كل دفعة ومتى: «سجل العمليات».</p>
+              </div>
+            )}
+          </div>
+        );
+      })()}
       {/* «التحصيل شهرًا بشهر» أُزيل: عند مكتب انتقل حديثًا تبدو أشهره السابقة فارغة
           فيُقرأ الرسم ارتفاعًا لا حقيقة له، ومن يدفع سنويًّا يظهر شهره عمودًا ضخمًا
           وبقية أشهره أصفارًا. وكان أثقل استعلام هنا (دفعات المكتب كله لسنة).
@@ -335,7 +432,7 @@ export default function PortfolioView({ properties, windows, compliance, orgName
           <div className="grid lg:grid-cols-2 gap-4">
             {late.length > 0 && <div><div className="text-xs opacity-80 mb-1.5">🔴 متأخرون ({late.length}) — {sar(totals.overdue)} ريال</div><div className="space-y-1.5">{cut("late", late).map(({ p, t, st }) => <Item key={t.id} p={p} t={t} st={st} tone="late" note={`${st.statusLabel} · ${sar(dueWithVat(st, t, p))} ريال`} />)}<More k="late" n={late.length} /></div></div>}
             {due.length > 0 && <div><div className="text-xs opacity-80 mb-1.5">🟠 مستحق خلال {daysAr(windows.imminent)} ({due.length})</div><div className="space-y-1.5">{cut("due", due).map(({ p, t, st }) => <Item key={t.id} p={p} t={t} st={st} tone="due" note={`${st.statusLabel} · ${st.nextDueDate} (${hijriShort(st.nextDueDate || "")})`} />)}<More k="due" n={due.length} /></div></div>}
-            {expiring.length > 0 && <div><div className="text-xs opacity-80 mb-1.5">⏳ عقود تنتهي خلال {daysAr(windows.expiring)} ({expiring.length})</div><div className="space-y-1.5">{cut("exp", expiring).map(({ p, t, st }) => <Item key={t.id} p={p} t={t} st={st} tone="exp" note={`ينتهي ${st.endDate} (بعد ${daysAr(st.daysToEnd)})`} />)}<More k="exp" n={expiring.length} /></div></div>}
+            {expiring.length > 0 && <div><div className="text-xs opacity-80 mb-1.5">⏳ عقود انتهت أو تنتهي خلال {daysAr(windows.expiring)} — جدّدها أو سجّل الإخلاء ({expiring.length})</div><div className="space-y-1.5">{cut("exp", expiring).map(({ p, t, st }) => <Item key={t.id} p={p} t={t} st={st} tone="exp" note={(st.daysToEnd ?? 0) < 0 ? `انتهى ${st.endDate} (منذ ${daysAr(-(st.daysToEnd ?? 0))}) ولم يُجدَّد` : `ينتهي ${st.endDate} (بعد ${daysAr(st.daysToEnd)})`} />)}<More k="exp" n={expiring.length} /></div></div>}
             {vacant.length > 0 && <div><div className="text-xs opacity-80 mb-1.5">⚪ شاغرة ({vacant.length})</div><div className="space-y-1.5">{cut("vac", vacant).map(({ p, t, st }) => <Item key={t.id} p={p} t={t} st={st} note={t.move_out_date ? `شاغرة منذ ${t.move_out_date}` : "شاغرة"} />)}<More k="vac" n={vacant.length} /></div></div>}
           </div>
         )}

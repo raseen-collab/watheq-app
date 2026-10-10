@@ -73,6 +73,16 @@ export function unitStatus(t: any, st: { incomplete?: boolean; status: string; h
   if (st.expiringSoon || (st.daysToEnd != null && st.daysToEnd < 0)) return "expiring";
   return "ok";
 }
+/**
+ * يحتاج تجديدًا أو إخلاءً: يقترب من نهايته، أو انتهى ولم يُسجَّل تجديد ولا إخلاء.
+ * (10 أكتوبر 2026 — بلاغ مكتب التميز) «نظرة عامة» والملخص اليومي وكشف العقار كانت
+ * تعدّ expiringSoon وحده (0 ≤ الأيام ≤ النافذة)، فالعقد الذي انتهى أمس يختفي منها
+ * ولا يظهر إلا داخل صفحة العقار. مصدر واحد لكل الشاشات.
+ */
+export function renewalDue(t: any, st: { expiringSoon?: boolean; daysToEnd?: number | null }): boolean {
+  if (isVacant(t)) return false;
+  return !!st.expiringSoon || (st.daysToEnd != null && st.daysToEnd < 0);
+}
 /** الاسم المعروض: «ينتهي قريبًا» لعقد انتهى فعلًا كذب — يُسمّى «انتهى العقد» */
 export function unitStatusLabel(key: UnitStatus, st: { daysToEnd?: number | null }): string {
   return key === "expiring" && st.daysToEnd != null && st.daysToEnd < 0 ? "انتهى العقد" : UNIT_STATUS_LABEL[key];
