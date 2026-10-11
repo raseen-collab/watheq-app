@@ -492,7 +492,10 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
         : /does not exist|function/.test(m) ? "شغّل schema-v12 في قاعدة البيانات أولًا." : m);
     }
     const r = data as { paid_periods: number; partial_amount: number; completed: number };
-    setItems(items.map((p) => p.id === active.id ? {
+    /* تحديث وظيفي: «سداد الدين المرحَّل + الأقساط» يسجّل عمليتين متتاليتين —
+       items من الإغلاق كانت ستمحو تحديث الدين الذي سبقها */
+    const aid = active.id;
+    setItems((cur) => cur.map((p) => p.id === aid ? {
       ...p,
       collected: (p.collected || 0) + amt,
       tenants: p.tenants.map((x) => (x.id === t.id ? { ...x, paid_periods: r.paid_periods, partial_amount: r.partial_amount } : x)),
@@ -502,7 +505,42 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       : `سُجّل ${sar(amt)} ريال كسداد جزئي`,
       /* تراجع بنقرة واحدة لسبع ثوانٍ: أقرب من قائمة ⋯ حين يكون الخطأ طازجًا */
       may("undo_actions") ? () => undoPayment(t) : undefined);
+    return true;
     });
+  }
+
+  /**
+   * (11 أكتوبر 2026 — مكتب التميز) سداد الدين المرحَّل من نافذة «تسجيل مبلغ مستلم»:
+   * مستأجر دفع 3,600 عن دينه القديم فسجّلها المكتب بالزر المعتاد فسكّرت 4 أقساط
+   * من العقد الحالي. الدالة نفسها التي يستعملها «الديون المرحَّلة» (schema-v45):
+   * نقد في الدفتر يظهر في تقرير المالك، ولا يمسّ عدّاد الأقساط.
+   */
+  async function recordCarried(t: Tenant, amount: number, method = "transfer", paidOn?: string, reference?: string): Promise<boolean> {
+    const amt = Math.round((Number(amount) || 0) * 100) / 100;
+    if (!amt || !active) return false;
+    const aid = active.id;
+    const res = await once(`carried:${t.id}`, async () => {
+      const { data, error } = await supabase.rpc("watheq_record_carried_payment", {
+        p_tenant: t.id, p_amount: amt, p_paid_on: paidOn || today(), p_method: method, p_reference: reference || null,
+      });
+      if (error) {
+        const m = String(error.message || "");
+        notify("err", /not authorized/.test(m) ? "هذا الإجراء يحتاج صلاحية أعلى — اطلبه من صاحب المكتب."
+          : /does not exist|function/.test(m) ? "شغّل schema-v45 في قاعدة البيانات أولًا." : m);
+        return false;
+      }
+      const left = Math.max(0, Number((data as any)?.remaining) || 0);
+      setItems((cur) => cur.map((p) => p.id === aid ? {
+        ...p,
+        collected: (p.collected || 0) + amt,
+        tenants: p.tenants.map((x) => (x.id === t.id ? { ...x, carried_debt: left } as Tenant : x)),
+      } : p));
+      notify("ok", left > 0
+        ? `سُجّل ${sar(amt)} ريال سدادًا للدين المرحَّل — يتبقّى منه ${sar(left)} ريال`
+        : `سُجّل ${sar(amt)} ريال — سُدّد الدين المرحَّل كاملًا`);
+      return true;
+    });
+    return !!res;
   }
 
   /**
@@ -575,6 +613,9 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
         if (near) why = `يشبه دفعة ${sar(Number(near.amount))} بتاريخ ${String(near.paid_on).slice(0, 10)}`;
       } catch { /* بلا قراءة: يبقى التأكيد المعتاد */ }
     }
+    /* (11 أكتوبر 2026) عليه دين مرحَّل ⇒ النافذة تسأل: الأقساط أم الدين؟ — لا تسجيل صامت على الأقساط */
+    const cd = Math.max(0, Number((t as any).carried_debt) || 0);
+    if (!why && cd > 0) why = `على المستأجر دين مرحَّل ${sar(cd)} ريال — اختر على ماذا يُحسب المبلغ`;
     if (why) { setPayInit({ amount: amt, why }); setPaying(t); return; }
     const vatNote = active && unitVatApplies(t, active) && active.vat_inclusive === false ? " (قبل الضريبة المضافة)" : "";
     const head = part > 0
@@ -2676,9 +2717,18 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       {paying && <PaymentModal tenant={paying} unitWord={ul} onClose={() => { setPaying(null); setPayInit(null); setPayClaim(null); }}
         st={contractState(paying, { graceDays: Number(active?.grace_days) || 0, ...windowsOf(active) })}
         recent={payRecent} vat={active ? unitVat(paying, active) : null} init={payInit}
-        onSubmit={(amt, method, note, paidOn, reference, guarded) => {
-          if (payClaim) approveClaimPayment(paying, payClaim, amt, method, note, paidOn, reference);
-          else recordPayment(paying, amt, method, note, paidOn, reference, guarded);
+        allowCarried={!payClaim}
+        onSubmit={(amt, method, note, paidOn, reference, guarded, carriedAmt) => {
+          const t = paying;
+          if (payClaim) approveClaimPayment(t, payClaim, amt, method, note, paidOn, reference);
+          else if (carriedAmt && carriedAmt > 0) {
+            /* الدين أولًا ثم الأقساط — وإن فشل الدين لا نسجّل الباقي فيُعاد المبلغ كاملًا مرتين */
+            void (async () => {
+              const ok = await recordCarried(t, carriedAmt, method, paidOn, reference);
+              if (ok && amt > 0) await recordPayment(t, amt, method, note, paidOn, reference, guarded);
+            })();
+          }
+          else recordPayment(t, amt, method, note, paidOn, reference, guarded);
           setPaying(null); setPayInit(null); setPayClaim(null); }} />}
       {tenantLinkFor && active && (
         <TenantLinkModal tenant={tenantLinkFor} propertyName={active.name} unitWord={ul}
@@ -2795,7 +2845,7 @@ const METHODS: { v: string; l: string }[] = [
 ];
 export const methodLabel = (v?: string | null) => METHODS.find((m) => m.v === v)?.l || "أخرى";
 
-function PaymentModal({ tenant, unitWord, onClose, onSubmit, st, recent = null, vat = null, init = null }: {
+function PaymentModal({ tenant, unitWord, onClose, onSubmit, st, recent = null, vat = null, init = null, allowCarried = true }: {
   tenant: Tenant; unitWord: string; onClose: () => void;
   /** حالة العقد — لتقول المعاينة على أي دفعة يقع المبلغ (30 سبتمبر 2026) */
   st?: ReturnType<typeof contractState>;
@@ -2805,7 +2855,10 @@ function PaymentModal({ tenant, unitWord, onClose, onSubmit, st, recent = null, 
   vat?: any;
   /** مبلغ مقترح وسبب حين حوّل زرّ ✔ إلى هنا */
   init?: { amount: number; why: string; paidOn?: string; reference?: string | null } | null;
-  onSubmit: (amount: number, method: string, note?: string, paidOn?: string, reference?: string, guarded?: boolean) => void;
+  /** يُعرض خيار «يُحسب على الدين المرحَّل» — لا في اعتماد بلاغ حوالة المستأجر */
+  allowCarried?: boolean;
+  /** amount = ما يُسجَّل على الأقساط (قد يكون 0)، carried = ما يُسجَّل سدادًا للدين المرحَّل */
+  onSubmit: (amount: number, method: string, note?: string, paidOn?: string, reference?: string, guarded?: boolean, carried?: number) => void;
 }) {
   const rent = Number(tenant.rent_amount) || 0;
   const already = Number(tenant.partial_amount) || 0;
@@ -2814,6 +2867,8 @@ function PaymentModal({ tenant, unitWord, onClose, onSubmit, st, recent = null, 
   const rem = contractRemaining(tenant, vat);
   /* عقد مسدَّد بالكامل: لا نقترح مبلغًا — كان الحقل يُملأ بدفعة كاملة لا وجود لها */
   const [amount, setAmount] = useState<string>(init?.amount ? String(init.amount) : rem.remaining <= 0 ? "" : String(Math.min(remaining || rent, rem.remaining)));
+  /* المبلغ المقترح عند الفتح — «الدين المرحَّل» يستبدله بالدين ما لم يكتب المكتب مبلغه بنفسه */
+  const [suggested] = useState<string>(amount);
   const [ask, setAsk] = useState<null | { kind: "excess" | "dup"; text: string }>(null);
   const [acked, setAcked] = useState<{ excess?: string; dup?: string }>({});
   const [method, setMethod] = useState("transfer");
@@ -2821,7 +2876,16 @@ function PaymentModal({ tenant, unitWord, onClose, onSubmit, st, recent = null, 
   /* تاريخ وصول المال ومرجع الحوالة — أساس مطابقة كشف البنك */
   const [paidOn, setPaidOn] = useState(init?.paidOn || today());
   const [reference, setReference] = useState(init?.reference || "");
-  const amt = Number(amount) || 0;
+  const entered = Number(amount) || 0;
+  /* (11 أكتوبر 2026) على المستأجر دين مرحَّل ⇒ يختار المكتب صراحةً على ماذا يُحسب المبلغ.
+     لا تلقائي: بعضهم يدفع إيجار الشهر ويقسّط الدين القديم على حدة. */
+  const carriedDebt = allowCarried ? Math.max(0, Math.round((Number((tenant as any).carried_debt) || 0) * 100) / 100) : 0;
+  const [target, setTarget] = useState<"" | "rent" | "carried" | "both">("");
+  const tgt = carriedDebt > 0 ? target : "rent";
+  const toCarried = tgt === "carried" ? entered : tgt === "both" ? Math.min(entered, carriedDebt) : 0;
+  const carriedOver = tgt === "carried" && entered > carriedDebt + 0.005;
+  /** ما يذهب للأقساط — كل حسابات المعاينة والحرّاس عليه */
+  const amt = tgt === "carried" ? 0 : Math.round((entered - toCarried) * 100) / 100;
   const pool = already + amt;
   const completed = rent > 0 ? Math.floor(pool / rent) : 0;
   const leftover = rent > 0 ? +(pool - completed * rent).toFixed(2) : 0;
@@ -2831,7 +2895,8 @@ function PaymentModal({ tenant, unitWord, onClose, onSubmit, st, recent = null, 
   const lateDue = Math.max(0, Number(st?.amountDue) || 0);
   /** الحارسان بالترتيب: يزيد على المتبقي ← يشبه دفعة قريبة؛ كل تأكيد مرتبط بالمبلغ والتاريخ نفسيهما */
   function submit(ok: { excess?: string; dup?: string }) {
-    if (!amt) return;
+    if (!entered || !tgt || carriedOver) return;
+    if (!amt) { onSubmit(0, method, note.trim() || undefined, paidOn, reference.trim() || undefined, true, toCarried); return; }
     const key = `${amt}|${paidOn}`;
     const over = excessOverRemaining(amt, rem.remaining);
     if (over > 0 && ok.excess !== key) {
@@ -2850,7 +2915,7 @@ function PaymentModal({ tenant, unitWord, onClose, onSubmit, st, recent = null, 
     /* (F2) covered = قائمة الدفعات القريبة مكتملة لتاريخ هذا السداد: قُرئت بلا خطأ، وإمّا أقل من سقف
        القراءة (60) أو التاريخ لا يسبق أقدم دفعة فيها. عندها فقط لا يعيد recordPayment سؤال «اليوم نفسه». */
     const covered = recentCovers(recent, paidOn, 60);
-    onSubmit(amt, method, note.trim() || undefined, paidOn, reference.trim() || undefined, covered);
+    onSubmit(amt, method, note.trim() || undefined, paidOn, reference.trim() || undefined, covered, toCarried || undefined);
   }
 
   return (
@@ -2876,6 +2941,19 @@ function PaymentModal({ tenant, unitWord, onClose, onSubmit, st, recent = null, 
           {rem.remaining > 0 && rem.remainingWithVat !== rem.remaining ? <span className="text-xs text-muted font-normal"> (شاملًا الضريبة {sar(rem.remainingWithVat)})</span> : null}</b>
       </div>
       {init?.why && <div className="text-xs rounded-lg border border-[#EBD9AA] bg-[#FDF0DC] text-[#7A4800] p-2.5 mb-3">راجع قبل التسجيل: {init.why}.</div>}
+
+      {carriedDebt > 0 && (
+        <div className="rounded-xl border border-[#F5CFA0] bg-[#FDECD2] p-3 mb-3 text-sm" data-testid="carried-choice">
+          <div className="font-semibold text-[#9A4B00] mb-2">على المستأجر دين مرحَّل {sar(carriedDebt)} ريال — المبلغ يُحسب على:</div>
+          {([["rent", "أقساط العقد الحالي"], ["carried", "الدين المرحَّل"], ["both", "الاثنين — الدين أولًا والباقي للأقساط"]] as const).map(([v, l]) => (
+            <label key={v} className="flex items-center gap-2 py-0.5 cursor-pointer">
+              <input type="radio" name="payTarget" className="w-4 h-4" checked={target === v}
+                onChange={() => { setTarget(v); setAsk(null); if (v === "carried" && (amount === "" || amount === suggested)) setAmount(String(carriedDebt)); }} />
+              <span>{l}</span>
+            </label>
+          ))}
+        </div>
+      )}
 
       <Field label="المبلغ المستلم (ريال)">
         <input className="fld" type="number" autoFocus value={amount} onChange={(e) => { setAmount(e.target.value); setAsk(null); }} />
@@ -2910,6 +2988,17 @@ function PaymentModal({ tenant, unitWord, onClose, onSubmit, st, recent = null, 
           <input className="fld" value={note} onChange={(e) => setNote(e.target.value)} placeholder="سداد شهر رجب" />
         </Field>
       </div>
+
+      {tgt && tgt !== "rent" && entered > 0 && (
+        <div className={`rounded-xl p-3 mt-4 text-xs leading-relaxed border ${carriedOver ? "bg-[#FBE9E7] border-[#F5C6C2] text-[#8f2b26]" : "bg-[#FDECD2] border-[#F5CFA0] text-[#7A4800]"}`} data-testid="carried-preview">
+          {carriedOver
+            ? <div>المبلغ أكبر من الدين المرحَّل ({sar(carriedDebt)}) — اختر «الاثنين» ليذهب الباقي للأقساط، أو صحّح المبلغ.</div>
+            : <>
+              <div><b>{sar(toCarried)} ريال</b> سدادًا للدين المرحَّل{toCarried >= carriedDebt - 0.005 ? " — يُسدَّد كاملًا" : ` — يتبقّى منه ${sar(Math.round((carriedDebt - toCarried) * 100) / 100)} ريال`}. لا يمسّ أقساط العقد.</div>
+              {tgt === "both" && amt <= 0 && <div>لا يبقى شيء للأقساط.</div>}
+            </>}
+        </div>
+      )}
 
       {amt > 0 && (() => {
         /* الزيادة على المتبقي من العقد كله. إن وُجدت فلا «دفعة قادمة» ولا «جزئي منها»
@@ -2948,7 +3037,8 @@ function PaymentModal({ tenant, unitWord, onClose, onSubmit, st, recent = null, 
       ) : (
       <div className="flex gap-2 mt-5">
         <button type="button" className="btn btn-ghost flex-1 justify-center" onClick={onClose}>إلغاء</button>
-        <button type="button" className="btn btn-gold flex-1 justify-center" disabled={!amt} onClick={() => submit(acked)}>تسجيل</button>
+        <button type="button" className="btn btn-gold flex-1 justify-center" disabled={!entered || !tgt || carriedOver}
+          title={!tgt ? "اختر على ماذا يُحسب المبلغ" : undefined} onClick={() => submit(acked)}>تسجيل</button>
       </div>
       )}
     </Shell>

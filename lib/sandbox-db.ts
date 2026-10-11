@@ -233,8 +233,8 @@ export function sandboxClient(store: SandboxStore) {
         if (!t) return { data: null, error: { message: "الوحدة غير موجودة" } };
         if (amt <= 0 || amt > (Number(t.carried_debt) || 0) + 0.005) return { data: null, error: { message: "المبلغ أكبر من الدين المرحَّل" } };
         store.payments = [{ id: `sb_pay_${Math.random().toString(36).slice(2, 10)}`, tenant_id: t.id, property_id: t.property_id,
-          paid_on: args.p_paid_on || new Date().toISOString().slice(0, 10), amount: amt, method: "transfer",
-          note: "سداد دين مرحَّل", periods_covered: 0, payer_name: t.name, unit_label: t.unit, applies_to: "carried",
+          paid_on: args.p_paid_on || new Date().toISOString().slice(0, 10), amount: amt, method: args.p_method || "transfer",
+          reference: args.p_reference ?? null, note: "سداد دين مرحَّل", periods_covered: 0, payer_name: t.name, unit_label: t.unit, applies_to: "carried",
           created_at: new Date().toISOString() }, ...store.payments];
         t.carried_debt = r2((Number(t.carried_debt) || 0) - amt);
         const prop = store.properties.find((p) => p.id === t.property_id);
