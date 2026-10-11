@@ -3119,7 +3119,7 @@ function HistoryModal({ data, unitWord, onClose, canEdit = true, onChanged, db }
     if (error) { setErr(/does not exist|function/i.test(error.message) ? "شغّل schema-v35 في قاعدة البيانات أولًا." : error.message); return; }
     const res = data as any;
     setRows((cur) => [{ id: res?.payment_id || `rev_${r.id}`, tenant_id: r.tenant_id, paid_on: r.paid_on,
-      amount: -Number(r.amount), method: "other", periods_covered: -1,
+      amount: -Number(r.amount), method: "other", periods_covered: -1, reverses: r.id,
       note: `عكس دفعة ${r.paid_on}`, created_at: new Date().toISOString() }, ...cur]);
     onChanged?.();
   }
@@ -3137,6 +3137,10 @@ function HistoryModal({ data, unitWord, onClose, canEdit = true, onChanged, db }
   }
 
   const total = rows.reduce((s, r) => s + (Number(r.amount) || 0), 0);
+  /* (11 أكتوبر 2026 — مكتب التميز) الدفعة المعكوسة تبقى في السجل للتدقيق، وكان
+     زرّ «اعكسها» يظهر عليها فيرد الخادم «سبق عكس هذه الدفعة» ويظنّ المكتب أنها
+     لم تُلغَ. نعلّمها «معكوسة» ونخفي الزر. */
+  const reversedIds = new Set(rows.filter((r) => Number(r.amount) < 0 && r.reverses).map((r) => String(r.reverses)));
   return (
     <Shell onClose={onClose} wide>
       <h3 className="font-display font-bold text-deep text-lg mb-1">سجل المدفوعات — {tenant.name}</h3>
@@ -3171,7 +3175,11 @@ function HistoryModal({ data, unitWord, onClose, canEdit = true, onChanged, db }
                       <div className="text-[10px] text-muted">سُجّل {String(r.created_at).slice(0, 10)}</div>
                     )}
                   </td>
-                  <td className="p-2 tabular-nums font-semibold">{sar(r.amount)}</td>
+                  <td className="p-2 tabular-nums font-semibold">
+                    {reversedIds.has(String(r.id))
+                      ? <><span className="line-through text-muted">{sar(r.amount)}</span><div className="text-[10px] font-normal text-late">معكوسة — لا تُحتسب</div></>
+                      : sar(r.amount)}
+                  </td>
                   <td className="p-2">{methodLabel(r.method)}</td>
                   {/* المرجع ووقت التسجيل: مطابقة كشف البنك تحتاج الاثنين —
                       تاريخ وصول المال أعلاه، ولحظة إدخاله هنا للتدقيق. */}
@@ -3199,7 +3207,7 @@ function HistoryModal({ data, unitWord, onClose, canEdit = true, onChanged, db }
                           onClick={() => { setEditing(r.id); setEDate(String(r.paid_on || "").slice(0, 10)); setERef(r.reference || ""); }}
                           title="تصحيح تاريخ وصول الحوالة أو مرجعها — المبلغ لا يُعدَّل، وعكسها إن وُجد يتبعها">✎ تاريخ/مرجع</button>
                       )}
-                      {canEdit && editing !== r.id && Number(r.amount) > 0 && (
+                      {canEdit && editing !== r.id && Number(r.amount) > 0 && !reversedIds.has(String(r.id)) && (
                         <button className="btn btn-ghost text-[10px] px-2 py-0.5 ms-1 text-late" disabled={busy}
                           onClick={() => reverseOne(r)}
                           title="يُعيد مبلغ هذه الدفعة مستحقًّا — للدفعة المسجّلة بمبلغ خاطئ">↩︎ اعكسها</button>
