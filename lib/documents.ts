@@ -143,7 +143,7 @@ export type PaymentRow = {
   method?: string | null; periods_covered?: number | null; note?: string | null;
 };
 const METHOD_AR: Record<string, string> = {
-  transfer: "تحويل بنكي", ejar: "منصة إيجار", cash: "نقدًا", pos: "شبكة", cheque: "شيك", other: "أخرى",
+  transfer: "تحويل بنكي", ejar: "منصة إيجار", cash: "نقدًا", pos: "شبكة", card: "بطاقة", cheque: "شيك", other: "أخرى",
 };
 const methodAr = (m?: string | null) => METHOD_AR[String(m || "")] || "—";
 /** صف السجل: الدفعة السالبة تراجعٌ موثّق — تُسمّى باسمها لا «أخرى» */
@@ -513,7 +513,7 @@ export function pastVatOf(rows: { id: string; snapshot?: any }[] | null | undefi
   return out;
 }
 function vatOfPayments(p: Property & { tenants?: any[] },
-  payments: { amount: number | string; unit?: string | null; tenant_id?: string | null; past_tenancy_id?: string | null }[],
+  payments: { amount: number | string; unit?: string | null; tenant_id?: string | null; past_tenancy_id?: string | null; applies_to?: string | null }[],
   pastVat?: PastVat): { inside: number; onTop: number } {
   /* ضريبة كل دفعة بإعدادات من دفعها — لا من يسكن الوحدة الآن. كان مستأجر
      سابق معفًى تُحسب على دفعاته ضريبة لأن من خلفه خاضع (والعكس). */
@@ -527,8 +527,12 @@ function vatOfPayments(p: Property & { tenants?: any[] },
     if (!t) continue;
     const v = vatOf(p, t);
     if (!v.enabled) continue;
-    const sp = splitVat(Number(x.amount) || 0, v);
-    if (v.inclusive) inside += sp.vat; else onTop += sp.vat;
+    /* (11 أكتوبر 2026) سداد دين مرحَّل/دين مستأجر سابق: الدين يُرحَّل شاملًا الضريبة
+       (renewContract وإعادة التأجير) — فضريبته داخل المبلغ. كانت تُضاف فوقه مرة ثانية
+       في «مضافة فوق الإيجار»: سداد 1,000 يظهر 1,150 وصافي المالك يزيد ~130. */
+    const debt = !!x.applies_to && x.applies_to !== "rent";
+    const sp = splitVat(Number(x.amount) || 0, debt ? { ...v, inclusive: true } : v);
+    if (v.inclusive || debt) inside += sp.vat; else onTop += sp.vat;
   }
   return { inside: Math.round(inside * 100) / 100, onTop: Math.round(onTop * 100) / 100 };
 }
@@ -718,6 +722,10 @@ export function statementHTML(t: Tenant, p: Property, issuer: Issuer = {}, payme
   const ul = unitWordFor((t as any).unit_type, p.property_type);
   const who = issuer.billing_name || issuer.org_name || p.manager || "إدارة الأملاك";
   const v = vatOf(p, t);
+  /* المبلغ كما دفعه المستأجر: قسط «مضافة فوق الإيجار» يُسجَّل قبل الضريبة فنُظهره شاملًا؛
+     سداد الدين المرحَّل/دين سابق شاملٌ أصلًا فلا يُضاف عليه (11 أكتوبر 2026) */
+  const grossPay = (r: any) => (v.enabled && !v.inclusive && (!r.applies_to || r.applies_to === "rent"))
+    ? splitVat(Number(r.amount) || 0, v).total : (Number(r.amount) || 0);
   const unit = splitVat(Number(t.rent_amount) || 0, v);      // تفصيل الدفعة الواحدة
   const totalContract = unit.total * rows.length;
   /* (30 سبتمبر 2026) السداد الجزئي بالضريبة كبقية الأرقام: في «غير شاملة» كان
@@ -854,13 +862,13 @@ ${shownPays.length ? `
     ${shownPays.map((r: any, i: number) => `<tr>
       <td>${i + 1}</td>
       <td>${r.paid_on ? arDate(r.paid_on) : "—"}</td>
-      <td>${sar(v.enabled && !v.inclusive ? splitVat(Number(r.amount) || 0, v).total : r.amount)}</td>
+      <td>${sar(grossPay(r))}</td>
       <td>${payMethod(r)}</td>
       <td>${r.note ? escH(r.note) : "—"}</td>
     </tr>`).join("")}
     <tr style="background:#F3EEE2;font-weight:700">
       <td colspan="2">إجمالي المستلم</td>
-      <td>${sar(payments.reduce((a, r) => a + (v.enabled && !v.inclusive ? splitVat(Number(r.amount) || 0, v).total : (Number(r.amount) || 0)), 0))}</td>
+      <td>${sar(payments.reduce((a, r) => a + grossPay(r), 0))}</td>
       <td colspan="2">${countAr(shownPays.length, "عملية")}</td>
     </tr>
   </tbody>

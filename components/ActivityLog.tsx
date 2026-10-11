@@ -19,11 +19,13 @@ type Entry = {
   note: string | null; tenant_id: string; property_id: string; created_by: string | null; periods_covered: number | null;
   /** نوع الحركة: دفعة/تراجع أو مصروف — والمصروف قد يخصّ وحدة بعينها */
   kind?: "payment" | "expense" | "adjustment"; unit?: string | null;
+  /** على ماذا تُحسب الدفعة (v45): rent | carried | past_debt */
+  applies_to?: string | null;
   /** اسم الدافع المحفوظ ووحدته — لدفعات مستأجر انتقل للأرشيف */
   payer_name?: string | null; unit_label?: string | null;
 };
 
-const METHOD_AR: Record<string, string> = { transfer: "تحويل", ejar: "منصة إيجار", cash: "نقدًا", pos: "شبكة", cheque: "شيك", other: "أخرى" };
+const METHOD_AR: Record<string, string> = { transfer: "تحويل", ejar: "منصة إيجار", cash: "نقدًا", pos: "شبكة", card: "بطاقة", cheque: "شيك", other: "أخرى" };
 const sar = (n: number) => (Number(n) || 0).toLocaleString("en-US");
 
 /** الوقت بتوقيت السعودية، ميلادي، بأرقام لاتينية — لا اجتهاد للمتصفح */
@@ -147,6 +149,7 @@ export default function ActivityLog({ properties, onClose, db }: { properties: a
                       <td className="p-2 whitespace-nowrap">{r.kind === "adjustment" ? <span className="font-semibold text-[#5B21B6]">⚙︎ تصحيح عدّاد</span>
                         : r.kind === "expense" ? <span className="font-semibold text-[#9A4B00]">💸 مصروف</span>
                         : neg ? <span className="font-semibold text-late">↩︎ تراجع عن دفعة</span>
+                        : r.applies_to === "carried" ? "💳 سداد دين مرحَّل" : r.applies_to === "past_debt" ? "💳 سداد دين مستأجر سابق"
                         : r.periods_covered ? `✔ دفعة (${r.periods_covered})` : "½ سداد جزئي"}</td>
                       <td className="p-2">{r.kind === "expense" ? <span className="text-muted">{r.unit ? `الوحدة ${r.unit}` : "على العقار"}</span> : <>{t?.name || r.payer_name || "—"}{(t?.unit || r.unit_label) && <span className="text-muted text-xs"> · {t?.unit || r.unit_label}</span>}{!r.tenant_id && r.payer_name && <span className="text-[10px] text-muted"> (سابق)</span>}</>}</td>
                       <td className="p-2 text-muted">{pName[r.property_id] || "—"}</td>

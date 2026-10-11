@@ -80,7 +80,7 @@ export default function PortfolioView({ properties, windows, compliance, orgName
     if (!ids.length) { setPickPays([]); return; }
     let live = true;
     setPickPays(null); setPickErr("");
-    fetchAllRows(supabase as any, "payments", "id, property_id, tenant_id, amount, paid_on, method, created_at", (q) => q.in("property_id", ids).eq("paid_on", pickDate))
+    fetchAllRows(supabase as any, "payments", "id, property_id, tenant_id, amount, paid_on, method, created_at, applies_to, reverses, payer_name, unit_label", (q) => q.in("property_id", ids).eq("paid_on", pickDate))
       .then((data) => { if (live) setPickPays([...data].sort((a: any, b: any) => String(b.created_at || "").localeCompare(String(a.created_at || "")))); })
       .catch((e) => { if (live) setPickErr(e?.message || "تعذّر التحميل"); });
     return () => { live = false; };
@@ -106,7 +106,7 @@ export default function PortfolioView({ properties, windows, compliance, orgName
         setExpMonth({ owner, office }); })
       .catch((e) => console.error("month expenses", e?.message));
     /* على دفعات، والفشل يُبقي «…» — كان يعرض «0 محصَّل» رقمًا خاطئًا */
-    fetchAllRows(supabase as any, "payments", "id, property_id, tenant_id, amount, paid_on, method, created_at", (q) => q.in("property_id", ids).gte("paid_on", qFrom).lte("paid_on", to))
+    fetchAllRows(supabase as any, "payments", "id, property_id, tenant_id, amount, paid_on, method, created_at, applies_to, reverses, payer_name, unit_label", (q) => q.in("property_id", ids).gte("paid_on", qFrom).lte("paid_on", to))
       .then((data) => {
         const m: Record<string, number> = {};
         const td: any[] = [], yy: any[] = [];
@@ -285,7 +285,9 @@ export default function PortfolioView({ properties, windows, compliance, orgName
       {/* ═══ تحصيل اليوم وأمس — بالأسماء عند الضغط ═══ */}
       {(() => {
         const sum = (a: any[]) => a.reduce((s, x) => s + (Number(x.amount) || 0), 0);
-        const cnt = (a: any[]) => a.filter((x) => (Number(x.amount) || 0) > 0).length;
+        /* العدد = دفعات قائمة: المعكوسة في اليوم نفسه لا تُعدّ (المجموع صحيح أصلًا بالسالب) */
+        const cnt = (a: any[]) => { const rev = new Set(a.filter((x) => x.reverses).map((x) => String(x.reverses)));
+          return a.filter((x) => (Number(x.amount) || 0) > 0 && !rev.has(String(x.id))).length; };
         const who: Record<string, { t: Tenant; p: Property }> = {};
         rows.forEach(({ p, t }) => { who[t.id] = { t, p }; });
         const METHOD: Record<string, string> = { cash: "نقدًا", transfer: "تحويل بنكي", ejar: "منصة إيجار", card: "بطاقة", pos: "شبكة", cheque: "شيك" };
@@ -304,6 +306,7 @@ export default function PortfolioView({ properties, windows, compliance, orgName
           );
         };
         const open = (dayOpen && listOf(dayOpen)) || [];
+        const openRev = new Set(open.filter((x: any) => x.reverses).map((x: any) => String(x.reverses)));
         const loading = dayOpen ? listOf(dayOpen) === null : false;
         const pickOn = dayOpen === "custom";
         const dayWord = dayOpen === "today" ? "اليوم" : dayOpen === "yesterday" ? "أمس" : pickDate ? `يوم ${arDate(pickDate)}` : "";
@@ -331,8 +334,8 @@ export default function PortfolioView({ properties, windows, compliance, orgName
                       return (
                         <div key={x.id} className="flex items-center justify-between gap-3 px-3 py-2 text-sm">
                           <div className="min-w-0">
-                            <div className="font-medium truncate">{w ? w.t.name : "مستأجر سابق"}</div>
-                            <div className="text-[11px] text-muted truncate">{w ? `${w.p.name} · ${UNIT_AR[w.p.property_type] || "وحدة"} ${w.t.unit || "—"}` : ""}{x.method && METHOD[x.method] ? ` · ${METHOD[x.method]}` : ""}</div>
+                            <div className="font-medium truncate">{w ? w.t.name : (x.payer_name ? `${x.payer_name} (سابق)` : "مستأجر سابق")}</div>
+                            <div className="text-[11px] text-muted truncate">{w ? `${w.p.name} · ${UNIT_AR[w.p.property_type] || "وحدة"} ${w.t.unit || "—"}` : (x.unit_label ? `وحدة ${x.unit_label}` : "")}{x.method && METHOD[x.method] ? ` · ${METHOD[x.method]}` : ""}{x.applies_to === "carried" ? " · سداد دين مرحَّل" : x.applies_to === "past_debt" ? " · سداد دين سابق" : ""}{openRev.has(String(x.id)) ? " · معكوسة" : ""}</div>
                           </div>
                           <div className={`tabular-nums font-semibold whitespace-nowrap ${amt < 0 ? "text-late" : "text-[#137a50]"}`}>
                             {amt < 0 ? `تراجع ${sar(Math.round(-amt))}` : sar(Math.round(amt))}</div>

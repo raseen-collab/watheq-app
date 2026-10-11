@@ -166,7 +166,7 @@ export function renderTenantPage(d: TenantPortalData, opts: { nonce: string; bas
   const pays = `
 <section class="card"><h2>دفعاتك المسجّلة</h2>
   ${shown.length ? shown.map((x: any) => `<div class="row">
-    <div><b>${money(f.v.enabled && !f.v.inclusive ? splitVat(Number(x.amount) || 0, f.v).total : Number(x.amount))} ريال</b>
+    <div><b>${money(f.v.enabled && !f.v.inclusive && (!x.applies_to || x.applies_to === "rent") ? splitVat(Number(x.amount) || 0, f.v).total : Number(x.amount))} ريال</b>
       <div class="muted">${gDate(x.paid_on)} · ${methodAr(x.method)}${x.applies_to === "carried" ? " · سداد دين مرحَّل" : ""}</div></div>
     ${x.reference ? `<span class="muted" dir="ltr" style="align-self:center">${esc(x.reference)}</span>` : ""}
   </div>`).join("") : `<div class="muted">لا دفعات مسجّلة في هذا العقد بعد.</div>`}

@@ -2843,7 +2843,7 @@ const METHODS: { v: string; l: string }[] = [
   { v: "cash", l: "نقدًا" },
   { v: "pos", l: "شبكة" }, { v: "cheque", l: "شيك" }, { v: "other", l: "أخرى" },
 ];
-export const methodLabel = (v?: string | null) => METHODS.find((m) => m.v === v)?.l || "أخرى";
+export const methodLabel = (v?: string | null) => METHODS.find((m) => m.v === v)?.l || (v === "card" ? "بطاقة" : "أخرى");
 
 function PaymentModal({ tenant, unitWord, onClose, onSubmit, st, recent = null, vat = null, init = null, allowCarried = true }: {
   tenant: Tenant; unitWord: string; onClose: () => void;
@@ -2984,7 +2984,7 @@ function PaymentModal({ tenant, unitWord, onClose, onSubmit, st, recent = null, 
         <Field label="مرجع الحوالة" hint="آخر أرقام العملية — لمطابقة كشف البنك">
           <input className="fld" dir="ltr" value={reference} onChange={(e) => setReference(e.target.value)} placeholder="…4417" />
         </Field>
-        <Field label="ملاحظة" hint="اختياري">
+        <Field label="ملاحظة" hint={tgt === "carried" ? "سداد الدين يُحفظ بملاحظة «سداد دين مرحَّل»" : tgt === "both" ? "تُحفظ على جزء الأقساط" : "اختياري"}>
           <input className="fld" value={note} onChange={(e) => setNote(e.target.value)} placeholder="سداد شهر رجب" />
         </Field>
       </div>

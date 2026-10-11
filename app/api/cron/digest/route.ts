@@ -221,9 +221,11 @@ export async function GET(req: Request) {
       if (propIds.length) {
         const yd = new Date(`${todayISO()}T00:00:00Z`); yd.setUTCDate(yd.getUTCDate() - 1);
         const y = yd.toISOString().slice(0, 10);
-        const yRows = await fetchAllRows(db as any, "payments", "amount", (q: any) => q.in("property_id", propIds).eq("paid_on", y));
+        const yRows = await fetchAllRows(db as any, "payments", "id,amount,reverses", (q: any) => q.in("property_id", propIds).eq("paid_on", y));
         const net = yRows.reduce((s: number, r: any) => s + (Number(r.amount) || 0), 0);
-        const n = yRows.filter((r: any) => (Number(r.amount) || 0) > 0).length;
+        /* دفعة عُكست في اليوم نفسه لا تُعدّ (المجموع صحيح بالسالب أصلًا) */
+        const rev = new Set(yRows.filter((r: any) => r.reverses).map((r: any) => String(r.reverses)));
+        const n = yRows.filter((r: any) => (Number(r.amount) || 0) > 0 && !rev.has(String(r.id))).length;
         yLine = n ? `💰 <b>تحصيل أمس: ${sar(net)} ريال</b> (${n} ${n === 1 ? "دفعة" : "دفعات"})` : "💰 تحصيل أمس: لا دفعات مسجّلة";
       }
     } catch { /* ثانوي */ }

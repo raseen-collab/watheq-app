@@ -18,6 +18,8 @@ import type { Frequency } from "@/lib/contracts";
 
 /* التحليل كله في lib/importParse (دوال نقية مختبَرة) — هنا الواجهة والحفظ فقط (30 سبتمبر 2026) */
 const blocked = (r: Row) => !!(r._error || r._exists);
+/** عدد الغرف/دورات المياه/المكيفات كما تقبله القاعدة: صحيح بين 0 و50، وإلا فارغ */
+const clampCount = (n: any): number | null => { const v = Number(n); return n == null || n === "" || !isFinite(v) ? null : Math.max(0, Math.min(50, Math.round(v))); };
 
 type Sheet = { name: string; grid: string[][] };
 /* مطابقة المكتب لملفه تُتذكّر في متصفحه (بصمة العناوين فقط — لا بيانات) فلا يُسأل
@@ -143,8 +145,10 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
       return;
     }
     if (!list.length) { setFileName(`${f.name} — الملف فارغ`); return; }
-    /* ورقة «الوحدات» (قالبنا) إن وُجدت، وإلا الأكثر صفوفًا — لا الأولى عمياء */
+    /* ورقة «الوحدات» (قالبنا) أو «قالب الرفع» (ملف تصدير وثيق) إن وُجدت، وإلا الأكثر صفوفًا — لا الأولى عمياء.
+       (11 أكتوبر 2026) ملف التصدير كان يفتح «الدفعات» لأنها الأكثر صفوفًا. */
     let idx = list.findIndex((s) => s.name === "الوحدات");
+    if (idx < 0) idx = list.findIndex((s) => s.name === "قالب الرفع");
     if (idx < 0) idx = list.reduce((b, s, i) => s.grid.length > list[b].grid.length ? i : b, 0);
     setSheets(list); setSheetIdx(idx);
     startSheet(list[idx].grid, false);
@@ -278,9 +282,12 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
         carried_debt: r.carried_debt && r.carried_debt > 0 ? r.carried_debt : 0,
         ...(r.carried_debt && r.carried_debt > 0 ? { carried_debt_note: "رصيد سابق من ملف الرفع" } : {}),
         first_due: (r._due && dueChoice === "drop") ? null : (r.first_due || null),
-        unit_type: r.unit_type || null, vat_mode: r.vat_mode || null,
+        /* (11 أكتوبر 2026) vat_mode عمود NOT NULL افتراضه 'auto' — كانت null تُفشل الدفعة كلها،
+           فيحذف حلقة الإعادة العمود من 100 صف معًا ويضيع «تُطبَّق/معفاة» من بقيتها بصمت */
+        unit_type: r.unit_type || null, vat_mode: r.vat_mode || "auto",
         contract_no: r.contract_no || null, elec_account: r.elec_account || null, water_account: r.water_account || null,
-        rooms: r.rooms ?? null, baths: r.baths ?? null, acs: r.acs ?? null,
+        /* القاعدة تقبل 0–50 عددًا صحيحًا (schema-v22) — كاللوحة: قيمة خارجها كانت توقف الحفظ كله */
+        rooms: clampCount(r.rooms), baths: clampCount(r.baths), acs: clampCount(r.acs),
       }));
       /* على دفعات من 100 صف: مكتب يرفع 450 وحدة دفعة واحدة قد تنتهي مهلة
          الطلب أو يُرفض حجمه، فيفشل الرفع كله بعد دقيقة انتظار. وبالدفعات
