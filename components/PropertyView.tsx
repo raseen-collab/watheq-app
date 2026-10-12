@@ -1040,7 +1040,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
        * ما يعادله بالدورة الجديدة.
        */
       if (prev && (prev.paid_periods || 0) > 0 && (d.payment_frequency || "monthly") !== (prev.payment_frequency || "monthly")
-          && Number(d.paid_periods) === Number(init.paid_periods)) {
+          && Number(d.paid_periods) === Number(init.paid_periods) && !(d as any)._paidPicked) {
         const MO: Record<string, number> = { monthly: 1, quarterly: 3, trimester: 4, semiannual: 6, annual: 12 };
         const oldM = MO[prev.payment_frequency || "monthly"], newM = MO[d.payment_frequency || "monthly"];
         const months = (prev.paid_periods || 0) * (oldM || 0);
@@ -3850,7 +3850,9 @@ function TenantModal({ open, initial, unitWord, error, saving, onClose, onSubmit
     || (initial as any).contract_no || (initial as any).elec_account || (initial as any).water_account || (initial as any).meter_elec_in
     || (initial as any).meter_water_in || ((initial as any).vat_mode && (initial as any).vat_mode !== "auto"))));
   if (!open) return null;
-  const preview = d.contract_start && d.rent_amount ? contractState({ ...d, paid_periods: d.paid_periods || 0 }) : null;
+  /* (12 أكتوبر 2026) النهاية في المعاينة تُشتق كما سيحفظها الحفظ (derivedEndDate) — كانت المعاينة
+     تقرأ contract_end المخزَّن القديم، فبعد تغيير الدورة أو المدة تعرض «ينتهي مارس 2028» والحفظ سيكتب غيرها */
+  const preview = d.contract_start && d.rent_amount ? contractState({ ...d, contract_end: null, paid_periods: d.paid_periods || 0 }) : null;
   /**
    * بداية في المستقبل بلا دفعات: في بيانات المكاتب الحقيقية 25 عقدًا من 216
    * (11%) — مكتب يبدأ مع وثيق في منتصف سنة العقد فيُدخل «موعد الدفعة
@@ -3867,7 +3869,12 @@ function TenantModal({ open, initial, unitWord, error, saving, onClose, onSubmit
   const rentMissing = isNew && String(d.status) !== "vacated" && !(Number(d.rent_amount) > 0);
   /* v78: «مسدَّد حتى» اختيار صريح للساكن الحالي — كان الافتراضي «لم يدفع» فيظهر
      مستأجر منتظم منذ مارس متأخرًا 20,000 ريال لمن لم ينتبه للخانة */
-  const paidUnpicked = askOcc && occ === "current" && !d._paidPicked;
+  /* (12 أكتوبر 2026 — حادثة «حافظ») تغيير الدورة لعقد عليه دفعات: القائمة تطلب اختيارًا صريحًا.
+     كان الحارس لا يقبل إلا قيمةً تختلف عن القديمة — فإن كان الصحيح هو العدد نفسه (دفعتان
+     نصف سنوية صارتا دفعتين ربع سنوية) استحال الحفظ، واختيار الخيار نفسه لا يطلق onChange. */
+  const cycleChangedPaid = !!initial && !isFill && Number((initial as any).paid_periods) > 0
+    && (d.payment_frequency || "monthly") !== ((initial as any).payment_frequency || "monthly");
+  const paidUnpicked = ((askOcc && occ === "current") || cycleChangedPaid) && !d._paidPicked;
   const futureStartQ = !!startISO && startISO > today() && !(Number(d.paid_periods) > 0)
     && String(d.status) !== "vacated" && !startIsNew && !askOcc;
   const startTooLate = askOcc && occ === "current" && !!startISO && startISO > today();
