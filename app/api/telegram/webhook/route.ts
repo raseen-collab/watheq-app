@@ -238,8 +238,8 @@ async function confirmPay(db: DB, chatId: number, messageId: number, p: any, sco
   const rent = Number(card?.rent) || 0;
   const all = scope === "late" ? Number(row.amount) || 0 : 0;
   const buttons: TgKeyboard = [
-    [{ text: `✅ قسط واحد (${sar(rent || row.amount)})`, callback_data: `payok:${scope}:${id}:one` }],
-    ...(all > rent + 0.5 ? [[{ text: `✅ كامل المتأخر (${sar(all)})`, callback_data: `payok:${scope}:${id}:all` }]] : []),
+    [{ text: `✅ قسط واحد (${sar(card?.oneAmt ?? (rent || row.amount))})`, callback_data: `payok:${scope}:${id}:one` }],
+    ...(all > (card?.oneAmt ?? rent) + 0.5 ? [[{ text: `✅ كامل المتأخر (${sar(all)})`, callback_data: `payok:${scope}:${id}:all` }]] : []),
     backBtn(scope),
   ];
   /* 30 سبتمبر 2026: الوحدة واسم المستأجر نصّ حرّ — بلا تهريب يرفض تليجرام التعديل كله */

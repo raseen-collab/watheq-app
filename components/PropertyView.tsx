@@ -1145,6 +1145,32 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
           + `إن كان هذا تجديدًا لعقد جديد: اضغط «إلغاء» واستعمل «تجديد العقد» من قائمة الوحدة — يسألك عن المتأخرات ولا يضيّعها.\n\n`
           + `إن كان تصحيحًا لبيانات أُدخلت خطأً: اضغط «موافق».`)) { setSaving(false); return; }
       }
+      /* (20 أكتوبر 2026) تخفيض «الدين المرحَّل» من التعديل يمسحه بلا سجل نقدي ولا سبب:
+         المستأجر سدّد 3,600 فيصفّرها الموظف هنا — لا تدخل المحصَّل ولا تقرير المالك.
+         السداد والشطب لهما طريقان مسجَّلان؛ الرفع (دين جديد) يبقى مسموحًا. */
+      if (prev && carriedChanged && (Number(payload.carried_debt) || 0) < (Number(init.carried_debt) || 0) - 0.005) {
+        return fail(`لا يُخفَّض الدين المرحَّل من التعديل (${sar(Number(init.carried_debt) || 0)} ← ${sar(Number(payload.carried_debt) || 0)}) — يضيع بلا سجل. `
+          + `إن استلمت سداده: «💰 تسجيل دفعة» واختر «الدين المرحَّل». وإن تنازل عنه المالك أو كان إدخالًا خاطئًا: «الديون المرحَّلة» ← شطب مع السبب.`);
+      }
+      /* (20 أكتوبر 2026) تغيير بداية العقد أو أول استحقاق أو التقويم وعليه دفعات مسدَّدة:
+         العدّاد يُعاد حسابه من البداية الجديدة فيتغيّر المتأخر بصمت (3 مسدَّدة من يوليو
+         «متأخر 2,000» ← نقل البداية لأكتوبر ← «منتظم»). نعرض قبل/بعد ونسأل. */
+      if (prev && paidNew > 0) {
+        const moved = prev.contract_start && payload.contract_start
+          ? Math.abs((Date.parse(String(payload.contract_start)) - Date.parse(String(prev.contract_start))) / 86400000) : 0;
+        const fdChanged = String((prev as any).first_due || "") !== String(payload.first_due || "");
+        const calChanged = String((prev as any).calendar || "gregorian") !== String(payload.calendar || "gregorian");
+        if (moved >= 25 || fdChanged || calChanged) {
+          const opts = { graceDays: Number(active.grace_days) || 0, ...windowsOf(active) };
+          const before = contractState(prev, opts).amountDue || 0;
+          const after = contractState({ ...(prev as any), ...payload, paid_periods: paidNew } as any, opts).amountDue || 0;
+          if (Math.abs(before - after) > 0.5 && !confirm(
+            `تغيير ${moved >= 25 ? "بداية العقد" : fdChanged ? "أول تاريخ استحقاق" : "التقويم"} وعلى العقد ${paidNew} دفعة مسدَّدة يغيّر المتأخر:\n\n`
+            + `قبل: ${sar(before)} ريال\nبعد: ${sar(after)} ريال\n\n`
+            + `الدفعات المسدَّدة تُحسب من البداية الجديدة. إن كنت ترجّع العقد لبدايته الحقيقية لتُدخل دفعات قديمة، فسجّلها كلها بعد الحفظ حتى يرجع المتأخر صحيحًا.\n\nمتابعة؟`
+          )) { setSaving(false); return; }
+        }
+      }
       /**
        * كتابة قديمة فوق دفعة زميل (30 سبتمبر 2026).
        *
@@ -1488,6 +1514,12 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
     const st = contractState(t, { graceDays: Number(active?.grace_days) || 0, ...windowsOf(active) });
     /* فارغ = سنة بدورة العقد (كان 12 لكل الدورات: «الدفعة 3 من 12» لعقد ربع سنوي) */
     const total = t.contract_periods || defaultTermPeriods((t.payment_frequency || "monthly") as Frequency);
+    /* (20 أكتوبر 2026) عقد مسدَّد كله: كانت تصدر «الدفعة 12 من 12» مستحقة اليوم — فاتورة ضريبية
+       بمطالبة لا وجود لها تحرق رقمًا من التسلسل. */
+    if (st.fullyPaid) {
+      notify("err", `دفعات عقد ${t.name} مسدَّدة كلها — لا فاتورة مستحقة. للعقد الجديد جدّده أولًا.`);
+      return;
+    }
     const n = Math.min((t.paid_periods || 0) + 1, total);
     const period = `الدفعة ${n} من ${total}`;
     const amount = Number(t.rent_amount) || 0;
@@ -2329,8 +2361,9 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                                 ) : key === "litigation" ? (
                                   <button className="btn btn-ghost text-xs" onClick={() => setEnforcing(t)}>متابعة التنفيذ</button>
                                 ) : (<>
-                                  {canCollect && !st.fullyPaid && !((st.daysToEnd ?? 0) < 0 && st.unpaid === 0) && <QuickBtn title={isBusy(`pay:${t.id}`) ? "جارٍ التسجيل…" : st.hasPartial ? "تأكيد استلام باقي الدفعة" : "تأكيد استلام الدفعة كاملة"} cls={`btn-primary ${isBusy(`pay:${t.id}`) ? "opacity-50 pointer-events-none" : ""}`} onClick={() => quickPay(t, st)}>&#10004;</QuickBtn>}
-                                  {canCollect && <QuickBtn title="سداد جزئي" cls="btn-ghost" onClick={() => setPaying(t)}>&#189;</QuickBtn>}
+                                  {/* (20 أكتوبر 2026) زرّ واحد للسداد بدل ✔ و½: ✔ كان يسجّل بتاريخ اليوم بلا نافذة،
+                                      فتُسجَّل دفعات وصلت قبل أيام بتاريخ خاطئ. الآن كل دفعة تمرّ بالنافذة وحرّاسها. */}
+                                  {canCollect && <QuickBtn title="تسجيل دفعة مستلمة" cls={!st.fullyPaid && !((st.daysToEnd ?? 0) < 0 && st.unpaid === 0) && st.unpaid > 0 ? "btn-primary" : "btn-ghost"} onClick={() => setPaying(t)}><span className="whitespace-nowrap">💰 دفعة</span></QuickBtn>}
                                   {may("send_reminders") && !st.fullyPaid && !((st.daysToEnd ?? 0) < 0 && st.unpaid === 0) && <a href={remindLink(t)} target="_blank" rel="noreferrer" className="btn btn-wa text-xs px-2.5" title="إرسال تذكير واتساب" onClick={(e) => { e.preventDefault(); openExternal(remindLink(t)); }}>&#128172;</a>}
                                   {endNoticeDue(t, st) && <a href={endNoticeLink(t)} target="_blank" rel="noreferrer" className="btn btn-wa text-xs px-2.5" title="إشعار انتهاء العقد (واتساب)" onClick={(e) => { e.preventDefault(); openExternal(endNoticeLink(t)); }}>&#128197;</a>}
                                 </>)}
@@ -2514,9 +2547,8 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                   ) : (
                     <>
                       {primaryPay && (
-                        <QuickBtn title={st.hasPartial ? "تأكيد استلام باقي الدفعة" : "تأكيد استلام الدفعة"} cls={`btn-primary ${isBusy(`pay:${t.id}`) ? "opacity-50 pointer-events-none" : ""}`}
-                          onClick={() => quickPay(t, st)}>
-                          <span className="whitespace-nowrap">&#10004; {key === "due" ? "استلام" : st.hasPartial ? "استلام الباقي" : "استلام"}</span>
+                        <QuickBtn title="تسجيل دفعة مستلمة" cls="btn-primary" onClick={() => setPaying(t)}>
+                          <span className="whitespace-nowrap">💰 تسجيل دفعة</span>
                         </QuickBtn>
                       )}
                       {primaryRenew && <button className="btn text-xs" style={{ background: "#0E3A37", color: "#F6F1E4" }} onClick={() => askRenew(t)}>تجديد</button>}
@@ -2524,10 +2556,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                       {endNoticeDue(t, st) && <a href={endNoticeLink(t)} target="_blank" rel="noreferrer" className={`btn btn-wa text-xs px-2.5 ${primaryPay ? wide : ""}`} title="إشعار انتهاء العقد (واتساب)" onClick={(e) => { e.preventDefault(); openExternal(endNoticeLink(t)); }}><span className="whitespace-nowrap">&#128197; إشعار الانتهاء</span></a>}
                       {primaryEdit && <button className="btn btn-gold text-xs" onClick={() => setModal({ kind: "tenant", id: t.id })}>إكمال البيانات</button>}
                       {/* الثانوي — على الشاشة الأوسع فقط؛ على الجوال كله في ⋯ */}
-                      {canPay && !primaryPay && (
-                        <QuickBtn title="تأكيد استلام الدفعة" cls={`btn-primary ${wide}`} onClick={() => quickPay(t, st)}><span className="whitespace-nowrap">&#10004; استلام</span></QuickBtn>
-                      )}
-                      {canCollect && <span className={wide}><QuickBtn title="سداد جزئي" cls="btn-ghost" onClick={() => setPaying(t)}><span className="whitespace-nowrap">&#189; جزئي</span></QuickBtn></span>}
+                      {canCollect && !primaryPay && <span className={wide}><QuickBtn title="تسجيل دفعة مستلمة" cls="btn-ghost" onClick={() => setPaying(t)}><span className="whitespace-nowrap">💰 تسجيل دفعة</span></QuickBtn></span>}
                       {canRemind && <a href={remindLink(t)} target="_blank" rel="noreferrer" className={`btn btn-wa text-xs px-2.5 ${wide}`} title="إرسال تذكير واتساب" onClick={(e) => { e.preventDefault(); openExternal(remindLink(t)); }}><span className="whitespace-nowrap">&#128172; تذكير</span></a>}
                       {/* كان 📄 أبيضَ على خلفية بيضاء فيكاد يختفي — الأيقونة ترث لون النص. */}
                       {may("issue_invoices") && <span className={wide}><QuickBtn title="إصدار فاتورة" cls="btn-ghost" onClick={() => openInvoice(t)}>
@@ -2541,8 +2570,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                     items={[
                       /* على الجوال: ما خرج من البطاقة يعيش هنا أولًا — لا يضيع إجراء */
                       ...(key !== "vacant" && key !== "litigation" && (canPay || canCollect || canRemind || tel) ? [{ sep: "💰 تحصيل" } as any] : []),
-                      ...(key !== "vacant" && key !== "litigation" && canPay && !primaryPay ? [{ label: "✔ تأكيد استلام الدفعة", run: () => quickPay(t, st) }] : []),
-                      ...(key !== "vacant" && key !== "litigation" && canCollect ? [{ label: "½ تسجيل مبلغ (جزئي أو بتاريخ آخر)", run: () => setPaying(t) }] : []),
+                      ...(key !== "vacant" && key !== "litigation" && canCollect ? [{ label: "💰 تسجيل دفعة", run: () => setPaying(t) }] : []),
                       ...(key !== "vacant" && key !== "litigation" && canRemind ? [{ label: "💬 تذكير واتساب", run: () => openExternal(remindLink(t)) }] : []),
                       ...(tel && key !== "vacant" ? [{ label: "📞 اتصال", run: () => { window.location.href = tel; } }] : []),
 /* نفس ترتيب الجدول حرفيًّا: المستخدم لا يتعلّم قائمتين */
@@ -2869,8 +2897,8 @@ function PaymentModal({ tenant, unitWord, onClose, onSubmit, st, recent = null, 
   const [amount, setAmount] = useState<string>(init?.amount ? String(init.amount) : rem.remaining <= 0 ? "" : String(Math.min(remaining || rent, rem.remaining)));
   /* المبلغ المقترح عند الفتح — «الدين المرحَّل» يستبدله بالدين ما لم يكتب المكتب مبلغه بنفسه */
   const [suggested] = useState<string>(amount);
-  const [ask, setAsk] = useState<null | { kind: "excess" | "dup"; text: string }>(null);
-  const [acked, setAcked] = useState<{ excess?: string; dup?: string }>({});
+  const [ask, setAsk] = useState<null | { kind: "excess" | "dup" | "early" | "future"; text: string }>(null);
+  const [acked, setAcked] = useState<{ excess?: string; dup?: string; early?: string; future?: string }>({});
   const [method, setMethod] = useState("transfer");
   const [note, setNote] = useState("");
   /* تاريخ وصول المال ومرجع الحوالة — أساس مطابقة كشف البنك */
@@ -2894,10 +2922,28 @@ function PaymentModal({ tenant, unitWord, onClose, onSubmit, st, recent = null, 
   const lateN = Math.max(0, Number(st?.unpaid) || 0);
   const lateDue = Math.max(0, Number(st?.amountDue) || 0);
   /** الحارسان بالترتيب: يزيد على المتبقي ← يشبه دفعة قريبة؛ كل تأكيد مرتبط بالمبلغ والتاريخ نفسيهما */
-  function submit(ok: { excess?: string; dup?: string }) {
+  function submit(ok: { excess?: string; dup?: string; early?: string; future?: string }) {
     if (!entered || !tgt || carriedOver) return;
-    if (!amt) { onSubmit(0, method, note.trim() || undefined, paidOn, reference.trim() || undefined, true, toCarried); return; }
     const key = `${amt}|${paidOn}`;
+    /* (20 أكتوبر 2026) تاريخ بعد اليوم: غالبًا خطأ إدخال (سنة أو شهر) — الدفعة تدخل محصَّل
+       شهر لم يأتِ وتغيب عن تقرير هذا الشهر وكشف البنك. */
+    if (/^\d{4}-\d{2}-\d{2}$/.test(String(paidOn)) && String(paidOn) > today() && ok.future !== key) {
+      setAsk({ kind: "future", text: `تاريخ السداد (${arDate(String(paidOn))}) بعد اليوم. المبلغ سيُحسب في محصَّل ذلك الشهر لا هذا الشهر. متأكد من التاريخ؟` });
+      return;
+    }
+    if (!amt) { onSubmit(0, method, note.trim() || undefined, paidOn, reference.trim() || undefined, true, toCarried); return; }
+    /* (20 أكتوبر 2026) تاريخ سداد قبل بداية العقد في وثيق بأكثر من شهر: الدفعة تُحسب
+       سدادًا للدفعة المستحقة التالية لا لمدة قديمة، فيظهر المستأجر مسدِّدًا مقدّمًا وهو
+       ليس كذلك (حالة مكتب «بداية جديدة» أراد إدخال دفعات ما قبل وثيق). الشهر هامش
+       لمن يدفع مبكرًا قبل أول استحقاق — وهذا طبيعي ولا يُسأل عنه. */
+    const startIso = String(tenant.contract_start || "").slice(0, 10);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(startIso) && /^\d{4}-\d{2}-\d{2}$/.test(String(paidOn))
+      && (Date.parse(startIso) - Date.parse(String(paidOn))) / 86400000 > 31 && ok.early !== key) {
+      setAsk({ kind: "early", text: `تاريخ السداد (${arDate(String(paidOn))}) قبل بداية العقد في وثيق (${arDate(startIso)}). `
+        + `المبلغ سيُحسب على أقدم دفعة غير مسدَّدة في العقد الحالي — لا على مدة قبل بدايته — فقد يظهر المستأجر مسدِّدًا وهو ليس كذلك. `
+        + `إن كانت دفعة قديمة: عدّل «بداية العقد» أولًا من ⋯ ← تعديل البيانات، أو أبقها في دفترك.` });
+      return;
+    }
     const over = excessOverRemaining(amt, rem.remaining);
     if (over > 0 && ok.excess !== key) {
       /* (F3) «مضافة فوق الإيجار»: المبلغ = المتبقي شاملًا الضريبة (±1) ⇒ غالبًا أُدخل شاملًا والتسجيل بدونها */
@@ -2941,6 +2987,14 @@ function PaymentModal({ tenant, unitWord, onClose, onSubmit, st, recent = null, 
           {rem.remaining > 0 && rem.remainingWithVat !== rem.remaining ? <span className="text-xs text-muted font-normal"> (شاملًا الضريبة {sar(rem.remainingWithVat)})</span> : null}</b>
       </div>
       {init?.why && <div className="text-xs rounded-lg border border-[#EBD9AA] bg-[#FDF0DC] text-[#7A4800] p-2.5 mb-3">راجع قبل التسجيل: {init.why}.</div>}
+      {/* (20 أكتوبر 2026) اعتماد بلاغ حوالة لا يعرض خيار الدين المرحَّل — فيذهب المبلغ كله للأقساط
+          وقد يكون المستأجر حوّله سدادًا للدين القديم (حادثة 11 أكتوبر بطريق آخر). */}
+      {!allowCarried && (Number((tenant as any).carried_debt) || 0) > 0 && (
+        <div className="text-xs rounded-lg border border-[#F5C6C2] bg-[#FBE9E7] text-[#8f2b26] p-2.5 mb-3">
+          على المستأجر دين مرحَّل {sar(Number((tenant as any).carried_debt) || 0)} ريال، وهذا الاعتماد يحسب المبلغ كله على أقساط العقد الحالي.
+          إن كانت الحوالة سدادًا للدين القديم: ألغِ هنا، وسجّلها من «💰 تسجيل دفعة» واختر «الدين المرحَّل».
+        </div>
+      )}
 
       {carriedDebt > 0 && (
         <div className="rounded-xl border border-[#F5CFA0] bg-[#FDECD2] p-3 mb-3 text-sm" data-testid="carried-choice">
@@ -3028,10 +3082,10 @@ function PaymentModal({ tenant, unitWord, onClose, onSubmit, st, recent = null, 
         <div role="alertdialog" aria-labelledby="pay-ask" className="mt-5 rounded-xl border border-[#F5C6C2] bg-[#FBE9E7] p-3 text-[#8f2b26]">
           <div id="pay-ask" className="text-sm font-semibold leading-relaxed">⚠️ {ask.text}</div>
           <div className="flex gap-2 mt-3">
-            <button type="button" className="btn btn-ghost flex-1 justify-center" autoFocus onClick={() => setAsk(null)}>{ask.kind === "dup" ? "لا، سأراجع" : "مراجعة المبلغ"}</button>
+            <button type="button" className="btn btn-ghost flex-1 justify-center" autoFocus onClick={() => setAsk(null)}>{ask.kind === "dup" || ask.kind === "early" || ask.kind === "future" ? "لا، سأراجع" : "مراجعة المبلغ"}</button>
             <button type="button" className="btn flex-1 justify-center bg-late text-white"
               onClick={() => { const key = `${amt}|${paidOn}`; const next = { ...acked, [ask.kind]: key }; setAcked(next); setAsk(null); submit(next); }}>
-              {ask.kind === "dup" ? "نعم، دفعة جديدة" : "نعم، سجّله"}</button>
+              {ask.kind === "dup" ? "نعم، دفعة جديدة" : ask.kind === "early" || ask.kind === "future" ? "سجّلها على أي حال" : "نعم، سجّله"}</button>
           </div>
         </div>
       ) : (
@@ -3201,7 +3255,7 @@ function HistoryModal({ data, unitWord, onClose, canEdit = true, onChanged, db }
       `عكس هذه الدفعة؟\n\n${sar(Number(r.amount))} ريال بتاريخ ${r.paid_on}\n\n`
       + `سيُضاف صفّ سالب مطابق، ويُنقص عدّاد الدفعات المسدَّدة، ويعود المبلغ مستحقًّا.\n`
       + `الدفعة الأصلية تبقى في السجل للتدقيق.\n\n`
-      + `إن كان المستأجر سدّد مبلغًا أقل، اعكسها ثم سجّل المبلغ الصحيح بزر ½.`
+      + `إن كان المستأجر سدّد مبلغًا أقل، اعكسها ثم سجّل المبلغ الصحيح بزر «💰 تسجيل دفعة».`
     )) return;
     setBusy(true); setErr(null);
     const { data, error } = await supabase.rpc("watheq_reverse_payment", { p_payment: r.id });
@@ -3215,7 +3269,25 @@ function HistoryModal({ data, unitWord, onClose, canEdit = true, onChanged, db }
   }
 
   async function saveEdit(id: string) {
-    setBusy(true); setErr(null);
+    setErr(null);
+    /* (20 أكتوبر 2026) تعديل التاريخ كان تحديثًا مباشرًا بلا فحص: تاريخ فارغ يُسقط الدفعة من كل
+       تقرير بالفترة، وخطأ سنة (2062) ينقلها لشهر لم يأتِ، ونقلها بين شهرين يغيّر محصَّل شهر
+       ربما أُرسل تقريره للمالك. نفس حدود watheq_record_payment: من سنة قبل بداية العقد إلى الغد. */
+    const orig = rows.find((x) => x.id === id);
+    const nd = String(eDate || "").slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(nd)) { setErr("تاريخ السداد مطلوب."); return; }
+    const tomorrow = new Date(Date.parse(today()) + 86400000).toISOString().slice(0, 10);
+    if (nd > tomorrow) { setErr(`التاريخ ${arDate(nd)} بعد اليوم — تاريخ السداد يوم وصول المال فعلًا.`); return; }
+    const cs = String(tenant.contract_start || "").slice(0, 10);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(cs)) {
+      const floor = new Date(Date.parse(cs) - 365 * 86400000).toISOString().slice(0, 10);
+      if (nd < floor) { setErr(`التاريخ ${arDate(nd)} قبل بداية العقد (${arDate(cs)}) بأكثر من سنة — تأكّد منه.`); return; }
+    }
+    const od = String(orig?.paid_on || "").slice(0, 10);
+    if (od && od.slice(0, 7) !== nd.slice(0, 7) && !confirm(
+      `نقل الدفعة من ${arDate(od)} إلى ${arDate(nd)} ينقل مبلغها من محصَّل شهر إلى شهر آخر في التقارير وكشف المالك.\n\n`
+      + `تقارير أُرسلت للمالك سابقًا لا تتغيّر — قد يختلف رقمها عن الكشف الجديد.\n\nمتابعة؟`)) return;
+    setBusy(true);
     const { data: up, error } = await supabase.from("payments")
       .update({ paid_on: eDate || null, reference: eRef.trim() || null })
       .eq("id", id).select("id, paid_on, reference");
@@ -4047,12 +4119,12 @@ function TenantModal({ open, initial, unitWord, error, saving, onClose, onSubmit
             وما فهمت»). وعقد جديد لم يُدفع فيه شيء لا يُسأل أصلًا. */}
         {askOcc && (occ === "new" || occ === "fresh") ? (
           <div className="text-[12px] text-muted rounded-lg bg-paper border border-line px-3 py-2">
-            {occ === "fresh" ? "بداية جديدة — لا دفعات سابقة في وثيق؛ القديم يبقى في دفاترك." : "عقد جديد — لا دفعات سابقة."} إن استلمت دفعة عند التوقيع أو اليوم فسجّلها بعد الحفظ بزر ✔ «استلام».
+            {occ === "fresh" ? "بداية جديدة — لا دفعات سابقة في وثيق؛ القديم يبقى في دفاترك." : "عقد جديد — لا دفعات سابقة."} إن استلمت دفعة عند التوقيع أو اليوم فسجّلها بعد الحفظ بزر «💰 تسجيل دفعة».
           </div>
         ) : (
         <Field label="مسدَّد حتى: آخر دفعة دفعها المستأجر"
           hint={initial && !isFill
-            ? "لتصحيح خطأ فقط. الدفعة الجديدة تُسجَّل بزر ✔ «استلام» وتظهر هنا تلقائيًّا"
+            ? "لتصحيح خطأ فقط. الدفعة الجديدة تُسجَّل بزر «💰 تسجيل دفعة» وتظهر هنا تلقائيًّا"
             : "اختر تاريخ آخر دفعة دفعها، ولو كانت قبل أن تبدأ مع وثيق — ووثيق يحسب منها القادمة والمتأخرة"}>
           {sched.length > 0 ? (
             <select className={`fld ${paidUnpicked ? "border-late" : ""}`} value={paidUnpicked ? "" : String(Number(d.paid_periods) || 0)}

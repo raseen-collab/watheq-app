@@ -7,7 +7,7 @@
 import { productState, LIMIT_MSG } from "./entitlements";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { statusWindows } from "./contract-state";
-import { contractState, renewContract as renewFields, freqShort, applyPayment, defaultTermPeriods, splitVat, unitVatApplies, withVat, type Frequency } from "@/lib/contracts";
+import { contractState, renewContract as renewFields, freqShort, applyPayment, defaultTermPeriods, splitVat, unitVatApplies, unitVat, withVat, type Frequency } from "@/lib/contracts";
 import { today as riyadhToday, waNumber, daysAr } from "@/lib/utils";
 import { annualRentRoll } from "@/lib/income";
 import { fetchAllRows } from "@/lib/fetch-all";
@@ -120,8 +120,17 @@ const rowLabel = (r: Enriched) => {
   return [r.propName, unit].filter(Boolean).join(" · ") || (r.t.name || "عقد");
 };
 
+/** (20 أكتوبر 2026) «قسط واحد» = ما يُكمل الدفعة الحالية. كان البوت يسجّل الإيجار كاملًا
+    (3,000) والمستأجر دفع منه 1,000 سابقًا — فيُضاف للمحصَّل 1,000 لم تصل. نفس منطق اللوحة. */
+export function oneInstallment(t: any): number {
+  const rent = Number(t?.rent_amount) || 0;
+  const part = Math.max(0, Math.min(rent, Number(t?.partial_amount) || 0));
+  return Math.round((rent - part) * 100) / 100;
+}
+
 const cardOf = (r: Enriched): ContractCard => ({
   tenantId: r.t.id, rent: Number(r.t.rent_amount) || 0,
+  oneAmt: oneInstallment(r.t),
   label: rowLabel(r),
   tenant: r.t.name || "—",
   phone: r.t.phone || "",
@@ -326,6 +335,8 @@ export async function getUnpaid(db: DB, profile: any, scope: string): Promise<Un
 
 export type ContractCard = {
   tenantId: string; label: string; tenant: string; phone: string; rent?: number;
+  /** (20 أكتوبر 2026) ما يُكمل الدفعة الحالية = الإيجار − المدفوع منها جزئيًّا */
+  oneAmt?: number;
   state: { key: StateKey; label: string; dot: string; owed: number; nextDue: string | null; daysToEnd: number | null; endDate: string | null; };
 };
 
@@ -411,7 +422,8 @@ async function payTenant(db: DB, profile: any, tenantId: string, mode: "one" | "
   if (recent && recent.length) return { ok: false, msg: "سُجّلت دفعة لهذا المستأجر قبل لحظات — لم تُسجَّل ثانية. إن كانت دفعة أخرى فعلًا، سجّلها من اللوحة." };
   /* «كامل المتأخر» يسجّل ما عُرض في القائمة، لا قسطًا واحدًا (كان يُعرض 7,500 ويُسجَّل 2,500) */
   const st = contractState(t, statusWindows(prop, profile));
-  const amount = mode === "all" && (st.amountDue || 0) > 0 ? Math.round((st.amountDue || 0) * 100) / 100 : rent;
+  const amount = mode === "all" && (st.amountDue || 0) > 0 ? Math.round((st.amountDue || 0) * 100) / 100 : oneInstallment(t);
+  if (!(amount > 0)) return { ok: false, msg: "لا مبلغ مستحق على الدفعة الحالية — راجع العقد من اللوحة." };
   const { data, error } = await db.rpc("watheq_record_payment", {
     p_tenant: tenantId, p_amount: amount, p_method: "other", p_note: BOT_NOTE,
     p_paid_on: todayISO(), p_actor: profile.id,
@@ -506,7 +518,7 @@ export async function renewContract(db: DB, profile: any, tenantId: string): Pro
   try {
     const { data: t } = await db.from("tenants").select("*").eq("id", tenantId).maybeSingle();
     if (!t) return { ok: false, msg: "العقد غير موجود." };
-    const { data: prop } = await db.from("properties").select("id,user_id,property_type,name").eq("id", t.property_id).maybeSingle();
+    const { data: prop } = await db.from("properties").select("id,user_id,property_type,name,vat_enabled,vat_rate,vat_inclusive").eq("id", t.property_id).maybeSingle();
     if (!prop || String(prop.user_id) !== String(profile.id)) return { ok: false, msg: "غير مصرّح." };
     if (productState(profile, "property") === "expired") return { ok: false, msg: LIMIT_MSG.readOnly };   // v67
     /* (جولة 4) البوت لا يجدّد قبل نهاية العقد بأكثر من 30 يومًا — نفس حارس اللوحة وعتبته.
@@ -514,7 +526,8 @@ export async function renewContract(db: DB, profile: any, tenantId: string): Pro
     const curEnd = contractState(t).endDate;
     if (curEnd && renewalTooEarly(curEnd, todayISO())) return { ok: false, msg: earlyRenewalMsg(curEnd) };
     /* «جدّد سنة» سنةً فعلًا: كانت بمدة العقد السابق (عقد سنتين يُجدَّد سنتين) */
-    const fields = renewFields(t, { periods: defaultTermPeriods((t.payment_frequency || "monthly") as Frequency) });
+    /* (20 أكتوبر 2026) ضريبة الوحدة كما في اللوحة — بدونها تُرحَّل متأخرات «مضافة فوق الإيجار» بلا ضريبتها */
+    const fields = renewFields(t, { periods: defaultTermPeriods((t.payment_frequency || "monthly") as Frequency), vat: unitVat(t, prop) });
     const moved = Math.round(((Number((fields as any).carried_debt) || 0) - (Number(t.carried_debt) || 0)) * 100) / 100;
     const { error } = await db.from("tenants").update(fields).eq("id", tenantId);
     if (error) return { ok: false, msg: "تعذّر الحفظ: " + error.message };

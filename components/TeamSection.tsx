@@ -21,7 +21,7 @@ type Member = { owner_id: string; member_id: string; role: string; member_name: 
  * محصّل يسجّل الدفعات ولا يُصدر الفواتير؟ أطفئ «إصدار الفواتير» له وحده.
  */
 const PERMS: { k: string; label: string; hint: string; def: Record<string, boolean>; group: string; locked?: boolean }[] = [
-  { group: "التحصيل اليومي", k: "record_payments", label: "تسجيل الدفعات", hint: "زرّا ✔ و½ في اللوحة", def: { manager: true, collector: true, viewer: false } },
+  { group: "التحصيل اليومي", k: "record_payments", label: "تسجيل الدفعات", hint: "زر «💰 تسجيل دفعة» في اللوحة", def: { manager: true, collector: true, viewer: false } },
   { group: "التحصيل اليومي", k: "issue_invoices",  label: "إصدار الفواتير", hint: "الفاتورة الضريبية المرقّمة", def: { manager: true, collector: true, viewer: false } },
   { group: "التحصيل اليومي", k: "send_reminders",  label: "التذكيرات والخطابات", hint: "تذكير واتساب ونموذج الإشعار", def: { manager: true, collector: true, viewer: false } },
   { group: "التحصيل اليومي", k: "add_notes",       label: "إضافة ملاحظات", hint: "سجل العقار", def: { manager: true, collector: true, viewer: false } },

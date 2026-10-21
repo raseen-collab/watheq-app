@@ -269,6 +269,9 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
               r.calendar === "hijri" ? "hijri" : "gregorian")
           : null,
         paid_periods: r.paid_periods,
+        /* (20 أكتوبر 2026) الجزئي المدفوع قبل وثيق رصيدًا افتتاحيًّا — كان يُطلب تسجيله بعد الرفع
+           فيُسجَّل نقدًا بتاريخ اليوم ويدخل محصَّل هذا الشهر وتقرير المالك */
+        partial_amount: r.partial_amount && r.partial_amount > 0 ? r.partial_amount : 0,
         // يوم المرساة كما يفعل الإدخال اليدوي: يُشتق من البداية عند غيابه،
         // لكن حفظه صراحةً يبقي المواعيد ثابتة لو عُدّل تاريخ البداية لاحقًا
         /* من «أول استحقاق» إن وُجد في الملف، وإلا من البداية — كالإدخال اليدوي */
@@ -436,7 +439,7 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
                     {existsCount > 0 && <> · <span className="text-late font-semibold">{existsCount} موجودة أصلًا في العقار — لن تُرفع</span></>}
                     {checking && <> · <span>جارٍ فحص الوحدات الموجودة…</span></>}
                     {warnCount > 0 && <> · <span className="text-[#8a5a11] font-semibold">{warnCount} بدايتها بعد اليوم — تحقّق منها</span></>}
-                    {partialCount > 0 && <> · <span className="text-[#8a5a11] font-semibold">{partialCount} فيها مبلغ جزئي — سجّله بعد الرفع</span></>}
+                    {partialCount > 0 && <> · <span className="text-[#8a5a11] font-semibold">{partialCount} فيها مبلغ جزئي — يُحفظ رصيدًا افتتاحيًّا</span></>}
                   </div>
                   {colInfo && (
                     /* ما فهمناه من الملف ظاهرًا: عمود بعنوان غير معروف كان يُقرأ بموضعه بصمت (30 سبتمبر 2026) */

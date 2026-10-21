@@ -4,7 +4,7 @@
 // فُصل عن ImportView (30 سبتمبر 2026) ليُختبر مباشرة، ولتقرأه ورقة «قالب الرفع»
 // في التصدير من المصدر نفسه — فلا يعود ترتيب الأعمدة يختلف بين الطرفين.
 // ============================================================
-import { firstDueGap, type Frequency } from "./contracts";
+import { firstDueGap, contractState, defaultTermPeriods, type Frequency } from "./contracts";
 import { parseHijriInput } from "./hijri";
 
 // العمود التاسع «الدفعات المسدّدة» اختياري: بدونه يُعدّ العقد لم يُسدَّد منه شيء —
@@ -29,6 +29,8 @@ export type Row = {
   paid_periods: number;
   elec_account?: string; water_account?: string; contract_no?: string; calendar?: string;
   unit_type?: string; rooms?: number; baths?: number; acs?: number; first_due?: string; vat_mode?: string; carried_debt?: number;
+  /** (20 أكتوبر 2026) جزء مدفوع من الدفعة التالية قبل وثيق — رصيد افتتاحي لا نقد في الدفتر */
+  partial_amount?: number;
   prop_name?: string;
   prop_id?: string;
   _error?: string;
@@ -566,7 +568,7 @@ export function parseGrid(grid: string[][], properties: Prop[], todayIso: string
       if (paidRem < 0.01) paidRem = 0;
       if (amt > 0 && rentPay > 0)
         notes.push(`المسدَّد ${fmtN(amt)} = ${pd} ${pd === 1 ? "دفعة كاملة" : "دفعات كاملة"}`
-          + (paidRem ? ` + ${fmtN(paidRem)} جزئي — سجّل الجزئي من صفحة المستأجر بعد الرفع` : ""));
+          + (paidRem ? ` + ${fmtN(paidRem)} جزئي — يُحفظ مدفوعًا من الدفعة التالية (رصيد افتتاحي، لا يدخل محصَّل هذا الشهر)` : ""));
     } else pd = isNaN(paidN) ? 0 : Math.max(0, Math.floor(paidN));
     const carriedN = carriedTxt ? parseNum(carriedTxt) : NaN;
     const fd = firstDueTxt ? parseAnyDate(firstDueTxt).iso : "";
@@ -593,6 +595,18 @@ export function parseGrid(grid: string[][], properties: Prop[], todayIso: string
     else if (pr && paidBasis === "amount" && (pd > pr || (pd === pr && paidRem > 0)))
       err = `المبلغ المسدَّد ${fmtN(paidN)} أكثر من قيمة العقد كله (${pr} × ${fmtN(rentPay)}) — تأكّد من عمود المبلغ وأساسه`;
     else if (pr && pd > pr) err = "الدفعات المسدّدة أكثر من عدد دفعات العقد";
+    /* (20 أكتوبر 2026) بلا «عدد الدفعات» تُفترض سنة بالدورة — مسدَّد أكثر منها كان يُقبل
+       («مسدَّد 15000 من 12»: مبلغ كُتب في عمود العدد) */
+    else if (!pr && FREQ_LOOKUP[fk] && pd > defaultTermPeriods(frequency))
+      err = `الدفعات المسدّدة (${pd}) أكثر من دفعات سنة بهذه الدورة (${defaultTermPeriods(frequency)}) — اكتب «عدد الدفعات» للعقد، أو تأكّد أن العمود عدد لا مبلغ`;
+    /* مسدَّد أكثر مما استحق حتى اليوم بدفعتين فأكثر: غالبًا خطأ — يُنبَّه ولا يُمنع (قد يدفع سنة مقدّمًا) */
+    if (!err && cs && pd > 0) {
+      try {
+        const due0 = Number(contractState({ contract_start: cs, payment_frequency: frequency, rent_amount: rentPay || 1,
+          paid_periods: 0, contract_periods: pr || null, calendar, first_due: fd || null } as any).unpaid) || 0;
+        if (pd > due0 + 1) notes.push(`⚠️ مسدَّد ${pd} والمستحق حتى اليوم ${due0} — أي ${pd - due0} مقدّمًا. تأكّد من العدد`);
+      } catch { /* تاريخ غير صالح يُلتقط في مكان آخر */ }
+    }
     const target = propName ? propByName.get(norm(propName)) : undefined;
     if (propName && !target && !err) err = `العقار «${propName}» غير موجود — أنشئه أولًا أو صحّح الاسم`;
 
@@ -616,6 +630,7 @@ export function parseGrid(grid: string[][], properties: Prop[], todayIso: string
       first_due: fd || undefined,
       vat_mode,
       carried_debt: carriedTxt ? Math.max(0, isNaN(carriedN) ? 0 : carriedN) : undefined,
+      partial_amount: paidRem > 0 ? paidRem : undefined,
       prop_name: propName || undefined, prop_id: target?.id,
       _error: err || undefined,
       /* بيانات المكاتب: 11% من العقود أُدخلت ببداية مستقبلية وعدّاد صفر — «موعد
