@@ -28,6 +28,7 @@ import DemoGuide from "@/components/DemoGuide";
 import DebtFollowUp from "@/components/DebtFollowUp";
 import UnitInvoicesModal from "@/components/UnitInvoicesModal";
 import CollectionStatementModal from "@/components/CollectionStatementModal";
+import DueListModal from "@/components/DueListModal";
 import ExpensesModal from "@/components/ExpensesModal";
 import OwnerLinkModal from "@/components/OwnerLinkModal";
 import { TenantLinkModal, TenantPortalInbox, type TenantClaim } from "@/components/TenantPortal";
@@ -1408,6 +1409,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
      ثلاث فواتير لوحدة ولا يستطيع رؤيتها ولا إعادة طباعة واحدة طلبها المستأجر. */
   const [invoicesFor, setInvoicesFor] = useState<Tenant | null>(null);
   const [collOpen, setCollOpen] = useState(false);
+  const [dueOpen, setDueOpen] = useState(false);
   /* خطأ الحفظ يُعرض داخل النموذج لا إشعارًا عائمًا في أعلى الصفحة: على
      الجوال يكون المستخدم منزلًا داخل نموذج طويل، فيضغط «حفظ» ويظهر الإشعار
      خارج نظره — فيقول «ضغطت ولا صار شي». */
@@ -2164,6 +2166,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                   الأدوات نفسها — لكن العين تجد مكانها بدل أن تمسح صفًّا طويلًا. */}
               <MenuBtn label={<><Icon name="doc" className="me-1.5" />مستندات</>} items={[
                 { label: "كشف حساب العقار", run: () => setStmtOpen(true) },
+                { label: "كشف المستحقات (للمحصّل)", run: () => setDueOpen(true) },
                 { label: "عرض سعر لمستأجر محتمل", run: () => setQuoteOpen(true) },
                 /* «التزامات المكتب» انتقلت إلى «نظرة عامة» — للمكتب كله لا لعقار */
               ]} />
@@ -2714,6 +2717,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       {ownerStmtOpen && <OwnerStatementModal properties={items} issuer={issuer} db={db} onClose={() => setOwnerStmtOpen(false)} />}
       {logOpen && <ActivityLog properties={items} db={db} onClose={() => setLogOpen(false)} />}
       {/* الصفحة العامة ترسم دليلها بنفسها — لا نكرّره هنا */}
+      {dueOpen && <DueListModal properties={items as any} issuer={issuer} db={db} onClose={() => setDueOpen(false)} />}
       {collOpen && <CollectionStatementModal properties={items as any /* كاملة: نسبة الأتعاب وإعدادات الضريبة تحدّد صافي المالك */} issuer={issuer} db={db} onClose={() => setCollOpen(false)} />}
       {debtOpen && <DebtFollowUp properties={items.map((p) => ({ id: p.id, name: p.name }))} orgName={orgName} db={db} onClose={() => setDebtOpen(false)} />}
       {invoicesFor && active && <UnitInvoicesModal tenant={invoicesFor} property={active} issuer={issuer} db={db}

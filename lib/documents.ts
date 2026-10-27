@@ -106,6 +106,9 @@ const NOUNS: Record<string, [one: string, two: string, few: string, many: string
   "بند": ["بند واحد", "بندان", "بنود", "بندًا"],
   "قيد": ["قيد واحد", "قيدان", "قيود", "قيدًا"],
   "معروض": ["معروض واحد", "معروضان", "معروضات", "معروضًا"],
+  "قسط": ["قسط واحد", "قسطان", "أقساط", "قسطًا"],
+  "مستأجر": ["مستأجر واحد", "مستأجران", "مستأجرين", "مستأجرًا"],
+  "استحقاق": ["استحقاق واحد", "استحقاقان", "استحقاقات", "استحقاقًا"],
 };
 /** genitive: بعد حرف جر («على وحدتين» لا «على وحدتان») */
 function countAr(n: number | null | undefined, noun: string, genitive = false): string {
@@ -3320,4 +3323,58 @@ ${header("سند صرف", e.voucher_no || "—", issuer, e.spent_on)}
 </div>
 ${footer(issuer)}`;
   return SHELL(`سند صرف ${e.voucher_no || ""} — ${p.name}`, body, markOf(issuer));
+}
+
+/**
+ * كشف المستحقات القادمة — ورقة المحصّل (27 أكتوبر 2026).
+ *
+ * بلا دخل ولا مصروفات ولا صافٍ: من يستحق عليه، ومتى، وكم. وعمود فارغ
+ * يكتب فيه المحصّل بيده ما تمّ — الورقة تُطبع وتُحمل في الجولة.
+ */
+export function dueListHTML(
+  rows: { property_name: string; name: string; phone: string | null; unit: string | null;
+    n: number; of: number; date: string; amount: number; kind: "late" | "upcoming"; count?: number }[],
+  period: { label: string; from: string; to: string },
+  issuer: Issuer = {},
+  opts: { showAmount?: boolean; scopeLabel?: string } = {},
+) {
+  rows = scrub(rows); issuer = scrub(issuer); period = scrub(period);
+  const showAmount = opts.showAmount !== false;
+  const byProp: Record<string, typeof rows> = {};
+  rows.forEach((r) => { (byProp[r.property_name] ||= []).push(r); });
+  const lateN = rows.filter((r) => r.kind === "late").length;
+  const upN = rows.length - lateN;
+  const tenantsN = new Set(rows.map((r) => `${r.property_name}|${r.name}|${r.unit || ""}`)).size;
+
+  const rowHTML = (r: (typeof rows)[number], i: number) => `<tr>
+      <td>${i + 1}</td>
+      <td><b>${r.name}</b></td>
+      <td>${r.unit || "—"}</td>
+      <td dir="ltr" style="white-space:nowrap">${r.phone || "—"}</td>
+      <td style="white-space:nowrap">${arDate(r.date)}<div style="font-size:.68rem;color:#5C6B67">${hijriText(r.date.slice(0, 10))}</div></td>
+      <td>${r.kind === "late"
+        ? `<span class="pill l">متأخر${(r.count || 1) > 1 ? ` ${countAr(r.count || 1, "قسط", true)}` : ""}</span>`
+        : `<span class="pill u">القسط ${r.n} من ${r.of}</span>`}</td>
+      ${showAmount ? `<td style="white-space:nowrap"><b>${sar(r.amount)}</b></td>` : ""}
+      <td style="min-width:90px"></td>
+    </tr>`;
+
+  const inner = `
+${header("كشف المستحقات", opts.scopeLabel || "كل العقارات", issuer)}
+<h1>المستحقات — ${period.label}</h1>
+<div class="sub">من ${arDateH(period.from)} إلى ${arDateH(period.to)}${opts.scopeLabel ? ` · ${opts.scopeLabel}` : ""} · ${countAr(tenantsN, "مستأجر")}${lateN ? ` · ${lateN === 1 ? "واحد منهم عليه" : `${lateN} منهم عليهم`} متأخرات` : ""}</div>
+
+${rows.length ? Object.entries(byProp).map(([name, items]) => `
+<h2 style="margin-top:18px">${name} — ${countAr(items.length, "استحقاق")}</h2>
+<div class="scrollx"><table>
+  <thead><tr><th>#</th><th>المستأجر</th><th>الوحدة</th><th>الجوال</th><th>تاريخ الاستحقاق</th><th>البيان</th>${showAmount ? "<th>المطلوب (ريال)</th>" : ""}<th>ملاحظة المحصّل</th></tr></thead>
+  <tbody>${items.map(rowHTML).join("")}</tbody>
+</table></div>`).join("")
+  : `<div class="note">لا استحقاقات في هذه الفترة.</div>`}
+
+<div class="note">
+  ${upN ? `${upN === 1 ? "قسط واحد قادم" : upN === 2 ? "قسطان قادمان" : `${countAr(upN, "قسط")} قادمة`} في الفترة. ` : ""}${lateN ? "«متأخر» = حلّ موعده ولم يُسدَّد بعد، وتاريخه هو أقدم قسط متأخر. " : ""}${showAmount ? "المبلغ شامل الضريبة إن انطبقت، وبعد خصم أي سداد جزئي. " : ""}
+  صادر آليًّا بتاريخ ${arDate(today())} — قد تتغيّر الحالة بعد الطباعة إن سُجّلت دفعات.
+</div>`;
+  return SHELL(`كشف المستحقات — ${period.label}`, inner + footer(issuer), markOf(issuer));
 }
