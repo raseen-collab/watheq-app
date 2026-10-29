@@ -551,11 +551,17 @@ export function parseGrid(grid: string[][], properties: Prop[], todayIso: string
       const per = PER_YEAR[frequency] || 12;
       const exact = (rentBasis === "annual" ? rentN : rentN * 12) / per;
       rentPay = round2(exact);
+      /* (29 أكتوبر 2026) أثر تقريب المكتب نفسه: «الشهري 666.67» لعقد سنوي 8,000
+         كان يُخرج الدفعة 8,000.04، فمن سدّد 8,000 كاملة يُحسب «جزئيًّا» ويظهر
+         متأخرًا بأربع هللات لا وجود لها. الدفعة على بعد ≤ 5 هللات من ريال صحيح
+         هي ذلك الريال — لا مكتب يسعّر إيجاره بالهللة. */
+      const snapped = Math.round(rentPay);
+      if (snapped > 0 && Math.abs(rentPay - snapped) <= 0.05) rentPay = snapped;
       if (rentPay !== rentN || rentBasis === "monthly" && per !== 12)
         notes.push(rentBasis === "annual"
           ? `الدفعة = السنوي ${fmtN(rentN)} ÷ ${per} = ${fmtN(rentPay)}`
           : `الدفعة = الشهري ${fmtN(rentN)} × 12 ÷ ${per} = ${fmtN(rentPay)}`);
-      if (Math.abs(exact - rentPay) > 1e-9) notes.push("مقرَّبة لأقرب هللة");
+      if (Math.abs(exact - rentPay) > 1e-9) notes.push("مقرَّبة لأقرب ريال");
     }
     const paidN = paid ? parseNum(paid) : 0;
     /* المسدَّد مبلغًا: الدفعات الكاملة تُعدّ، والباقي جزئي يُنبَّه عليه — لا يُقرَّب لدفعة كاملة

@@ -1294,7 +1294,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
     setItems(items.map((p) => (p.id === active.id ? { ...p, property_notes: p.property_notes.filter((n) => n.id !== id) } : p)));
   }
 
-  async function doRenew(t: Tenant, opts: { periods: number; newAmount: number | null; newFrequency: Frequency; arrears?: "carry" }) {
+  async function doRenew(t: Tenant, opts: { periods: number; newAmount: number | null; newFrequency: Frequency; arrears?: "carry"; fromToday?: boolean }) {
     if (!active) return;
     /**
      * متأخرات المدة المنتهية: ثلاثة مصائر لا اثنان.
@@ -1328,7 +1328,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
     /* خارج نافذة التجديد: غالبًا ضغطة على الوحدة الخطأ — نسأل ولا نمنع */
     if (!needsRenewal(fresh) && renewAcked.current !== t.id && !confirm(`عقد ${t.name} لا ينتهي قبل ${contractState(fresh).endDate || "—"} — خارج نافذة التجديد.\n\nالتجديد الآن يبدأ المدة الجديدة من نهاية الحالية ويُرحّل ما لم يُدفع منها دينًا.\n\nالمتابعة على أي حال؟`)) return;
     /* vat: الرصيد المرحَّل بضريبة الوحدة (lib/contracts يقبله حين يدعمه؛ any ليبني في الحالين) */
-    const renewOpts: any = { periods: opts.periods, newAmount: opts.newAmount, newFrequency: opts.newFrequency, arrears: "carry", vat: unitVat(fresh, active) };
+    const renewOpts: any = { periods: opts.periods, newAmount: opts.newAmount, newFrequency: opts.newFrequency, arrears: "carry", vat: unitVat(fresh, active), fromToday: !!opts.fromToday };
     const fields = renewContract(fresh, renewOpts);
     t = fresh;
     const toSettle = Math.round(((Number((fields as any).carried_debt) || 0) - (Number(t.carried_debt) || 0)) * 100) / 100;
@@ -1375,7 +1375,9 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
     /* الملاحظة توثيق لا شرط: إن رفضتها الصلاحيات نُكمل ونُعلم بلا إفشال العملية */
     const noteRes = await supabase.from("property_notes").insert({
       property_id: active.id, note_date: today(),
-      text: `تجديد عقد ${t.name} (${unitLabel(active.property_type)} ${t.unit || "—"}) — من ${fields.contract_start} إلى ${fields.contract_end} بقيمة ${sar(fields.rent_amount)} ريال / ${freqShort(fields.payment_frequency)}`,
+      /* الفجوة غير المفوترة (fromToday) تُوثَّق في السجل — قرار المكتب يُقال صراحةً لا صمتًا */
+      text: `تجديد عقد ${t.name} (${unitLabel(active.property_type)} ${t.unit || "—"}) — من ${fields.contract_start} إلى ${fields.contract_end} بقيمة ${sar(fields.rent_amount)} ريال / ${freqShort(fields.payment_frequency)}`
+        + ((fields as any).gap && (fields as any).gap.days > 0 ? ` (بدأت من اليوم؛ ما بين ${(fields as any).gap.from} و${(fields as any).gap.to} غير مفوتَر)` : ""),
     });
     setItems(items.map((pp) => pp.id === active.id ? {
       ...pp,
@@ -2126,7 +2128,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
             <div className="text-sm font-semibold text-deep">
               ⚡ عدادات العقار الرئيسية <span className="text-xs text-muted font-normal">— {metersCountLine(active.meters)}</span>
             </div>
-            {isManager && <button type="button" className="text-xs text-muted hover:text-deep underline" onClick={() => setModal({ kind: "editProp" })}>تعديل</button>}
+            {isManager && <button type="button" className="text-xs text-muted hover:text-deep underline min-h-[40px] sm:min-h-0 inline-flex items-center" onClick={() => setModal({ kind: "editProp" })}>تعديل</button>}
           </div>
           <div className="flex flex-wrap gap-2">
             {(active.meters || []).map((m, i) => (
@@ -2229,12 +2231,28 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
               واحد. الفراغ الأفقي عُولج داخل البطاقة نفسها بدل تقسيم الصف. */}
           <div className="p-4 flex flex-col gap-2">
             {!tenants.length ? (
-              <div className="text-center text-muted py-8 text-sm">
-                لا توجد وحدات بعد.
-                <div className="mt-3 flex gap-2 justify-center">
+              /* (29 أكتوبر 2026) حالة فارغة تدلّ على الطريق — ثلاث حسابات جديدة وقفت
+                 عند «عقار · 0 وحدة» بعد إغلاق نافذة ما بعد العقار. «لا توجد وحدات بعد»
+                 وحدها لا تقول ما الخطوة ولا أن هناك طريقًا أسرع من وحدة وحدة، ولا أن
+                 المكتب يقدر يرسل ملفه ونجهّزه له (الطريق الذي جاء منه كل مشترك دافع). */
+              <div className="text-center py-8 px-2">
+                <div className="text-[11px] font-semibold text-gold mb-1">الخطوة ٢ من ٣</div>
+                <div className="font-display font-bold text-deep text-base">أضف وحدات {active?.name ? `«${active.name}»` : "العقار"}</div>
+                <p className="text-xs text-muted mt-1 leading-relaxed">بعدها تسجّل المستأجرين والمسدَّد، ويحسب لك المتأخر تلقائيًّا.</p>
+                <div className="mt-4 flex flex-wrap gap-2 justify-center">
                   <button className="btn btn-gold text-xs" onClick={() => setModal({ kind: "tenant" })}>+ أضف {ul}</button>
-                  <Link href="/dashboard/property/import" className="btn btn-ghost text-xs" onClick={(e) => { if (demo) { e.preventDefault(); demoJoin(); } }}>رفع Excel</Link>
+                  {active && <button className="btn btn-ghost text-xs" onClick={() => setModal({ kind: "afterProp", id: active.id })}>عدة وحدات دفعة واحدة</button>}
+                  <Link href="/dashboard/property/import" className="btn btn-ghost text-xs" onClick={(e) => { if (demo) { e.preventDefault(); demoJoin(); } }}>رفع ملف Excel</Link>
                 </div>
+                {!demo && (
+                  <p className="text-[11px] text-muted mt-4">
+                    ما عندك وقت؟{" "}
+                    <a className="text-gold font-semibold underline" target="_blank" rel="noreferrer"
+                      href={"https://wa.me/966596300591?text=" + encodeURIComponent("السلام عليكم، أبغى تجهزون لي حسابي في وثيق — عندي ملف/صورة ببيانات العقار")}>
+                      أرسل لنا ملفك أو صورة الدفتر على واتساب ونجهّزه لك
+                    </a>
+                  </p>
+                )}
               </div>
             ) : !rows.length ? (
               <div className="text-center text-muted py-8 text-sm">
@@ -3564,8 +3582,9 @@ function AddNote({ onAdd, unitWord }: {
       <div className="flex flex-wrap items-center gap-2">
         <div className="flex flex-wrap gap-1">
           {Object.entries(NOTE_KINDS).map(([k, v]) => (
+            /* (دراسة 29 أكتوبر 2026) كانت ~26px — 40px على الجوال كرقائق التصفية */
             <button key={k} type="button" onClick={() => setKind(k)} aria-pressed={kind === k}
-              className={`text-[11px] px-2 py-1 rounded-full border whitespace-nowrap ${kind === k ? "bg-deep text-goldSoft border-deep" : "border-line text-muted hover:text-deep"}`}>
+              className={`text-[11px] min-h-[40px] px-3 sm:min-h-0 sm:px-2 sm:py-1 rounded-full border whitespace-nowrap ${kind === k ? "bg-deep text-goldSoft border-deep" : "border-line text-muted hover:text-deep"}`}>
               {v.icon} {v.label}
             </button>
           ))}
@@ -4734,7 +4753,7 @@ function PortfolioStat({ v, l, tone }: { v: string; l: string; tone?: "warn" }) 
 
 function RenewModal({ tenant, unitWord, onClose, onRenew }: {
   tenant: Tenant; unitWord: string; onClose: () => void;
-  onRenew: (o: { periods: number; newAmount: number | null; newFrequency: Frequency }) => void | Promise<unknown>;
+  onRenew: (o: { periods: number; newAmount: number | null; newFrequency: Frequency; fromToday?: boolean }) => void | Promise<unknown>;
 }) {
   const cur = contractState(tenant);
   const curFreq = (tenant.payment_frequency || "monthly") as Frequency;
@@ -4749,13 +4768,22 @@ function RenewModal({ tenant, unitWord, onClose, onRenew }: {
     setFreq(f);
   }
   const [amount, setAmount] = useState<string>(String(tenant.rent_amount || ""));
+  /* (دراسة 29 أكتوبر 2026) عقد منتهٍ منذ سنوات جُدِّد سنةً في التجربة فخرجت المدة
+     «الجديدة» منتهية هي الأخرى — حسابيًّا صحيح (تبدأ من نهاية السابقة)، لكن لا
+     أحد ينبّه المكتب. الآن: تحذير حين تنتهي المدة الجديدة في الماضي، وخيار
+     «تبدأ من اليوم» (fromToday الذي تدعمه renewContract أصلًا) لعقد انتهى من زمن. */
+  const [fromToday, setFromToday] = useState(false);
   const [busy, setBusy] = useState(false);
+  const todayISO = today();
+  const expired = !!cur.endDate && cur.endDate < todayISO;
 
   const preview = renewContract(tenant, {
     periods: Number(periods) || null,
     newAmount: Number(amount) || null,
     newFrequency: freq,
+    fromToday: expired && fromToday,
   });
+  const endsInPast = preview.contract_end !== null && preview.contract_end < todayISO;
   const changed = Number(amount) !== Number(tenant.rent_amount);
   const diff = Number(amount) - Number(tenant.rent_amount || 0);
 
@@ -4814,10 +4842,28 @@ function RenewModal({ tenant, unitWord, onClose, onRenew }: {
         </div>
       </div>
 
+      {expired && (
+        <label className="flex items-start gap-2 text-sm mt-4 cursor-pointer">
+          <input type="checkbox" className="mt-1" checked={fromToday} onChange={(e) => setFromToday(e.target.checked)} />
+          <span>تبدأ المدة الجديدة من اليوم<br />
+            <span className="text-[11px] text-muted">بدل نهاية المدة السابقة ({cur.endDate}) — وما بينهما لا يُفوتَر</span></span>
+        </label>
+      )}
+
+      {endsInPast && (
+        <div className="bg-[#FDF3E2] border border-[#EED9AE] rounded-xl p-3 mt-4 text-xs text-[#8a5a11] leading-relaxed">
+          <b>تنبيه:</b> المدة الجديدة تنتهي في <b>{preview.contract_end}</b> — تاريخ مضى.
+          {expired ? " زد المدة، أو فعّل «تبدأ المدة الجديدة من اليوم»." : " زد المدة إن لم يكن هذا مقصودًا."}
+        </div>
+      )}
+
       <div className="bg-[#E6F4EC] border border-[#B7DFC7] rounded-xl p-3 mt-4 text-sm">
         <div className="font-semibold text-[#137a50] mb-1.5">المدة الجديدة بعد التجديد</div>
         <div className="text-[#137a50] space-y-1 text-xs leading-relaxed">
           <div>تبدأ: <b>{preview.contract_start}</b> · تنتهي: <b>{preview.contract_end}</b></div>
+          {preview.gap && preview.gap.days > 0 && (
+            <div>ما بين {arDate(preview.gap.from)} واليوم ({plural(preview.gap.days, "يوم واحد", "يومان", "أيام", "يومًا")}) لن يُفوتَر.</div>
+          )}
           <div>إجمالي قيمة المدة: <b>{sar(preview.rent_amount * preview.contract_periods)} ريال</b></div>
           {changed && (
             <div>تغيّر الإيجار: <b>{diff > 0 ? "+" : ""}{sar(diff)} ريال</b> لكل دفعة
@@ -4835,7 +4881,7 @@ function RenewModal({ tenant, unitWord, onClose, onRenew }: {
         <button type="button" className="btn btn-ghost flex-1 justify-center" onClick={onClose}>إلغاء</button>
         <button className="btn btn-gold flex-1 justify-center" disabled={busy || !Number(periods)}
           /* يعود الزرّ إن توقّف التجديد (إلغاء سؤال أو خطأ) — كان يبقى «...» معطّلًا */
-          onClick={() => { setBusy(true); Promise.resolve(onRenew({ periods: Number(periods), newAmount: Number(amount) || null, newFrequency: freq })).finally(() => setBusy(false)); }}>
+          onClick={() => { setBusy(true); Promise.resolve(onRenew({ periods: Number(periods), newAmount: Number(amount) || null, newFrequency: freq, fromToday: expired && fromToday })).finally(() => setBusy(false)); }}>
           {busy ? "..." : "تأكيد التجديد"}
         </button>
       </div>

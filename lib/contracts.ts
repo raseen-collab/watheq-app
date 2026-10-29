@@ -606,7 +606,10 @@ export function buildSchedule(t: {
   return Array.from({ length: Math.min(total, 400) }, (_, i) => {
     const date = addPeriods(start, freq, i, anchor, (t.calendar === "hijri" ? "hijri" : "gregorian"));
     const isPaid = i < paid;
-    const isDue = date <= today;
+    /* (29 أكتوبر 2026) «متأخرة» تعني فات موعدها — لا حلّ اليوم. دفعة اليوم كانت
+       تُطبع «متأخرة» في كشف الحساب بينما اللوحة تقول «يستحق اليوم» (عدّ الحالة
+       strict): تناقض يراه المستأجر صباح يوم استحقاقه. اليوم = قادمة تُسدَّد. */
+    const isDue = date < today;
     // أول دفعة غير مسدّدة هي التي يقع عليها السداد الجزئي
     const isPartialRow = !isPaid && i === paid && partial > 0;
     return {

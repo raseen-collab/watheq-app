@@ -75,13 +75,15 @@ export default function DateField({ value, onChange, id, relative }: {
 
   return (
     <div>
+      {/* (دراسة 29 أكتوبر 2026) كان الزران ~22px — أصغر هدف لمس في النموذج كله،
+          والمكتب يبدّل للهجري من الجوال. 40px على الشاشات الصغيرة كرقائق التصفية. */}
       <div className="flex items-center gap-1 mb-1.5">
         <button type="button" onClick={() => pick("g")}
-          className={`text-[11px] px-2 py-0.5 rounded-full border ${cal === "g" ? "bg-deep text-goldSoft border-deep" : "bg-white border-line text-muted"}`}>
+          className={`text-[11px] min-h-[40px] px-3 sm:min-h-0 sm:px-2 sm:py-0.5 rounded-full border ${cal === "g" ? "bg-deep text-goldSoft border-deep" : "bg-white border-line text-muted"}`}>
           ميلادي
         </button>
         <button type="button" onClick={() => pick("h")}
-          className={`text-[11px] px-2 py-0.5 rounded-full border ${cal === "h" ? "bg-deep text-goldSoft border-deep" : "bg-white border-line text-muted"}`}>
+          className={`text-[11px] min-h-[40px] px-3 sm:min-h-0 sm:px-2 sm:py-0.5 rounded-full border ${cal === "h" ? "bg-deep text-goldSoft border-deep" : "bg-white border-line text-muted"}`}>
           هجري
         </button>
       </div>

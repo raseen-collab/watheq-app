@@ -65,7 +65,8 @@ export default function DemoClient() {
           </div>
           <div className="flex gap-2 shrink-0">
             <button onClick={() => setJoinOpen(true)} className="bg-gold text-white rounded-lg px-3 py-1.5 text-xs font-bold">ابدأ مجانًا</button>
-            <Link href="/login" className="text-[#CFE0DB] hover:text-white text-xs self-center">دخول</Link>
+            {/* (دراسة 29 أكتوبر 2026) كان هدف اللمس ~16px — أصغر عنصر في الصفحة */}
+            <Link href="/login" className="text-[#CFE0DB] hover:text-white text-xs self-center min-h-[40px] inline-flex items-center px-2 -mx-1 sm:min-h-0 sm:px-0 sm:mx-0">دخول</Link>
           </div>
         </div>
       </div>
