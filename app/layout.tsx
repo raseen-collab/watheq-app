@@ -83,6 +83,25 @@ document.addEventListener("click",function(e){
 })();`;
 
 /**
+ * (29 أكتوبر 2026) حارس <label> — خطأ صامت وُجد في دراسة الاستخدام.
+ * المتصفح يحوّل أي نقرة على نصّ <label> إلى نقرة على «أول عنصر قابل للربط» بداخله،
+ * والأزرار قابلة للربط: لمس عنوان «دورة السداد» كان يجعل الدورة «يومي»، ولمس عنوان
+ * «بداية العقد» يبدّل التقويم، ولمس نصّ تنبيه داخل حقل يضغط زرًّا لا علاقة له به —
+ * بلا أي إشارة. عشرة مكوّنات تلفّ حقولها بـ<label>؛ حارس واحد هنا يغطيها كلها ومن
+ * يأتي بعدها: حين يكون المربوط زرًّا والنقرة على نصّ لا على عنصر تفاعلي، تُلغى.
+ * الخانات (input/select) لا تتأثر — لمس عنوانها يبقى يركّزها.
+ */
+const LABEL_GUARD = `(function(){
+document.addEventListener("click",function(e){
+  var t=e.target; if(!t||!t.closest)return;
+  var l=t.closest("label"); if(!l)return;
+  var c=l.control; if(!c||c.tagName!=="BUTTON")return;
+  if(t.closest("button,a,input,select,textarea,summary"))return;
+  e.preventDefault();
+},true);
+})();`;
+
+/**
  * أزرار عائمة:
  *  • الوضع الليلي — لكل زائر
  *  • المستشار     — لكل مستخدم مسجّل دخوله
@@ -128,6 +147,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         {/* مساعد الموقع — يجيب من قاعدة معرفة مكتوبة، بلا نموذج ولا تكلفة */}
         <HelpAssistant />
         <script dangerouslySetInnerHTML={{ __html: fabScroll }} />
+        <script dangerouslySetInnerHTML={{ __html: LABEL_GUARD }} />
       </body>
     </html>
   );

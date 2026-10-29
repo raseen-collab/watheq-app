@@ -3607,6 +3607,7 @@ function AddNote({ onAdd, unitWord }: {
 
 function Field({ label, hint, children }: { label: React.ReactNode; hint?: string; children: React.ReactNode }) {
   return (
+    /* <label> يلفّ أزرارًا أحيانًا (دورة السداد، التقويم) — حارس النقرة في app/layout.tsx (LABEL_GUARD) */
     <label className="block">
       {/* كان العنوان والشرح في سطر واحد وبحجم واحد، فيصير النموذج جدارًا
           من النص. الشرح الآن سطر أصغر وأفتح تحت العنوان. */}
@@ -3925,8 +3926,16 @@ function TenantModal({ open, initial, unitWord, error, saving, onClose, onSubmit
   const [d, setD] = useState<any>(initial || { payment_frequency: "monthly", contract_start: today() });
   /* لقطة العدّادات لحظة الفتح — يقارن بها الحفظ ويحرس بها التزامن (30 سبتمبر 2026) */
   const [init0] = useState(() => initial ? { paid_periods: initial.paid_periods ?? null, carried_debt: (initial as any).carried_debt ?? null } : null);
-  /* «عقد جديد يبدأ لاحقًا» — يؤكّده المكتب مرة فيختفي التنبيه */
-  const [startIsNew, setStartIsNew] = useState(false);
+  /* ردود المكتب على التنبيهات (Advisory). «أول استحقاق» المحفوظ سابقًا مؤكَّد من قبل —
+     لا يُسأل عنه في كل حفظ لبيانات راجعها المكتب (كما كان confirm يفعل). */
+  const [adv, setAdv] = useState<Record<string, AdvAnswer>>(() => {
+    const fd = initial && (initial as any).first_due ? String((initial as any).first_due).slice(0, 10) : "";
+    const m: Record<string, AdvAnswer> = {};
+    if (fd) m.due = { choice: "ack", sig: fd, note: `أول دفعة في ${arDate(fd)} — مؤكَّد سابقًا` };
+    return m;
+  });
+  const answer = (k: string, a: AdvAnswer) => { setAdv((m) => ({ ...m, [k]: a })); setLocalErr(null); };
+  const unanswer = (k: string) => setAdv((m) => { const n = { ...m }; delete n[k]; return n; });
   /**
    * «المستأجر ساكن الآن؟» — أول سؤال عند الإضافة، قبل التواريخ.
    *
@@ -3971,9 +3980,33 @@ function TenantModal({ open, initial, unitWord, error, saving, onClose, onSubmit
     && (d.payment_frequency || "monthly") !== ((initial as any).payment_frequency || "monthly");
   const paidUnpicked = ((askOcc && occ === "current") || cycleChangedPaid) && !d._paidPicked;
   const futureStartQ = !!startISO && startISO > today() && !(Number(d.paid_periods) > 0)
-    && String(d.status) !== "vacated" && !startIsNew && !askOcc;
+    && String(d.status) !== "vacated" && !askOcc;
   const startTooLate = askOcc && occ === "current" && !!startISO && startISO > today();
   const dueGap = String(d.status) !== "vacated" ? firstDueGap(startISO, d.first_due ? String(d.first_due).slice(0, 10) : null) : null;
+  const fdISO = d.first_due ? String(d.first_due).slice(0, 10) : "";
+  const freqNow = String(d.payment_frequency || "monthly");
+  const rentOdd = String(d.status) !== "vacated" ? rentOddity(Number(d.rent_amount) || 0, freqNow) : null;
+  const rentSig = `${Number(d.rent_amount) || 0}|${freqNow}`;
+  const overPaid = Number(d.paid_periods) > 0 && Number(d.contract_periods) > 0 && Number(d.paid_periods) > Number(d.contract_periods);
+  const overSig = `${Number(d.paid_periods)}/${Number(d.contract_periods)}`;
+  const unvacating = !!initial && String(initial.status || "active") === "vacated" && String(d.status) !== "vacated" && !!payInfo && payInfo.any > 0;
+  /* التنبيهات الظاهرة بلا رد — الحفظ ينتظرها. (startTooLate خطأ لا يُتجاوز: حارسه أدناه) */
+  const isAnswered = (k: string, sig: string) => adv[k]?.sig === sig;
+  const fixedNow = (k: string, sig: string) => adv[k]?.choice === "fix" && adv[k].sig === sig;
+  const pendingAdv = [
+    rentOdd && !isAnswered("rent", rentSig),
+    overPaid && !isAnswered("over", overSig),
+    futureStartQ && !isAnswered("future", startISO),
+    dueGap && !isAnswered("due", fdISO),
+    unvacating && !isAnswered("unvac", "1"),
+  ].filter(Boolean).length;
+  /* تغيير الدورة بالمدة نفسها — كزرّ الدورة في النموذج (لا يُبقي «12 دفعة» لعقد صار سنويًّا) */
+  const withFreq = (f: string) => {
+    const MO: Record<string, number> = { monthly: 1, quarterly: 3, trimester: 4, semiannual: 6, annual: 12 };
+    const oldM = (Number(d.contract_periods) || 0) * (MO[freqNow] || 0);
+    return { ...d, payment_frequency: f, ...(oldM && MO[f] && oldM % MO[f] === 0 ? { contract_periods: oldM / MO[f] } : {}) };
+  };
+  const FREQ_AR: Record<string, string> = { monthly: "شهري", quarterly: "كل 3 أشهر", trimester: "كل 4 أشهر", semiannual: "نصف سنوي", annual: "سنوي" };
   /* جدول الأقساط بالبيانات الحالية — لقائمة «مسدَّد حتى» والمعاينة */
   const sched: { n: number; date: string; status: string }[] = d.contract_start && Number(d.rent_amount) > 0
     ? buildSchedule({ ...d, paid_periods: Number(d.paid_periods) || 0 } as any) : [];
@@ -4007,14 +4040,19 @@ function TenantModal({ open, initial, unitWord, error, saving, onClose, onSubmit
           <span className="text-muted"> — بلا مستأجر حاليًّا. سجّلها الآن وأجّرها لاحقًا بزر «تأجير».</span>
         </span>
       </label>
-      {initial && String(initial.status || "active") === "vacated" && String(d.status) !== "vacated" && !!payInfo && payInfo.any > 0 && (
+      {(unvacating || fixedNow("unvac", "fix")) && payInfo && (
         /* (جولة 4 · F1b) شاغرة ← مؤجّرة من المربّع: مدة إيجار جديدة — تنبيه داخل النافذة لا منع */
-        <div role="status" data-testid="unvacate-notice" className="-mt-2 mb-4 rounded-xl border border-[#EBD9AA] bg-[#FDF0DC] p-3 text-[12.5px] leading-relaxed text-[#7A4800]">
-          <b>إلغاء «شاغرة» يبدأ مدة إيجار جديدة لهذه الوحدة:</b> عدّاد الدفعات يبدأ من الصفر، والدفعات المسجّلة سابقًا ({payInfo.any}) تبقى للمدة السابقة.
-          {payInfo.inTerm > 0
-            ? <> على المدة الحالية {payInfo.inTerm === 1 ? "دفعة مسجّلة" : `${payInfo.inTerm} دفعات مسجّلة`} — إن كان المقصود تصحيح بيانات العقد فأبقِ الوحدة كما هي وعدّل الحقول من «تعديل البيانات».</>
-            : <> لمستأجر جديد استعمل «إعادة تأجير» من قائمة الوحدة — تحفظ المستأجر السابق ودينه.</>}
-          <div className="mt-2"><button type="button" className="btn btn-ghost text-xs" onClick={() => setD({ ...d, status: "vacated" })}>أبقِها شاغرة</button></div>
+        <div data-testid="unvacate-notice" className="-mt-2 mb-4">
+          <Advisory sig={unvacating ? "1" : "fix"} answer={adv.unvac}
+            title="إلغاء «شاغرة» يبدأ مدة إيجار جديدة لهذه الوحدة"
+            fixLabel="أبقِها شاغرة" onFix={() => { setD({ ...d, status: "vacated" }); answer("unvac", { choice: "fix", sig: "fix", note: "أُبقيت الوحدة شاغرة" }); }}
+            ackLabel="أعي ذلك — ابدأ مدة جديدة" onAck={() => answer("unvac", { choice: "ack", sig: "1", note: "مدة إيجار جديدة — عدّاد الدفعات من الصفر" })}
+            onUndo={() => { if (adv.unvac?.choice === "fix") setD({ ...d, status: "active" }); unanswer("unvac"); }}>
+            عدّاد الدفعات يبدأ من الصفر، والدفعات المسجّلة سابقًا ({payInfo.any}) تبقى للمدة السابقة.
+            {payInfo.inTerm > 0
+              ? <> على المدة الحالية {payInfo.inTerm === 1 ? "دفعة مسجّلة" : `${payInfo.inTerm} دفعات مسجّلة`} — إن كان المقصود تصحيح بيانات العقد فأبقِ الوحدة كما هي وعدّل الحقول من «تعديل البيانات».</>
+              : <> لمستأجر جديد استعمل «إعادة تأجير» من قائمة الوحدة — تحفظ المستأجر السابق ودينه.</>}
+          </Advisory>
         </div>
       )}
       <p className="text-sm text-muted mb-4">أدخل تاريخ البداية والدورة والقيمة — والنظام يستنتج بقية التواريخ والدفعات تلقائيًّا.</p>
@@ -4049,6 +4087,29 @@ function TenantModal({ open, initial, unitWord, error, saving, onClose, onSubmit
               </button>
             ))}
           </div>
+          {(rentOdd || fixedNow("rent", rentSig)) && (() => {
+            const r = Number(d.rent_amount) || 0;
+            const to = rentOdd?.kind === "low" ? "monthly" : "annual";
+            return (
+              <Advisory sig={rentSig} answer={adv.rent}
+                title={rentOdd?.kind === "low"
+                  ? `${sar(r)} ريال ${FREQ_AR[freqNow]} = ${sar(Math.round(rentOdd.perYear))} فقط في السنة — هل هي دفعة شهر؟`
+                  : `${sar(r)} ريال ${FREQ_AR[freqNow]} = ${sar(Math.round(rentOdd?.perYear || 0))} في السنة — هل هي إيجار السنة كاملة؟`}
+                fixLabel={rentOdd?.kind === "low" ? "نعم، دفعة شهرية — اجعل الدورة شهري" : "نعم، إيجار سنوي — اجعل الدورة سنوي"}
+                onFix={() => {
+                  const prev = { payment_frequency: d.payment_frequency, contract_periods: d.contract_periods };
+                  setD(withFreq(to));
+                  answer("rent", { choice: "fix", sig: `${r}|${to}`, note: `حُوّلت الدورة إلى ${FREQ_AR[to]}: ${sar(r)} ريال ${FREQ_AR[to]}`, undo: () => setD((x: any) => ({ ...x, ...prev })) });
+                }}
+                ackLabel={`أعي ذلك — ${sar(r)} ${FREQ_AR[freqNow]} صحيح`}
+                onAck={() => answer("rent", { choice: "ack", sig: rentSig, note: `أكّدتَ: ${sar(r)} ريال ${FREQ_AR[freqNow]}` })}
+                onUndo={() => { adv.rent?.undo?.(); unanswer("rent"); }}>
+                {rentOdd?.kind === "low"
+                  ? "إيجار سنوي بهذا المبلغ نادر — والأشيع أن تُكتب دفعة الشهر مع دورة سنوية، فتظهر كل الأرقام أقل من حقيقتها."
+                  : "دفعة بهذا الحجم نادرة لهذه الدورة — والأشيع أن يُكتب إيجار السنة في خانة الدفعة الشهرية، فتتضاعف المتأخرات والكشوف."}
+              </Advisory>
+            );
+          })()}
         </Field>
         {askOcc && (
           <div className={`rounded-xl border p-3 ${occ ? "border-line bg-paper" : "border-[#F2D49B] bg-[#FFF6E5]"}`}>
@@ -4070,16 +4131,13 @@ function TenantModal({ open, initial, unitWord, error, saving, onClose, onSubmit
           <Field label={askOcc && occ === "current" ? "بداية العقد في إيجار — قبل اليوم" : askOcc && occ === "fresh" ? "موعد دفعته القادمة" : "بداية العقد"}
             hint={askOcc && occ === "current" ? "من عقد إيجار نفسه — ليس موعد الدفعة القادمة"
               : askOcc && occ === "fresh" ? "من هنا يبدأ وثيق متابعته، وتنتهي المدة بعد «مدة العقد» منه" : undefined}>
+          <div id="tenant-start-wrap">
           <DateField value={d.contract_start || ""} onChange={(v, mode) => setD({ ...d, contract_start: v,
             /* أدخل التاريخ بالهجري؟ إذن عقده هجري وأقساطه تُحسب بالأشهر الهجرية —
                كان يجب عليه تغيير خانة ثانية بنفسه، فينسى وتخرج الاستحقاقات منحرفة أيامًا */
             ...(mode ? { calendar: mode === "h" ? "hijri" : "gregorian", _calAuto: true } : {}) })} />
-            {startTooLate && (
-              <div className="text-[11.5px] text-late mt-1 leading-relaxed">
-                هذا بعد اليوم — والمستأجر ساكن الآن، فعقده بدأ قبل اليوم. إن كان هذا <b>موعد الدفعة القادمة</b> فلا يُكتب هنا:
-                اكتب بداية العقد من إيجار، ثم اختر من «مسدَّد حتى» آخر دفعة دفعها — والقادمة تُحسب تلقائيًّا.
-              </div>
-            )}</Field>
+          </div>
+</Field>
         <Field label="تُحسب الأقساط بالتقويم" hint={d._calAuto ? `ضُبط تلقائيًّا لأنك أدخلت البداية بالتقويم ${d.calendar === "hijri" ? "الهجري" : "الميلادي"} — غيّره إن كان العقد مكتوبًا بالتقويم الآخر` : "عقد مكتوب بالهجري (كل 6 أشهر هجرية) اختر هجري — وإلا يزحف الاستحقاق أيامًا كل قسط"}>
           <select className="fld" value={d.calendar || "gregorian"} onChange={(e) => setD({ ...d, calendar: e.target.value, _calAuto: false })}>
             <option value="gregorian">ميلادي — الأشهر الميلادية</option>
@@ -4123,6 +4181,20 @@ function TenantModal({ open, initial, unitWord, error, saving, onClose, onSubmit
             );
           })()}
         </div>
+        {(startTooLate || fixedNow("late", startISO)) && (
+          /* خطأ لا يُتجاوز (حادثة عمرو: 33 مرة) — لا «أعي ذلك»، بل أحد تصحيحين */
+          <Advisory tone="late" sig={startISO} answer={adv.late}
+            title="هذا بعد اليوم — والمستأجر ساكن الآن، فعقده بدأ قبل اليوم."
+            fixLabel="هذا موعد دفعته القادمة — ابدأ المتابعة منه"
+            onFix={() => { setOcc("fresh"); setD({ ...d, paid_periods: 0, partial_amount: 0 });
+              answer("late", { choice: "fix", sig: startISO, note: `المتابعة تبدأ من دفعته القادمة ${arDate(startISO)} (بداية جديدة)` }); }}
+            ackLabel="سأكتب بداية العقد من إيجار"
+            onAck={() => document.getElementById("tenant-start-wrap")?.scrollIntoView({ behavior: "smooth", block: "center" })}
+            onUndo={() => { setOcc("current"); unanswer("late"); }}>
+            إن كان هذا <b>موعد الدفعة القادمة</b> فلا يُكتب في «بداية العقد»: إمّا تبدأ المتابعة منه (والقديم مسوّى عندك)،
+            أو تكتب بداية العقد من إيجار ثم تختار من «مسدَّد حتى» آخر دفعة دفعها.
+          </Advisory>
+        )}
         <Field label="نوع الوحدة" hint="يظهر في المستندات ومخالصة الإخلاء">
           <select className="fld" value={d.unit_type || ""} onChange={(e) => setD({ ...d, unit_type: e.target.value })}>
             <option value="">— بحسب العقار —</option>
@@ -4183,22 +4255,34 @@ function TenantModal({ open, initial, unitWord, error, saving, onClose, onSubmit
             </div>
           )}
           {futureStartQ && (
-            <div className="bg-[#FFF6E5] border border-[#F2D49B] rounded-xl p-3 text-[12.5px] leading-relaxed mt-2">
-              <b className="text-deep">بداية العقد بعد اليوم ({arDate(startISO)}).</b> هل هو عقد جديد يبدأ في هذا التاريخ، أم عقد ساري من قبل؟
-              <div className="mt-1.5">
-                <b>عقد ساري:</b> اكتب في «بداية العقد» تاريخ بدايته الفعلي من العقد نفسه — <b>لا موعد الدفعة القادمة</b> —
-                ثم اختر هنا آخر دفعة سدّدها. الدفعة القادمة ونهاية العقد تُحسبان تلقائيًّا.
-              </div>
-              <button type="button" className="btn btn-ghost text-xs mt-2" onClick={() => setStartIsNew(true)}>
-                نعم، عقد جديد يبدأ في هذا التاريخ</button>
-            </div>
+            <Advisory sig={startISO} answer={adv.future}
+              title={`بداية العقد بعد اليوم (${arDate(startISO)}) — عقد جديد يبدأ في هذا التاريخ، أم عقد ساري من قبل؟`}
+              fixLabel="عقد ساري — سأصحّح البداية"
+              onFix={() => document.getElementById("tenant-start-wrap")?.scrollIntoView({ behavior: "smooth", block: "center" })}
+              ackLabel="أعي ذلك — عقد جديد يبدأ في هذا التاريخ"
+              onAck={() => answer("future", { choice: "ack", sig: startISO, note: `عقد جديد يبدأ ${arDate(startISO)}` })}
+              onUndo={() => unanswer("future")}>
+              <b>عقد ساري:</b> اكتب في «بداية العقد» تاريخ بدايته الفعلي من العقد نفسه — <b>لا موعد الدفعة القادمة</b> —
+              ثم اختر هنا آخر دفعة سدّدها. الدفعة القادمة ونهاية العقد تُحسبان تلقائيًّا.
+            </Advisory>
           )}
-          {Number(d.paid_periods) > 0 && Number(d.contract_periods) > 0 && (
+          {Number(d.paid_periods) > 0 && Number(d.contract_periods) > 0 && !overPaid && (
             <span className="block text-[11px] text-muted mt-1">
-              {Number(d.paid_periods) > Number(d.contract_periods)
-                ? `⚠️ أكبر من مدة العقد (${d.contract_periods} دفعة) — سداد مقدَّم لمدة قادمة؟`
-                : `المتبقي ${Number(d.contract_periods) - Number(d.paid_periods)} دفعة من ${d.contract_periods}`}
+              {`المتبقي ${Number(d.contract_periods) - Number(d.paid_periods)} دفعة من ${d.contract_periods}`}
             </span>
+          )}
+          {(overPaid || fixedNow("over", overSig)) && (
+            <Advisory sig={overSig} answer={adv.over}
+              title={`المسدَّد (${Number(d.paid_periods)} دفعة) أكبر من مدة العقد (${Number(d.contract_periods)} دفعة)`}
+              fixLabel={`اجعلها كامل المدة (${Number(d.contract_periods)} من ${Number(d.contract_periods)})`}
+              onFix={() => { const prev = d.paid_periods; const cp = Number(d.contract_periods);
+                setD({ ...d, paid_periods: cp, _paidPicked: true });
+                answer("over", { choice: "fix", sig: `${cp}/${cp}`, note: `المسدَّد = كامل المدة (${cp} من ${cp})`, undo: () => setD((x: any) => ({ ...x, paid_periods: prev })) }); }}
+              ackLabel="أعي ذلك — سداد مقدَّم لمدة قادمة"
+              onAck={() => answer("over", { choice: "ack", sig: overSig, note: `سداد مقدَّم: ${Number(d.paid_periods) - Number(d.contract_periods)} دفعة زيادة على المدة` })}
+              onUndo={() => { adv.over?.undo?.(); unanswer("over"); }}>
+              الزيادة تُحسب رصيدًا دائنًا ينتقل للمدة الجديدة عند التجديد.
+            </Advisory>
           )}
         </Field>
         )}
@@ -4216,17 +4300,19 @@ function TenantModal({ open, initial, unitWord, error, saving, onClose, onSubmit
             <Field label="أول تاريخ استحقاق" hint="اتركه فارغًا إن كان المستأجر يدفع يوم بداية العقد — وهذا أغلب العقود. املأه فقط إن كانت أول دفعة في يوم آخر (يبدأ 1/1 والدفعة الأولى 5/1)">
               <DateField value={d.first_due || ""} onChange={(v) => setD({ ...d, first_due: v })}
                 relative={{ from: startISO, warn: firstDueOutOfRange(startISO, d.first_due, d.payment_frequency, d.calendar) }} />
-              {dueGap && (
+              {(dueGap || fixedNow("due", "")) && (
                 /* (30 سبتمبر 2026) مكتبان كتبا هنا تاريخًا لمستأجر يدفع يوم بداية العقد،
                    فانزاح يوم الدفع الشهري كله. نقول الأثر بالأرقام قبل الحفظ. */
-                <div className="mt-2 rounded-lg border border-[#F2D49B] bg-[#FFF6E5] p-2.5 text-[12.5px] leading-relaxed">
-                  <b>انتبه:</b> أول دفعة {dueGap.days > 0 ? `بعد ${daysAr(dueGap.days)}` : `قبل ${daysAr(-dueGap.days)}`} من بداية العقد
-                  {dueGap.months >= 2 ? <> (قرابة <b>{plural(dueGap.months, "شهر واحد", "شهرين", "أشهر", "شهرًا")}</b>)</> : null}
-                  {dueGap.dueDay !== dueGap.startDay ? <>، ويوم الدفع الشهري سيصير <b>{dueGap.dueDay}</b> بدل {dueGap.startDay}</> : null}.
-                  <div className="mt-1">إن كان المستأجر يدفع يوم بداية العقد:
-                    <button type="button" className="underline underline-offset-4 font-semibold ms-1" onClick={() => setD({ ...d, first_due: "" })}>امسح هذا التاريخ</button>
-                  </div>
-                </div>
+                <Advisory sig={fdISO} answer={adv.due}
+                  title={dueGap ? <>أول دفعة {dueGap.days > 0 ? `بعد ${daysAr(dueGap.days)}` : `قبل ${daysAr(-dueGap.days)}`} من بداية العقد
+                    {dueGap.months >= 2 ? <> (قرابة {plural(dueGap.months, "شهر واحد", "شهرين", "أشهر", "شهرًا")})</> : null}
+                    {dueGap.dueDay !== dueGap.startDay ? <>، ويوم الدفع الشهري سيصير {dueGap.dueDay} بدل {dueGap.startDay}</> : null}.</> : ""}
+                  fixLabel="يدفع يوم بداية العقد — امسح هذا التاريخ"
+                  onFix={() => { const prev = d.first_due; setD({ ...d, first_due: "" });
+                    answer("due", { choice: "fix", sig: "", note: "مُسح «أول استحقاق» — يدفع يوم بداية العقد", undo: () => setD((x: any) => ({ ...x, first_due: prev })) }); }}
+                  ackLabel="أعي ذلك — أول دفعة فعلًا في هذا التاريخ"
+                  onAck={() => answer("due", { choice: "ack", sig: fdISO, note: `أول دفعة في ${arDate(fdISO)}` })}
+                  onUndo={() => { adv.due?.undo?.(); unanswer("due"); }} />
               )}
             </Field>
             {vatEnabled && (
@@ -4318,17 +4404,16 @@ function TenantModal({ open, initial, unitWord, error, saving, onClose, onSubmit
             if (rentMissing) { setLocalErr("أدخل «قيمة الدفعة» — بدونها لا تُحسب الاستحقاقات ولا تُسجَّل دفعة."); return; }
             if (paidUnpicked && sched.length > 0) { setLocalErr("اختر من «مسدَّد حتى» آخر دفعة دفعها المستأجر — أو «لم يدفع أي دفعة» إن كان فعلًا لم يدفع."); return; }
             if (startTooLate) { setLocalErr(`بداية العقد ${arDate(startISO)} بعد اليوم، والمستأجر ساكن الآن. اكتب تاريخ بداية العقد من إيجار — لا موعد الدفعة القادمة.`); return; }
+            /* تنبيه ظاهر بلا رد: لا حفظ. ننقله إليه (ونفتح «تفاصيل إضافية» إن كان فيها) —
+               كانت نوافذ confirm هنا يُضغط «موافق» فيها دون قراءة، وما لا نافذة له يمرّ صامتًا */
+            if (pendingAdv > 0) {
+              setLocalErr(pendingAdv === 1 ? "أجب على التنبيه المظلَّل أولًا: صحّح، أو «أعي ذلك»." : `أجب على التنبيهات المظلَّلة (${pendingAdv}) أولًا: صحّح، أو «أعي ذلك».`);
+              const el = document.querySelector("[data-adv-pending]") as HTMLElement | null;
+              el?.closest("details")?.setAttribute("open", "");
+              el?.scrollIntoView({ behavior: "smooth", block: "center" });
+              return;
+            }
             setLocalErr(null);
-            /* أول استحقاق يختلف عن البداية: سؤال عند إدخاله أو تغييره فقط — لا في كل
-               حفظ لبيانات راجعها المكتب من قبل. */
-            if (dueGap && d.first_due !== (initial as any)?.first_due && !confirm(
-              `أول استحقاق ${arDate(d.first_due)} يختلف عن بداية العقد ${arDate(d.contract_start)}`
-              + (dueGap.dueDay !== dueGap.startDay ? `، فيصير يوم الدفع الشهري ${dueGap.dueDay} بدل ${dueGap.startDay}` : "") + `.\n\n`
-              + `موافق = نعم، أول دفعة فعلًا في هذا التاريخ.\n`
-              + `إلغاء = سأراجع (إن كان يدفع يوم بداية العقد فامسح «أول استحقاق»).`)) return;
-            if (futureStartQ && !confirm(`بداية العقد ${arDate(startISO)} بعد اليوم، ولا دفعات مسدَّدة.\n\n`
-              + `موافق = عقد جديد يبدأ في هذا التاريخ — احفظ.\n`
-              + `إلغاء = عقد ساري من قبل — سأكتب بدايته الفعلية وآخر دفعة سُدّدت.`)) return;
             onSubmit(init0 ? { ...d, _init: init0 } : d);
           }}>حفظ</button>
       </div>
@@ -4742,6 +4827,66 @@ function DocModal({ doc, onClose }: { doc: { title: string; body: string }; onCl
 }
 
 
+/**
+ * تنبيه يطلب ردًّا (29 أكتوبر 2026 — طلب عبيد: «رسائل التنبيهات لازم يكون لها رد»).
+ *
+ * كانت التنبيهات أنواعًا: نصّ أصفر بلا زر، أو زرّ تصحيح بلا «أعي ذلك»، أو نافذة
+ * confirm من المتصفح عند الحفظ يضغط المكتب «موافق» فيها دون قراءة. الآن كل تنبيه:
+ *   ١) زرّ تصحيح بما يقترحه (إن وُجد)   ٢) «أعي ذلك» يُبقي ما أدخله
+ * وبعد الرد يتحوّل إلى سطر أخضر يقول ما اختاره المكتب، ومعه «تراجع».
+ * الحفظ لا يتمّ وتنبيه بلا رد — فلا يمرّ خطأ لأن أحدًا لم ينتبه له.
+ *
+ * sig: بصمة القيمة التي نُبّه عليها — «أعي ذلك» على 36,000 لا يسري على 360,000،
+ *      والتصحيح يُبصم بالقيمة بعده: تعديلٌ لاحق غريب يُسأل عنه من جديد.
+ */
+type AdvAnswer = { choice: "ack" | "fix"; sig: string; note: string; undo?: () => void };
+function Advisory({ answer, sig, title, children, fixLabel, onFix, ackLabel = "أعي ذلك — أبقِه كما هو", onAck, onUndo, tone = "warn" }: {
+  answer?: AdvAnswer; sig: string; title: React.ReactNode; children?: React.ReactNode;
+  fixLabel?: string; onFix?: () => void;
+  /** null = لا تجاوز (خطأ لا يُحفظ — التصحيح وحده) */
+  ackLabel?: string | null; onAck?: () => void;
+  onUndo: () => void; tone?: "warn" | "late";
+}) {
+  const done = !!answer && answer.sig === sig;
+  if (done) {
+    return (
+      <div role="status" className="mt-2 flex items-center gap-2 rounded-lg border border-[#B7DFC7] bg-[#E6F4EC] px-3 py-1.5 text-[12px] text-[#137a50]"
+        onClick={(e) => { if (!(e.target as HTMLElement).closest("button,a,input,select,textarea")) e.preventDefault(); }}>
+        <span className="flex-1 leading-relaxed">✓ {answer!.note}</span>
+        <button type="button" className="underline underline-offset-4 font-semibold shrink-0 min-h-[36px] sm:min-h-0" onClick={onUndo}>تراجع</button>
+      </div>
+    );
+  }
+  const box = tone === "late" ? "border-[#F5C6C2] bg-[#FBE9E7] text-[#8f2b26]" : "border-[#F2D49B] bg-[#FFF6E5] text-[#7A4800]";
+  return (
+    /* النقرة على نصّ التنبيه لا تُفعّل عنصر الحقل المحيط (<label>) — ولا خانة إدخال فيه */
+    <div role="alert" data-adv-pending="1" className={`mt-2 rounded-xl border p-3 text-[12.5px] leading-relaxed ${box}`}
+      onClick={(e) => { if (!(e.target as HTMLElement).closest("button,a,input,select,textarea")) e.preventDefault(); }}>
+      <div><b>{title}</b></div>
+      {children && <div className="mt-1">{children}</div>}
+      <div className="flex flex-wrap gap-2 mt-2.5">
+        {fixLabel && onFix && (
+          <button type="button" className="btn btn-gold text-xs min-h-[40px] sm:min-h-0" onClick={onFix}>{fixLabel}</button>
+        )}
+        {ackLabel && onAck && (
+          <button type="button" className="btn btn-ghost text-xs min-h-[40px] sm:min-h-0 bg-white" onClick={onAck}>{ackLabel}</button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** قيمة دفعة لا تتسق مع دورتها: أشيع خطأ صامت في الإدخال الأول (إيجار السنة في خانة الشهر أو العكس) */
+function rentOddity(rent: number, freq: string): null | { kind: "high" | "low"; perMonth: number; perYear: number } {
+  const MO: Record<string, number> = { monthly: 1, quarterly: 3, trimester: 4, semiannual: 6, annual: 12 };
+  const st = MO[freq];
+  if (!st || !(rent > 0)) return null;           // يومي/أسبوعي: لا معيار شهري موثوق
+  const perMonth = rent / st, perYear = perMonth * 12;
+  if (freq !== "annual" && perMonth >= 20000) return { kind: "high", perMonth, perYear };
+  if ((freq === "annual" || freq === "semiannual") && perYear < 6000) return { kind: "low", perMonth, perYear };
+  return null;
+}
+
 function PortfolioStat({ v, l, tone }: { v: string; l: string; tone?: "warn" }) {
   return (
     <div>
@@ -4773,6 +4918,8 @@ function RenewModal({ tenant, unitWord, onClose, onRenew }: {
      أحد ينبّه المكتب. الآن: تحذير حين تنتهي المدة الجديدة في الماضي، وخيار
      «تبدأ من اليوم» (fromToday الذي تدعمه renewContract أصلًا) لعقد انتهى من زمن. */
   const [fromToday, setFromToday] = useState(false);
+  /* ردّ المكتب على «تنتهي في الماضي» — لا تأكيد للتجديد قبله (Advisory) */
+  const [pastAns, setPastAns] = useState<AdvAnswer | undefined>();
   const [busy, setBusy] = useState(false);
   const todayISO = today();
   const expired = !!cur.endDate && cur.endDate < todayISO;
@@ -4784,6 +4931,7 @@ function RenewModal({ tenant, unitWord, onClose, onRenew }: {
     fromToday: expired && fromToday,
   });
   const endsInPast = preview.contract_end !== null && preview.contract_end < todayISO;
+  const pastPending = endsInPast && pastAns?.sig !== preview.contract_end;
   const changed = Number(amount) !== Number(tenant.rent_amount);
   const diff = Number(amount) - Number(tenant.rent_amount || 0);
 
@@ -4850,11 +4998,16 @@ function RenewModal({ tenant, unitWord, onClose, onRenew }: {
         </label>
       )}
 
-      {endsInPast && (
-        <div className="bg-[#FDF3E2] border border-[#EED9AE] rounded-xl p-3 mt-4 text-xs text-[#8a5a11] leading-relaxed">
-          <b>تنبيه:</b> المدة الجديدة تنتهي في <b>{preview.contract_end}</b> — تاريخ مضى.
-          {expired ? " زد المدة، أو فعّل «تبدأ المدة الجديدة من اليوم»." : " زد المدة إن لم يكن هذا مقصودًا."}
-        </div>
+      {(endsInPast || (pastAns?.choice === "fix" && fromToday)) && (
+        <Advisory sig={endsInPast ? preview.contract_end : "today"} answer={pastAns}
+          title={`المدة الجديدة تنتهي في ${arDate(preview.contract_end)} — تاريخ مضى، فالعقد يبقى «منتهيًا» بعد التجديد.`}
+          fixLabel={expired ? "ابدأ المدة الجديدة من اليوم" : undefined}
+          onFix={() => { setFromToday(true); setPastAns({ choice: "fix", sig: "today", note: "المدة الجديدة تبدأ من اليوم" }); }}
+          ackLabel="أعي ذلك — أبقِ التواريخ كما هي"
+          onAck={() => setPastAns({ choice: "ack", sig: preview.contract_end, note: `أكّدتَ: مدة من ${arDate(preview.contract_start)} إلى ${arDate(preview.contract_end)} (مضت) — لتسوية مدة سابقة` })}
+          onUndo={() => { if (pastAns?.choice === "fix") setFromToday(false); setPastAns(undefined); }}>
+          زد المدة{expired ? "، أو ابدأها من اليوم" : ""} — أو أكّد إن كنت تسجّل مدة سابقة لتسويتها.
+        </Advisory>
       )}
 
       <div className="bg-[#E6F4EC] border border-[#B7DFC7] rounded-xl p-3 mt-4 text-sm">
@@ -4879,7 +5032,8 @@ function RenewModal({ tenant, unitWord, onClose, onRenew }: {
 
       <div className="flex gap-2 mt-5">
         <button type="button" className="btn btn-ghost flex-1 justify-center" onClick={onClose}>إلغاء</button>
-        <button className="btn btn-gold flex-1 justify-center" disabled={busy || !Number(periods)}
+        <button className="btn btn-gold flex-1 justify-center" disabled={busy || !Number(periods) || pastPending}
+          title={pastPending ? "أجب على التنبيه أولًا" : undefined}
           /* يعود الزرّ إن توقّف التجديد (إلغاء سؤال أو خطأ) — كان يبقى «...» معطّلًا */
           onClick={() => { setBusy(true); Promise.resolve(onRenew({ periods: Number(periods), newAmount: Number(amount) || null, newFrequency: freq, fromToday: expired && fromToday })).finally(() => setBusy(false)); }}>
           {busy ? "..." : "تأكيد التجديد"}
