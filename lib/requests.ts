@@ -20,6 +20,8 @@ export type SeekerRequest = {
   price_max?: number | null;
   area_min?: number | null;
   area_max?: number | null;
+  /** أقل عدد غرف (schema-v77) — فارغ = لا يهم */
+  rooms_min?: number | null;
   status?: string | null;      // active | closed
   note?: string | null;
 };
@@ -59,6 +61,14 @@ export function matches(l: Listing, r: SeekerRequest): boolean {
     if (maxA > 0 && area > maxA) return false;
   }
 
+  /* الغرف (29 أكتوبر 2026): «شقة ٣ غرف» كانت تطابق شقة غرفتين. معروض بلا عدد
+     غرف لا يُقصى (كالمساحة) — الأرض لا غرف لها فلا يطلبها أحد بغرف */
+  const minR = Number(r.rooms_min) || 0;
+  if (minR > 0) {
+    const rooms = Number(l.rooms) || 0;
+    if (rooms > 0 && rooms < minR) return false;
+  }
+
   const wanted = splitDistricts(r.districts);
   if (wanted.length) {
     const have = norm(l.district || "");
@@ -82,6 +92,11 @@ export function matchesForRequest(r: SeekerRequest, listings: Listing[]): Listin
   return (listings || []).filter((l) => matches(l, r));
 }
 
+/** «3 غرف فأكثر» — لا «3+»: علامة + بجوار رقم في سطر عربي تُعرض معكوسة (+3) */
+export function roomsAtLeast(n: number): string {
+  return n === 1 ? "غرفة فأكثر" : n === 2 ? "غرفتان فأكثر" : `${n} غرف فأكثر`;
+}
+
 /** وصف الطلب في سطر: «شقة للإيجار · النرجس · حتى 45,000 · 120–160 م²» */
 export function requestDesc(r: SeekerRequest, kindLabel: string, offerLabel: string): string {
   const fmt = (n: number) => n.toLocaleString("en-US");
@@ -93,6 +108,7 @@ export function requestDesc(r: SeekerRequest, kindLabel: string, offerLabel: str
   if (a1 && a2) bits.push(`${fmt(a1)}–${fmt(a2)} م²`);
   else if (a1) bits.push(`من ${fmt(a1)} م²`);
   else if (a2) bits.push(`حتى ${fmt(a2)} م²`);
+  if (Number(r.rooms_min) > 0) bits.push(roomsAtLeast(Number(r.rooms_min)));
   return bits.filter(Boolean).join(" · ");
 }
 

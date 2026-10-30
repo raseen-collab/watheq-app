@@ -15,7 +15,11 @@ export type IconName =
   | "building" | "owner" | "data" | "doc" | "report" | "link" | "money"
   | "expense" | "debt" | "upload" | "download" | "history" | "print"
   | "whatsapp" | "phone" | "plus" | "search" | "settings" | "check"
-  | "close" | "alert" | "clock" | "shield" | "key" | "note" | "chart";
+  | "close" | "alert" | "clock" | "shield" | "key" | "note" | "chart"
+  /* سجل المعروضات (29 أكتوبر 2026) */
+  | "land" | "apartment" | "villa" | "shop" | "box" | "bed" | "bath" | "area"
+  | "layers" | "sofa" | "camera" | "megaphone" | "edit" | "trash" | "pin"
+  | "sparkle" | "grid" | "list" | "sort" | "filter" | "tag" | "save";
 
 const PATHS: Record<IconName, string> = {
   building: "M3 21h18M5 21V5a1 1 0 0 1 1-1h8a1 1 0 0 1 1 1v16M15 9h3a1 1 0 0 1 1 1v11M8 8h2M8 12h2M8 16h2",
@@ -44,6 +48,28 @@ const PATHS: Record<IconName, string> = {
   key: "M15 7a4 4 0 1 1-3.5 5.9L7 17.4 4.6 15 9 10.5A4 4 0 0 1 15 7zM17 6h.01",
   note: "M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8zM14 3v5h5M9 14h6",
   chart: "M3 3v18h18M7 15l3.5-4 3 2.5L19 7",
+  land: "M3 6l6-3 6 3 6-3v15l-6 3-6-3-6 3zM9 3v15M15 6v15",
+  apartment: "M4 21V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v17M16 10h3a1 1 0 0 1 1 1v10M2 21h20M8 7h1M11 7h1M8 11h1M11 11h1M8 15h1M11 15h1M9 21v-3h2v3",
+  villa: "M3 11 12 4l9 7M5 9.5V20a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V9.5M10 21v-6h4v6",
+  shop: "M3 9l1.5-5h15L21 9M3 9v1a3 3 0 0 0 6 0V9M9 9v1a3 3 0 0 0 6 0V9M15 9v1a3 3 0 0 0 6 0V9M5 13v8h14v-8M10 21v-5h4v5",
+  box: "M21 8 12 3 3 8v8l9 5 9-5zM3 8l9 5 9-5M12 13v8",
+  bed: "M3 18v-7a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v7M3 14h18M3 18v2M21 18v2M7 9V6.5A1.5 1.5 0 0 1 8.5 5h7A1.5 1.5 0 0 1 17 6.5V9",
+  bath: "M4 12h16v3a5 5 0 0 1-5 5H9a5 5 0 0 1-5-5zM6 12V5.5A2.5 2.5 0 0 1 8.5 3 2.5 2.5 0 0 1 11 5.5M7 20l-1 2M17 20l1 2",
+  area: "M3 9V3h6M21 9V3h-6M3 15v6h6M21 15v6h-6",
+  layers: "M12 3 2 8l10 5 10-5zM2 13l10 5 10-5M2 18l10 5 10-5",
+  sofa: "M5 11V8a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v3M3 13a2 2 0 0 1 4 0v2h10v-2a2 2 0 0 1 4 0v5H3zM5 18v2M19 18v2",
+  camera: "M4 8h3l2-3h6l2 3h3a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1zM12 17a4 4 0 1 0 0-8 4 4 0 0 0 0 8z",
+  megaphone: "M3 11v2a1 1 0 0 0 1 1h3l6 4V6L7 10H4a1 1 0 0 0-1 1zM16 9a4 4 0 0 1 0 6M19 6a8 8 0 0 1 0 12",
+  edit: "M4 20h4L19 9l-4-4L4 16zM14 6l4 4",
+  trash: "M3 6h18M8 6V4h8v2M6 6l1 14a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-14",
+  pin: "M12 21s7-6.2 7-12a7 7 0 1 0-14 0c0 5.8 7 12 7 12zM12 11.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5z",
+  sparkle: "M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8zM19 16l.7 1.8 1.8.7-1.8.7L19 21l-.7-1.8-1.8-.7 1.8-.7z",
+  grid: "M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z",
+  list: "M8 6h13M8 12h13M8 18h13M3.5 6h.01M3.5 12h.01M3.5 18h.01",
+  sort: "M7 4v16M3 16l4 4 4-4M17 20V4M13 8l4-4 4 4",
+  filter: "M3 5h18l-7 8.5V19l-4 2v-7.5z",
+  tag: "M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8zM7.5 7.5h.01",
+  save: "M5 3h11l4 4v13a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1zM8 3v5h7V3M8 21v-7h8v7",
 };
 
 /** أيقونة خطّية ترث لون النص وتتحاذى مع سطره */

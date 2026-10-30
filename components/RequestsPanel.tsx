@@ -5,14 +5,21 @@
  * للتفسير: نوع + عرض + ميزانية + مساحة + تقاطع أحياء) مع زر واتساب
  * جاهز بنص يذكر أكواد المعروضات المطابقة.
  */
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import Icon from "@/components/Icon";
 import { createClient } from "@/lib/supabase-client";
 import { officeId } from "@/lib/office";
 import { sar, waLink } from "@/lib/utils";
 import { KIND_META, OFFER_LABEL, pricePerMeter, shortDesc, type Listing, type ListingKind, type OfferType } from "@/lib/listings";
 import { matchesForRequest, requestDesc, isActiveRequest, type SeekerRequest } from "@/lib/requests";
 
-export default function RequestsPanel({ initial, listings }: { initial: SeekerRequest[]; listings: Listing[] }) {
+const KIND_ICON = { land: "land", apartment: "apartment", villa: "villa", building: "building", shop: "shop", other: "box" } as const;
+
+export default function RequestsPanel({ initial, listings, prefill, onPrefillUsed }: {
+  initial: SeekerRequest[]; listings: Listing[];
+  /** بحث زبون من تبويب المعروضات ← نموذج طلب معبّأ (29 أكتوبر 2026) */
+  prefill?: Partial<SeekerRequest> | null; onPrefillUsed?: () => void;
+}) {
   const supabase = createClient();
   const [items, setItems] = useState<SeekerRequest[]>(initial || []);
   const [showClosed, setShowClosed] = useState(false);
@@ -21,9 +28,13 @@ export default function RequestsPanel({ initial, listings }: { initial: SeekerRe
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<null | { k: "ok" | "err"; m: string }>(null);
 
+  const [seed, setSeed] = useState<Partial<SeekerRequest> | null>(null);
+  useEffect(() => { if (prefill) { setSeed(prefill); setForm(true); onPrefillUsed?.(); } }, [prefill, onPrefillUsed]);
+
   function flash(k: "ok" | "err", m: string) { setMsg({ k, m }); setTimeout(() => setMsg(null), 3500); }
   function friendly(e: any) {
     const t = String(e?.message || e);
+    if (/rooms_min/.test(t)) return "حقل «الغرف» يحتاج تشغيل ملف schema-v77-request-rooms.sql في Supabase مرة واحدة — أو احذف الغرف من الطلب واحفظ.";
     return /seeker_requests/.test(t) && /(not exist|relation|schema cache)/i.test(t)
       ? "شغّل ملف schema-v8.sql في Supabase أولًا ثم أعد المحاولة" : t;
   }
@@ -43,8 +54,8 @@ export default function RequestsPanel({ initial, listings }: { initial: SeekerRe
         .insert({ ...d, user_id: uid }).select("*").single();
       if (error) throw error;
       setItems([data as SeekerRequest, ...items]);
-      setForm(false);
-      flash("ok", "سُجّل الطلب");
+      setForm(false); setSeed(null);
+      flash("ok", "سُجّل الطلب — وحين يدخل معروض يناسبه يظهر هنا وفي ملخّصك اليومي");
     } catch (e) { flash("err", friendly(e)); } finally { setBusy(false); }
   }
 
@@ -73,7 +84,7 @@ export default function RequestsPanel({ initial, listings }: { initial: SeekerRe
           <button className="btn btn-ghost text-xs" onClick={() => setShowClosed(!showClosed)}>
             {showClosed ? "إخفاء المنجزة" : "إظهار المنجزة"}
           </button>
-          <button className="btn btn-gold text-sm" onClick={() => setForm(true)}>+ طلب</button>
+          <button className="btn btn-gold text-sm" onClick={() => { setSeed(null); setForm(true); }}><Icon name="plus" /> طلب</button>
         </div>
       </div>
 
@@ -84,11 +95,12 @@ export default function RequestsPanel({ initial, listings }: { initial: SeekerRe
         </div>
       )}
 
-      {form && <RequestForm busy={busy} onCancel={() => setForm(false)} onSave={save} />}
+      {form && <RequestForm key={seed ? JSON.stringify(seed) : "new"} seed={seed} busy={busy} onCancel={() => { setForm(false); setSeed(null); }} onSave={save} />}
 
       {!shown.length ? (
-        <div className="mt-4 rounded-xl border border-line bg-paper p-6 text-center text-sm text-muted">
-          {activeCount ? "لا طلبات بهذا الفرز." : "لا طلبات بعد — أول مكالمة «أبغى شقة في…» سجّلها هنا بدل ورقة تضيع."}
+        <div className="mt-4 rounded-2xl border border-dashed border-line bg-paper p-8 text-center text-sm text-muted">
+          <span className="inline-grid place-items-center w-12 h-12 rounded-full bg-white border border-line text-gold mb-2"><Icon name="search" size={22} /></span>
+          <p>{activeCount ? "لا طلبات بهذا الفرز." : "لا طلبات بعد — أول مكالمة «أبغى شقة في…» سجّلها هنا بدل ورقة تضيع."}</p>
         </div>
       ) : (
         <div className="mt-3 flex flex-col gap-2">
@@ -98,32 +110,35 @@ export default function RequestsPanel({ initial, listings }: { initial: SeekerRe
             const active = isActiveRequest(r);
             const expanded = openId === r.id;
             return (
-              <div key={r.id} className={`rounded-xl border border-line p-3 ${active ? "bg-white" : "bg-[#F8FAFC] opacity-80"}`}>
+              <div key={r.id} className={`rounded-2xl border border-line p-3 ${active ? "bg-white" : "bg-[#F8FAFC] opacity-80"}`}>
                 <div className="flex flex-col sm:flex-row sm:items-center gap-2">
-                  <div className="min-w-0 flex-1">
+                  <div className="min-w-0 flex-1 flex items-start gap-2.5">
+                    <span className="grid place-items-center w-10 h-10 rounded-xl bg-paper2 text-gold shrink-0"><Icon name={KIND_ICON[r.kind] || "box"} size={19} /></span>
+                    <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2 flex-wrap">
-                      <span className="font-semibold text-sm">{r.seeker_name || "طلب بلا اسم"}</span>
+                      <span className="font-semibold text-sm text-deep">{r.seeker_name || "طلب بلا اسم"}</span>
                       {!active && <span className="text-[.68rem] font-bold rounded-lg px-2 py-0.5 bg-[#F1F5F9] text-[#475569]">أُنجز</span>}
                       {active && (
                         <button onClick={() => setOpenId(expanded ? null : r.id)}
                           className={`text-[.68rem] font-bold rounded-lg px-2 py-0.5 transition ${
                             hits.length ? "bg-[#E6F4EC] text-[#137a50] hover:bg-[#d6ecdf]" : "bg-[#F1F5F9] text-[#475569]"}`}>
-                          {hits.length ? `✨ يطابق ${hits.length} ${hits.length === 1 ? "معروضًا" : "معروضات"}` : "لا مطابقة بعد"}
+                          {hits.length ? <span className="inline-flex items-center gap-1"><Icon name="sparkle" size={12} /> يطابق {hits.length} {hits.length === 1 ? "معروضًا" : "معروضات"}</span> : "لا مطابقة بعد"}
                         </button>
                       )}
                     </div>
                     <div className="text-xs text-muted mt-0.5">
                       {requestDesc(r, meta.label, OFFER_LABEL[r.offer_type])}{r.note ? ` · ${r.note}` : ""}
                     </div>
+                    </div>
                   </div>
                   <div className="flex flex-wrap gap-1.5 sm:justify-end shrink-0">
                     {r.seeker_phone && active && (
-                      <a className="btn btn-ghost text-xs" target="_blank" rel="noreferrer"
+                      <a className="btn btn-wa text-xs" target="_blank" rel="noreferrer"
                         href={waLink(r.seeker_phone,
                           hits.length
                             ? `السلام عليكم ${r.seeker_name || ""}، عندنا ${hits.length === 1 ? "معروض يناسب طلبك" : "معروضات تناسب طلبك"}: ${hits.slice(0, 3).map((l) => `${l.code} (${shortDesc(l)}${Number(l.price) > 0 ? ` — ${sar(Number(l.price))} ريال` : ""})`).join(" · ")} — نرتب لك معاينة؟`
                             : `السلام عليكم ${r.seeker_name || ""}، طلبك عندنا مسجّل وسنوافيك فور توفر ما يناسبه.`)}>
-                        واتساب
+                        <Icon name="whatsapp" size={14} /> واتساب
                       </a>
                     )}
                     {active
@@ -155,20 +170,28 @@ export default function RequestsPanel({ initial, listings }: { initial: SeekerRe
   );
 }
 
-function RequestForm({ busy, onSave, onCancel }: {
+function RequestForm({ busy, onSave, onCancel, seed }: {
   busy: boolean; onSave: (d: Partial<SeekerRequest>) => void; onCancel: () => void;
+  seed?: Partial<SeekerRequest> | null;
 }) {
   const [d, setD] = useState<any>({
-    kind: "apartment" as ListingKind, offer_type: "rent" as OfferType,
-    seeker_name: "", seeker_phone: "", districts: "", city: "",
-    price_max: "", area_min: "", area_max: "", note: "",
+    kind: (seed?.kind || "apartment") as ListingKind, offer_type: (seed?.offer_type || "rent") as OfferType,
+    seeker_name: "", seeker_phone: "", districts: seed?.districts || "", city: "",
+    price_max: seed?.price_max ? String(seed.price_max) : "", area_min: "", area_max: "",
+    rooms_min: seed?.rooms_min ? Number(seed.rooms_min) : 0, note: "",
   });
+  const land = !!KIND_META[d.kind as ListingKind]?.land;
   const num = (v: any) => (v === "" || v == null ? null : Number(v));
   const txt = (v: any) => (String(v || "").trim() || null);
   const ready = String(d.seeker_name || "").trim().length > 0 || String(d.seeker_phone || "").trim().length > 0;
 
   return (
-    <div className="mt-4 border border-line rounded-xl p-4 bg-paper space-y-3">
+    <div className="mt-4 border border-line rounded-2xl p-4 bg-paper space-y-3">
+      {seed && (
+        <div className="rounded-lg bg-[#E6F4EC] border border-[#B7DFC7] text-[#137a50] text-[12.5px] px-3 py-2 inline-flex items-center gap-1.5">
+          <Icon name="sparkle" size={14} /> عبّأنا الطلب من بحثك — أضف اسم الزبون وجواله واحفظ.
+        </div>
+      )}
       <div className="grid grid-cols-2 gap-3">
         <label className="block"><span className="block text-sm font-semibold mb-1">اسم الباحث</span>
           <input className="fld" value={d.seeker_name} onChange={(e) => setD({ ...d, seeker_name: e.target.value })} placeholder="أبو خالد" /></label>
@@ -181,10 +204,10 @@ function RequestForm({ busy, onSave, onCancel }: {
           <span className="block text-sm font-semibold mb-1">يبحث عن</span>
           <div className="grid grid-cols-3 gap-2">
             {(Object.keys(KIND_META) as ListingKind[]).map((k) => (
-              <button key={k} type="button" onClick={() => setD({ ...d, kind: k })}
-                className={`border-2 rounded-lg py-1.5 text-[.68rem] font-semibold transition ${
+              <button key={k} type="button" onClick={() => setD({ ...d, kind: k, ...(KIND_META[k].land ? { rooms_min: 0 } : {}) })}
+                className={`border-2 rounded-lg min-h-[40px] text-[.72rem] font-semibold transition inline-flex items-center justify-center gap-1 ${
                   d.kind === k ? "border-gold bg-[#FBF1DF]" : "border-line bg-white hover:border-goldSoft"}`}>
-                {KIND_META[k].icon} {KIND_META[k].label}
+                <Icon name={KIND_ICON[k]} size={14} /> {KIND_META[k].label}
               </button>
             ))}
           </div>
@@ -219,6 +242,20 @@ function RequestForm({ busy, onSave, onCancel }: {
           <input className="fld" type="number" value={d.area_max} onChange={(e) => setD({ ...d, area_max: e.target.value })} /></label>
       </div>
 
+      {!land && (
+        <div>
+          <span className="block text-sm font-semibold mb-1">أقل عدد غرف <span className="text-muted text-xs font-normal">— «أي عدد» = لا يهم</span></span>
+          <div className="flex gap-1.5 flex-wrap">
+            {[0, 1, 2, 3, 4, 5].map((n) => (
+              <button key={n} type="button" onClick={() => setD({ ...d, rooms_min: n })} aria-pressed={d.rooms_min === n}
+                className={`rounded-full border px-3 min-h-[36px] text-xs font-semibold transition ${d.rooms_min === n ? "border-gold bg-[#FBF1DF] text-deep" : "border-line bg-white text-muted"}`}>
+                {n ? <bdi dir="ltr">{n}+</bdi> : "أي عدد"}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       <label className="block"><span className="block text-sm font-semibold mb-1">ملاحظة <span className="text-muted text-xs font-normal">— اختياري</span></span>
         <input className="fld" value={d.note} onChange={(e) => setD({ ...d, note: e.target.value })} placeholder="يفضّل دور أرضي، جاهز للدفع كاش" /></label>
 
@@ -232,6 +269,8 @@ function RequestForm({ busy, onSave, onCancel }: {
               seeker_name: txt(d.seeker_name), seeker_phone: txt(d.seeker_phone),
               districts: txt(d.districts), city: txt(d.city),
               price_max: num(d.price_max), area_min: num(d.area_min), area_max: num(d.area_max),
+              /* يُرسل فقط إن حُدِّد: من لم يشغّل v77 بعد يبقى يحفظ طلباته كما كان */
+              ...(!land && Number(d.rooms_min) > 0 ? { rooms_min: Number(d.rooms_min) } : {}),
               note: txt(d.note),
             })}>
             {busy ? "…" : "تسجيل الطلب"}

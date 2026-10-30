@@ -23,3 +23,11 @@ npx esbuild lib/importParse.ts --bundle --format=cjs --platform=node --alias:@=.
 node tests/import-mapping.js
 TZ=Asia/Riyadh node tests/import-mapping.js   # تواريخ إكسل بتوقيت الرياض
 ```
+
+## بحث الزبون في المعروضات
+
+```bash
+npx esbuild lib/listings.ts --bundle --format=cjs --platform=node --alias:@=. --outfile=/tmp/b/listings.js
+npx esbuild lib/requests.ts --bundle --format=cjs --platform=node --alias:@=. --outfile=/tmp/b/requests.js
+node tests/listings-search.js
+```

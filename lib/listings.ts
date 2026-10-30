@@ -41,6 +41,7 @@ export type Listing = {
   last_confirmed_at?: string | null;
   brokerage_id?: string | null;
   note?: string | null;
+  created_at?: string | null;
 };
 
 /** الأرض حقولها صك ومخطط وقطعة؛ والمبني حقوله دور وغرف — لا يخلطان */
@@ -202,4 +203,81 @@ export function listingsDigestLines(
     lines.push(`⚠️ ${orphan.length} معروض ما زال مفتوحًا وعقد وساطته انتهى (${codes}${orphan.length > 6 ? "…" : ""})`);
   }
   return lines;
+}
+
+/* ══════════════ بحث الزبون (29 أكتوبر 2026) ══════════════
+   «زبون يبي شقة ٣ غرف للإيجار حتى ٤٠ ألف في النرجس» — كان البحث نصًّا حرًّا
+   على الكود والحي فقط، والغرف والسعر والنوع لا تُفلتر. الشروط هنا نفس منطق
+   المطابقة في lib/requests: الحقل المجهول في المعروض لا يُقصيه (معروض بلا
+   عدد غرف يبقى ظاهرًا مع شرط الغرف)، لئلا يختفي عقار مناسب لأن خانته فارغة. */
+
+export type StatusFilter = "open" | "all" | "stale" | ListingStatus;
+export type ListingQuery = {
+  status?: StatusFilter;
+  kind?: ListingKind | "";
+  offer?: OfferType | "";
+  roomsMin?: number;          // 0 = لا يهم
+  priceMax?: number;          // 0 = لا يهم
+  q?: string;
+};
+export type ListingSort = "attention" | "newest" | "price_asc" | "price_desc" | "area_desc";
+
+export const SORT_LABEL: Record<ListingSort, string> = {
+  attention: "المراجعة أولًا",
+  newest: "الأحدث",
+  price_asc: "السعر: الأقل",
+  price_desc: "السعر: الأعلى",
+  area_desc: "المساحة: الأكبر",
+};
+
+/** تطبيع عربي خفيف للبحث النصي: الهمزات والتاء المربوطة والألف المقصورة */
+function normAr(s: string): string {
+  return String(s || "").toLowerCase()
+    .replace(/[أإآ]/g, "ا").replace(/ة/g, "ه").replace(/ى/g, "ي").replace(/\s+/g, " ").trim();
+}
+
+export function filterListings(items: Listing[], f: ListingQuery, asOf?: Date): Listing[] {
+  const status = f.status || "open";
+  const needle = normAr(f.q || "").replace(/^ال/, "");
+  const roomsMin = Number(f.roomsMin) || 0;
+  const priceMax = Number(f.priceMax) || 0;
+  return (items || []).filter((l) => {
+    if (status === "open" && !isOpen(l)) return false;
+    if (status === "stale" && !freshness(l, asOf).stale) return false;
+    if (["available", "reserved", "contracted", "withdrawn"].includes(status) && (l.status || "available") !== status) return false;
+    if (f.kind && l.kind !== f.kind) return false;
+    if (f.offer && l.offer_type !== f.offer) return false;
+    if (roomsMin > 0) {
+      if (KIND_META[l.kind]?.land) return false;                 // الأرض لا غرف لها
+      const r = Number(l.rooms) || 0;
+      if (r > 0 && r < roomsMin) return false;                   // مجهول الغرف لا يُقصى
+    }
+    if (priceMax > 0) {
+      const p = Number(l.price) || 0;
+      if (p > 0 && p > priceMax) return false;                   // مجهول السعر لا يُقصى
+    }
+    if (needle) {
+      const hay = [l.code, l.title, l.district, l.city, l.owner_name, l.owner_phone, l.deed_no, l.plan_no, l.parcel_no, l.unit_no, l.note]
+        .filter(Boolean).map((x) => normAr(String(x))).join(" | ");
+      if (!hay.includes(needle)) return false;
+    }
+    return true;
+  });
+}
+
+export function sortListingsBy(items: Listing[], by: ListingSort): Listing[] {
+  if (by === "attention") return sortListings(items);
+  const arr = [...(items || [])];
+  /* الفارغ في آخر القائمة دائمًا — لا يتصدّر «السعر: الأقل» معروضٌ بلا سعر */
+  const num = (v: any, dir: 1 | -1) => (Number(v) > 0 ? Number(v) * dir : Number.POSITIVE_INFINITY);
+  if (by === "newest") arr.sort((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || "")));
+  if (by === "price_asc") arr.sort((a, b) => num(a.price, 1) - num(b.price, 1));
+  if (by === "price_desc") arr.sort((a, b) => num(a.price, -1) - num(b.price, -1));
+  if (by === "area_desc") arr.sort((a, b) => num(a.area, -1) - num(b.area, -1));
+  return arr;
+}
+
+/** هل في البحث شرط من شروط الزبون (لا فرز الحالة وحده)؟ — يُظهر «احفظه كطلب» */
+export function hasSeekerCriteria(f: ListingQuery): boolean {
+  return !!(f.kind || f.offer || (Number(f.roomsMin) || 0) > 0 || (Number(f.priceMax) || 0) > 0);
 }
