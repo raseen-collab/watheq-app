@@ -2983,6 +2983,120 @@ ${footer(issuer)}`;
 
 
 // ============================================================
+// محضر عرض معروض — دليل المسوّق في نزاع السعي (2 نوفمبر 2026)
+//
+// المحاكم تطلب من الوسيط إثبات أنه أول من عرّف الزبون بالعقار: سجل مؤرّخ
+// بالأسماء والتواريخ. «عُرض على» شاشة لا قيمة لها خارج الحساب — هذا المستند
+// يُخرجها ورقةً مؤرّخة بصيغة ثابتة: من، متى، بأي وسيلة، وكم مرة فُتح الرابط.
+// لا يذكر جوال المالك ولا السعي: المستند قد يُعرض على طرف ثالث.
+// ============================================================
+export type ListingShowRow = { customer_name?: string | null; customer_phone?: string | null; shown_at: string; note?: string | null; created_at?: string | null };
+export type ListingLinkRow = { token: string; revoked: boolean; views: number; last_view_at?: string | null; created_at: string };
+
+export function listingShowsHTML(l: Listing, shows: ListingShowRow[], links: ListingLinkRow[], orgName: string, issuer: Issuer = {}) {
+  l = scrub(l); shows = scrub(shows); links = scrub(links); orgName = scrub(orgName); issuer = scrub(issuer);
+  const who = issuer.billing_name || orgName || "المسوّق العقاري";
+  const meta = L_KIND[l.kind] || L_KIND.other;
+  const st = STATUS_META[(l.status || "available") as keyof typeof STATUS_META] || STATUS_META.available;
+  const rows = (shows || []).slice().sort((a, b) => String(a.shown_at).localeCompare(String(b.shown_at)) || String(a.created_at || "").localeCompare(String(b.created_at || "")));
+  const views = (links || []).reduce((n, k) => n + (Number(k.views) || 0), 0);
+  const lastView = (links || []).map((k) => k.last_view_at || "").filter(Boolean).sort().pop() || null;
+  const mask = (p?: string | null) => { const d = String(p || "").replace(/\D/g, ""); return d.length >= 7 ? `${d.slice(0, 4)}…${d.slice(-3)}` : (p || "—"); };
+
+  const body = `
+${header("محضر عرض معروض", who, issuer)}
+<h1>محضر عرض معروض</h1>
+<div class="sub">${who} · تاريخ الإصدار: ${arDate(today())} · ${countAr(rows.length, "عرض")}</div>
+
+<h2>المعروض</h2>
+<table>
+  <tbody>
+    <tr><th>الكود</th><td><b>${l.code || "—"}</b></td><th>النوع</th><td>${meta.icon} ${meta.label} — ${OFFER_LABEL[l.offer_type] || ""}</td></tr>
+    <tr><th>الوصف</th><td>${shortDesc(l)}${l.title ? ` · ${l.title}` : ""}</td><th>الحالة الآن</th><td><span class="pill ${st.tone === "ok" ? "p" : "u"}">${st.label}</span></td></tr>
+    <tr><th>السعر المعلن</th><td>${Number(l.price) > 0 ? `${sar(Number(l.price))} ريال${l.offer_type === "rent" ? " سنويًّا" : ""}` : "—"}</td><th>آخر تأكيد للتوفر</th><td>${arDate(l.last_confirmed_at)}</td></tr>
+    <tr><th>تفويض المالك</th><td>${l.owner_authorized === true ? "موجود" : l.owner_authorized === false ? "لا يوجد" : "غير محدَّد"}</td><th>الرابط العام</th><td>${(links || []).length ? `${countAr(views, "مشاهدة")}${lastView ? ` · آخرها ${arDate(lastView)}` : ""}` : "لم يُنشأ"}</td></tr>
+  </tbody>
+</table>
+
+<h2>عُرض على</h2>
+${rows.length ? `<div class="scrollx"><table>
+  <thead><tr><th>#</th><th>الزبون</th><th>الجوال</th><th>تاريخ العرض</th><th>الوسيلة / ملاحظة</th><th>سُجّل في</th></tr></thead>
+  <tbody>${rows.map((r, i) => `<tr>
+    <td>${i + 1}</td><td><b>${r.customer_name || "—"}</b></td><td dir="ltr">${mask(r.customer_phone)}</td>
+    <td>${arDate(r.shown_at)}</td><td>${r.note || "—"}</td><td>${r.created_at ? arDate(r.created_at) : "—"}</td></tr>`).join("")}</tbody>
+</table></div>` : `<div class="sub">لم يُسجَّل عرض على أحد بعد.</div>`}
+
+<div class="note">سجل داخلي للمسوّق صادر آليًّا من وثيق بتاريخ ${arDate(today())}. التواريخ كما سجّلها المسوّق وقت العرض، و«سُجّل في» تاريخ إدخال السطر في النظام. أرقام الجوال مُقنَّعة حمايةً للزبائن. لا يُعدّ هذا المستند عقد وساطة ولا إثباتًا قضائيًّا بذاته — بل سجلًا يُرفق مع عقد الوساطة الموثَّق والمراسلات.</div>
+<div class="sign"><div>أعدّه: ${who}<br><br>التوقيع: ________________</div><div>تاريخ الإصدار: ${arDate(today())}</div></div>
+${footer(issuer)}`;
+  return SHELL(`محضر عرض ${l.code || ""} — ${who}`, body, markOf(issuer));
+}
+
+// ============================================================
+// اتفاق سعي (صفحة واحدة) — بين المسوّق والمالك/الطرف الذي يدفع السعي
+//
+// أكثر نزاعات السعي سببها اتفاق شفهي: النسبة؟ من يدفع؟ إلى متى؟ حصري أم لا؟
+// هذه الورقة تُولَّد من بيانات المعروض نفسها فلا يُعاد إدخال شيء، وتُطبع أو
+// تُرسل PDF ليوقّعها الطرفان. ليست بديلًا عن توثيق عقد الوساطة في منصة
+// الهيئة — بل ملحقًا يُثبت ما اتُّفق عليه قبل أي عرض.
+// ============================================================
+export type CommissionTerms = {
+  payer: "owner" | "buyer" | "split";
+  exclusive: boolean;
+  start: string;           // yyyy-mm-dd
+  end: string;             // yyyy-mm-dd
+  note?: string | null;
+};
+
+export function commissionAgreementHTML(l: Listing, t: CommissionTerms, orgName: string, issuer: Issuer = {}) {
+  l = scrub(l); t = scrub(t); orgName = scrub(orgName); issuer = scrub(issuer);
+  const who = issuer.billing_name || orgName || "المسوّق العقاري";
+  const meta = L_KIND[l.kind] || L_KIND.other;
+  const pct = Number(l.commission_pct) > 0 ? Number(l.commission_pct) : null;
+  const rent = l.offer_type === "rent";
+  const base = Number(l.price) || 0;
+  const est = pct && base ? Math.round(base * pct / 100) : null;
+  const payerAr = t.payer === "owner" ? (rent ? "المؤجّر (المالك)" : "البائع (المالك)") : t.payer === "buyer" ? (rent ? "المستأجر" : "المشتري") : "مناصفةً بين الطرفين";
+  const land = meta.land;
+  const propLine = [land ? (l.plan_no ? `مخطط ${l.plan_no}` : "") : (l.unit_no ? `وحدة ${l.unit_no}` : ""), land ? (l.parcel_no ? `قطعة ${l.parcel_no}` : "") : (l.floor_no != null ? `الدور ${l.floor_no}` : ""), l.area ? `${sar(Number(l.area))} م²` : ""].filter(Boolean).join(" · ");
+
+  const body = `
+${header("اتفاق سعي", l.code || "", issuer)}
+<h1>اتفاق سعي — ${meta.label} ${OFFER_LABEL[l.offer_type] || ""}</h1>
+<div class="sub">${who} · حُرّر بتاريخ ${arDate(today())}</div>
+
+<h2>الطرفان</h2>
+<table><tbody>
+  <tr><th style="width:22%">الطرف الأول (المسوّق)</th><td>${who}${issuer.billing_phone ? ` · جوال: <bdi dir="ltr">${issuer.billing_phone}</bdi>` : ""}${(issuer as any).fal_license ? ` · رخصة فال: ${(issuer as any).fal_license}` : ""}</td></tr>
+  <tr><th>الطرف الثاني (المالك)</th><td>${l.owner_name || "________________"}${l.owner_phone ? ` · جوال: <bdi dir="ltr">${l.owner_phone}</bdi>` : " · جوال: ____________"}</td></tr>
+</tbody></table>
+
+<h2>العقار</h2>
+<table><tbody>
+  <tr><th style="width:22%">الوصف</th><td>${meta.icon} ${meta.label} ${OFFER_LABEL[l.offer_type] || ""}${l.district ? ` — ${l.district}` : ""}${l.city ? `، ${l.city}` : ""}${propLine ? ` · ${propLine}` : ""}</td></tr>
+  <tr><th>${land ? "رقم الصك" : "رقم الصك / الوحدة"}</th><td>${l.deed_no || "____________"}</td></tr>
+  <tr><th>${rent ? "الإيجار السنوي المطلوب" : "السعر المطلوب"}</th><td>${base ? `${sar(base)} ريال` : "____________ ريال"}</td></tr>
+  <tr><th>الكود المرجعي</th><td>${l.code || "—"}</td></tr>
+</tbody></table>
+
+<h2>شروط السعي</h2>
+<table><tbody>
+  <tr><th style="width:22%">نسبة السعي</th><td>${pct != null ? `${pct}%` : "____ %"} ${rent ? "من إيجار السنة الأولى" : "من قيمة البيع"}${est ? ` (تقديرًا ≈ ${sar(est)} ريال على السعر المطلوب)` : ""}</td></tr>
+  <tr><th>يدفعه</th><td>${payerAr}</td></tr>
+  <tr><th>الاستحقاق</th><td>عند إتمام الصفقة خلال مدة هذا الاتفاق أو خلال شهرين من انتهائه إذا كان الطرف الأول هو من عرّف الطرفين ببعضهما.</td></tr>
+  <tr><th>المدة</th><td>من ${arDate(t.start)} إلى ${arDate(t.end)}</td></tr>
+  <tr><th>الحصرية</th><td>${t.exclusive ? "<b>حصري:</b> لا يُسوَّق العقار عبر وسيط آخر خلال المدة." : "<b>غير حصري:</b> يحق للمالك التسويق عبر وسطاء آخرين، ويستحق السعي من عرّف الطرفين ببعضهما."}</td></tr>
+  <tr><th>التفويض بالإعلان</th><td>يفوّض الطرف الثاني الطرفَ الأول بعرض العقار والإعلان عنه بالصور والمواصفات المذكورة، مع الالتزام بترخيص الإعلان من الهيئة العامة للعقار.</td></tr>
+  ${t.note ? `<tr><th>شروط إضافية</th><td>${t.note}</td></tr>` : ""}
+</tbody></table>
+
+<div class="note">نظام الوساطة العقارية: السعي لا يزيد على 2.5% من قيمة الصفقة (وفي الإيجار من إيجار السنة الأولى) ما لم يُتفق كتابةً على غير ذلك. هذا الاتفاق ملحق تنظيمي يُثبت ما اتُّفق عليه، ولا يغني عن توثيق عقد الوساطة في منصة الهيئة العامة للعقار. صدر عبر وثيق بتاريخ ${arDate(today())}.</div>
+<div class="sign"><div>الطرف الأول (المسوّق): ${who}<br><br>التوقيع: ________________</div><div>الطرف الثاني (المالك): ${l.owner_name || "____________"}<br><br>التوقيع: ________________</div></div>
+${footer(issuer)}`;
+  return SHELL(`اتفاق سعي ${l.code || ""} — ${who}`, body, markOf(issuer));
+}
+
+// ============================================================
 // سجل المصروفات المجمّع — كل العقارات في تقرير واحد
 //
 // صاحب المكتب كان يفتح كل عقار ليرى مصروفاته، فلا تتكوّن عنده صورة واحدة

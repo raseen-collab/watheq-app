@@ -31,3 +31,11 @@ npx esbuild lib/listings.ts --bundle --format=cjs --platform=node --alias:@=. --
 npx esbuild lib/requests.ts --bundle --format=cjs --platform=node --alias:@=. --outfile=/tmp/b/requests.js
 node tests/listings-search.js
 ```
+
+## المسوّق العقاري (2 نوفمبر 2026)
+
+```bash
+for f in roles:roles entitlements:ent pricing:pricing listings:listings requests:requests ads:ads listingPublic:lpub; do
+  npx esbuild lib/${f%%:*}.ts --bundle --format=cjs --platform=node --alias:@=. --outfile=/tmp/b/${f##*:}.js; done
+node tests/marketer.js   # الأدوار، 399 سنوي، السعي والتفويض، المتابعة، الإعلان بلا ترخيص، صفحة الزبون
+```

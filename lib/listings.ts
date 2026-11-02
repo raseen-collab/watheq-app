@@ -42,7 +42,46 @@ export type Listing = {
   brokerage_id?: string | null;
   note?: string | null;
   created_at?: string | null;
+  /* المسوّق العقاري (schema-v78، 2 نوفمبر 2026) */
+  /** نسبة السعي الكلية % (2.5 في البيع عادةً) */
+  commission_pct?: number | null;
+  /** نصيب المسوّق من السعي % — 100 مع المالك مباشرة، ويُقسَم مع وسيط آخر */
+  my_share_pct?: number | null;
+  /** تفويض المالك بالتسويق: null لم يُحدَّد · true موجود · false لا يوجد */
+  owner_authorized?: boolean | null;
+  /** المسوّق قرأ تنبيه التفويض وأقرّ به (يُمسح للتراجع) */
+  authorization_ack_at?: string | null;
+  /** المالك يسوّقه عبر وسطاء آخرين (غير حصري) — تذكير بتأكيد السعر قبل كل عرض */
+  others_marketing?: boolean | null;
 };
+
+/**
+ * تنبيه التفويض: العرض بلا تفويض من المالك مخالفة في نظام الوساطة العقارية.
+ * «لا يوجد» ينبّه الجميع؛ و«لم يُحدَّد» ينبّه المسوّق وحده (المكاتب لها سجل
+ * عقود وساطة مرتبط بالمعروض). الإقرار يُسكت التنبيه لا يُلغي المخالفة.
+ */
+export function authorizationWarning(l: Listing, marketer: boolean): "missing" | "unknown" | null {
+  if (!isOpen(l)) return null;
+  if (l.owner_authorized === false) return "missing";
+  if (marketer && l.owner_authorized == null) return "unknown";
+  return null;
+}
+
+/** «السعي 2.5% · نصيبك 50% ≈ 6,250 ريال» — null إن لم تُسجَّل النسبة */
+export function commissionLine(l: Listing): string | null {
+  const c = Number(l.commission_pct);
+  if (!(c > 0)) return null;
+  const share = l.my_share_pct == null ? 100 : Number(l.my_share_pct);
+  const price = Number(l.price) || 0;
+  const bits = [`السعي ${fmtPct(c)}%`];
+  if (share !== 100) bits.push(`نصيبك ${fmtPct(share)}%`);
+  if (price > 0) {
+    const mine = Math.round(price * (c / 100) * (share / 100));
+    if (mine > 0) bits.push(`≈ ${mine.toLocaleString("en-US")} ريال`);
+  }
+  return bits.join(" · ");
+}
+const fmtPct = (n: number) => (Number.isInteger(n) ? String(n) : String(Math.round(n * 100) / 100));
 
 /** الأرض حقولها صك ومخطط وقطعة؛ والمبني حقوله دور وغرف — لا يخلطان */
 export const KIND_META: Record<ListingKind, { label: string; prefix: string; land: boolean; icon: string }> = {

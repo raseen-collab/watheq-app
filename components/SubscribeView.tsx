@@ -2,7 +2,7 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { PROP_PLANS, HOA_PLANS, OFFICE_YEARLY, subPrice, type PropPlan, type HoaPlan } from "@/lib/pricing";
+import { PROP_PLANS, HOA_PLANS, OFFICE_YEARLY, MARKETER_PLAN, subPrice, type PropPlan, type HoaPlan } from "@/lib/pricing";
 import { WATHEQ_WA } from "@/lib/utils";
 
 export type SubscribeBank = { iban: string; bank: string; name: string };
@@ -14,7 +14,7 @@ export type SubscribeClaim = {
 type ProductStatus = { product: "property" | "hoa"; plan: string | null; kind: string; subDaysLeft: number | null; trialDaysLeft: number | null };
 
 const sar = (n: number) => n.toLocaleString("en-US");
-const propName = (id?: string | null) => PROP_PLANS.find((x) => x.id === id)?.name || "";
+const propName = (id?: string | null) => id === "marketer" ? MARKETER_PLAN.name : (PROP_PLANS.find((x) => x.id === id)?.name || "");
 const hoaName = (id?: string | null) => HOA_PLANS.find((x) => x.id === id)?.name || "";
 
 function statusLine(s: ProductStatus): string {
@@ -26,7 +26,7 @@ function statusLine(s: ProductStatus): string {
 }
 
 export default function SubscribeView({ accountType, status, subscribedUntil, claims, bank, ready, today }: {
-  accountType: "landlord" | "hoa_manager" | "both";
+  accountType: "landlord" | "hoa_manager" | "both" | "marketer";
   status: ProductStatus[];
   subscribedUntil: string | null;
   claims: SubscribeClaim[];
@@ -35,12 +35,15 @@ export default function SubscribeView({ accountType, status, subscribedUntil, cl
   today: string;
 }) {
   const router = useRouter();
+  /* المسوّق العقاري (2 نوفمبر 2026): باقة واحدة سنوية — لا اختيار ولا شهري */
+  const marketer = accountType === "marketer";
   const hasProp = accountType !== "hoa_manager";
-  const hasHoa = accountType !== "landlord";
+  const hasHoa = accountType !== "landlord" && !marketer;
   const current = (pr: "property" | "hoa") => status.find((s) => s.product === pr)?.plan || null;
 
   const initProp = (): PropPlan | null => {
     if (!hasProp) return null;
+    if (marketer) return "marketer";
     const c = current("property");
     return c === "basic" ? "basic" : "full";
   };
@@ -52,7 +55,7 @@ export default function SubscribeView({ accountType, status, subscribedUntil, cl
 
   const [prop, setProp] = useState<PropPlan | null>(initProp);
   const [hoa, setHoa] = useState<HoaPlan | null>(initHoa);
-  const [months, setMonths] = useState<1 | 12>(1);
+  const [months, setMonths] = useState<1 | 12>(marketer ? 12 : 1);
   const [payer, setPayer] = useState("");
   const [ref, setRef] = useState("");
   const [date, setDate] = useState(today);
@@ -60,8 +63,8 @@ export default function SubscribeView({ accountType, status, subscribedUntil, cl
   const [err, setErr] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
 
-  const yearlyOk = prop === "full" && !hoa;
-  const effMonths = yearlyOk ? months : 1;
+  const yearlyOk = (prop === "full" || prop === "marketer") && !hoa;
+  const effMonths = marketer ? 12 : yearlyOk ? months : 1;
   const total = useMemo(() => subPrice(prop, hoa, effMonths), [prop, hoa, effMonths]);
 
   const open = claims.find((c) => c.status === "pending" || c.status === "processing");
@@ -149,7 +152,18 @@ export default function SubscribeView({ accountType, status, subscribedUntil, cl
             </div>
           )}
 
-          {hasProp && (
+          {marketer && (
+            <section className="bg-white border border-line rounded-2xl p-5">
+              <h2 className="font-display font-bold text-deep mb-3">١) باقة المسوّق العقاري</h2>
+              <div className="grid sm:grid-cols-2 gap-3">
+                <PlanCard active onClick={() => setProp("marketer")} title={MARKETER_PLAN.name}
+                  price={`${sar(MARKETER_PLAN.yearly)} ريال / سنويًا`} note={MARKETER_PLAN.note} />
+              </div>
+              <p className="text-xs text-muted mt-3">باقة واحدة سنوية بلا شهري. تحتاج عقارات ووحدات مؤجّرة؟ راسلنا ونحوّل حسابك إلى باقة المالك أو المكتب.</p>
+            </section>
+          )}
+
+          {hasProp && !marketer && (
             <section className="bg-white border border-line rounded-2xl p-5">
               <h2 className="font-display font-bold text-deep mb-3">{accountType === "both" ? "١) باقة إدارة الأملاك" : "١) اختر الباقة"}</h2>
               <div className="grid sm:grid-cols-2 gap-3">
@@ -180,7 +194,7 @@ export default function SubscribeView({ accountType, status, subscribedUntil, cl
             </section>
           )}
 
-          <section className="bg-white border border-line rounded-2xl p-5">
+          {!marketer && <section className="bg-white border border-line rounded-2xl p-5">
             <h2 className="font-display font-bold text-deep mb-3">المدة</h2>
             <div className="flex gap-2 flex-wrap">
               <button type="button" onClick={() => setMonths(1)}
@@ -195,7 +209,13 @@ export default function SubscribeView({ accountType, status, subscribedUntil, cl
               الإجمالي: <b className="text-deep">{total === null ? "—" : `${sar(total)} ريال`}</b>
               <span className="text-xs text-muted"> {effMonths === 12 ? "لمدة سنة" : "لمدة شهر"}</span>
             </div>
-          </section>
+          </section>}
+          {marketer && (
+            <section className="bg-white border border-line rounded-2xl p-5 text-lg">
+              الإجمالي: <b className="text-deep">{total === null ? "—" : `${sar(total)} ريال`}</b>
+              <span className="text-xs text-muted"> لمدة سنة</span>
+            </section>
+          )}
 
           <section className="bg-white border border-line rounded-2xl p-5">
             <h2 className="font-display font-bold text-deep mb-3">٢) حوّل المبلغ</h2>

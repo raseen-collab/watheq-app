@@ -3,7 +3,7 @@
 import { riyadhDate } from "@/lib/utils";
 import { Fragment, useMemo, useState } from "react";
 import { openDoc, subscriptionInvoiceHTML } from "@/lib/documents";
-import { recordSubPayment, setSubInvoiceBillTo } from "@/app/admin/subs/actions";
+import { recordSubPayment, setSubInvoiceBillTo, grantTrialDays, setAccountType } from "@/app/admin/subs/actions";
 
 export type SubRow = {
   id: string;
@@ -40,7 +40,10 @@ const PLAN_AR: Record<string, { landlord: string; hoa: string }> = {
   basic: { landlord: "باقة المالك", hoa: "الأساسية" },
   pro: { landlord: "الاحترافية", hoa: "الاحترافية" },
   full: { landlord: "باقة المكتب", hoa: "الشاملة" },
+  /* marketer (2 نوفمبر 2026): باقة المسوّق العقاري السنوية */
+  marketer: { landlord: "باقة المسوّق", hoa: "باقة المسوّق" },
 };
+const TYPE_AR: Record<string, string> = { landlord: "أملاك", hoa_manager: "جمعيات", both: "مزدوج", marketer: "مسوّق" };
 const planLabel = (plan?: string | null, acct?: string | null) => {
   if (!plan) return "بلا باقة";
   const p = PLAN_AR[plan];
@@ -102,7 +105,7 @@ function stateOf(r: SubRow): { s: State; label: string; tone: string } {
   const sub = daysTo(r.subscribed_until);
   /* تاريخ اشتراك سارٍ بلا باقة مدفوعة: صاحبه يرى «تجربة» — لا نعرضه مشتركًا هنا
      (الحساب المزدوج: يكفي أن تكون إحدى باقتيه مدفوعة) */
-  const paidPl = (v?: string | null) => ["basic", "pro", "full"].includes(String(v || "").toLowerCase());
+  const paidPl = (v?: string | null) => ["basic", "pro", "full", "marketer"].includes(String(v || "").toLowerCase());
   if (sub !== null && sub >= 0 && !paidPl(r.plan) && !(r.account_type === "both" && paidPl(r.hoa_plan))) {
     return { s: "soon", label: `⚠ بلا باقة — يظهر له «تجربة» (بقي ${daysWord(sub)})`, tone: "text-late font-semibold" };
   }
@@ -130,6 +133,35 @@ export default function SubsAdmin({ rows, pays, paysFailed, signature }: { rows:
   const [hoaPlan, setHoaPlan] = useState("");
   const [method, setMethod] = useState("transfer");
   const [note, setNote] = useState("");
+
+  /* المسوّق العقاري (2 نوفمبر 2026): تجربة 3 أشهر لأول 5 مسوّقين — يدويًّا من هنا،
+     وتحويل نوع الحساب. الأثر يُعرض محليًّا فورًا ثم تُحدَّث الصفحة من الخادم. */
+  const [trialOverride, setTrialOverride] = useState<Record<string, string>>({});
+  const [typeOverride, setTypeOverride] = useState<Record<string, string>>({});
+  const [typeFor, setTypeFor] = useState<string | null>(null);
+  async function grant(r: SubRow, days: number) {
+    if (!confirm(`منح «${r.org_name || r.full_name || "الحساب"}» تجربة ${days === 90 ? "3 أشهر" : `${days} يومًا`} إضافية من اليوم أو من نهاية تجربته الحالية؟`)) return;
+    setBusy(true); setMsg(null);
+    const res = await grantTrialDays(r.id, days);
+    setBusy(false);
+    if (!res.ok) return setMsg({ kind: "err", text: res.error });
+    setTrialOverride((o) => ({ ...o, [r.id]: res.trialEndsAt }));
+    setMsg({ kind: "ok", text: `✓ تجربة «${r.org_name || r.full_name || "الحساب"}» حتى ${res.trialEndsAt}` });
+  }
+  async function changeType(r: SubRow, t: "landlord" | "hoa_manager" | "both" | "marketer") {
+    if (t === r.account_type) return setTypeFor(null);
+    const warn = t === "marketer"
+      ? "سيُحوَّل إلى «مسوّق عقاري»: يرى المعروضات والطلبات فقط، وتُمسح باقة الأملاك إن وُجدت (بياناته لا تُمسّ). متأكد؟"
+      : `تحويل نوع الحساب إلى «${TYPE_AR[t]}»؟ باقته الحالية قد تُمسح إن لم تناسب النوع الجديد.`;
+    if (!confirm(warn)) return;
+    setBusy(true); setMsg(null);
+    const res = await setAccountType(r.id, t);
+    setBusy(false);
+    if (!res.ok) return setMsg({ kind: "err", text: res.error });
+    setTypeOverride((o) => ({ ...o, [r.id]: t }));
+    setTypeFor(null);
+    setMsg({ kind: "ok", text: `✓ صار «${r.org_name || r.full_name || "الحساب"}» حساب ${TYPE_AR[t]}` });
+  }
 
   /* تعديل «إلى» لفاتورة دفعة بعينها (v72). التعديلات المحفوظة تُحفظ محليًّا أيضًا
      فتظهر فورًا دون انتظار إعادة تحميل الصفحة. */
@@ -165,7 +197,9 @@ export default function SubsAdmin({ rows, pays, paysFailed, signature }: { rows:
     return m;
   }, [pays]);
 
-  const enriched = rows.map((r) => ({ r, st: stateOf(r), last: (paysByUser[r.id] || [])[0] || null }));
+  const enriched = rows
+    .map((r0) => ({ ...r0, trial_ends_at: trialOverride[r0.id] ?? r0.trial_ends_at, account_type: typeOverride[r0.id] ?? r0.account_type }))
+    .map((r) => ({ r, st: stateOf(r), last: (paysByUser[r.id] || [])[0] || null }));
 
   const nPaid = enriched.filter((e) => e.st.s === "paid" || e.st.s === "soon").length;
   const nSoon = enriched.filter((e) => e.st.s === "soon").length;
@@ -271,6 +305,30 @@ export default function SubsAdmin({ rows, pays, paysFailed, signature }: { rows:
                   <td className="p-2.5">
                     <div className="font-semibold">{r.full_name || "—"}</div>
                     <div className="text-xs text-muted">{r.org_name || ""}</div>
+                    <div className="mt-1 flex items-center gap-1 flex-wrap">
+                      <button type="button" onClick={() => setTypeFor(typeFor === r.id ? null : r.id)} disabled={busy}
+                        title="تغيير نوع الحساب"
+                        className={`text-[.68rem] font-bold rounded-lg px-2 py-0.5 border ${r.account_type === "marketer" ? "bg-[#FBF1DF] border-[#EBD9AA] text-[#8a5a11]" : "bg-paper2 border-line text-muted"}`}>
+                        {TYPE_AR[r.account_type || ""] || "بلا نوع"} ▾
+                      </button>
+                      {r.account_type === "marketer" && (
+                        <button type="button" onClick={() => grant(r, 90)} disabled={busy}
+                          title="تجربة 3 أشهر — عرض أول 5 مسوّقين"
+                          className="text-[.68rem] font-bold rounded-lg px-2 py-0.5 border border-line bg-white text-deep hover:border-goldSoft">
+                          🎁 منح 3 شهور
+                        </button>
+                      )}
+                    </div>
+                    {typeFor === r.id && (
+                      <div className="mt-1.5 flex gap-1 flex-wrap">
+                        {(["landlord", "hoa_manager", "both", "marketer"] as const).map((t) => (
+                          <button key={t} type="button" disabled={busy} onClick={() => changeType(r, t)}
+                            className={`text-[.68rem] rounded-full px-2.5 py-1 border ${r.account_type === t ? "bg-gold text-white border-gold font-semibold" : "bg-white border-line text-deep"}`}>
+                            {TYPE_AR[t]}
+                          </button>
+                        ))}
+                      </div>
+                    )}
                   </td>
                   <td className="p-2.5 text-xs whitespace-nowrap">{planLabel(r.plan, r.account_type)}</td>
                   <td className={`p-2.5 text-xs whitespace-nowrap ${st.tone}`}>{st.label}</td>
@@ -315,6 +373,8 @@ export default function SubsAdmin({ rows, pays, paysFailed, signature }: { rows:
                         <div className="flex gap-1.5 mb-3 flex-wrap">
                           {(r.account_type === "hoa_manager"
                             ? [{ v: "", l: "بلا تغيير" }, { v: "basic", l: "الأساسية (59)" }, { v: "pro", l: "الاحترافية (99)" }, { v: "full", l: "الشاملة (149)" }]
+                            : r.account_type === "marketer"
+                            ? [{ v: "", l: "بلا تغيير" }, { v: "marketer", l: "باقة المسوّق (399 سنوي)" }]
                             : [{ v: "", l: "بلا تغيير" }, { v: "basic", l: "باقة المالك (99)" }, { v: "full", l: "باقة المكتب (199)" }]).map((o) => (
                             <button key={o.v} onClick={() => setPlan(o.v)}
                               className={`text-xs rounded-full px-3 py-1.5 border ${

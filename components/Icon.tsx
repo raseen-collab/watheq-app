@@ -19,7 +19,9 @@ export type IconName =
   /* سجل المعروضات (29 أكتوبر 2026) */
   | "land" | "apartment" | "villa" | "shop" | "box" | "bed" | "bath" | "area"
   | "layers" | "sofa" | "camera" | "megaphone" | "edit" | "trash" | "pin"
-  | "sparkle" | "grid" | "list" | "sort" | "filter" | "tag" | "save";
+  | "sparkle" | "grid" | "list" | "sort" | "filter" | "tag" | "save"
+  /* المسوّق العقاري (2 نوفمبر 2026) */
+  | "eye" | "users" | "percent" | "undo" | "calendar";
 
 const PATHS: Record<IconName, string> = {
   building: "M3 21h18M5 21V5a1 1 0 0 1 1-1h8a1 1 0 0 1 1 1v16M15 9h3a1 1 0 0 1 1 1v11M8 8h2M8 12h2M8 16h2",
@@ -69,6 +71,11 @@ const PATHS: Record<IconName, string> = {
   sort: "M7 4v16M3 16l4 4 4-4M17 20V4M13 8l4-4 4 4",
   filter: "M3 5h18l-7 8.5V19l-4 2v-7.5z",
   tag: "M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8zM7.5 7.5h.01",
+  eye: "M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12zM12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z",
+  users: "M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM22 21v-2a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.8",
+  percent: "M19 5 5 19M6.5 9a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5zM17.5 20a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5z",
+  undo: "M3 7v6h6M3.5 13a9 9 0 1 0 2.6-6.4L3 10",
+  calendar: "M3 5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2zM3 9h18M8 2v4M16 2v4",
   save: "M5 3h11l4 4v13a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1zM8 3v5h7V3M8 21v-7h8v7",
 };
 

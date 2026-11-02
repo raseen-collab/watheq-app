@@ -6,10 +6,12 @@
 // وبيانات المعروض كلها موجودة أصلًا — فلا يُعاد إدخال شيء.
 //
 // بوابة الترخيص: النظام يوجب إبراز رقم ترخيص الإعلان ورخصة فال.
-// النص لا يُعرض ولا يُنسخ قبلهما — والقرار في lib/ads (adReady)
-// لا هنا، حتى لا يلتفّ عليه تعديل واجهة لاحق. رخصة فال تُجلب
-// تلقائيًّا من سجل الالتزامات إن سُجّلت هناك، وتراخيص الإعلانات
-// تُعرض قائمةً للاختيار — والحقلان يقبلان الكتابة اليدوية دائمًا.
+// النص لا يُعرض قبلهما — والقرار في lib/ads (adReady). (2 نوفمبر 2026)
+// صار التجاوز ممكنًا بإقرار صريح «أعي أن الإعلان بلا ترخيص مخالفة عليّ»
+// يُضغط كل مرة (لا يُحفظ)، ومع «تراجع» تعود البوابة؛ فالمسوّق الذي
+// ترخيصه قيد الإصدار لا يُحبَس، والمسؤولية مكتوبة أمامه لا مخفية.
+// رخصة فال تُجلب تلقائيًّا من سجل الالتزامات إن سُجّلت هناك، وتراخيص
+// الإعلانات تُعرض قائمةً للاختيار — والحقلان يقبلان الكتابة اليدوية دائمًا.
 // ============================================================
 
 import { useEffect, useMemo, useState } from "react";
@@ -36,6 +38,8 @@ export default function AdComposer({ listing, orgName, phone, onClose }: {
   const [adLic, setAdLic] = useState("");
   const [adOptions, setAdOptions] = useState<string[]>([]);
   const [copied, setCopied] = useState<string | null>(null);
+  /** تجاوز بوابة الترخيص بإقرار صريح — لهذه النافذة فقط */
+  const [bypass, setBypass] = useState(false);
 
   /**
    * جلب واحد عند الفتح: رخصة فال (أحدث بند ref_no من نوعها) تُملأ
@@ -62,14 +66,15 @@ export default function AdComposer({ listing, orgName, phone, onClose }: {
 
   const office: AdOffice = { org_name: orgName, billing_phone: phone, fal_license: fal, ad_license: adLic };
   const gate = adReady(office);
+  const unlocked = gate.ok || bypass;
 
   const text = useMemo(() => {
-    if (!gate.ok) return "";
+    if (!unlocked) return "";
     if (tab === "haraj") { const h = harajAd(listing, office); return `${h.title}\n${"─".repeat(24)}\n${h.body}`; }
     if (tab === "x") return xAd(listing, office);
     return whatsappAd(listing, office);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tab, fal, adLic, listing, orgName, phone, gate.ok]);
+  }, [tab, fal, adLic, listing, orgName, phone, unlocked]);
 
   async function copy(what: string, value: string) {
     try {
@@ -108,13 +113,27 @@ export default function AdComposer({ listing, orgName, phone, onClose }: {
           </div>
         </div>
 
-        {!gate.ok ? (
+        {!gate.ok && (
           <div className="mt-4 text-sm bg-[#FDF6E3] border border-[#EAD9A8] text-[#7a5c12] rounded-xl p-3.5 leading-relaxed">
-            <b>الإعلان بلا ترخيص مخالفة على مكتبك.</b> أكمل أولًا:
+            <b>الإعلان بلا ترخيص مخالفة عليك.</b> ناقص:
             <ul className="mt-1.5 space-y-1">{gate.missing.map((m) => <li key={m}>• {m}</li>)}</ul>
             <div className="text-xs mt-2 text-muted">تُصدر تراخيص الإعلانات من منصة الهيئة العامة للعقار، وتُسجَّل في «الالتزامات» لتصلك تنبيهات قبل انتهائها.</div>
+            <div className="mt-3 flex items-center gap-2 flex-wrap">
+              {!bypass ? (
+                <button type="button" className="btn text-xs bg-white border border-[#EAD9A8] text-[#7a5c12] hover:bg-[#FBF1DF]" onClick={() => setBypass(true)}>
+                  أعي أن الإعلان بلا ترخيص مخالفة عليّ — أظهر النص
+                </button>
+              ) : (
+                <span className="text-xs inline-flex items-center gap-2">
+                  <b>أقررت بالتنبيه.</b> النص أدناه بلا سطر الترخيص{gate.missing.length === 1 ? " الكامل" : ""}.
+                  <button type="button" className="underline underline-offset-2 font-semibold" onClick={() => setBypass(false)}>تراجع</button>
+                </span>
+              )}
+            </div>
           </div>
-        ) : (
+        )}
+
+        {unlocked && (
           <>
             <div className="flex gap-1.5 mt-4 mb-2">
               {TABS.map((t) => (

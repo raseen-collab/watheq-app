@@ -61,9 +61,16 @@ function factLines(l: Listing): string[] {
   return out;
 }
 
-/** سطر الالتزام النظامي — يظهر في كل المنصات بلا استثناء */
+/**
+ * سطر الالتزام النظامي — يظهر في كل المنصات. (2 نوفمبر 2026) صار تجاوز
+ * البوابة ممكنًا بإقرار صريح من المستخدم (AdComposer)، فالسطر يُبنى بما
+ * توفّر: الرقمان، أو أحدهما، أو لا شيء — ولا يُكتب «undefined» في إعلان.
+ */
 function licenseLine(o: AdOffice): string {
-  return `ترخيص الإعلان: ${o.ad_license} · رخصة فال: ${o.fal_license}`;
+  const bits: string[] = [];
+  if (o.ad_license?.trim()) bits.push(`ترخيص الإعلان: ${o.ad_license.trim()}`);
+  if (o.fal_license?.trim()) bits.push(`رخصة فال: ${o.fal_license.trim()}`);
+  return bits.join(" · ");
 }
 
 /** لا إعلان بلا ترخيصَيه — القرار هنا لا في الواجهة حتى لا يُلتفّ عليه */
@@ -90,7 +97,8 @@ export function harajAd(l: Listing, o: AdOffice): { title: string; body: string 
     `الرقم المرجعي: ${l.code}`,
     licenseLine(o),
   ];
-  return { title, body: lines.join("\n") };
+  // سطر الترخيص قد يكون فارغًا (تجاوز بإقرار) — لا سطر فارغ في ذيل الإعلان
+  return { title, body: lines.filter((x, i) => !(x === "" && i === lines.length - 1)).join("\n") };
 }
 
 /** X: سقف 280 حرفًا — نحسبه فعلًا ونحذف الأقل أهمية حتى يدخل */
@@ -98,7 +106,7 @@ export function xAd(l: Listing, o: AdOffice): string {
   const req = [
     `للتواصل: ${o.billing_phone || "—"}`,
     licenseLine(o),
-  ];
+  ].filter(Boolean);
   let facts = factLines(l);
   const build = (f: string[]) => [headline(l), "", ...f, "", ...req].join("\n");
   let text = build(facts);
@@ -116,7 +124,7 @@ export function xAd(l: Listing, o: AdOffice): string {
 
 /** واتساب: للنشر في القروبات أو الإرسال لطالب مطابق — أغنى نصًا */
 export function whatsappAd(l: Listing, o: AdOffice): string {
-  return [
+  const lines = [
     `*${headline(l)}*`,
     "",
     ...factLines(l).map((f) => `• ${f}`),
@@ -125,7 +133,8 @@ export function whatsappAd(l: Listing, o: AdOffice): string {
     `للتواصل: ${o.billing_phone || "—"}${o.org_name ? ` — ${o.org_name}` : ""}`,
     `الرقم المرجعي: ${l.code}`,
     licenseLine(o),
-  ].join("\n");
+  ];
+  return lines.filter((x, i) => !(x === "" && i === lines.length - 1)).join("\n");
 }
 
 /** روابط النشر المباشر */

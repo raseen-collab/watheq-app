@@ -9,9 +9,9 @@ import { useEffect, useMemo, useState } from "react";
 import Icon from "@/components/Icon";
 import { createClient } from "@/lib/supabase-client";
 import { officeId } from "@/lib/office";
-import { sar, waLink } from "@/lib/utils";
+import { sar, waLink, today } from "@/lib/utils";
 import { KIND_META, OFFER_LABEL, pricePerMeter, shortDesc, type Listing, type ListingKind, type OfferType } from "@/lib/listings";
-import { matchesForRequest, requestDesc, isActiveRequest, type SeekerRequest } from "@/lib/requests";
+import { matchesForRequest, requestDesc, isActiveRequest, followUpOf, needsFollowUp, type SeekerRequest } from "@/lib/requests";
 
 const KIND_ICON = { land: "land", apartment: "apartment", villa: "villa", building: "building", shop: "shop", other: "box" } as const;
 
@@ -35,15 +35,28 @@ export default function RequestsPanel({ initial, listings, prefill, onPrefillUse
   function friendly(e: any) {
     const t = String(e?.message || e);
     if (/rooms_min/.test(t)) return "حقل «الغرف» يحتاج تشغيل ملف schema-v77-request-rooms.sql في Supabase مرة واحدة — أو احذف الغرف من الطلب واحفظ.";
+    if (/last_contact_at|follow_up_at/.test(t)) return "المتابعة تحتاج تشغيل ملف schema-v78-marketer.sql في Supabase مرة واحدة.";
     return /seeker_requests/.test(t) && /(not exist|relation|schema cache)/i.test(t)
       ? "شغّل ملف schema-v8.sql في Supabase أولًا ثم أعد المحاولة" : t;
   }
 
+  /* المتأخرة أولًا ثم مستحقّة اليوم (v78) — ثم بقية النشطة بترتيبها */
+  const fuRank = (r: SeekerRequest) => { const k = followUpOf(r).kind; return k === "overdue" ? 2 : k === "due" ? 1 : 0; };
   const shown = useMemo(
-    () => items.filter((r) => (showClosed ? true : isActiveRequest(r))),
+    () => items.filter((r) => (showClosed ? true : isActiveRequest(r)))
+      .slice().sort((a, b) => fuRank(b) - fuRank(a)),
     [items, showClosed],
   );
   const activeCount = items.filter(isActiveRequest).length;
+  const dueCount = items.filter((r) => needsFollowUp(r)).length;
+  const [planFor, setPlanFor] = useState<string | null>(null);
+
+  /** «تواصلت اليوم» و«موعد المتابعة» — تحديث حقل واحد بلا نموذج */
+  async function patch(r: SeekerRequest, p: Partial<SeekerRequest>) {
+    const { error } = await supabase.from("seeker_requests").update(p).eq("id", r.id);
+    if (error) return flash("err", friendly(error));
+    setItems(items.map((x) => (x.id === r.id ? { ...x, ...p } : x)));
+  }
 
   async function save(d: Partial<SeekerRequest>) {
     setBusy(true);
@@ -95,6 +108,13 @@ export default function RequestsPanel({ initial, listings, prefill, onPrefillUse
         </div>
       )}
 
+      {dueCount > 0 && (
+        <div className="mt-3 rounded-xl border border-[#EBD9AA] bg-[#FBF1DF] p-3 text-sm text-[#8a5a11] flex items-center gap-2">
+          <Icon name="calendar" size={16} />
+          <span className="flex-1 leading-relaxed"><b>{dueCount}</b> {dueCount === 1 ? "زبون يحتاج متابعة" : "زبائن يحتاجون متابعة"} اليوم — مرتّبون في أعلى القائمة.</span>
+        </div>
+      )}
+
       {form && <RequestForm key={seed ? JSON.stringify(seed) : "new"} seed={seed} busy={busy} onCancel={() => { setForm(false); setSeed(null); }} onSave={save} />}
 
       {!shown.length ? (
@@ -129,6 +149,27 @@ export default function RequestsPanel({ initial, listings, prefill, onPrefillUse
                     <div className="text-xs text-muted mt-0.5">
                       {requestDesc(r, meta.label, OFFER_LABEL[r.offer_type])}{r.note ? ` · ${r.note}` : ""}
                     </div>
+                    {active && (() => {
+                      const fu = followUpOf(r);
+                      const cls = fu.tone === "bad" ? "bg-[#FBE9E7] text-[#a5322c]" : fu.tone === "warn" ? "bg-[#FBF1DF] text-[#8a5a11]" : fu.tone === "ok" ? "bg-[#E6F4EC] text-[#137a50]" : "bg-[#F1F5F9] text-[#475569]";
+                      return (
+                        <div className="mt-1.5 flex items-center gap-1.5 flex-wrap">
+                          {fu.label && <span className={`text-[.68rem] font-bold rounded-lg px-2 py-0.5 inline-flex items-center gap-1 ${cls}`}><Icon name="calendar" size={11} /> {fu.label}</span>}
+                          <button type="button" className="text-[.68rem] font-semibold text-muted underline underline-offset-2 min-h-[28px]"
+                            onClick={() => patch(r, { last_contact_at: today(), ...(fu.kind === "due" || fu.kind === "overdue" ? { follow_up_at: null } : {}) })}
+                            title="يسجّل تاريخ اليوم كآخر تواصل ويُغلق متابعة اليوم">✓ تواصلت اليوم</button>
+                          <button type="button" className="text-[.68rem] font-semibold text-muted underline underline-offset-2 min-h-[28px]"
+                            onClick={() => setPlanFor(planFor === r.id ? null : r.id)}>{r.follow_up_at ? "غيّر موعد المتابعة" : "موعد متابعة"}</button>
+                          {planFor === r.id && (
+                            <span className="inline-flex items-center gap-1">
+                              <input type="date" className="fld text-xs py-1" style={{ width: "auto" }} defaultValue={r.follow_up_at || ""} min={today()}
+                                onChange={(e) => { if (e.target.value) { void patch(r, { follow_up_at: e.target.value }); setPlanFor(null); } }} aria-label="موعد المتابعة" />
+                              {r.follow_up_at && <button type="button" className="text-[.68rem] text-late underline" onClick={() => { void patch(r, { follow_up_at: null }); setPlanFor(null); }}>إلغاء الموعد</button>}
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })()}
                     </div>
                   </div>
                   <div className="flex flex-wrap gap-1.5 sm:justify-end shrink-0">

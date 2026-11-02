@@ -1,7 +1,7 @@
 import { createClient } from "@/lib/supabase-server";
 import ListingsView from "@/components/ListingsView";
 import { redirect } from "next/navigation";
-import { normalizeAccountType, canAccess } from "@/lib/roles";
+import { normalizeAccountType, canAccess, isMarketer } from "@/lib/roles";
 import { issuerMarks } from "@/lib/subscription";
 import { getOfficeContext } from "@/lib/office-context";
 import { productProfile } from "@/lib/entitlements";
@@ -69,6 +69,7 @@ export default async function ListingsPage() {
       requests={(requests || []) as any}
       orgName={office?.org_name || ""}
       issuer={{ ...(office || {}), trial, expired }}
+      marketer={isMarketer(type)}
     />
   );
 }

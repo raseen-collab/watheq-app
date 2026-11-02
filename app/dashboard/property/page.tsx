@@ -1,7 +1,7 @@
 import { createClient } from "@/lib/supabase-server";
 import PropertyView from "@/components/PropertyView";
 import { redirect } from "next/navigation";
-import { normalizeAccountType, canAccess } from "@/lib/roles";
+import { normalizeAccountType, canAccess, isMarketer } from "@/lib/roles";
 import { issuerMarks } from "@/lib/subscription";
 import { getOfficeContext } from "@/lib/office-context";
 import { limitsFor, productProfile, toWire } from "@/lib/entitlements";
@@ -46,6 +46,7 @@ export default async function PropertyPage() {
   }
   if (!type) redirect("/onboarding");
   if (!canAccess(type, "property")) redirect("/dashboard/association");
+  if (isMarketer(type)) redirect("/dashboard/property/listings");   // المسوّق: لا عقارات ولا عقود
   if (type === "both") {
     await supabase.from("profiles").update({ last_dashboard: "property" }).eq("id", u.id);
   }

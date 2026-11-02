@@ -1,6 +1,6 @@
 import { createClient } from "@/lib/supabase-server";
 import { redirect } from "next/navigation";
-import { normalizeAccountType, defaultDashboard, dashboardPath } from "@/lib/roles";
+import { normalizeAccountType, homePath } from "@/lib/roles";
 import { withClockSkewRetry, isTransient } from "@/lib/db-retry";
 import RetryScreen from "@/components/RetryScreen";
 
@@ -40,5 +40,5 @@ export default async function Dashboard() {
   }
   if (!type) redirect("/onboarding");
 
-  redirect(dashboardPath(defaultDashboard(type, profile?.last_dashboard)));
+  redirect(homePath(type, profile?.last_dashboard));
 }

@@ -1,9 +1,10 @@
 "use client";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
+import { useEffect } from "react";
 import { createClient } from "@/lib/supabase-client";
 import { trialDaysLeft } from "@/lib/domain";
-import type { AccountType } from "@/lib/roles";
+import { isMarketer, marketerAllowed, type AccountType } from "@/lib/roles";
 import type { SubState } from "@/lib/subscription";
 import OfficeChat from "@/components/OfficeChat";
 import { daysAr } from "@/lib/utils";
@@ -35,6 +36,13 @@ export default function DashboardShell({
   const current = onProperty ? "property" : "association";
   const sub = subs ? (onProperty ? subs.property : subs.hoa) : subAll;
 
+  /* المسوّق العقاري (2 نوفمبر 2026): لوحته صفحة المعروضات وحدها. أي صفحة أخرى
+     من اللوحة تُعاد إلى المعروضات — القاعدة تمنع الكتابة في غيرها أصلًا
+     (schema-v78)، وهذا يمنع الضياع في صفحات فارغة. */
+  const marketer = isMarketer(accountType);
+  const offLimits = marketer && !marketerAllowed(pathname);
+  useEffect(() => { if (offLimits) router.replace("/dashboard/property/listings"); }, [offLimits, router]);
+
   async function signOut() {
     const supabase = createClient();
     await supabase.auth.signOut();
@@ -43,7 +51,9 @@ export default function DashboardShell({
   }
 
   // روابط اللوحة الحالية فقط — لا تزاحم بين عالمين
-  const nav = onProperty
+  const nav = marketer
+    ? [{ href: "/dashboard/property/listings", label: "📋 المعروضات والطلبات" }]
+    : onProperty
     ? [
         { href: "/dashboard/property", label: "عقاراتي" },
         { href: "/dashboard/property/overview", label: "🗂️ نظرة عامة" },
@@ -66,7 +76,7 @@ export default function DashboardShell({
             <div>
               <div>وثيق</div>
               <div className="text-[.65rem] font-normal text-[#9FB8B3] -mt-1">
-                {onProperty ? "إدارة الأملاك" : "جمعية الملاك"}
+                {marketer ? "المسوّق العقاري" : onProperty ? "إدارة الأملاك" : "جمعية الملاك"}
               </div>
             </div>
           </a>
@@ -132,17 +142,17 @@ export default function DashboardShell({
         </div>
       )}
 
-      {sub?.trial && days !== null && days <= 30 && days > 0 && (
+      {sub?.trial && days !== null && (days <= 30 || marketer) && days > 0 && (
         <div className={`text-center text-sm py-2 px-4 ${
           days <= 5 ? "bg-[#FBE9E7] text-[#8f2b26] border-b border-[#F5C6C2]"
                     : "bg-[#FBF1DF] text-[#8a5a11] border-b border-[#EBD9AA]"}`}>
-          🎁 تجربتك المجانية — متبقٍ <b>{days}</b> يومًا من أصل ٣٠. كل المزايا مفعّلة.
+          🎁 تجربتك المجانية — متبقٍ <b>{days}</b> يومًا{marketer ? "" : " من أصل ٣٠"}. كل المزايا مفعّلة.
           {days > 5 && <> <Link href="/subscribe" className="underline font-bold">اختر باقتك</Link></>}
           {days <= 5 && <> بعدها يصير الحساب للقراءة والتصدير فقط حتى تشترك — <Link href="/subscribe" className="underline font-bold">اختر باقتك</Link></>}
         </div>
       )}
 
-      <main className="max-w-6xl mx-auto p-4">{children}</main>
+      <main className="max-w-6xl mx-auto p-4">{offLimits ? <p className="text-sm text-muted p-6 text-center">جارٍ فتح المعروضات…</p> : children}</main>
 
       <footer className="max-w-6xl mx-auto px-4 pb-8 text-center text-xs text-muted leading-relaxed">
         وثيق أداة تنظيمية تُنشئ <b>نماذج خطابات تذكير وإشعارات</b> لتستخدمها بنفسك.

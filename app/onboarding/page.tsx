@@ -3,7 +3,7 @@ import { friendlyError } from "@/lib/friendlyError";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase-client";
-import { ACCOUNT_TYPES, defaultDashboard, dashboardPath, type AccountType } from "@/lib/roles";
+import { ACCOUNT_TYPES, homePath, type AccountType } from "@/lib/roles";
 
 /**
  * تحويل «تسجيل مكتمل» لبكسل إعلانات X — الحدث tw-rearl-rfa0m (نوعه Lead).
@@ -128,12 +128,13 @@ export default function OnboardingPage() {
     // تحويل مؤكَّد: الحساب صار له نوع محفوظ في القاعدة، فالتسجيل اكتمل
     await trackSignUp();
 
-    window.location.assign(dashboardPath(defaultDashboard(type)));
+    window.location.assign(homePath(type));   // المسوّق يفتح على المعروضات مباشرة
   }
 
   const placeholder =
     type === "hoa_manager" ? "جمعية ملاك عمارة النرجس"
     : type === "landlord" ? "مكتب اليمامة لإدارة الأملاك"
+    : type === "marketer" ? "أبو خالد للتسويق العقاري"
     : "اسم منشأتك أو اسمك";
 
   return (
@@ -170,7 +171,9 @@ export default function OnboardingPage() {
           </div>
         ) : (<>
 
-        <div className="grid md:grid-cols-3 gap-4">
+        {/* أربعة أنواع (المسوّق العقاري أُضيف 2 نوفمبر 2026): عمودان على الأجهزة
+            المتوسطة وأربعة على الكبيرة — ثلاثة كانت تترك بطاقة وحيدة في سطر */}
+        <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
           {ACCOUNT_TYPES.map((a) => (
             <button key={a.value} onClick={() => setType(a.value)}
               className={`text-right bg-white border-2 rounded-2xl p-5 transition-all flex flex-col ${

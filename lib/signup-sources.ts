@@ -33,6 +33,8 @@ export const CHOSEN_SOURCES: SignupSource[] = [
  */
 export const LINK_SOURCES: SignupSource[] = [
   { v: "demo", l: "النسخة التجريبية", adminLabel: "النسخة التجريبية" },
+  /* صفحة المسوّق العقاري watheqapp.com/marketer — وجهة إعلان X (2 نوفمبر 2026) */
+  { v: "marketer", l: "صفحة المسوّق العقاري", adminLabel: "صفحة المسوّق" },
 ];
 
 /** «أفضّل عدم الذكر» — تُحفظ عند ترك الحقل فارغًا، ولا تُعرض كخيار مكرَّر */

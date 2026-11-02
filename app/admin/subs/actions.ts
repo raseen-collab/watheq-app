@@ -62,7 +62,8 @@ async function applySubPayment(input: PaymentInput): Promise<RecordResult> {
   const amount = Number(input.amount) || 0;
   if (amount < 0) return { ok: false, error: "المبلغ غير صالح" };
 
-  const plan = input.plan && ["basic", "pro", "full"].includes(input.plan) ? input.plan : null;
+  /* marketer (2 نوفمبر 2026): باقة المسوّق — لحساب المسوّق فقط (تُفحص أدناه بعد قراءة الملف) */
+  const plan = input.plan && ["basic", "pro", "full", "marketer"].includes(input.plan) ? input.plan : null;
   const hoaPlan = input.hoaPlan && ["basic", "pro", "full"].includes(input.hoaPlan) ? input.hoaPlan : null;
 
   const db = serviceDb();
@@ -77,8 +78,11 @@ async function applySubPayment(input: PaymentInput): Promise<RecordResult> {
   /* 30 سبتمبر 2026: سُجّل شهر لحساب باقته ليست مدفوعة و«الباقة: بلا تغيير» —
      فامتدّ subscribed_until وظهر مشتركًا هنا، بينما لوحته تبقى «تجربة» لأن
      subState لا يعدّ الحساب مدفوعًا إلا بباقة مدفوعة. لا دفعة بلا باقة. */
-  const paidPl = (v?: string | null) => ["basic", "pro", "full"].includes(String(v || "").toLowerCase());
+  const paidPl = (v?: string | null) => ["basic", "pro", "full", "marketer"].includes(String(v || "").toLowerCase());
   const isBoth = (prof as any).account_type === "both";
+  const isMarketerAcct = (prof as any).account_type === "marketer";
+  if (plan === "marketer" && !isMarketerAcct) return { ok: false, error: "باقة المسوّق لحساب «مسوّق عقاري» فقط — حوّل نوع الحساب أولًا." };
+  if (isMarketerAcct && plan && plan !== "marketer") return { ok: false, error: "حساب المسوّق باقته «باقة المسوّق» وحدها — لباقة المالك/المكتب حوّل نوع الحساب أولًا." };
   const propOk = paidPl(plan || (prof as any).plan);
   const hoaOk = isBoth && paidPl(hoaPlan || (prof as any).hoa_plan);
   if (!propOk && !hoaOk) {
@@ -171,7 +175,7 @@ export async function setSubInvoiceBillTo(
 
 /* ═══ طلبات «أرسلت الحوالة» من صفحة /subscribe (schema-v71) ═══ */
 
-const PROP_PRICE: Record<string, string> = { basic: "باقة المالك", full: "باقة المكتب" };
+const PROP_PRICE: Record<string, string> = { basic: "باقة المالك", full: "باقة المكتب", marketer: "باقة المسوّق" };
 
 /**
  * اعتماد طلب: يحجزه أولًا (pending → processing) فلا يعتمده ضغطان مرتين،
@@ -244,5 +248,60 @@ export async function saveInvoiceSignature(
     return { ok: false, error: missing ? "شغّل schema-v72-sub-invoice-billto.sql في Supabase أولًا." : error.message };
   }
   revalidatePath("/admin/subs");
+  return { ok: true };
+}
+
+
+/* ═══ المسوّق العقاري (2 نوفمبر 2026) ═══ */
+
+/**
+ * منح تجربة ممدودة: أول 5 مسوّقين يأخذون 3 أشهر — تُحدَّد يدويًّا من هنا.
+ * التمديد من اليوم أو من نهاية التجربة السارية (الأبعد)، لا يمسّ الاشتراك
+ * المدفوع. days بين 1 و180 حتى لا تمنح ضغطةٌ خاطئة سنةً.
+ */
+export async function grantTrialDays(userId: string, days: number): Promise<{ ok: true; trialEndsAt: string } | { ok: false; error: string }> {
+  try { await requireAdmin(); } catch { return { ok: false, error: "غير مصرّح" }; }
+  const d = Math.floor(Number(days) || 0);
+  if (d < 1 || d > 180) return { ok: false, error: "المدة بين يوم و180 يومًا" };
+  const db = serviceDb();
+  const { data: prof, error: pe } = await db.from("profiles").select("id, trial_ends_at").eq("id", userId).maybeSingle();
+  if (pe) return { ok: false, error: pe.message };
+  if (!prof) return { ok: false, error: "الحساب غير موجود" };
+  const now = new Date();
+  const cur = (prof as any).trial_ends_at ? new Date((prof as any).trial_ends_at) : null;
+  const from = cur && cur > now ? cur : now;
+  const until = new Date(from.getTime() + d * 86400000);
+  const { error: ue } = await db.from("profiles").update({ trial_ends_at: until.toISOString() }).eq("id", userId);
+  if (ue) return { ok: false, error: ue.message };
+  revalidatePath("/admin/subs"); revalidatePath("/admin");
+  return { ok: true, trialEndsAt: riyadhDate(until) };
+}
+
+/**
+ * تحويل نوع الحساب من لوحة الإدارة (المستخدم لا يغيّره بنفسه بعد الاشتراك —
+ * zz_profile_type_guard v67 يمنعه، ومفتاح الخدمة يمرّ). عند التحويل إلى
+ * «مسوّق» تُمسح باقة أملاك سابقة غير متوافقة (المسوّق باقته marketer فقط)؛
+ * وعند الخروج من «مسوّق» تُمسح باقة marketer. التجربة والاشتراك لا يُمسّان.
+ */
+export async function setAccountType(userId: string, type: "landlord" | "hoa_manager" | "both" | "marketer"):
+  Promise<{ ok: true } | { ok: false; error: string }> {
+  try { await requireAdmin(); } catch { return { ok: false, error: "غير مصرّح" }; }
+  if (!["landlord", "hoa_manager", "both", "marketer"].includes(type)) return { ok: false, error: "نوع غير صالح" };
+  const db = serviceDb();
+  const { data: prof, error: pe } = await db.from("profiles").select("id, account_type, plan").eq("id", userId).maybeSingle();
+  if (pe) return { ok: false, error: pe.message };
+  if (!prof) return { ok: false, error: "الحساب غير موجود" };
+  const { count } = await db.from("team_members").select("owner_id", { count: "exact", head: true }).eq("owner_id", userId);
+  if (type === "marketer" && (count || 0) > 0) return { ok: false, error: "هذا الحساب فيه موظفون — المسوّق فرد بلا فريق. احذف الموظفين أولًا أو أبقه على باقة المكتب." };
+  const patch: Record<string, any> = { account_type: type };
+  const pl = String((prof as any).plan || "").toLowerCase();
+  if (type === "marketer" && pl && pl !== "marketer") patch.plan = null;
+  if (type !== "marketer" && pl === "marketer") patch.plan = null;
+  const { error: ue } = await db.from("profiles").update(patch).eq("id", userId);
+  if (ue) {
+    const chk = /account_type_chk|check constraint/i.test(ue.message || "");
+    return { ok: false, error: chk ? "شغّل schema-v78-marketer.sql في Supabase أولًا (قيد نوع الحساب لا يعرف «marketer» بعد)." : ue.message };
+  }
+  revalidatePath("/admin/subs"); revalidatePath("/admin");
   return { ok: true };
 }

@@ -14,6 +14,8 @@
  *   جمعيات  basic «الأساسية»    جمعية واحدة حتى 20 وحدة · مستشار 5
  *           pro   «الاحترافية»   جمعية واحدة بلا حد وحدات · سجل العمارة · تصدير CSV · مستشار 15
  *           full  «الشاملة»      جمعيات بلا حد · مستشار 30
+ *   مسوّق   marketer «باقة المسوّق» (2 نوفمبر 2026) المعروضات والطلبات فقط —
+ *           لا عقارات ولا عقود ولا مستشار؛ 399 ريالًا سنويًّا (lib/pricing.ts)
  *   التجربة = كل المزايا بلا حدود (مستشار 10).
  *   بعد انتهاء الاشتراك + 5 أيام سماح (أو انتهاء التجربة بلا اشتراك):
  *     قراءة وتصدير فقط · علامة «نسخة تجريبية» على المستندات · مستشار 3.
@@ -75,7 +77,7 @@ const ALL: Omit<Limits, "product" | "state" | "plan" | "readOnly" | "advisorDail
   buildingLog: true, ownersExport: true,
 };
 
-export const ADVISOR_DAILY = { trial: 10, expired: 3, basic: 5, pro: 15, full: 30 } as const;
+export const ADVISOR_DAILY = { trial: 10, expired: 3, basic: 5, pro: 15, full: 30, marketer: 0 } as const;
 
 export function limitsFor(p: EntProfile | null | undefined, product: Product): Limits {
   const state = productState(p, product);
@@ -87,6 +89,9 @@ export function limitsFor(p: EntProfile | null | undefined, product: Product): L
 
   // مدفوع أو ضمن السماح: حدود الباقة
   if (product === "property") {
+    if (plan === "marketer") {
+      return { ...base, ...ALL, maxProperties: 0, advisorDaily: ADVISOR_DAILY.marketer };
+    }
     if (plan === "basic") {
       return { ...base, ...ALL, maxProperties: 1, advisorDaily: ADVISOR_DAILY.basic };
     }
@@ -103,6 +108,8 @@ export function limitsFor(p: EntProfile | null | undefined, product: Product): L
 /** المنتجات التي يملكها نوع الحساب */
 export function productsOf(accountType?: string | null): Product[] {
   if (accountType === "both") return ["property", "hoa"];
+  // المسوّق: منتجه الأملاك (المعروضات جزء منها) — لا جمعيات
+  if (accountType === "marketer") return ["property"];
   if (accountType === "hoa_manager") return ["hoa"];
   return ["property"];
 }
@@ -114,6 +121,7 @@ export function primaryProduct(accountType?: string | null): Product {
 
 /** حصة المستشار اليومية: أعلى حصة بين منتجات الحساب (المستشار واحد للحساب) */
 export function advisorDailyFor(p: EntProfile | null | undefined): number {
+  if (p?.account_type === "marketer") return 0;   // المستشار خارج باقة المسوّق — تجربةً واشتراكًا
   return Math.max(...productsOf(p?.account_type).map((pr) => limitsFor(p, pr).advisorDaily));
 }
 
@@ -128,6 +136,7 @@ export const LIMIT_MSG = {
   properties: "باقة المالك تشمل عقارًا واحدًا — لإضافة عقارات أكثر انتقل إلى باقة المكتب.",
   associations: "باقتك تشمل جمعية واحدة — لإدارة أكثر من جمعية انتقل إلى الباقة الشاملة.",
   units: "الباقة الأساسية تشمل حتى 20 وحدة — للوحدات بلا حد انتقل إلى الباقة الاحترافية.",
+  marketer: "حساب المسوّق العقاري يشمل المعروضات والطلبات فقط — لإدارة عقارات ووحدات مؤجّرة راسلنا لتحويل الحساب إلى باقة المالك أو المكتب.",
 };
 
 /** ما يعبر من الخادم إلى المكوّنات (Infinity لا يمرّ عبر JSON — نستعمل null) */

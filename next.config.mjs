@@ -27,6 +27,8 @@ const nextConfig = {
       { source: "/:path*", headers: SECURITY_HEADERS },
       /* رابط المالك: لا يُرسل عنوانه لأي موقع آخر أبدًا */
       { source: "/r/:token*", headers: [{ key: "Referrer-Policy", value: "no-referrer" }, { key: "X-Robots-Tag", value: "noindex, nofollow" }] },
+      /* رابط المعروض للزبون (v78): نفس الحماية */
+      { source: "/l/:token*", headers: [{ key: "Referrer-Policy", value: "no-referrer" }, { key: "X-Robots-Tag", value: "noindex, nofollow" }] },
       /* لوحات خاصة: لا تظهر في محركات البحث حتى لو وصلها رابط */
       { source: "/:section(dashboard|admin|settings|onboarding|reset-password)/:path*", headers: [{ key: "X-Robots-Tag", value: "noindex" }] },
     ];

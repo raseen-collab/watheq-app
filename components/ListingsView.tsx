@@ -19,6 +19,7 @@ import { openDoc, listingsRegisterHTML, arDate } from "@/lib/documents";
 import {
   KIND_META, OFFER_LABEL, STATUS_META, freshness, pricePerMeter, shortDesc,
   summarize, nextCode, isOpen, STALE_DAYS, filterListings, sortListingsBy, hasSeekerCriteria, SORT_LABEL,
+  authorizationWarning, commissionLine,
   type Listing, type ListingKind, type OfferType, type ListingStatus, type StatusFilter, type ListingSort, type ListingQuery,
 } from "@/lib/listings";
 import { complianceState, type ComplianceItem } from "@/lib/compliance";
@@ -26,6 +27,9 @@ import { matchesForListing, roomsAtLeast, type SeekerRequest } from "@/lib/reque
 import RequestsPanel from "@/components/RequestsPanel";
 import ListingPhotos from "@/components/ListingPhotos";
 import AdComposer from "@/components/AdComposer";
+import ListingLinkModal from "@/components/ListingLinkModal";
+import ListingShows from "@/components/ListingShows";
+import CommissionAgreementModal from "@/components/CommissionAgreementModal";
 import DateField from "@/components/DateField";
 import Icon, { type IconName } from "@/components/Icon";
 
@@ -46,6 +50,7 @@ const OFFER_CLS: Record<OfferType, string> = {
 };
 const ROOM_STEPS = [1, 2, 3, 4, 5];
 const VIEW_KEY = "watheq.listings.view";
+const TIPS_KEY = "watheq.marketer.tips";
 
 /* صور الغلاف: أول صورة لكل معروض مفتوح، بقائمة واحدة لكل مجلد وتوقيع جماعي
    واحد — لا تُبطئ الصفحة: تُجلب بعد الرسم، والبطاقة تعرض أيقونة النوع حتى تصل. */
@@ -83,12 +88,14 @@ function useCovers(items: Listing[]) {
   return { covers, refresh: () => setTick((t) => t + 1) };
 }
 
-export default function ListingsView({ initial, brokerages, requests, orgName, issuer }: {
+export default function ListingsView({ initial, brokerages, requests, orgName, issuer, marketer = false }: {
   initial: Listing[];
   brokerages: ComplianceItem[];
   requests: SeekerRequest[];
   orgName: string;
   issuer?: any;
+  /** حساب «مسوّق عقاري» (2 نوفمبر 2026): تنبيه التفويض يشمل «لم يُحدَّد»، والنصوص تخاطب المسوّق */
+  marketer?: boolean;
 }) {
   // تبويبان: المعروضات (ما عندك) والطلبات (ما يبحث عنه الناس) — والمطابقة تربطهما
   const [tab, setTab] = useState<"listings" | "requests">("listings");
@@ -106,6 +113,10 @@ export default function ListingsView({ initial, brokerages, requests, orgName, i
 
   /* طريقة العرض تُتذكّر لكل متصفح — راحة لا حالة: تعمل بدونها */
   useEffect(() => { try { const v = localStorage.getItem(VIEW_KEY); if (v === "list" || v === "cards") setView(v); } catch { /* */ } }, []);
+  /* دليل المسوّق في أول أسبوع (v78): يُخفى بضغطة ويُتذكّر لكل متصفح */
+  const [tips, setTips] = useState(false);
+  useEffect(() => { if (!marketer) return; try { setTips(localStorage.getItem(TIPS_KEY) !== "off"); } catch { setTips(true); } }, [marketer]);
+  function hideTips() { setTips(false); try { localStorage.setItem(TIPS_KEY, "off"); } catch { /* */ } }
   function pickView(v: "cards" | "list") { setView(v); try { localStorage.setItem(VIEW_KEY, v); } catch { /* */ } }
 
   function flash(k: "ok" | "err", m: string) { setMsg({ k, m }); setTimeout(() => setMsg(null), 3500); }
@@ -136,6 +147,8 @@ export default function ListingsView({ initial, brokerages, requests, orgName, i
       return flash("err", "شغّل ملف schema-v7.sql في Supabase أولًا ثم أعد المحاولة");
     if (/listings_code_per_user|duplicate key/i.test(t))
       return flash("err", "هذا الكود مستخدم من قبل — غيّره");
+    if (/commission_pct|my_share_pct|owner_authorized|authorization_ack_at|others_marketing/.test(t))
+      return flash("err", "حقول السعي والتفويض تحتاج تشغيل ملف schema-v78-marketer.sql في Supabase مرة واحدة — أو اتركها فارغة واحفظ.");
     flash("err", t);
   }
 
@@ -169,6 +182,16 @@ export default function ListingsView({ initial, brokerages, requests, orgName, i
     setItems(items.map((x) => (x.id === l.id ? { ...x, last_confirmed_at: d } : x)));
   }
 
+  /** تنبيه التفويض: «أعي ذلك» يُسكته لهذا المعروض ويُسجَّل وقته، و«تراجع» يعيده */
+  async function ackAuthorization(l: Listing, ack: boolean) {
+    setBusy(l.id);
+    const v = ack ? new Date().toISOString() : null;
+    const { error } = await supabase.from("listings").update({ authorization_ack_at: v }).eq("id", l.id);
+    setBusy(null);
+    if (error) return handleErr(error);
+    setItems(items.map((x) => (x.id === l.id ? { ...x, authorization_ack_at: v } : x)));
+  }
+
   async function setStatus(l: Listing, status: ListingStatus) {
     setBusy(l.id);
     const { error } = await supabase.from("listings").update({ status }).eq("id", l.id);
@@ -188,7 +211,7 @@ export default function ListingsView({ initial, brokerages, requests, orgName, i
 
   if (form) {
     return (
-      <ListingForm editing={form.editing} all={items} brokerages={brokerages} busy={busy === "save"}
+      <ListingForm editing={form.editing} all={items} brokerages={brokerages} busy={busy === "save"} marketer={marketer}
         onCancel={() => setForm(null)} onSave={(d) => save(d, form.editing)} />
     );
   }
@@ -203,7 +226,9 @@ export default function ListingsView({ initial, brokerages, requests, orgName, i
           <div className="min-w-0">
             <h1 className="font-display font-bold text-deep text-2xl leading-tight">سجل المعروضات</h1>
             <p className="text-sm text-muted mt-1 leading-relaxed">
-              عقاراتك المعروضة بكود ثابت وحالة واضحة، وبحث سريع لما يتصل زبون.
+              {marketer
+                ? "معروضاتك بكود ثابت وصور ورابط لكل زبون، وطلبات زبائنك تُطابَق معها تلقائيًّا."
+                : "عقاراتك المعروضة بكود ثابت وحالة واضحة، وبحث سريع لما يتصل زبون."}
             </p>
           </div>
         </div>
@@ -233,6 +258,21 @@ export default function ListingsView({ initial, brokerages, requests, orgName, i
         <div role="status" className={`mt-3 rounded-lg border px-3 py-2 text-sm font-semibold ${
           msg.k === "ok" ? "bg-[#E6F4EC] border-[#B7DFC7] text-[#137a50]" : "bg-[#FBE9E7] border-[#F5C6C2] text-[#8f2b26]"}`}>
           {msg.m}
+        </div>
+      )}
+
+      {marketer && tips && (
+        <div className="mt-4 rounded-2xl border border-[#EBD9AA] bg-[#FBF1DF] p-4">
+          <div className="flex items-start justify-between gap-3">
+            <div className="font-semibold text-deep text-sm">كيف يشتغل المسوّق في وثيق — 4 خطوات</div>
+            <button className="text-xs text-muted underline underline-offset-2 shrink-0" onClick={hideTips}>فهمت، أخفِ</button>
+          </div>
+          <ol className="mt-2 grid sm:grid-cols-2 gap-x-4 gap-y-1.5 text-[13px] text-[#33413D] leading-relaxed list-none p-0 m-0">
+            <li className="flex gap-2"><span className="font-bold text-gold shrink-0">١</span><span><b>أضف المعروض</b> بزر «+ معروض» وسجّل السعي والتفويض، ثم صوره من <Icon name="camera" size={13} />.</span></li>
+            <li className="flex gap-2"><span className="font-bold text-gold shrink-0">٢</span><span><b>أرسل للزبون رابطًا</b> من <Icon name="link" size={13} /> بدل الصور — بلا جوال المالك، ويتوقّف وحده إذا بيع.</span></li>
+            <li className="flex gap-2"><span className="font-bold text-gold shrink-0">٣</span><span><b>سجّل على من عرضته</b> من <Icon name="eye" size={13} /> — ويطلع لك «محضر عرض» مؤرّخ عند أي نزاع سعي.</span></li>
+            <li className="flex gap-2"><span className="font-bold text-gold shrink-0">٤</span><span><b>سجّل طلبات الزبائن</b> في التبويب الثاني — كل معروض جديد يُطابَق معها تلقائيًّا، ومعها موعد المتابعة.</span></li>
+          </ol>
         </div>
       )}
 
@@ -349,7 +389,7 @@ export default function ListingsView({ initial, brokerages, requests, orgName, i
         <div className="mt-4 rounded-2xl border border-dashed border-line bg-paper p-8 text-center">
           <span className="inline-grid place-items-center w-12 h-12 rounded-full bg-white border border-line text-gold mb-2"><Icon name={items.length ? "search" : "tag"} size={22} /></span>
           <p className="text-sm text-muted leading-relaxed">
-            {items.length ? "لا معروض بهذه الشروط." : "ابدأ بأول معروض — أرض أو شقة — ويُعطى كودًا تلقائيًّا مثل أ-101."}
+            {items.length ? "لا معروض بهذه الشروط." : marketer ? "ابدأ بأول عقار تسوّقه الآن — بصوره وسعره — ويُعطى كودًا تلقائيًّا مثل ش-101، ثم أرسل رابطه لأول زبون." : "ابدأ بأول معروض — أرض أو شقة — ويُعطى كودًا تلقائيًّا مثل أ-101."}
           </p>
           {items.length ? (
             filtered && <button className="btn btn-ghost text-xs mt-3" onClick={clearFilters}>مسح الفلاتر</button>
@@ -360,9 +400,9 @@ export default function ListingsView({ initial, brokerages, requests, orgName, i
       ) : (
         <div className={view === "cards" ? "mt-3 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3" : "mt-3 flex flex-col gap-2"}>
           {shown.map((l) => (
-            <Card key={l.id} l={l} compact={view === "list"} cover={covers[l.id]} adOrg={orgName} adPhone={issuer?.billing_phone}
+            <Card key={l.id} l={l} compact={view === "list"} cover={covers[l.id]} adOrg={orgName} adPhone={issuer?.billing_phone} marketer={marketer} issuer={issuer}
               brokerages={brokerages} requests={requests} busy={busy === l.id}
-              onConfirm={() => confirmAvailable(l)} onEdit={() => setForm({ editing: l })}
+              onConfirm={() => confirmAvailable(l)} onEdit={() => setForm({ editing: l })} onAck={(a) => ackAuthorization(l, a)}
               onStatus={(st) => setStatus(l, st)} onRemove={() => remove(l)} onPhotosClosed={refreshCovers} />
           ))}
         </div>
@@ -417,14 +457,32 @@ function specs(l: Listing): { icon: IconName; text: string }[] {
 
 /* ──────────────────────── بطاقة معروض واحد ──────────────────────── */
 
-function Card({ l, compact, cover, brokerages, requests, busy, onConfirm, onEdit, onStatus, onRemove, onPhotosClosed, adOrg, adPhone }: {
+function Card({ l, compact, cover, brokerages, requests, busy, onConfirm, onEdit, onStatus, onRemove, onPhotosClosed, onAck, adOrg, adPhone, marketer, issuer }: {
   l: Listing; compact: boolean; cover?: string; brokerages: ComplianceItem[]; requests: SeekerRequest[]; busy: boolean;
   onConfirm: () => void; onEdit: () => void; onStatus: (s: ListingStatus) => void; onRemove: () => void; onPhotosClosed: () => void;
-  adOrg?: string | null; adPhone?: string | null;
+  onAck: (ack: boolean) => void;
+  adOrg?: string | null; adPhone?: string | null; marketer: boolean; issuer?: any;
 }) {
   const [showPhotos, setShowPhotos] = useState(false);
   const [showAd, setShowAd] = useState(false);
   const [showMatches, setShowMatches] = useState(false);
+  const [showLink, setShowLink] = useState(false);
+  const [showAgreement, setShowAgreement] = useState(false);
+  const [showShows, setShowShows] = useState(false);
+  const [showsN, setShowsN] = useState<number | null>(null);
+  const supabaseShows = createClient();
+  const authWarn = authorizationWarning(l, marketer);
+  const commission = commissionLine(l);
+
+  /* «أرسلت الرابط لزبون» من نافذة الرابط → سجل «عُرض على» بلا إدخال ثانٍ */
+  async function logShown(name: string, phone: string) {
+    try {
+      const uid = await officeId(supabaseShows);
+      if (!uid) return;
+      await supabaseShows.from("listing_shows").insert({ user_id: uid, listing_id: l.id, customer_name: name || null, customer_phone: phone || null, note: "أُرسل له رابط المعروض" });
+      setShowsN((n) => (n == null ? null : n + 1));
+    } catch { /* السجل تحسين لا شرط */ }
+  }
   const hits = matchesForListing(l, requests);
   const meta = KIND_META[l.kind] || KIND_META.other;
   const st = STATUS_META[(l.status || "available") as ListingStatus] || STATUS_META.available;
@@ -507,6 +565,29 @@ function Card({ l, compact, cover, brokerages, requests, busy, onConfirm, onEdit
             {broProblem && (
               <div className="text-[11.5px] font-semibold text-[#a5322c] inline-flex items-center gap-1"><Icon name="alert" size={13} /> عقد الوساطة «{bro!.title}» — {broState!.label}</div>
             )}
+            {/* تنبيه التفويض (v78): لا يُغلق إلا بردّ صريح «أعي ذلك» — ومع «تراجع» يعود */}
+            {authWarn && !l.authorization_ack_at && (
+              <div className="text-[11.5px] rounded-lg border border-[#EBD9AA] bg-[#FBF1DF] text-[#8a5a11] px-2.5 py-2 flex items-start gap-2">
+                <Icon name="alert" size={14} className="mt-0.5" />
+                <span className="flex-1 leading-relaxed">
+                  {authWarn === "missing" ? <><b>لا تفويض من المالك.</b> التسويق بلا تفويض مخالفة في نظام الوساطة العقارية — خذ تفويضًا قبل العرض.</>
+                    : <><b>لم تحدّد هل عندك تفويض من المالك.</b> سجّله من «تعديل» — العرض بلا تفويض مخالفة على المسوّق.</>}
+                </span>
+                <button type="button" className="shrink-0 font-bold underline underline-offset-2" onClick={() => onAck(true)} disabled={busy} title="أقررت بالتنبيه — يُخفى لهذا المعروض">أعي ذلك</button>
+              </div>
+            )}
+            {authWarn && l.authorization_ack_at && (
+              <div className="text-[11px] text-muted inline-flex items-center gap-1.5">
+                <Icon name="alert" size={12} /> {authWarn === "missing" ? "بلا تفويض — أقررتَ بذلك" : "التفويض غير محدَّد — أقررتَ بذلك"}
+                <button type="button" className="underline underline-offset-2 inline-flex items-center gap-0.5" onClick={() => onAck(false)} disabled={busy}><Icon name="undo" size={11} /> تراجع</button>
+              </div>
+            )}
+            {commission && (
+              <div className="text-[11.5px] text-[#33413D] inline-flex items-center gap-1.5"><Icon name="percent" size={13} /> {commission}</div>
+            )}
+            {l.others_marketing && open && (
+              <div className="text-[11.5px] text-muted inline-flex items-center gap-1.5" title="المالك يسوّقه عبر وسطاء آخرين — السعي لمن يعرّف الطرفين أولًا"><Icon name="users" size={13} /> وسطاء آخرون يسوّقونه — أكّد السعر قبل كل عرض</div>
+            )}
             {(l.owner_name || l.source) && (
               <div className="text-[11.5px] text-muted inline-flex items-center gap-1.5 flex-wrap">
                 <Icon name="owner" size={13} />
@@ -544,6 +625,9 @@ function Card({ l, compact, cover, brokerages, requests, busy, onConfirm, onEdit
           ))}
         </select>
         <div className="flex gap-1.5 ms-auto">
+          {iconBtn("link", "رابط الزبون — صور ومواصفات بلا بيانات المالك", () => setShowLink(true))}
+          {iconBtn("doc", "اتفاق سعي — ورقة يوقّعها المالك", () => setShowAgreement(true))}
+          {iconBtn("eye", showShows ? "إخفاء «عُرض على»" : `عُرض على${showsN != null ? ` (${showsN})` : ""}`, () => setShowShows(!showShows), showShows ? "border-gold bg-[#FBF1DF]" : "")}
           {iconBtn("megaphone", "نص إعلان جاهز لحراج وX وواتساب", () => setShowAd(true))}
           {iconBtn("camera", showPhotos ? "إخفاء الصور" : "الصور", togglePhotos, showPhotos ? "border-gold bg-[#FBF1DF]" : "")}
           {iconBtn("edit", "تعديل", onEdit)}
@@ -569,21 +653,25 @@ function Card({ l, compact, cover, brokerages, requests, busy, onConfirm, onEdit
         </div>
       )}
 
+      {showShows && <div className={compact ? "mt-2" : "px-3.5 pb-3.5"}><ListingShows listing={l} onCount={setShowsN} orgName={adOrg || ""} issuer={issuer} /></div>}
       {showPhotos && <div className={compact ? "mt-2" : "px-3.5 pb-3.5"}><ListingPhotos listingId={l.id} code={l.code} /></div>}
       {showAd && <AdComposer listing={l} orgName={adOrg} phone={adPhone} onClose={() => setShowAd(false)} />}
+      {showLink && <ListingLinkModal listing={l} onClose={() => setShowLink(false)} onShown={logShown} />}
+      {showAgreement && <CommissionAgreementModal listing={l} orgName={adOrg} issuer={issuer} onClose={() => setShowAgreement(false)} />}
     </div>
   );
 }
 
 /* ──────────────────────── نموذج إضافة/تعديل ──────────────────────── */
 
-function ListingForm({ editing, all, brokerages, busy, onSave, onCancel }: {
+function ListingForm({ editing, all, brokerages, busy, onSave, onCancel, marketer = false }: {
   editing?: Listing; all: Listing[]; brokerages: ComplianceItem[]; busy: boolean;
-  onSave: (d: Partial<Listing>) => void; onCancel: () => void;
+  onSave: (d: Partial<Listing>) => void; onCancel: () => void; marketer?: boolean;
 }) {
-  const [d, setD] = useState<any>(() => editing ? { ...editing } : {
+  const [d, setD] = useState<any>(() => editing ? { ...editing, owner_authorized: editing.owner_authorized ?? null } : {
     kind: "land" as ListingKind, offer_type: "sale" as OfferType, code: nextCode(all, "land"),
     title: "", district: "", city: "", price: "", area: "", owner_name: "", owner_phone: "", source: "owner",
+    commission_pct: "", my_share_pct: "", owner_authorized: null, others_marketing: false,
     deed_no: "", plan_no: "", parcel_no: "", street_count: "",
     unit_no: "", floor_no: "", rooms: "", baths: "", building_age: "", furnished: false,
     status: "available" as ListingStatus, last_confirmed_at: today(), brokerage_id: "", note: "",
@@ -625,8 +713,19 @@ function ListingForm({ editing, all, brokerages, busy, onSave, onCancel }: {
       last_confirmed_at: d.last_confirmed_at || null,
       brokerage_id: d.brokerage_id || null,
       note: txt(d.note),
+      /* حقول v78 تُرسل فقط إن حُدِّدت أو كانت موجودة في السجل أصلًا — من لم
+         يشغّل الترحيل بعد يبقى يحفظ معروضاته كما كان */
+      ...(num(d.commission_pct) != null || (editing && "commission_pct" in editing) ? { commission_pct: num(d.commission_pct) } : {}),
+      ...(num(d.my_share_pct) != null || (editing && "my_share_pct" in editing) ? { my_share_pct: num(d.my_share_pct) } : {}),
+      ...(d.owner_authorized != null || (editing && "owner_authorized" in editing) ? { owner_authorized: d.owner_authorized } : {}),
+      ...(d.others_marketing || (editing && "others_marketing" in editing) ? { others_marketing: !!d.others_marketing } : {}),
     });
   }
+  const shareHint = (() => {
+    const c = Number(d.commission_pct) || 0, sh = d.my_share_pct === "" || d.my_share_pct == null ? 100 : Number(d.my_share_pct), pr = Number(d.price) || 0;
+    if (!c || !pr) return undefined;
+    return `نصيبك ≈ ${sar(Math.round(pr * c / 100 * sh / 100))} ريال`;
+  })();
 
   return (
     <div>
@@ -716,7 +815,11 @@ function ListingForm({ editing, all, brokerages, busy, onSave, onCancel }: {
 
         <div className="grid grid-cols-2 gap-3">
           <F label="مصدر المعروض" hint="يحدد نصيبك من العمولة">
-            <select className="fld" value={d.source} onChange={(e) => setD({ ...d, source: e.target.value })}>
+            <select className="fld" value={d.source} onChange={(e) => {
+              const src = e.target.value;
+              // وسيط آخر = السعي يُقسَم (50% افتراضًا)؛ مالك مباشر = كله لك — ما لم تكتب غيره
+              setD({ ...d, source: src, my_share_pct: d.my_share_pct === "" || d.my_share_pct == null || Number(d.my_share_pct) === (src === "broker" ? 100 : 50) ? (src === "broker" ? 50 : "") : d.my_share_pct });
+            }}>
               <option value="owner">مالك مباشر</option>
               <option value="broker">وسيط آخر</option>
             </select>
@@ -741,6 +844,35 @@ function ListingForm({ editing, all, brokerages, busy, onSave, onCancel }: {
             </select>
           </F>
         </div>
+
+        {/* السعي والتفويض (v78): ما يهمّ المسوّق قبل أن يعرض */}
+        <div className="grid grid-cols-2 gap-3">
+          <F label="نسبة السعي %" hint={d.offer_type === "sale" ? "2.5 في البيع عادةً" : "من الإيجار السنوي"}>
+            <input className="fld" type="number" inputMode="decimal" step="0.5" min={0} max={100} value={d.commission_pct ?? ""} placeholder={d.offer_type === "sale" ? "2.5" : ""}
+              onChange={(e) => setD({ ...d, commission_pct: e.target.value })} />
+          </F>
+          <F label="نصيبك من السعي %" hint={shareHint || (d.source === "broker" ? "يُقسَم مع الوسيط الآخر" : "فارغ = كله لك")}>
+            <input className="fld" type="number" inputMode="decimal" step="5" min={0} max={100} value={d.my_share_pct ?? ""} placeholder="100"
+              onChange={(e) => setD({ ...d, my_share_pct: e.target.value })} />
+          </F>
+        </div>
+
+        <label className="flex items-center gap-2 text-sm">
+          <input type="checkbox" checked={!!d.others_marketing} onChange={(e) => setD({ ...d, others_marketing: e.target.checked })} />
+          <span>المالك يسوّقه عبر وسطاء آخرين أيضًا <span className="text-muted text-xs">— غير حصري؛ اسأل المالك عنها دائمًا</span></span>
+        </label>
+
+        <F label="تفويض المالك بالتسويق" hint={marketer ? "العرض بلا تفويض مخالفة على المسوّق" : "اختياري"}>
+          <div className="grid grid-cols-3 gap-2">
+            {([[true, "موجود", "check"], [false, "لا يوجد", "alert"], [null, "لم أحدّد", "clock"]] as const).map(([v, label, ic]) => (
+              <button key={String(v)} type="button" onClick={() => setD({ ...d, owner_authorized: v })} aria-pressed={d.owner_authorized === v}
+                className={`border-2 rounded-lg min-h-[40px] text-xs font-semibold transition inline-flex items-center justify-center gap-1 ${
+                  d.owner_authorized === v ? "border-gold bg-[#FBF1DF]" : "border-line bg-white hover:border-goldSoft"}`}>
+                <Icon name={ic} size={14} /> {label}
+              </button>
+            ))}
+          </div>
+        </F>
 
         <F label="ملاحظة" hint="اختياري">
           <input className="fld" value={d.note} onChange={(e) => setD({ ...d, note: e.target.value })} />

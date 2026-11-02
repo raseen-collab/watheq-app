@@ -124,8 +124,8 @@ export default function SettingsView({ profile }: { profile: any }) {
       {/* نوع الحساب */}
       <section className="bg-white border border-line rounded-2xl p-6 mb-5">
         <h2 className="font-semibold text-deep text-lg mb-1">👤 نوع الحساب</h2>
-        <p className="text-sm text-muted mb-4">يحدّد اللوحة التي تُفتح لك عند الدخول. اختر «الاثنان معًا» لتحصل على لوحتين وتبدّل بينهما.</p>
-        <div className="grid sm:grid-cols-3 gap-3">
+        <p className="text-sm text-muted mb-4">يحدّد اللوحة التي تُفتح لك عند الدخول. اختر «الاثنان معًا» لتحصل على لوحتين وتبدّل بينهما، أو «المسوّق العقاري» لصفحة المعروضات والطلبات وحدها.</p>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           {ACCOUNT_TYPES.map((a) => (
             <button key={a.value} disabled={typeLocked && a.value !== p.account_type}
               onClick={() => { if (!typeLocked) setP({ ...p, account_type: a.value }); }}

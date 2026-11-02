@@ -2,7 +2,13 @@
 // أدوار الحسابات والتوجيه — مصدر الحقيقة الوحيد
 // ============================================================
 
-export type AccountType = "hoa_manager" | "landlord" | "both";
+/**
+ * marketer (2 نوفمبر 2026): «مسوّق عقاري» — فرد يسوّق عقارات غيره بلا وحدات
+ * مؤجّرة. يرى من لوحة الأملاك صفحة المعروضات والطلبات وحدها، وباقته واحدة
+ * سنوية (lib/pricing.ts MARKETER_YEARLY). لا موظفين: مكتب يريد فريقًا يأخذ
+ * باقة المكتب.
+ */
+export type AccountType = "hoa_manager" | "landlord" | "both" | "marketer";
 export type Dashboard = "association" | "property";
 
 export const ACCOUNT_TYPES: {
@@ -33,6 +39,18 @@ export const ACCOUNT_TYPES: {
     ],
   },
   {
+    value: "marketer",
+    label: "مسوّق عقاري",
+    short: "المسوّق العقاري",
+    icon: "📣",
+    desc: "أسوّق عقارات للبيع والإيجار وأتابع طلبات الزبائن",
+    points: [
+      "سجل معروضات بصور ورابط عام لكل عقار",
+      "طلبات الزبائن ومطابقتها تلقائيًّا بالمعروضات",
+      "إعلان جاهز لحراج وX وواتساب بضغطة",
+    ],
+  },
+  {
     value: "both",
     label: "الاثنان معًا",
     short: "حساب مزدوج",
@@ -54,8 +72,22 @@ export function canAccess(accountType: string | null | undefined, dash: Dashboar
   if (accountType === "both") return true;
   if (accountType === "landlord") return dash === "property";
   if (accountType === "hoa_manager") return dash === "association";
+  if (accountType === "marketer") return dash === "property";   // المعروضات تحت لوحة الأملاك
   return false;
 }
+
+/** المسوّق العقاري: لوحة الأملاك مختصرة على المعروضات والطلبات */
+export const isMarketer = (accountType?: string | null) => accountType === "marketer";
+
+/** المسار الذي يُفتح عليه الحساب أول ما يدخل */
+export function homePath(accountType: string | null | undefined, lastUsed?: string | null): string {
+  if (isMarketer(accountType)) return "/dashboard/property/listings";
+  return dashboardPath(defaultDashboard(accountType, lastUsed));
+}
+
+/** صفحات لوحة الأملاك المتاحة للمسوّق — ما عداها يُحوَّل إلى المعروضات */
+export const MARKETER_PATHS = ["/dashboard/property/listings"];
+export const marketerAllowed = (path: string) => MARKETER_PATHS.some((p) => path === p || path.startsWith(p + "/"));
 
 /** هل يستطيع التبديل بين اللوحتين؟ */
 export const canSwitch = (accountType?: string | null) => accountType === "both";
@@ -65,7 +97,7 @@ export function defaultDashboard(
   accountType: string | null | undefined,
   lastUsed?: string | null
 ): Dashboard {
-  if (accountType === "landlord") return "property";
+  if (accountType === "landlord" || accountType === "marketer") return "property";
   if (accountType === "hoa_manager") return "association";
   if (accountType === "both") {
     // الحساب المزدوج يعود لآخر لوحة استخدمها

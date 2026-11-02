@@ -55,7 +55,7 @@ export async function POST(req: Request) {
   if (chat && claim) {
     const c = claim as any, p = (prof || {}) as any;
     const plans = [
-      c.prop_plan ? `🏢 ${PROP_PLANS.find((x) => x.id === c.prop_plan)?.name || c.prop_plan}` : "",
+      c.prop_plan ? `🏢 ${c.prop_plan === "marketer" ? "باقة المسوّق" : PROP_PLANS.find((x) => x.id === c.prop_plan)?.name || c.prop_plan}` : "",
       c.hoa_plan ? `🏘 جمعيات: ${HOA_PLANS.find((x) => x.id === c.hoa_plan)?.name || c.hoa_plan}` : "",
     ].filter(Boolean).join(" + ");
     const text = [

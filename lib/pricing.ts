@@ -3,7 +3,8 @@
  * المبلغ المسجَّل في الطلب يُحسب هناك، وهذا للعرض فقط).
  * أسعار المؤسسين المنشورة في watheqapp.com بتاريخ 3 أكتوبر 2026.
  */
-export type PropPlan = "basic" | "full";
+/** marketer (2 نوفمبر 2026): باقة المسوّق العقاري — سنوية فقط */
+export type PropPlan = "basic" | "full" | "marketer";
 export type HoaPlan = "basic" | "pro" | "full";
 
 export const PROP_PLANS: { id: PropPlan; name: string; monthly: number; note: string }[] = [
@@ -16,12 +17,20 @@ export const HOA_PLANS: { id: HoaPlan; name: string; monthly: number; note: stri
   { id: "full", name: "الشاملة", monthly: 149, note: "جمعيات غير محدودة" },
 ];
 export const OFFICE_YEARLY = 1990;
+/** باقة المسوّق العقاري: سنوية فقط — تجربة 30 يومًا قبلها */
+export const MARKETER_YEARLY = 399;
+export const MARKETER_PLAN = { id: "marketer" as const, name: "باقة المسوّق", yearly: MARKETER_YEARLY, note: "المعروضات والطلبات · رابط عام لكل عقار · إعلانات جاهزة" };
 
 /** null = تركيبة غير متاحة (نفس قواعد القاعدة حرفيًّا) */
 export function subPrice(prop: PropPlan | null, hoa: HoaPlan | null, months: number): number | null {
   if (months !== 1 && months !== 12) return null;
   if (!prop && !hoa) return null;
-  if (months === 12) return prop === "full" && !hoa ? OFFICE_YEARLY : null;
+  if (months === 12) {
+    if (prop === "full" && !hoa) return OFFICE_YEARLY;
+    if (prop === "marketer" && !hoa) return MARKETER_YEARLY;
+    return null;
+  }
+  if (prop === "marketer") return null;   // لا شهري للمسوّق
   let t = 0;
   if (prop) { const p = PROP_PLANS.find((x) => x.id === prop); if (!p) return null; t += p.monthly; }
   if (hoa) { const h = HOA_PLANS.find((x) => x.id === hoa); if (!h) return null; t += h.monthly; }

@@ -27,7 +27,8 @@ export type SubProfile = {
   subscribed_until?: string | null;
 };
 
-export const PAID_PLANS = ["basic", "pro", "full"] as const;
+/** marketer (2 نوفمبر 2026): باقة المسوّق العقاري السنوية — تُقرأ مدفوعة كغيرها */
+export const PAID_PLANS = ["basic", "pro", "full", "marketer"] as const;
 
 /**
  * تحويل تاريخ الانتهاء إلى لحظة.

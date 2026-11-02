@@ -38,7 +38,7 @@ export default async function SubscribePage() {
 
   const { data: profile } = await supabase.from("profiles").select("*").eq("id", user.id).maybeSingle();
   const p = (profile || {}) as any;
-  const accountType = (p.account_type || "landlord") as "landlord" | "hoa_manager" | "both";
+  const accountType = (p.account_type || "landlord") as "landlord" | "hoa_manager" | "both" | "marketer";
 
   let claims: SubscribeClaim[] = [];
   let ready = true;

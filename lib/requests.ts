@@ -24,7 +24,42 @@ export type SeekerRequest = {
   rooms_min?: number | null;
   status?: string | null;      // active | closed
   note?: string | null;
+  /** آخر تواصل مع الزبون وموعد المتابعة (schema-v78) — فارغان = لم يُسجَّلا */
+  last_contact_at?: string | null;
+  follow_up_at?: string | null;
 };
+
+/** كم يومًا بين تاريخ (yyyy-mm-dd) واليوم — سالب إن كان في المستقبل */
+export function daysSince(v?: string | null, asOf?: Date): number | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(v || ""));
+  if (!m) return null;
+  const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  const t = asOf || new Date();
+  const t0 = new Date(t.getFullYear(), t.getMonth(), t.getDate());
+  return Math.floor((t0.getTime() - d.getTime()) / 86400000);
+}
+
+export type FollowUp = { kind: "due" | "overdue" | "scheduled" | "none"; days: number | null; label: string; tone: "warn" | "bad" | "ok" | "muted" };
+
+/**
+ * حالة المتابعة لطلب نشط: موعد اليوم = «متابعة اليوم»، فات = «متأخرة N»،
+ * قادم = «متابعة بعد N». بلا موعد: آخر تواصل منذ N يوم (تنبيه بعد 7).
+ */
+export function followUpOf(r: SeekerRequest, asOf?: Date): FollowUp {
+  if (!isActiveRequest(r)) return { kind: "none", days: null, label: "", tone: "muted" };
+  const f = daysSince(r.follow_up_at, asOf);
+  if (f !== null) {
+    if (f === 0) return { kind: "due", days: 0, label: "متابعة اليوم", tone: "warn" };
+    if (f > 0) return { kind: "overdue", days: f, label: `متابعة متأخرة ${f === 1 ? "يومًا" : `${f} أيام`}`, tone: "bad" };
+    return { kind: "scheduled", days: f, label: `متابعة بعد ${-f === 1 ? "يوم" : `${-f} أيام`}`, tone: "ok" };
+  }
+  const c = daysSince(r.last_contact_at, asOf);
+  if (c === null) return { kind: "none", days: null, label: "", tone: "muted" };
+  if (c === 0) return { kind: "none", days: 0, label: "تواصلت اليوم", tone: "ok" };
+  return { kind: c >= 7 ? "due" : "none", days: c, label: `آخر تواصل قبل ${c === 1 ? "يوم" : `${c} أيام`}`, tone: c >= 7 ? "warn" : "muted" };
+}
+
+export const needsFollowUp = (r: SeekerRequest, asOf?: Date) => ["due", "overdue"].includes(followUpOf(r, asOf).kind);
 
 export const isActiveRequest = (r: SeekerRequest) => String(r.status || "active") === "active";
 

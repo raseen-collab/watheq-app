@@ -2,7 +2,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { approveSubClaim, rejectSubClaim } from "@/app/admin/subs/actions";
-import { PROP_PLANS, HOA_PLANS } from "@/lib/pricing";
+import { PROP_PLANS, HOA_PLANS, MARKETER_PLAN } from "@/lib/pricing";
 
 export type AdminClaim = {
   id: string; user_id: string; name: string; account_type: string;
@@ -18,7 +18,7 @@ export default function SubClaimsPanel({ claims }: { claims: AdminClaim[] }) {
   if (!claims.length) return null;
 
   const label = (c: AdminClaim) => [
-    c.prop_plan ? PROP_PLANS.find((x) => x.id === c.prop_plan)?.name : "",
+    c.prop_plan ? (c.prop_plan === "marketer" ? MARKETER_PLAN.name : PROP_PLANS.find((x) => x.id === c.prop_plan)?.name) : "",
     c.hoa_plan ? `جمعيات: ${HOA_PLANS.find((x) => x.id === c.hoa_plan)?.name}` : "",
   ].filter(Boolean).join(" + ");
 

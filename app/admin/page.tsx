@@ -45,7 +45,8 @@ function serviceDb() {
 const sar = (n: number) => (Number(n) || 0).toLocaleString("en-US");
 const daysAgo = (n: number) => { const d = new Date(); d.setDate(d.getDate() - n); return d; };
 const fmt = (v?: string | null) => (v ? String(v).slice(0, 10) : "—");
-const PLAN_PRICE: Record<string, number> = { basic: 99, pro: 199, full: 199 };
+/* marketer: 399 سنويًّا ≈ 33 شهريًّا (2 نوفمبر 2026) */
+const PLAN_PRICE: Record<string, number> = { basic: 99, pro: 199, full: 199, marketer: 33 };
 const PLAN_AR: Record<string, string> = { basic: "المالك", pro: "المكتب", full: "المكتب" };
 
 /* التسميات من lib/signup-sources — كانت مكتوبة هنا ثانيةً فأي مصدر جديد
