@@ -21,7 +21,9 @@ export type IconName =
   | "layers" | "sofa" | "camera" | "megaphone" | "edit" | "trash" | "pin"
   | "sparkle" | "grid" | "list" | "sort" | "filter" | "tag" | "save"
   /* المسوّق العقاري (2 نوفمبر 2026) */
-  | "eye" | "users" | "percent" | "undo" | "calendar";
+  | "eye" | "users" | "percent" | "undo" | "calendar"
+  /* قسم الصيانة (5 نوفمبر 2026) */
+  | "wrench" | "drop" | "bolt" | "snow" | "elevator" | "broom" | "lock" | "image";
 
 const PATHS: Record<IconName, string> = {
   building: "M3 21h18M5 21V5a1 1 0 0 1 1-1h8a1 1 0 0 1 1 1v16M15 9h3a1 1 0 0 1 1 1v11M8 8h2M8 12h2M8 16h2",
@@ -76,6 +78,14 @@ const PATHS: Record<IconName, string> = {
   percent: "M19 5 5 19M6.5 9a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5zM17.5 20a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5z",
   undo: "M3 7v6h6M3.5 13a9 9 0 1 0 2.6-6.4L3 10",
   calendar: "M3 5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2zM3 9h18M8 2v4M16 2v4",
+  wrench: "M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.6 2.6-2.4-.6-.6-2.4z",
+  drop: "M12 3s6 6.4 6 11a6 6 0 0 1-12 0c0-4.6 6-11 6-11z",
+  bolt: "M13 2 4 14h7l-1 8 9-12h-7z",
+  snow: "M12 2v20M4.9 7l14.2 10M4.9 17 19.1 7M9 4l3 2 3-2M9 20l3-2 3 2",
+  elevator: "M5 3h14a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1zM12 3v18M7.5 10 9 8l1.5 2M13.5 14l1.5 2 1.5-2",
+  broom: "M19 3 11 11M8.5 10.5l5 5M9 11l-5 5c-1 1-1 3 1 4s3 1 4 0l5-5",
+  lock: "M6 11h12a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1v-8a1 1 0 0 1 1-1zM8 11V7a4 4 0 0 1 8 0v4",
+  image: "M4 5h16a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1zM3 16l5-5 4 4 3-3 6 6M15.5 9.5h.01",
   save: "M5 3h11l4 4v13a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1zM8 3v5h7V3M8 21v-7h8v7",
 };
 

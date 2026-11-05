@@ -397,3 +397,42 @@ html[data-theme="dark"] .hoa-tab[aria-selected="true"] { background: var(--d-gol
 /* شارة «قيد التنفيذ» (طلبات الصيانة) في الوضع الليلي — كبقية الشارات الفاتحة */
 html[data-theme="dark"] [class*="bg-[#E8EEF9]"] { background-color: #16233D !important; }
 html[data-theme="dark"] [class*="text-[#1E3A8A]"] { color: #A5B8F0 !important; }
+
+/* ── الوضع الليلي: ألوان كانت بلا مقابل ليلي فتبقى فاتحة على خلفية داكنة (5 نوفمبر 2026).
+   مولَّدة من كل لون ثابت مستعمل في الواجهة: الخلفيات الفاتحة ← تلوين خافت بنفس الصبغة،
+   والنصوص الداكنة ← نفس الصبغة فاتحة، والحدود ← درجة متوسطة. ── */
+html[data-theme="dark"] [class*="bg-[#E3F4EA]"] { background-color: #143321 !important; }
+html[data-theme="dark"] [class*="bg-[#E4F5F7]"] { background-color: #143034 !important; }
+html[data-theme="dark"] [class*="bg-[#E6F0FA]"] { background-color: #142434 !important; }
+html[data-theme="dark"] [class*="bg-[#E7F7EE]"] { background-color: #143422 !important; }
+html[data-theme="dark"] [class*="bg-[#EEE8DA]"] { background-color: #312916 !important; }
+html[data-theme="dark"] [class*="bg-[#EEE9F8]"] { background-color: #1E1434 !important; }
+html[data-theme="dark"] [class*="bg-[#EEF2F6]"] { background-color: #19242F !important; }
+html[data-theme="dark"] [class*="bg-[#F1F1EF]"] { background-color: #262621 !important; }
+html[data-theme="dark"] [class*="bg-[#F6F2E8]"] { background-color: #332A14 !important; }
+html[data-theme="dark"] [class*="bg-[#FBF6EA]"] { background-color: #342A14 !important; }
+html[data-theme="dark"] [class*="bg-[#FFFBF0]"] { background-color: #342B14 !important; }
+html[data-theme="dark"] [class*="bg-[#FFFBF2]"] { background-color: #342A14 !important; }
+html[data-theme="dark"] [class*="bg-[#FFFEFB]"] { background-color: #342C14 !important; }
+html[data-theme="dark"] [class*="bg-[#d6ecdf]"] { background-color: #173121 !important; }
+html[data-theme="dark"] [class*="border-[#C7DBF0]"] { border-color: #2B4764 !important; }
+html[data-theme="dark"] [class*="border-[#F1C9C5]"] { border-color: #64302B !important; }
+html[data-theme="dark"] [class*="border-[#F1D9AE]"] { border-color: #644F2B !important; }
+html[data-theme="dark"] [class*="text-[#16656F]"] { color: #A1E4EC !important; }
+html[data-theme="dark"] [class*="text-[#1F4F80]"] { color: #A5C7E9 !important; }
+html[data-theme="dark"] [class*="text-[#1b6b3a]"] { color: #A5E8BF !important; }
+html[data-theme="dark"] [class*="text-[#4B3A8A]"] { color: #BAB0DE !important; }
+html[data-theme="dark"] [class*="text-[#64748B]"] { color: #B3C3DB !important; }
+html[data-theme="dark"] [class*="text-[#6b4a10]"] { color: #EED2A0 !important; }
+html[data-theme="dark"] [class*="text-[#7A4800]"] { color: #EECEA0 !important; }
+html[data-theme="dark"] [class*="text-[#7a3b36]"] { color: #DDB4B1 !important; }
+html[data-theme="dark"] [class*="text-[#7a5c12]"] { color: #EED8A0 !important; }
+html[data-theme="dark"] [class*="text-[#8A5A11]"] { color: #EECFA0 !important; }
+html[data-theme="dark"] [class*="text-[#8f2b26]"] { color: #E7A9A6 !important; }
+html[data-theme="dark"] .text-goldInk { color: #E9C87E !important; }
+html[data-theme="dark"] .border-deep  { border-color: var(--d-head) !important; }
+html[data-theme="dark"] .border-goldSoft { border-color: #7A6230 !important; }
+html[data-theme="dark"] .shadow-sm, html[data-theme="dark"] [class*="shadow-[0_1px"] { box-shadow: none !important; }
+/* أسطح بشفافية (bg-paper/60 · bg-white/90): كانت تبقى رمادية فاتحة فوق الخلفية الداكنة */
+html[data-theme="dark"] [class*="bg-paper/"] { background-color: var(--d-soft) !important; }
+html[data-theme="dark"] [class*="bg-white/70"], html[data-theme="dark"] [class*="bg-white/90"] { background-color: var(--d-card) !important; }

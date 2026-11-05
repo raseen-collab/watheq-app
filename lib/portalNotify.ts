@@ -14,14 +14,15 @@ import { requestCatAr, requestLocAr } from "./hoaMoney";
  */
 export type PortalEvent =
   | { type: "claim"; amount: number; date: string; ref?: string | null }
-  | { type: "request"; category: string; location: string; description: string };
+  | { type: "request"; category: string; location: string; description: string; urgent?: boolean };
 
 const escT = (v: unknown) => String(v ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 const money = (n: number) => Number(n || 0).toLocaleString("en-US", { maximumFractionDigits: 2 });
 
 export function portalNotifyText(kind: "tenant" | "hoa", info: { place?: string | null; unit?: string | null; name?: string | null }, ev: PortalEvent): string {
   const who = kind === "tenant" ? "المستأجر" : "المالك";
-  const head = ev.type === "claim" ? `💳 <b>بلاغ حوالة جديد من ${who}</b>` : `🛠 <b>طلب صيانة جديد من ${who}</b>`;
+  const head = ev.type === "claim" ? `💳 <b>بلاغ حوالة جديد من ${who}</b>`
+    : ev.urgent ? `🚨 <b>طلب صيانة عاجل من ${who}</b>` : `🛠 <b>طلب صيانة جديد من ${who}</b>`;
   const lines = [head, "",
     `${kind === "tenant" ? "🏢 العقار" : "🏢 الجمعية"}: ${escT(info.place || "—")}`,
     `🚪 الوحدة: ${escT(info.unit || "—")}`,
@@ -48,7 +49,7 @@ export async function notifyPortalEvent(db: SupabaseClient, kind: "tenant" | "ho
     }
     const info = data as { chat_id?: string; place?: string; unit?: string; name?: string } | null;
     if (!info?.chat_id) return;   // المكتب لم يربط تليجرام
-    const url = `https://app.watheqapp.com/dashboard/${kind === "tenant" ? "property" : "association"}`;
+    const url = `https://app.watheqapp.com/dashboard/${kind === "tenant" ? (ev.type === "request" ? "property/maintenance" : "property") : "association"}`;
     await tgSend(info.chat_id, portalNotifyText(kind, info, ev), [[{ text: "افتح اللوحة", url }]]);
   })().catch((e) => console.error("portal notify failed", e?.message || e));
   await Promise.race([work, new Promise((r) => setTimeout(r, 2500))]);

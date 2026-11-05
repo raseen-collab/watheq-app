@@ -1,7 +1,7 @@
 "use client";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase-client";
 import { trialDaysLeft } from "@/lib/domain";
 import { isMarketer, marketerAllowed, type AccountType } from "@/lib/roles";
@@ -43,6 +43,15 @@ export default function DashboardShell({
   const offLimits = marketer && !marketerAllowed(pathname);
   useEffect(() => { if (offLimits) router.replace("/dashboard/property/listings"); }, [offLimits, router]);
 
+  /* عدّاد طلبات الصيانة المفتوحة بجوار رابطها (v79) — فشل القراءة يُخفي العدّاد فقط */
+  const [maintOpen, setMaintOpen] = useState(0);
+  useEffect(() => {
+    if (marketer || !onProperty) return;
+    const supabase = createClient();
+    supabase.from("tenant_requests").select("id", { count: "exact", head: true }).in("status", ["new", "in_progress"])
+      .then(({ count, error }) => { if (!error) setMaintOpen(count || 0); });
+  }, [marketer, onProperty, pathname]);
+
   async function signOut() {
     const supabase = createClient();
     await supabase.auth.signOut();
@@ -57,6 +66,7 @@ export default function DashboardShell({
     ? [
         { href: "/dashboard/property", label: "عقاراتي" },
         { href: "/dashboard/property/overview", label: "🗂️ نظرة عامة" },
+        { href: "/dashboard/property/maintenance", label: "🛠 الصيانة" },
         { href: "/dashboard/health", label: "🩺 فحص البيانات" },
         { href: "/dashboard/property/listings", label: "📋 المعروضات" },
         { href: "/dashboard/property/import", label: "رفع Excel" },
@@ -108,6 +118,9 @@ export default function DashboardShell({
                   className={`px-3 py-1.5 rounded-lg text-sm font-semibold transition whitespace-nowrap shrink-0 ${
                     pathname === n.href ? "bg-white/15 text-white" : "text-[#CFE0DB] hover:bg-white/10"}`}>
                   {n.label}
+                  {n.href === "/dashboard/property/maintenance" && maintOpen > 0 && (
+                    <span className="ms-1.5 inline-grid place-items-center min-w-[18px] h-[18px] px-1 rounded-full bg-goldSoft text-deep text-[11px] font-bold tabular-nums">{maintOpen}</span>
+                  )}
                 </Link>
               ))}
             </nav>

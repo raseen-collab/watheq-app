@@ -543,6 +543,8 @@ export function parseGrid(grid: string[][], properties: Prop[], todayIso: string
     const prFromMonths = monthsN > 0 ? Math.max(1, Math.round(monthsN * (PER_YEAR[frequency] || 12) / 12)) : null;
     const prN = periods ? parseNum(periods) : NaN;
     const pr = (prN > 0 ? prN : null) || prFromMonths;
+    /* (5 نوفمبر 2026) العمودان معًا ومتعارضان: «عدد الدفعات» يغلب — كان «مدة العقد» يُهمَل بصمت */
+    const monthsConflict = prN > 0 && prFromMonths !== null && Math.round(prN) !== prFromMonths;
     /* المبلغ المكتوب → قيمة الدفعة. السنوي ÷ عدد الدفعات في السنة، والشهري × 12 ÷ عددها.
        الناتج يظهر في المعاينة بحسبته — المكتب يرى «سنوي 30,000 ÷ 4 = 7,500» قبل الحفظ. */
     const notes: string[] = [];
@@ -613,6 +615,8 @@ export function parseGrid(grid: string[][], properties: Prop[], todayIso: string
         if (pd > due0 + 1) notes.push(`⚠️ مسدَّد ${pd} والمستحق حتى اليوم ${due0} — أي ${pd - due0} مقدّمًا. تأكّد من العدد`);
       } catch { /* تاريخ غير صالح يُلتقط في مكان آخر */ }
     }
+    if (!err && monthsConflict)
+      notes.push(`⚠️ «عدد الدفعات» ${prN} لا يوافق «مدة العقد» ${fmtN(monthsN)} شهرًا بدورة «${freq}» (= ${prFromMonths} دفعة) — اعتمدنا عدد الدفعات`);
     const target = propName ? propByName.get(norm(propName)) : undefined;
     if (propName && !target && !err) err = `العقار «${propName}» غير موجود — أنشئه أولًا أو صحّح الاسم`;
 

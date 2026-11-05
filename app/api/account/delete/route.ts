@@ -52,8 +52,9 @@ export async function POST(req: Request) {
     /* 30 سبتمبر 2026: الصور محفوظة في uid/<معرّف المعروض>/… — list(uid) يُرجع
        المجلدات الفرعية لا الملفات، فكان remove يُمرَّر أسماء مجلدات فلا يُحذف شيء
        وتبقى صور المستأجرين والعقارات بعد «حذف الحساب». نمشي الشجرة كلها. */
-    try {
-      const bucket = db.storage.from("listing-photos");
+    /* v79: صور الصيانة قبل/بعد في دلو مستقل بنفس الشجرة uid/<طلب>/… — نمشي الدلوين */
+    for (const bucketName of ["listing-photos", "maintenance-photos"]) try {
+      const bucket = db.storage.from(bucketName);
       const paths: string[] = [];
       const walk = async (dir: string, depth: number): Promise<void> => {
         if (depth > 5) return;                                   // حارس ضد شجرة غير متوقعة
@@ -72,7 +73,7 @@ export async function POST(req: Request) {
       await walk(uid, 0);
       for (let i = 0; i < paths.length; i += 1000) {
         const { error } = await bucket.remove(paths.slice(i, i + 1000));
-        if (error) console.error("account deletion: photo remove failed", uid, error.message);
+        if (error) console.error("account deletion: photo remove failed", bucketName, uid, error.message);
       }
     } catch { /* لا صور، أو الحاوية غير موجودة */ }
 

@@ -208,7 +208,7 @@ export function TenantPortalInbox({ db, enabled, propertyName, canDecide, canEdi
       <div className="rounded-2xl border border-[#E7C877] bg-[#FFFBF0] px-4 py-3 mb-4 flex flex-wrap items-center gap-2" data-testid="tenant-inbox">
         <b className="text-deep text-sm me-1">📨 من روابط المستأجرين:</b>
         {claims.length > 0 && <button className="btn btn-gold text-xs" onClick={() => setOpen("claims")}>💳 حوالات بانتظار المراجعة ({claims.length})</button>}
-        {reqs.length > 0 && <button className="btn btn-ghost text-xs" onClick={() => setOpen("reqs")}>🛠 طلبات صيانة مفتوحة ({reqs.length})</button>}
+        {reqs.length > 0 && <a className="btn btn-ghost text-xs" href="/dashboard/property/maintenance">🛠 طلبات صيانة مفتوحة ({reqs.length})</a>}
       </div>
 
       {open && (
@@ -278,7 +278,7 @@ export function TenantPortalInbox({ db, enabled, propertyName, canDecide, canEdi
                   </div>
                 );
               })}
-              <p className="text-[11.5px] text-muted">الطلبات المُنجزة والمرفوضة تختفي من هنا وتبقى في صفحة المستأجر بحالتها.</p>
+              <p className="text-[11.5px] text-muted">الطلبات المُنجزة والمرفوضة تختفي من هنا — كلها بفلاترها وصورها وتكلفتها في <a className="underline font-semibold" href="/dashboard/property/maintenance">صفحة الصيانة</a>.</p>
             </div>
           )}
         </Overlay>

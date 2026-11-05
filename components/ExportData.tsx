@@ -56,6 +56,8 @@ const BACKUP_TABLES: [string, string][] = [
   ["properties", "created_at"], ["tenants", "created_at"], ["payments", "created_at"], ["expenses", "created_at"],
   ["property_notes", "created_at"], ["invoices", "created_at"], ["past_tenancies", "archived_at"], ["ledger_adjustments", "created_at"],
   ["listings", "created_at"], ["seeker_requests", "created_at"], ["compliance_items", "created_at"],
+  /* v78: «عُرض على» وروابط الزبائن (الرمز يُستبعد) · v19: الإعلانات المنشورة · v70: سجل روابط المستأجرين */
+  ["listing_shows", "created_at"], ["listing_links", "created_at"], ["ad_posts", "created_at"], ["tenant_portal_audit", "created_at"],
   ["tenant_requests", "created_at"], ["tenant_payment_claims", "created_at"], ["office_messages", "created_at"],
   ["associations", "created_at"], ["owners", "created_at"], ["association_notes", "created_at"], ["association_expenses", "created_at"],
   ["association_budgets", "created_at"], ["hoa_documents", "created_at"], ["hoa_signatures", "created_at"],
@@ -158,6 +160,14 @@ export default function ExportData() {
       /* طلبات الصيانة وبلاغات الحوالات من رابط المستأجر (v70) — كانت لا تُصدَّر */
       const tReqs = await opt("tenant_requests", failed);
       const tClaims = await opt("tenant_payment_claims", failed);
+      /* المسوّق العقاري (v78): سجل «عُرض على» ومشاهدات روابط الزبائن — الرمز لا يُطلب أصلًا */
+      const shows = await opt("listing_shows", failed, "*", "shown_at");
+      const lLinks = await opt("listing_links", failed, "listing_id,views,revoked,last_view_at,created_at");
+      const listingCode: Record<string, string> = {}; listings.forEach((l: any) => { listingCode[l.id] = l.code; });
+      const showsBy: Record<string, number> = {}; shows.forEach((x: any) => { showsBy[x.listing_id] = (showsBy[x.listing_id] || 0) + 1; });
+      const viewsBy: Record<string, number> = {}; lLinks.forEach((x: any) => { viewsBy[x.listing_id] = (viewsBy[x.listing_id] || 0) + (Number(x.views) || 0); });
+      /* الصيانة (v79): رقم سند الصرف من المصروف المربوط */
+      const expById: Record<string, any> = {}; expenses.forEach((e: any) => { expById[e.id] = e; });
       const pastById: Record<string, any> = {}; past.forEach((x: any) => { pastById[x.id] = x; });
       const invoiceHolder = (inv: any) => past
         .filter((a: any) => a.unit_row_id && a.unit_row_id === inv.tenant_id && String(a.archived_at || "") > String(inv.created_at || ""))
@@ -225,6 +235,8 @@ export default function ExportData() {
         "حالة الدين": DEBT_ST_AR[(t as any).debt_status] || "", "نشأ الدين": (t as any).debt_since || "", "آخر متابعة": (t as any).debt_note || "",
         "في التنفيذ": t.litigation ? "نعم" : "", "رقم طلب التنفيذ": t.enforcement_no || "",
         "ملاحظات التأمين": t.deposit_notes || "", "تاريخ الإشعار": t.notice_date || "",
+        /* v74: إشعار نقل حساب الكهرباء — كم مرة أُرسل وآخر مرة */
+        "إشعارات نقل الكهرباء": Number(t.elec_notice_count) || "", "آخر إشعار كهرباء": String(t.elec_notice_at || "").slice(0, 10),
       })), [22, 10, 22, 14, 14, 12, 10, 12, 12, 10, 10, 10, 12, 12, 10, 12, 14, 14, 12, 12, 12, 12, 10, 12, 14, 8, 10, 10, 10, 12, 20, 10, 14, 20, 12]);
 
       /* M1: ورقة «الدفعات» للإيجارات فقط — دفعات الجمعيات في ورقتها (كانت تختلط بلا عقار ولا مستأجر) */
@@ -303,13 +315,24 @@ export default function ExportData() {
         "رقم الوحدة": l.unit_no || "", "الدور": l.floor_no ?? "", "الغرف": l.rooms ?? "", "دورات المياه": l.baths ?? "",
         "عمر البناء": l.building_age ?? "", "مؤثث": l.furnished ? "نعم" : l.furnished === false ? "لا" : "",
         "آخر تأكيد": String(l.last_confirmed_at || "").slice(0, 10), "ملاحظة": l.note || "",
-      })), [10, 10, 10, 20, 12, 14, 10, 12, 12, 18, 14, 8, 14, 10, 10, 8, 10, 6, 6, 8, 8, 6, 12, 30]);
+        "نسبة السعي %": l.commission_pct ?? "", "نصيبي من السعي %": l.my_share_pct ?? "",
+        "تفويض المالك": l.owner_authorized === true ? "موجود" : l.owner_authorized === false ? "لا يوجد" : "",
+        "يسوّقه وسطاء آخرون": l.others_marketing ? "نعم" : "",
+        "عُرض على (عدد)": showsBy[l.id] || 0, "مشاهدات رابط الزبون": viewsBy[l.id] || 0,
+      })), [10, 10, 10, 20, 12, 14, 10, 12, 12, 18, 14, 8, 14, 10, 10, 8, 10, 6, 6, 8, 8, 6, 12, 30, 10, 12, 12, 12, 10, 12]);
+
+      add("عرض على", shows.map((x: any) => ({
+        "الكود": listingCode[x.listing_id] || "", "الزبون": x.customer_name || "", "الجوال": x.customer_phone || "",
+        "تاريخ العرض": x.shown_at || "", "ملاحظة": x.note || "",
+      })), [10, 22, 14, 12, 40]);
 
       add("طلبات الباحثين", requests.map((r) => ({
         "الاسم": r.seeker_name || "", "الجوال": r.seeker_phone || "", "يبحث عن": (LISTING_KIND as any)[r.kind]?.label || r.kind || "", "العرض": (OFFER_LABEL as any)[r.offer_type] || r.offer_type || "",
         "المدينة": r.city || "", "الأحياء": r.districts || "", "السعر الأقصى": r.price_max || "",
-        "المساحة من": r.area_min || "", "إلى": r.area_max || "", "الحالة": OPEN_ST_AR[r.status] || r.status || "", "ملاحظة": r.note || "",
-      })), [18, 14, 10, 10, 12, 20, 12, 10, 10, 10, 30]);
+        "المساحة من": r.area_min || "", "إلى": r.area_max || "", "أقل عدد غرف": r.rooms_min ?? "",
+        "الحالة": OPEN_ST_AR[r.status] || r.status || "", "آخر تواصل": r.last_contact_at || "", "موعد المتابعة": r.follow_up_at || "",
+        "ملاحظة": r.note || "",
+      })), [18, 14, 10, 10, 12, 20, 12, 10, 10, 10, 10, 12, 12, 30]);
 
       add("التزامات المكتب", compliance.map((c) => ({
         "النوع": (COMPLIANCE_KIND as any)[c.kind]?.one || c.kind, "العنوان": c.title, "الرقم المرجعي": c.ref_no || "", "البداية": c.start_date || "",
@@ -325,7 +348,11 @@ export default function ExportData() {
         "النوع": REQ_CAT_AR[r.category] || r.category || "", "المكان": r.location === "common" ? "مرافق مشتركة" : "داخل الوحدة",
         "الوصف": r.description || "", "الحالة": REQ_ST_AR[r.status] || r.status || "", "ملاحظة المكتب": r.manager_note || "",
         "أُغلق": String(r.closed_at || "").slice(0, 10),
-      })), [12, 22, 10, 20, 10, 14, 50, 12, 30, 12]);
+        /* v79 */
+        "الأولوية": r.priority === "urgent" ? "عاجل" : "عادي", "المصدر": r.source === "office" ? "المكتب" : "رابط المستأجر",
+        "الفني": r.tech_name || "", "جوال الفني": r.tech_phone || "", "موعد الزيارة": r.visit_date || "",
+        "التكلفة": r.cost ?? "", "رقم سند الصرف": (r.expense_id && expById[r.expense_id]?.voucher_no) || "",
+      })), [12, 22, 10, 20, 10, 14, 50, 12, 30, 12, 8, 12, 18, 14, 12, 10, 14]);
 
       add("بلاغات الحوالات", tClaims.map((c: any) => ({
         "تاريخ البلاغ": String(c.created_at || "").slice(0, 10), "العقار": pName[c.property_id] || "",
@@ -403,7 +430,7 @@ export default function ExportData() {
     <div className="bg-white border border-line rounded-2xl p-5">
       <h3 className="font-display font-bold text-deep text-lg mb-1">📦 تصدير بياناتي</h3>
       <p className="text-xs text-muted mb-4 leading-relaxed">
-        ملف Excel واحد فيه كل شيء: العقارات، الوحدات والعقود، الدفعات، المصروفات، الفواتير، المستأجرون السابقون، طلبات الصيانة، السجل، المعروضات، الالتزامات، والجمعيات.
+        ملف Excel واحد فيه كل شيء: العقارات، الوحدات والعقود، الدفعات، المصروفات، الفواتير، المستأجرون السابقون، طلبات الصيانة بفنيّها وتكلفتها، السجل، المعروضات وسجل «عُرض على»، طلبات الزبائن، الالتزامات، والجمعيات.
         بياناتك ملكك — تأخذها كاملة متى شئت، وتعيد رفعها كما هي إن عدت.
       </p>
       <div className="flex flex-wrap items-center gap-3">

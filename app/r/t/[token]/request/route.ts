@@ -9,6 +9,7 @@ export const fetchCache = "force-no-store";
 
 /**
  * طلب صيانة من صفحة المستأجر — POST /r/t/{token}/request (نص فقط بلا صور).
+ * v79: خانة «عاجل» (priority=urgent) — قبل تشغيل v79 تُرسل بدونها فلا ينكسر شيء.
  * سقف الحجم 8KB (الوصف حتى 1000 حرف عربي ≈ 6KB مرمَّزة). الحد (5 مفتوحة) في القاعدة.
  * بعد الحفظ: تنبيه تليجرام فوري لصاحب المكتب.
  */
@@ -27,19 +28,21 @@ export async function POST(req: Request, { params }: { params: { token: string }
   const category = String(f.get("category") || "");
   const location = String(f.get("location") || "");
   const description = String(f.get("description") || "").replace(/[ \t]+/g, " ").trim();
+  const priority = f.get("urgent") ? "urgent" : "normal";
   if (!CATS.has(category) || (location !== "common" && location !== "unit")) return back(`${base}?m=req_bad#req`);
   if (description.length < 3 || description.length > 1000) return back(`${base}?m=req_text#req`);
 
   const db = portalDb();
   if (!db) return deny("الخدمة غير مهيأة", 500);
   try {
-    const { data, error } = await db.rpc("watheq_tenant_request_submit", {
-      p_token: token, p_category: category, p_location: location, p_description: description, p_ip: clientIp(req),
-    });
+    const args = { p_token: token, p_category: category, p_location: location, p_description: description, p_ip: clientIp(req) };
+    let { data, error } = await db.rpc("watheq_tenant_request_submit", { ...args, p_priority: priority });
+    /* قبل schema-v79 لا تعرف الدالة p_priority — نعيد بدونها (الطلب أهم من الأولوية) */
+    if (error && /p_priority|Could not find|schema cache/i.test(error.message || "")) ({ data, error } = await db.rpc("watheq_tenant_request_submit", args));
     if (error) throw error;
     switch (data as string) {
       case "ok":
-        await notifyPortalEvent(db, "tenant", token, { type: "request", category, location, description });
+        await notifyPortalEvent(db, "tenant", token, { type: "request", category, location, description, urgent: priority === "urgent" });
         return back(`${base}?m=req_ok#req`);
       case "bad_category": case "bad_location": return back(`${base}?m=req_bad#req`);
       case "bad_text": return back(`${base}?m=req_text#req`);

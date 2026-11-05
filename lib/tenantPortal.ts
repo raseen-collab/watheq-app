@@ -83,7 +83,19 @@ function reqSteps(r: TenantPortalData["requests"][number]): string {
     </li>`).join("")}</ol>`;
 }
 
-export function renderTenantPage(d: TenantPortalData, opts: { nonce: string; base: string; flash?: string | null }): string {
+/** v79: صور الصيانة قبل/بعد لكل طلب — روابط موقّتة يولّدها المسار بمفتاح الخدمة */
+export type TenantReqPhotos = Record<string, { before: string[]; after: string[] }>;
+
+function reqPhotos(p?: { before: string[]; after: string[] }): string {
+  if (!p || (!p.before.length && !p.after.length)) return "";
+  const strip = (label: string, urls: string[], tone: string) => !urls.length ? "" : `
+    <div style="margin-top:8px"><div style="font-size:12px;font-weight:700;color:${tone}">${label}</div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px">${urls.map((u) =>
+      `<a href="${esc(u)}" target="_blank" rel="noreferrer"><img src="${esc(u)}" alt="${label}" loading="lazy" style="width:76px;height:76px;object-fit:cover;border-radius:10px;border:1px solid #E4DDCD"></a>`).join("")}</div></div>`;
+  return strip("صور قبل الصيانة", p.before, "#8A5A11") + strip("صور بعد الصيانة", p.after, "#137A50");
+}
+
+export function renderTenantPage(d: TenantPortalData, opts: { nonce: string; base: string; flash?: string | null; photos?: TenantReqPhotos }): string {
   const t = d.tenant, p = d.property, o = d.office || {};
   const base = opts.base;
   const ul = unitWordFor((t as any).unit_type, p.property_type);
@@ -184,6 +196,7 @@ export function renderTenantPage(d: TenantPortalData, opts: { nonce: string; bas
     <div class="radio"><label><input type="radio" name="location" value="unit" checked> داخل ${esc(ul)}</label><label><input type="radio" name="location" value="common"> الأجزاء المشتركة</label></div>
     <label class="f" for="rd">الوصف</label>
     <textarea class="fld" id="rd" name="description" rows="3" required minlength="3" maxlength="1000" placeholder="مثال: تسريب مياه تحت مغسلة المطبخ"></textarea>
+    <label style="display:flex;gap:8px;align-items:flex-start;margin-top:10px;font-size:14px"><input type="checkbox" name="urgent" value="1" style="margin-top:5px"> <span><b style="color:#A5322C">عاجل</b> — تسريب ماء، انقطاع كهرباء، مصعد متوقف، باب لا يُقفل</span></label>
     <button class="btn b-deep" type="submit" style="width:100%;margin-top:12px">أرسل الطلب</button>
   </form></details>`;
   const reqBox = !d.active && !reqs.length ? "" : `
@@ -193,6 +206,7 @@ export function renderTenantPage(d: TenantPortalData, opts: { nonce: string; bas
     <span class="chip ${r.status === "done" ? "c-ok" : r.status === "rejected" ? "c-no" : "c-wait"}">${esc(TENANT_REQUEST_STATUS_AR[r.status] || r.status)}</span></div>
     <div style="overflow-wrap:anywhere;margin-top:4px">${esc(r.description)}</div>
     ${reqSteps(r)}
+    ${reqPhotos(opts.photos?.[r.id])}
   </div>`).join("") : `<div class="muted">لا طلبات بعد. أبلغ عن أي عطل من هنا.</div>`}
   ${reqForm}
 </section>`;
