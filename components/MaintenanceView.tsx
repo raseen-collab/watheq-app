@@ -488,7 +488,7 @@ function CostPanel({ r, canWork, canExpense, onFinish }: { r: MaintRequest; canW
       <h4 className={panelH}><Icon name="money" size={16} /> التكلفة</h4>
       {r.cost != null ? (
         <div className="text-sm">
-          <b className="text-paid tabular-nums">{sar(Number(r.cost))} ريال</b> <span className="text-muted">سُجّلت مصروفًا على العقار — تظهر في صافي المالك وتقريره.</span>
+          <b className="text-paid tabular-nums">{sar(Number(r.cost))} ريال</b> <span className="text-muted">سُجّلت مصروف صيانة على العقار — تجدها في «المصروفات» بخصمها من صافي المالك أو بدونه حسب اختيارك.</span>
         </div>
       ) : (
         <>
