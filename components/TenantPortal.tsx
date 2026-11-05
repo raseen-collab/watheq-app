@@ -8,6 +8,7 @@
  */
 import { useEffect, useState } from "react";
 import { waLink, openExternal, sar } from "@/lib/utils";
+import { arDate } from "@/lib/documents";
 import { REQUEST_CATEGORIES, TENANT_REQUEST_STATUS_AR as REQUEST_STATUS_AR, requestCatAr } from "@/lib/hoaMoney";
 
 const NEEDS_V70 = /watheq_tenant|tenant_portal|tenant_payment_claims|tenant_requests|does not exist|schema cache|Could not find/i;
@@ -231,7 +232,7 @@ export function TenantPortalInbox({ db, enabled, propertyName, canDecide, canEdi
                     <div className="min-w-0">
                       <div className="font-bold text-deep tabular-nums">{sar(Number(c.amount))} ريال</div>
                       <div className="text-xs text-muted">{where(c)}</div>
-                      <div className="text-xs text-muted mt-0.5">حوالة <bdi dir="ltr">{c.transfer_date}</bdi>{c.bank_ref ? <> · مرجع <bdi dir="ltr">{c.bank_ref}</bdi></> : null} · أُبلغ {riyadhDate(c.created_at)}</div>
+                      <div className="text-xs text-muted mt-0.5">حوالة <span className="whitespace-nowrap">{arDate(c.transfer_date)}</span>{c.bank_ref ? <> · مرجع <bdi dir="ltr">{c.bank_ref}</bdi></> : null} · أُبلغ {riyadhDate(c.created_at)}</div>
                       {c.note && <div className="text-xs mt-1">ملاحظة المستأجر: {c.note}</div>}
                     </div>
                     {canDecide && (

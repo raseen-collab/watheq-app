@@ -521,10 +521,13 @@ function Card({ l, compact, cover, brokerages, requests, busy, onConfirm, onEdit
     </div>
   ) : <div className="text-xs text-muted">السعر غير مسجّل</div>;
 
-  const iconBtn = (name: IconName, label: string, onClick: () => void, extra = "") => (
+  /* (مراجعة 5 نوفمبر) أيقونة + كلمة: على الجوال لا يظهر title، فكانت سبعة
+     أزرار بلا أسماء يخمّن المكتب معناها */
+  const iconBtn = (name: IconName, label: string, onClick: () => void, extra = "", short = "") => (
     <button type="button" onClick={onClick} title={label} aria-label={label}
-      className={`grid place-items-center w-10 h-10 rounded-lg border border-line bg-white text-deep hover:bg-paper transition ${extra}`}>
-      <Icon name={name} size={17} />
+      className={`flex flex-col items-center justify-center gap-0.5 min-w-[44px] h-12 px-1.5 rounded-lg border border-line bg-white text-deep hover:bg-paper transition ${extra}`}>
+      <Icon name={name} size={16} />
+      {short && <span className="text-[10px] leading-none font-semibold whitespace-nowrap">{short}</span>}
     </button>
   );
 
@@ -624,14 +627,14 @@ function Card({ l, compact, cover, brokerages, requests, busy, onConfirm, onEdit
             <option key={k} value={k}>{STATUS_META[k].label}</option>
           ))}
         </select>
-        <div className="flex gap-1.5 ms-auto">
-          {iconBtn("link", "رابط الزبون — صور ومواصفات بلا بيانات المالك", () => setShowLink(true))}
-          {iconBtn("doc", "اتفاق سعي — ورقة يوقّعها المالك", () => setShowAgreement(true))}
-          {iconBtn("eye", showShows ? "إخفاء «عُرض على»" : `عُرض على${showsN != null ? ` (${showsN})` : ""}`, () => setShowShows(!showShows), showShows ? "border-gold bg-[#FBF1DF]" : "")}
-          {iconBtn("megaphone", "نص إعلان جاهز لحراج وX وواتساب", () => setShowAd(true))}
-          {iconBtn("camera", showPhotos ? "إخفاء الصور" : "الصور", togglePhotos, showPhotos ? "border-gold bg-[#FBF1DF]" : "")}
-          {iconBtn("edit", "تعديل", onEdit)}
-          {iconBtn("trash", "حذف", onRemove, "text-late")}
+        <div className="flex flex-wrap gap-1.5 ms-auto justify-end">
+          {iconBtn("link", "رابط الزبون — صور ومواصفات بلا بيانات المالك", () => setShowLink(true), "", "الرابط")}
+          {iconBtn("doc", "اتفاق سعي — ورقة يوقّعها المالك", () => setShowAgreement(true), "", "الاتفاق")}
+          {iconBtn("eye", showShows ? "إخفاء «عُرض على»" : `عُرض على${showsN != null ? ` (${showsN})` : ""}`, () => setShowShows(!showShows), showShows ? "border-gold bg-[#FBF1DF]" : "", "عُرض على")}
+          {iconBtn("megaphone", "نص إعلان جاهز لحراج وX وواتساب", () => setShowAd(true), "", "إعلان")}
+          {iconBtn("camera", showPhotos ? "إخفاء الصور" : "الصور", togglePhotos, showPhotos ? "border-gold bg-[#FBF1DF]" : "", "الصور")}
+          {iconBtn("edit", "تعديل", onEdit, "", "تعديل")}
+          {iconBtn("trash", "حذف", onRemove, "text-late", "حذف")}
         </div>
       </div>
 

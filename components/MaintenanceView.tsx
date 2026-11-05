@@ -81,15 +81,16 @@ export default function MaintenanceView({ orgName }: { orgName?: string | null }
     setOffice(o.officeId);
     setPerms(o.isOwner === false ? (o.perms || {}) : OWNER_PERMS);
     const [p, t] = await Promise.all([
-      db.from("properties").select("id,name").order("name"),
+      db.from("properties").select("id,name").eq("user_id", o.officeId).order("name"),
       db.from("tenants").select("id,property_id,name,unit,phone,status").limit(5000),
     ]);
     setProps((p.data || []) as Prop[]);
-    setTenants(((t.data || []) as Tenant[]).filter((x) => x.status !== "vacated"));
-    let r = await db.from("tenant_requests").select("*").order("created_at", { ascending: false }).limit(600);
+    const pids = new Set(((p.data || []) as Prop[]).map((x) => x.id));
+    setTenants(((t.data || []) as Tenant[]).filter((x) => x.status !== "vacated" && pids.has(x.property_id)));
+    let r = await db.from("tenant_requests").select("*").eq("user_id", o.officeId).order("created_at", { ascending: false }).limit(600);
     if (!r.error && r.data && r.data.length && !("priority" in (r.data[0] as any))) setV79(false);
     if (r.error) {
-      r = await db.from("tenant_requests").select(V70_COLS).order("created_at", { ascending: false }).limit(600) as any;
+      r = await db.from("tenant_requests").select(V70_COLS).eq("user_id", o.officeId).order("created_at", { ascending: false }).limit(600) as any;
       setV79(false);
     }
     if (r.error) { setLoadErr(friendly(r.error)); setRows([]); return; }
@@ -639,28 +640,40 @@ function FinishModal({ r, db, canExpense, today, onClose, onDone, setStatus }: {
   const [err, setErr] = useState<string | null>(null);
   const amount = Number(String(cost).replace(/[^\d.]/g, ""));
   const alreadyDone = r.status === "done";
+  /* (مراجعة 5 نوفمبر) ما نجح من الخطوات يُحفظ: إعادة المحاولة بعد فشل الربط
+     لا تُدخل مصروفًا ثانيًا ولا تكرّر «أُنجز» في سجل المستأجر */
+  const [closed, setClosed] = useState(alreadyDone);
+  const [saved, setSaved] = useState<{ id: string; amount: number; voucher_no?: string | null } | null>(null);
+  /* طلب سُجّلت تكلفته من قبل (ثم أُعيد فتحه) لا يقبل تكلفة ثانية من هنا */
+  const hasCost = r.expense_id != null || r.cost != null;
+  const allowCost = canExpense && !hasCost;
 
   async function go() {
     setErr(null);
     if (cost && (!isFinite(amount) || amount <= 0)) return setErr("المبلغ غير صحيح");
     setBusy(true);
-    if (!alreadyDone) {
+    if (!closed) {
       const ok = await setStatus(note);
       if (!ok) { setBusy(false); return; }
+      setClosed(true);
     }
-    if (!(amount > 0) || !canExpense) {
+    if (!(amount > 0) || !allowCost) {
       setBusy(false);
       return onDone({ status: "done" }, "أُنجز الطلب ✓ — أضف صور «بعد» من التفاصيل وأرسل للمستأجر.");
     }
     try {
       const o = await getOffice(db);
       if (!o) throw new Error("انتهت الجلسة");
-      const { data: ex, error } = await db.from("expenses").insert({
-        user_id: o.officeId, property_id: r.property_id, unit: r.unit || null, category: "maintenance",
+      let ex: any = saved;
+      if (!ex) {
+      const { data, error } = await db.from("expenses").insert({
+        user_id: (r as any).user_id || o.officeId, property_id: r.property_id, unit: r.unit || null, category: "maintenance",
         amount: Math.round(amount * 100) / 100, spent_on: today, note: expenseNote(r), vendor: r.tech_name || null,
         billable, paid_by: paidBy, status: "paid",
       }).select("id,amount,voucher_no").single();
       if (error) throw error;
+      ex = data; setSaved(data as any);
+      }
       const { error: e2 } = await db.rpc("watheq_tenant_request_link_expense", { p_request: r.id, p_expense: (ex as any).id });
       if (e2) throw e2;
       setBusy(false);
@@ -668,7 +681,7 @@ function FinishModal({ r, db, canExpense, today, onClose, onDone, setStatus }: {
         `أُنجز الطلب ✓ وسُجّلت التكلفة ${sar(Number((ex as any).amount))} ريال${(ex as any).voucher_no ? ` · سند صرف ${(ex as any).voucher_no}` : ""}.`);
     } catch (e) {
       setBusy(false);
-      setErr(`${alreadyDone ? "" : "أُنجز الطلب، لكن "}تعذّر تسجيل التكلفة: ${friendly(e)}`);
+      setErr(`${alreadyDone ? "" : "أُنجز الطلب، لكن "}تعذّر ${saved ? "ربط المصروف بالطلب (المصروف حُفظ — أعد المحاولة)" : "تسجيل التكلفة"}: ${friendly(e)}`);
     }
   }
 
@@ -686,11 +699,13 @@ function FinishModal({ r, db, canExpense, today, onClose, onDone, setStatus }: {
           <label className="block"><span className="block text-sm font-semibold mb-1">ردّك للمستأجر <span className="text-muted font-normal text-xs">— اختياري</span></span>
             <input className="fld text-sm" maxLength={500} value={note} onChange={(e) => setNote(e.target.value)} placeholder="مثال: تم تغيير الخلاط وتنظيف التصريف" /></label>
         )}
-        {canExpense ? (
+        {hasCost ? (
+          <p className="text-xs text-muted">تكلفة هذا الطلب مسجّلة من قبل ({sar(Number(r.cost || 0))} ريال) — لتغييرها عدّل المصروف من «المصروفات».</p>
+        ) : canExpense ? (
           <div className="rounded-xl border border-line bg-paper p-3 space-y-2.5">
             <label className="block"><span className="block text-sm font-semibold mb-1">التكلفة <span className="text-muted font-normal text-xs">— تُسجَّل مصروف صيانة على العقار</span></span>
               <div className="relative">
-                <input className="fld text-sm pe-14 tabular-nums" inputMode="decimal" dir="ltr" value={cost} onChange={(e) => setCost(e.target.value)} placeholder="0" />
+                <input className="fld text-sm pe-14 tabular-nums" inputMode="decimal" dir="ltr" value={cost} readOnly={!!saved} onChange={(e) => setCost(e.target.value)} placeholder="0" />
                 <span className="absolute inset-y-0 end-3 grid place-items-center text-xs text-muted">ريال</span>
               </div></label>
             {amount > 0 && (
@@ -713,8 +728,8 @@ function FinishModal({ r, db, canExpense, today, onClose, onDone, setStatus }: {
           <p className="text-xs text-muted">تسجيل التكلفة يحتاج صلاحية «المصروفات» — اطلبها من صاحب المكتب.</p>
         )}
         {err && <div className="text-xs font-semibold text-[#8f2b26] bg-[#FBE9E7] border border-[#F5C6C2] rounded-lg p-2">{err}</div>}
-        <button className="btn w-full bg-paid text-white hover:opacity-90" disabled={busy || (alreadyDone && !(amount > 0))} onClick={() => void go()}>
-          {busy ? "…" : alreadyDone ? "سجّل التكلفة" : amount > 0 ? "أنجز وسجّل التكلفة" : "تم الإنجاز"}
+        <button className="btn w-full bg-paid text-white hover:opacity-90" disabled={busy || (alreadyDone && !(amount > 0 && allowCost))} onClick={() => void go()}>
+          {busy ? "…" : alreadyDone ? "سجّل التكلفة" : amount > 0 && allowCost ? "أنجز وسجّل التكلفة" : "تم الإنجاز"}
         </button>
       </div>
     </Overlay>

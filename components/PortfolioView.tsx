@@ -177,7 +177,8 @@ export default function PortfolioView({ properties, windows, compliance, orgName
       due: occ.filter((r) => r.st.status === "soon").length,
       expiring: occ.filter((r) => renewalDue(r.t, r.st)).length,
       monthly: occ.reduce((a, r) => a + (Number(r.t.rent_amount) || 0) * (PER_MONTH[r.t.payment_frequency || "monthly"] || 1), 0),
-      collected: monthCollected?.[p.id] ?? null,
+      /* عقار بلا دفعات هذا الشهر غائب عن الخريطة: صفر لا «…» (كان يبقى «…» للأبد) */
+      collected: monthCollected ? (monthCollected[p.id] ?? 0) : null,
     };
   }).sort((a, b) => b.overdue - a.overdue || b.late - a.late || a.p.name.localeCompare(b.p.name, "ar"));
 
@@ -436,7 +437,7 @@ export default function PortfolioView({ properties, windows, compliance, orgName
             {late.length > 0 && <div><div className="text-xs opacity-80 mb-1.5">🔴 متأخرون ({late.length}) — {sar(totals.overdue)} ريال</div><div className="space-y-1.5">{cut("late", late).map(({ p, t, st }) => <Item key={t.id} p={p} t={t} st={st} tone="late" note={`${st.statusLabel} · ${sar(dueWithVat(st, t, p))} ريال`} />)}<More k="late" n={late.length} /></div></div>}
             {due.length > 0 && <div><div className="text-xs opacity-80 mb-1.5">🟠 مستحق خلال {daysAr(windows.imminent)} ({due.length})</div><div className="space-y-1.5">{cut("due", due).map(({ p, t, st }) => <Item key={t.id} p={p} t={t} st={st} tone="due" note={`${st.statusLabel} · ${st.nextDueDate} (${hijriShort(st.nextDueDate || "")})`} />)}<More k="due" n={due.length} /></div></div>}
             {expiring.length > 0 && <div><div className="text-xs opacity-80 mb-1.5">⏳ عقود انتهت أو تنتهي خلال {daysAr(windows.expiring)} — جدّدها أو سجّل الإخلاء ({expiring.length})</div><div className="space-y-1.5">{cut("exp", expiring).map(({ p, t, st }) => <Item key={t.id} p={p} t={t} st={st} tone="exp" note={(st.daysToEnd ?? 0) < 0 ? `انتهى ${st.endDate} (منذ ${daysAr(-(st.daysToEnd ?? 0))}) ولم يُجدَّد` : `ينتهي ${st.endDate} (بعد ${daysAr(st.daysToEnd)})`} />)}<More k="exp" n={expiring.length} /></div></div>}
-            {vacant.length > 0 && <div><div className="text-xs opacity-80 mb-1.5">⚪ شاغرة ({vacant.length})</div><div className="space-y-1.5">{cut("vac", vacant).map(({ p, t, st }) => <Item key={t.id} p={p} t={t} st={st} note={t.move_out_date ? `شاغرة منذ ${t.move_out_date}` : "شاغرة"} />)}<More k="vac" n={vacant.length} /></div></div>}
+            {vacant.length > 0 && <div><div className="text-xs opacity-80 mb-1.5">⚪ شاغرة ({vacant.length})</div><div className="space-y-1.5">{cut("vac", vacant).map(({ p, t, st }) => <Item key={t.id} p={p} t={t} st={st} note={t.move_out_date ? `شاغرة منذ ${arDate(t.move_out_date)}` : "شاغرة"} />)}<More k="vac" n={vacant.length} /></div></div>}
           </div>
         )}
       </div>

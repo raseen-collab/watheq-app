@@ -64,16 +64,16 @@ export default function DashboardShell({
     ? [{ href: "/dashboard/property/listings", label: "📋 المعروضات والطلبات" }]
     : onProperty
     ? [
-        { href: "/dashboard/property", label: "عقاراتي" },
+        { href: "/dashboard/property", label: "🏢 عقاراتي" },
         { href: "/dashboard/property/overview", label: "🗂️ نظرة عامة" },
         { href: "/dashboard/property/maintenance", label: "🛠 الصيانة" },
-        { href: "/dashboard/health", label: "🩺 فحص البيانات" },
+        { href: "/dashboard/health", label: "🔍 فحص البيانات" },
         { href: "/dashboard/property/listings", label: "📋 المعروضات" },
-        { href: "/dashboard/property/import", label: "رفع Excel" },
+        { href: "/dashboard/property/import", label: "📥 رفع Excel" },
         { href: "/dashboard/property/advisor", label: "🧠 المستشار" },
       ]
     : [
-        { href: "/dashboard/association", label: "جمعيتي" },
+        { href: "/dashboard/association", label: "🏘️ جمعيتي" },
         { href: "/dashboard/association/advisor", label: "🧠 المستشار" },
       ];
 

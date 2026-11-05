@@ -1,4 +1,5 @@
 "use client";
+import { arDate } from "@/lib/documents";
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -111,7 +112,7 @@ export default function SubscribeView({ accountType, status, subscribedUntil, cl
       <h1 className="font-display font-bold text-deep text-2xl mt-3 mb-1">اشترك في وثيق</h1>
       <div className="text-sm text-muted mb-6 leading-relaxed">
         {status.map((s) => <div key={s.product}>{statusLine(s)}</div>)}
-        {subscribedUntil && <div>نهاية الاشتراك الحالي: {subscribedUntil} — التجديد يُضاف بعدها فلا تخسر أيامك.</div>}
+        {subscribedUntil && <div>نهاية الاشتراك الحالي: {arDate(subscribedUntil)} — التجديد يُضاف بعدها فلا تخسر أيامك.</div>}
       </div>
 
       {!ready && (

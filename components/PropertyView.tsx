@@ -137,8 +137,8 @@ function UpcomingLine({ st, rent, imminentDays, due: dueIn }: {
   const soon = d <= imminentDays;
   return (
     <span className="block font-normal text-muted mt-0.5">
-      القادمة {rent > 0 ? <b className="text-ink">{sar(rent)} ريال</b> : null} · <bdi dir="ltr" className="whitespace-nowrap">{st.upcomingDate}</bdi>
-      {" · "}{d === 0 ? "اليوم" : `بعد ${d} ${d === 1 ? "يوم" : d === 2 ? "يومين" : d <= 10 ? "أيام" : "يومًا"}`}
+      القادمة {rent > 0 ? <b className="text-ink">{sar(rent)} ريال</b> : null} · <span className="whitespace-nowrap">{arDate(st.upcomingDate)}</span>
+      {" · "}{d === 0 ? "اليوم" : d === 1 ? "غدًا" : d === 2 ? "بعد يومين" : `بعد ${d} ${d <= 10 ? "أيام" : "يومًا"}`}
       {soon && rent > 0 && due > 0 && (
         /* المجموع وحده يُخفي أن جزءًا منه متأخر أصلًا — والمكتب يحتاج أن
            يقول للمستأجر «منها 500 متأخرة من الشهر الماضي». */
@@ -562,7 +562,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       amount: amt,
       why: exVat
         ? `بلاغ حوالة من المستأجر: ${sar(Number(c.amount))} ريال شاملة الضريبة — يُسجَّل قبل الضريبة ${sar(amt)}`
-        : `بلاغ حوالة من المستأجر بتاريخ ${c.transfer_date} — طابقه مع كشف البنك`,
+        : `بلاغ حوالة من المستأجر بتاريخ ${arDate(c.transfer_date)} — طابقه مع كشف البنك`,
       paidOn: c.transfer_date, reference: c.bank_ref,
     });
     setPayClaim(c);
@@ -611,7 +611,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       try {
         const { data: rp } = await supabase.from("payments").select("id, amount, paid_on, reverses").eq("tenant_id", t.id).order("paid_on", { ascending: false }).limit(60);
         const near = nearDuplicatePayment(amt, today(), (rp || []) as any[]);
-        if (near) why = `يشبه دفعة ${sar(Number(near.amount))} بتاريخ ${String(near.paid_on).slice(0, 10)}`;
+        if (near) why = `يشبه دفعة ${sar(Number(near.amount))} بتاريخ ${arDate(String(near.paid_on).slice(0, 10))}`;
       } catch { /* بلا قراءة: يبقى التأكيد المعتاد */ }
     }
     /* (11 أكتوبر 2026) عليه دين مرحَّل ⇒ النافذة تسأل: الأقساط أم الدين؟ — لا تسجيل صامت على الأقساط */
@@ -687,7 +687,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       }
     } catch { /* نصوغ التأكيد بلا رقم */ }
     const what = last
-      ? `سيُعكس ${sar(last.amount)} ريال (دفعة ${last.paid_on}) ويُخصم من المحصَّل`
+      ? `سيُعكس ${sar(last.amount)} ريال (دفعة ${arDate(last.paid_on)}) ويُخصم من المحصَّل`
       : known ? "لا دفعة مسجّلة في الدفتر لهذه المدة — سيُصحَّح عدّاد الدفعات وحده بلا أثر نقدي (رصيد افتتاحي)"
       : "سيُعكس آخر مبلغ إيجار مسجَّل (تجده في «سجل المدفوعات») ويُخصم من المحصَّل";
     if (!confirm(`التراجع عن آخر دفعة مسجّلة؟\n\n${t.name} — ${ul} ${t.unit || "—"} — ${active.name}\n${what}، ويُسجَّل التراجع باسمك في سجل الحركات المالية.`)) return;
@@ -715,7 +715,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
     notify("ok", r.opening_balance
       ? "صُحّح عدّاد الدفعات — كانت دفعة سُدّدت قبل وثيق، فلا تُسجَّل في الدفتر"
       : ((r.reversed || amt) ? `تم التراجع — خُصم ${sar(r.reversed || amt)} ريال` : "تم التراجع")
-        + (r.paid_on ? ` من تحصيل ${r.paid_on}` : "") + " وسُجّل في سجل الحركات المالية");
+        + (r.paid_on ? ` من تحصيل ${arDate(r.paid_on)}` : "") + " وسُجّل في سجل الحركات المالية");
     });
   }
 
@@ -738,7 +738,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
     /* الملاحظة توثيق لا شرط: إن رفضتها الصلاحيات نُكمل ونُعلم بلا إفشال العملية */
     const noteRes = await supabase.from("property_notes").insert({
       property_id: active.id, note_date: today(),
-      text: `إخلاء ${unitLabel(active.property_type)} ${t.unit || "—"} — ${t.name} بتاريخ ${patch.move_out_date}` +
+      text: `إخلاء ${unitLabel(active.property_type)} ${t.unit || "—"} — ${t.name} بتاريخ ${arDate(patch.move_out_date)}` +
             (patch.deposit_amount ? ` · تأمين ${sar(patch.deposit_amount)} ريال` : "") +
             (patch.deposit_deductions ? ` · خصومات ${sar(patch.deposit_deductions)} ريال` : ""),
     });
@@ -1376,7 +1376,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
     const noteRes = await supabase.from("property_notes").insert({
       property_id: active.id, note_date: today(),
       /* الفجوة غير المفوترة (fromToday) تُوثَّق في السجل — قرار المكتب يُقال صراحةً لا صمتًا */
-      text: `تجديد عقد ${t.name} (${unitLabel(active.property_type)} ${t.unit || "—"}) — من ${fields.contract_start} إلى ${fields.contract_end} بقيمة ${sar(fields.rent_amount)} ريال / ${freqShort(fields.payment_frequency)}`
+      text: `تجديد عقد ${t.name} (${unitLabel(active.property_type)} ${t.unit || "—"}) — من ${arDate(fields.contract_start)} إلى ${arDate(fields.contract_end)} بقيمة ${sar(fields.rent_amount)} ريال / ${freqShort(fields.payment_frequency)}`
         + ((fields as any).gap && (fields as any).gap.days > 0 ? ` (بدأت من اليوم؛ ما بين ${(fields as any).gap.from} و${(fields as any).gap.to} غير مفوتَر)` : ""),
     });
     setItems(items.map((pp) => pp.id === active.id ? {
@@ -2034,8 +2034,8 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
         <div className={`flex flex-wrap items-center gap-3 rounded-xl p-3.5 mb-4 border text-sm ${
           (expiringSoon.st.daysToEnd || 0) <= 30 ? "bg-[#FBE9E7] border-[#F5C6C2] text-[#8f2b26]" : "bg-[#FBF1DF] border-[#EBD9AA] text-[#8a5a11]"}`}>
           <span>عقد {expiringSoon.t.name} ({ul} {expiringSoon.t.unit || "—"}) {(expiringSoon.st.daysToEnd ?? 0) < 0
-            ? <>انتهى منذ <b>{plural(-(expiringSoon.st.daysToEnd ?? 0), "يوم واحد", "يومين", "أيام", "يومًا")}</b> (<bdi dir="ltr" className="whitespace-nowrap">{expiringSoon.st.endDate}</bdi>) ولم يُجدَّد. جدّده أو سجّل الإخلاء.</>
-            : <>ينتهي خلال <b>{plural(expiringSoon.st.daysToEnd ?? 0, "يوم واحد", "يومين", "أيام", "يومًا")}</b> (<bdi dir="ltr" className="whitespace-nowrap">{expiringSoon.st.endDate}</bdi>). جهّز التجديد أو الإخلاء.</>}</span>
+            ? <>انتهى منذ <b>{plural(-(expiringSoon.st.daysToEnd ?? 0), "يوم واحد", "يومين", "أيام", "يومًا")}</b> (<span className="whitespace-nowrap">{arDate(expiringSoon.st.endDate)}</span>) ولم يُجدَّد. جدّده أو سجّل الإخلاء.</>
+            : <>ينتهي خلال <b>{plural(expiringSoon.st.daysToEnd ?? 0, "يوم واحد", "يومين", "أيام", "يومًا")}</b> (<span className="whitespace-nowrap">{arDate(expiringSoon.st.endDate)}</span>). جهّز التجديد أو الإخلاء.</>}</span>
           <button className="btn btn-ghost text-xs mr-auto" onClick={() => askRenew(expiringSoon.t)}>تجديد الآن</button>
         </div>
       )}
@@ -2202,11 +2202,11 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
           {tenants.length > 0 && (
             <div className="border-b border-line px-4 py-3 flex flex-wrap gap-2 items-center bg-paper">
               {/* النص الطويل كان يُقصّ على الجوال فلا يُعرف ما يُبحث به — قصير هنا، والكامل في title (30 سبتمبر 2026) */}
-              <input className="fld flex-1 min-w-[150px] basis-full sm:basis-auto" value={q} onChange={(e) => setQ(e.target.value)} type="search"
+              <input className="fld flex-1 min-w-[150px] basis-full sm:basis-0 sm:w-auto" value={q} onChange={(e) => setQ(e.target.value)} type="search"
                 aria-label={`بحث في الوحدات: الاسم أو رقم ${ul} أو الجوال أو الهوية أو رقم العقد أو حساب الكهرباء`}
                 title={`ابحث بالاسم أو رقم ${ul} أو الجوال أو الهوية أو رقم العقد أو حساب الكهرباء`}
                 placeholder={`ابحث: اسم، ${ul}، جوال، هوية…`} />
-              <select className="fld flex-1 sm:flex-none sm:max-w-[170px]" aria-label="ترتيب الوحدات" value={sort} onChange={(e) => setSort(e.target.value as any)}>
+              <select className="fld flex-1 sm:flex-none sm:w-[170px]" aria-label="ترتيب الوحدات" value={sort} onChange={(e) => setSort(e.target.value as any)}>
                 <option value="urgent">الأهم أولًا</option>
                 <option value="due">الأقرب استحقاقًا</option>
                 <option value="amount">الأكبر متأخرًا</option>
@@ -2322,14 +2322,14 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                               {key === "vacant" ? (
                                 <>
                                   <div className="text-muted">— شاغرة —</div>
-                                  {t.name && !(t.name === "شاغرة" && !t.contract_start) && <div className="text-[11px] text-muted">آخر مستأجر: {t.name}</div>}
+                                  {t.name && t.name.trim() !== "شاغرة" && <div className="text-[11px] text-muted">آخر مستأجر: {t.name}</div>}
                                 </>
                               ) : null}
                               <div className={`font-medium ${key === "vacant" ? "hidden" : ""}`}>{t.name}{msgCount[t.id] > 0 && <span className="ms-1 text-[10px] bg-deep text-goldSoft rounded-full px-1.5 py-0.5" title="رسائل الفريق على هذه الوحدة">💬 {msgCount[t.id]}</span>}</div>
                               {t.contract_no && <div className="text-[11px] text-muted" dir="ltr">عقد {t.contract_no}</div>}
                               {key !== "vacant" && <MeterLine t={t} onSend={meterNoticeDue(t) ? () => { void sendMeterNotice(t); } : undefined} />}
                             </td>
-                            <td className={`px-3 ${cellY} whitespace-nowrap tabular-nums ${key === "vacant" ? "text-muted/70" : "text-muted"}`}>{sar(t.rent_amount)} / {freqShort(t.payment_frequency)}{key === "vacant" && <div className="text-[10px]">الإيجار المطلوب</div>}</td>
+                            <td className={`px-3 ${cellY} whitespace-nowrap tabular-nums ${key === "vacant" ? "text-muted/70" : "text-muted"}`}>{key === "vacant" && !(Number(t.rent_amount) > 0) ? <span title="أدخله من «تعديل البيانات» ليظهر في عرض السعر وحساب الشغور">— <div className="text-[10px]">الإيجار المطلوب لم يُحدَّد</div></span> : <>{sar(t.rent_amount)} / {freqShort(t.payment_frequency)}{key === "vacant" && <div className="text-[10px]">الإيجار المطلوب</div>}</>}</td>
                             <td className={`px-3 ${cellY} whitespace-nowrap tabular-nums`}>
                               {key === "vacant" ? <span className="text-muted">—</span>
                               : st.fullyPaid && st.endDate ? (<>
@@ -2432,7 +2432,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                           <td className="px-3 py-2 whitespace-nowrap">
                             {/* «المتبقي خلال 12 شهرًا» و«التعاقدي شهريًّا» أزيلا: صيغتان أخريان لدخل العمارة تُقرآن مناقضتين له */}
                           </td>
-                          <td className="px-3 py-2 whitespace-nowrap" colSpan={2}>{nearest ? <>أقرب استحقاق: <bdi dir="ltr" className="whitespace-nowrap">{nearest}</bdi></> : "—"}</td>
+                          <td className="px-3 py-2 whitespace-nowrap" colSpan={2}>{nearest ? <>أقرب استحقاق: <span className="whitespace-nowrap">{arDate(nearest)}</span></> : "—"}</td>
                           <td className={`px-3 py-2 text-left font-bold ${totalDue > 0 ? "text-late" : ""}`}>{totalDue > 0 ? <>{sar(totalDue)}<div className="text-[10px] font-normal text-muted">إجمالي المستحق</div>
                             {dueLit > 0 && <div className="text-[10px] font-normal text-muted whitespace-nowrap">منه تحت التنفيذ {sar(dueLit)}</div>}
                             {dueVac > 0 && <div className="text-[10px] font-normal text-muted whitespace-nowrap">منه على سابقين {sar(dueVac)}</div>}</> : "—"}</td>
@@ -2524,10 +2524,10 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                               : <span className="text-[#5B21B6] font-semibold">ينتهي بعد {daysAr(st.daysToEnd)}</span>
                           )
                         : key === "litigation" ? <span className="text-[#475569]">{t.enforcement_no ? `طلب ${t.enforcement_no}` : "متابعة نظامية"}</span>
-                        : st.fullyPaid ? <span className="text-[#137a50] font-semibold">✓ سدّد كامل العقد ({st.paid} من {t.contract_periods || st.paid}){st.endDate ? <span className="font-normal text-muted"> · ينتهي <bdi dir="ltr" className="whitespace-nowrap">{st.endDate}</bdi>{st.daysToEnd !== null && st.daysToEnd >= 0 ? ` (بعد ${daysAr(st.daysToEnd)})` : ""} — القسط القادم مع التجديد</span> : null}</span>
+                        : st.fullyPaid ? <span className="text-[#137a50] font-semibold">✓ سدّد كامل العقد ({st.paid} من {t.contract_periods || st.paid}){st.endDate ? <span className="font-normal text-muted"> · ينتهي <span className="whitespace-nowrap">{arDate(st.endDate)}</span>{st.daysToEnd !== null && st.daysToEnd >= 0 ? ` (بعد ${daysAr(st.daysToEnd)})` : ""} — القسط القادم مع التجديد</span> : null}</span>
                         : st.nextDueDate ? <span className="text-muted">
                             {/* bdi: التاريخ اللاتيني وسط سطر عربي ينقلب ترتيبه عند الالتفاف (30 سبتمبر 2026) */}
-                            القادمة <bdi dir="ltr" className="whitespace-nowrap">{st.upcomingDate || st.nextDueDate}</bdi>{` · ${hijriShort(st.upcomingDate || st.nextDueDate || "")}`}
+                            القادمة <span className="whitespace-nowrap">{arDate(st.upcomingDate || st.nextDueDate)}</span>{` · ${hijriShort(st.upcomingDate || st.nextDueDate || "")}`}
                             {Number(t.rent_amount) > 0 && <span> · {sar(rentWithVat(t, active))} ريال</span>}
                           </span> : null}
                     </div>
@@ -2667,9 +2667,9 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                       {/* التاريخ في bdi باتجاه يساري: «متأخرة · 2026-09-28» كان ينقلب ترتيبه عند الالتفاف */}
                       {n.due_date ? (
                         <span className={late ? "text-late" : soon ? "text-[#9A4B00]" : "text-[#8a5a11]"}>
-                          {late ? "متأخرة · " : soon ? "اليوم · " : ""}<bdi dir="ltr" className="whitespace-nowrap">{n.due_date}</bdi>
+                          {late ? "متأخرة · " : soon ? "اليوم · " : ""}<span className="whitespace-nowrap">{arDate(n.due_date)}</span>
                         </span>
-                      ) : <span className="text-muted"><bdi dir="ltr" className="whitespace-nowrap">{n.note_date}</bdi></span>}
+                      ) : <span className="text-muted"><span className="whitespace-nowrap">{arDate(n.note_date)}</span></span>}
                     </span>
                     <span className={`flex-1 text-[#33413d] ${n.done_at ? "line-through" : ""}`}>
                       {n.kind && n.kind !== "other" && <span className="me-1">{NOTE_KINDS[n.kind]?.icon}</span>}
@@ -2977,7 +2977,7 @@ function PaymentModal({ tenant, unitWord, onClose, onSubmit, st, recent = null, 
     }
     const near = nearDuplicatePayment(amt, paidOn, recent || []);
     if (near && ok.dup !== key) {
-      setAsk({ kind: "dup", text: `يشبه دفعة ${sar(Number(near.amount))} بتاريخ ${String(near.paid_on).slice(0, 10)} — دفعة جديدة فعلًا؟` });
+      setAsk({ kind: "dup", text: `يشبه دفعة ${sar(Number(near.amount))} بتاريخ ${arDate(String(near.paid_on).slice(0, 10))} — دفعة جديدة فعلًا؟` });
       return;
     }
     /* (F2) covered = قائمة الدفعات القريبة مكتملة لتاريخ هذا السداد: قُرئت بلا خطأ، وإمّا أقل من سقف
@@ -3086,7 +3086,7 @@ function PaymentModal({ tenant, unitWord, onClose, onSubmit, st, recent = null, 
           {settled ? (
             <div>العقد مسدَّد بالكامل — المبلغ كله (<b>{sar(amt)} ريال</b>) زيادة على قيمة العقد.</div>
           ) : (<>
-          {lateN > 0 && <div>يُطبَّق على أقدم دفعة متأخرة أولًا{st?.nextDueDate ? <> (المستحقة <bdi dir="ltr" className="whitespace-nowrap">{st.nextDueDate}</bdi>)</> : null}.</div>}
+          {lateN > 0 && <div>يُطبَّق على أقدم دفعة متأخرة أولًا{st?.nextDueDate ? <> (المستحقة <span className="whitespace-nowrap">{arDate(st.nextDueDate)}</span>)</> : null}.</div>}
           {completed > 0 && <div>ستكتمل <b>{countAr(completed, "دفعة واحدة", "دفعتان", "دفعات", "دفعة")}</b>{lateN > 0 ? (completed >= lateN ? " — وتُغطّى كل المتأخرات" : ` — ويبقى متأخرًا ${countAr(lateN - completed, "دفعة واحدة", "دفعتان", "دفعات", "دفعة")}`) : ""}.</div>}
           {overAll > 0
             ? <div>ويزيد <b>{sar(overAll)} ريال</b> على المتبقي من العقد كله ({sar(rem.remaining)}) — لا دفعة بعدها في هذا العقد.</div>
@@ -3201,7 +3201,7 @@ function TurnoverModal({ tenant, unitWord, onClose, onSubmit, vat }: {
         <div className="font-semibold mb-1.5">تسوية التأمين</div>
         <div className="text-xs leading-relaxed space-y-0.5">
           <div>التأمين: <b className="tabular-nums">{sar(s.deposit)}</b> ريال</div>
-          <div>يُخصم إيجار متأخر حتى <bdi dir="ltr" className="whitespace-nowrap">{d.move_out_date || today()}</bdi>{vat?.enabled ? " (شامل الضريبة)" : ""}: <b className="tabular-nums">{sar(rentOwed)}</b> ريال</div>
+          <div>يُخصم إيجار متأخر حتى <span className="whitespace-nowrap">{arDate(d.move_out_date || today())}</span>{vat?.enabled ? " (شامل الضريبة)" : ""}: <b className="tabular-nums">{sar(rentOwed)}</b> ريال</div>
           {carriedOwed > 0 && <div>ويُخصم دين مرحَّل من مدة سابقة: <b className="tabular-nums">{sar(carriedOwed)}</b> ريال</div>}
           <div>يُخصم تلفيات: <b className="tabular-nums">{sar(s.deductions)}</b> ريال</div>
           <div className="pt-1 font-semibold">
@@ -3274,7 +3274,7 @@ function HistoryModal({ data, unitWord, onClose, canEdit = true, onChanged, db }
    */
   async function reverseOne(r: any) {
     if (!confirm(
-      `عكس هذه الدفعة؟\n\n${sar(Number(r.amount))} ريال بتاريخ ${r.paid_on}\n\n`
+      `عكس هذه الدفعة؟\n\n${sar(Number(r.amount))} ريال بتاريخ ${arDate(r.paid_on)}\n\n`
       + `سيُضاف صفّ سالب مطابق، ويُنقص عدّاد الدفعات المسدَّدة، ويعود المبلغ مستحقًّا.\n`
       + `الدفعة الأصلية تبقى في السجل للتدقيق.\n\n`
       + `إن كان المستأجر سدّد مبلغًا أقل، اعكسها ثم سجّل المبلغ الصحيح بزر «💰 تسجيل دفعة».`
@@ -3286,7 +3286,7 @@ function HistoryModal({ data, unitWord, onClose, canEdit = true, onChanged, db }
     const res = data as any;
     setRows((cur) => [{ id: res?.payment_id || `rev_${r.id}`, tenant_id: r.tenant_id, paid_on: r.paid_on,
       amount: -Number(r.amount), method: "other", periods_covered: -1, reverses: r.id,
-      note: `عكس دفعة ${r.paid_on}`, created_at: new Date().toISOString() }, ...cur]);
+      note: `عكس دفعة ${arDate(r.paid_on)}`, created_at: new Date().toISOString() }, ...cur]);
     onChanged?.();
   }
 
@@ -3356,7 +3356,7 @@ function HistoryModal({ data, unitWord, onClose, canEdit = true, onChanged, db }
                       ? <input className="fld !py-0.5 !text-xs !w-32" type="date" value={eDate} onChange={(e) => setEDate(e.target.value)} />
                       : r.paid_on}
                     {r.created_at && String(r.created_at).slice(0, 10) !== String(r.paid_on) && (
-                      <div className="text-[10px] text-muted">سُجّل {String(r.created_at).slice(0, 10)}</div>
+                      <div className="text-[10px] text-muted">سُجّل {arDate(String(r.created_at).slice(0, 10))}</div>
                     )}
                   </td>
                   <td className="p-2 tabular-nums font-semibold">
@@ -5013,7 +5013,7 @@ function RenewModal({ tenant, unitWord, onClose, onRenew }: {
       <div className="bg-[#E6F4EC] border border-[#B7DFC7] rounded-xl p-3 mt-4 text-sm">
         <div className="font-semibold text-[#137a50] mb-1.5">المدة الجديدة بعد التجديد</div>
         <div className="text-[#137a50] space-y-1 text-xs leading-relaxed">
-          <div>تبدأ: <b>{preview.contract_start}</b> · تنتهي: <b>{preview.contract_end}</b></div>
+          <div>تبدأ: <b>{arDate(preview.contract_start)}</b> · تنتهي: <b>{arDate(preview.contract_end)}</b></div>
           {preview.gap && preview.gap.days > 0 && (
             <div>ما بين {arDate(preview.gap.from)} واليوم ({plural(preview.gap.days, "يوم واحد", "يومان", "أيام", "يومًا")}) لن يُفوتَر.</div>
           )}
