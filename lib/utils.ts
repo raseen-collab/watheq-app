@@ -167,4 +167,4 @@ export function riyadhToday(): Date {
   return new Date(y, (m || 1) - 1, d || 1);
 }
 
-export const WATHEQ_WA = "966596300591";
+export const WATHEQ_WA = "966550165210";

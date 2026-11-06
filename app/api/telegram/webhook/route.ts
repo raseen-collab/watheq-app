@@ -166,7 +166,7 @@ async function handleMessage(db: DB, msg: any) {
     return tgSend(chatId,
       "⏳ <b>اشتراكك في وثيق منتهٍ.</b>\n\n"
       + "بياناتك محفوظة كما هي ولم يُحذف منها شيء، لكن تنبيهات البوت وأوامره متوقّفة حتى التجديد.\n\n"
-      + "للتجديد اضغط الزر أدناه، أو راسلنا على واتساب: +966596300591",
+      + "للتجديد اضغط الزر أدناه، أو راسلنا على واتساب: +966550165210",
       [[{ text: "💳 جدّد الاشتراك", url: "https://app.watheqapp.com/subscribe" }]]);
   }
 
@@ -289,7 +289,7 @@ async function handleCallback(db: DB, cq: any) {
   if (!p) return tgEdit(chatId, messageId, "حسابك غير مربوط. افتح «الإعدادات» في المنصة.");
   if ((p as any)._isStaff) return tgEdit(chatId, messageId, "تنبيهات وثيق لصاحب المكتب وحده — استعمل اللوحة من المتصفح.");
   if (allExpired(p as any))
-    return tgEdit(chatId, messageId, "⏳ اشتراكك منتهٍ — أوامر البوت متوقّفة حتى التجديد. بياناتك محفوظة.\n\nللتجديد: +966596300591");
+    return tgEdit(chatId, messageId, "⏳ اشتراكك منتهٍ — أوامر البوت متوقّفة حتى التجديد. بياناتك محفوظة.\n\nللتجديد: +966550165210");
 
   /**
    * حارس النقر المزدوج.

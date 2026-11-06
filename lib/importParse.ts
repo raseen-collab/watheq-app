@@ -727,3 +727,52 @@ export function tenantTemplateCells(t: any, propName: string): Partial<Record<Fi
     carried: Number(t.carried_debt) || 0,
   };
 }
+
+/* ============================================================
+   (6 نوفمبر 2026) «جدول تحصيل الإيجارات» المجاني من الموقع
+   أعلى صفحة يدخل منها الناس من قوقل تعطي هذا الملف — ثم كان رفعه في وثيق
+   يفتح ورقة «الدفعات»، ولا يفهم «نهاية العقد»، ويسأل عن تسعة أعمدة محسوبة،
+   فيقف الزائر عند شاشة المطابقة. هنا نتعرّف على الملف بعناوينه ونحوّل ورقة
+   «الإيجارات» إلى ما يقرؤه المحلّل مباشرة: المدة بالأشهر من التاريخين،
+   والمدفوع مبلغًا بالريال، وتُحذف الأعمدة المحسوبة وأسطر «مستأجر تجريبي».
+   ============================================================ */
+export const RENT_SHEET_NAME = "الإيجارات";
+const RC_SIGNATURE = ["الإيجار السنوي (ريال)", "نهاية العقد", "الدفعات المستحقة حتى اليوم", "أيام لنهاية العقد"];
+
+/** هل هذه ورقة «الإيجارات» من جدول التحصيل المجاني؟ */
+export function isRentCollectionSheet(grid: string[][]): boolean {
+  const first = (nonEmptyRows(grid)[0] || []).map((c) => cleanCell(c));
+  return RC_SIGNATURE.every((h) => first.includes(h));
+}
+
+/** عدد أشهر العقد من بدايته ونهايته (النهاية شاملة: 1 يناير–31 ديسمبر = 12) */
+export function monthsBetween(startIso: string, endIso: string): number | null {
+  const s = normalizeDate(startIso), e = normalizeDate(endIso);
+  if (!isRealDate(s) || !isRealDate(e)) return null;
+  const a = new Date(s + "T00:00:00Z"), b = new Date(e + "T00:00:00Z");
+  b.setUTCDate(b.getUTCDate() + 1);
+  const m = (b.getUTCFullYear() - a.getUTCFullYear()) * 12 + (b.getUTCMonth() - a.getUTCMonth()) + (b.getUTCDate() - a.getUTCDate()) / 30;
+  const r = Math.round(m);
+  return r > 0 ? r : null;
+}
+
+/** يحوّل ورقة «الإيجارات» إلى شبكة بعناوين وثيق — وإن لم تكن هي يُرجعها كما هي */
+export function adaptRentCollectionSheet(grid: string[][]): { grid: string[][]; adapted: boolean; dropped: number } {
+  if (!isRentCollectionSheet(grid)) return { grid, adapted: false, dropped: 0 };
+  const rows = nonEmptyRows(grid);
+  const h = rows[0].map((c) => cleanCell(c));
+  const at = (name: string) => h.indexOf(name);
+  const iUnit = at("رقم الوحدة"), iName = at("المستأجر"), iPhone = at("الجوال"), iRent = at("الإيجار السنوي (ريال)");
+  const iFreq = at("دورة السداد"), iStart = at("بداية العقد"), iEnd = at("نهاية العقد"), iPaid = at("المدفوع");
+  const cell = (r: string[], i: number) => (i >= 0 ? cleanCell(r[i]) : "");
+  const out: string[][] = [["رقم الوحدة", "اسم المستأجر", "الجوال", "الإيجار السنوي", "دورة السداد", "بداية العقد", "مدة العقد (أشهر)", "المبلغ المدفوع"]];
+  let dropped = 0;
+  for (const r of rows.slice(1)) {
+    const name = cell(r, iName);
+    /* أسطر الأمثلة في الملف: «مستأجر تجريبي ١…» بجوال 05xxxxxxxx */
+    if (!name || /^مستأجر تجريبي/.test(name)) { if (name) dropped++; continue; }
+    const months = monthsBetween(cell(r, iStart), cell(r, iEnd));
+    out.push([cell(r, iUnit), name, cell(r, iPhone), cell(r, iRent), cell(r, iFreq), cell(r, iStart), months ? String(months) : "", cell(r, iPaid) || "0"]);
+  }
+  return { grid: out, adapted: true, dropped };
+}

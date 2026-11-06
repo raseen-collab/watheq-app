@@ -23,7 +23,7 @@ export default function NotFound() {
           <Link href="/dashboard/property/overview" className="btn btn-ghost">نظرة عامة</Link>
         </div>
         <p className="text-[11px] text-muted mt-8">
-          إن وصلت هنا من رابط داخل وثيق، أخبرنا على واتساب 0596300591 لنصلحه.
+          إن وصلت هنا من رابط داخل وثيق، أخبرنا على واتساب 0550165210 لنصلحه.
         </p>
       </div>
     </main>

@@ -10,11 +10,12 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { searchKB, SUGGESTED, KB, CATEGORIES, type HelpEntry } from "@/lib/help-kb";
-import { openExternal } from "@/lib/utils";
+import { openExternal, WATHEQ_WA } from "@/lib/utils";
 
-type Msg = { who: "user" | "bot"; text: string; entries?: HelpEntry[]; noAnswer?: boolean };
+/* rated: تقييم المستخدم للجواب (6 نوفمبر 2026) — «وجد جوابًا» لا يعني «أفاد» */
+type Msg = { who: "user" | "bot"; text: string; entries?: HelpEntry[]; noAnswer?: boolean; q?: string; rated?: "up" | "down" };
 
-const WA = "966596300591";
+const WA = WATHEQ_WA;
 const waAsk = (q: string) =>
   `https://wa.me/${WA}?text=${encodeURIComponent(`سؤال عن وثيق:\n${q}`)}`;
 
@@ -55,12 +56,30 @@ export default function HelpAssistant() {
     log(t, hits);
     setMsgs((m) => [...m, { who: "user", text: t },
       hits.length
-        ? { who: "bot", text: "", entries: hits.map((h) => h.entry) }
+        ? { who: "bot", text: "", entries: hits.map((h) => h.entry), q: t }
         : {
             who: "bot", noAnswer: true,
             text: "ما لقيت جوابًا مكتوبًا لسؤالك.\n\nبدل ما أخمّن، أرسله لنا مباشرة وبنرد عليك — وبنضيفه هنا للجميع.",
           }]);
     setQ(""); setBrowse(false);
+  }
+
+  /** «أفاد / ما أفاد» — يُسجَّل مرة لكل جواب، ولا ينتظره المستخدم */
+  function rate(i: number, helpful: boolean) {
+    const m = msgs[i];
+    if (!m || m.rated) return;
+    setMsgs((all) => all.map((x, k) => (k === i ? { ...x, rated: helpful ? "up" : "down" } : x)));
+    try {
+      fetch("/api/help-log", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          kind: "feedback", question: m.q || "", helpful,
+          matched_id: m.entries?.[0]?.id || null,
+          path: typeof location !== "undefined" ? location.pathname : null,
+        }),
+        keepalive: true,
+      }).catch(() => {});
+    } catch { /* تجاهل */ }
   }
 
   const byCat = useMemo(() => {
@@ -145,6 +164,24 @@ export default function HelpAssistant() {
                     <div className="text-[13px] text-ink leading-[1.9] whitespace-pre-line">{e.a}</div>
                   </div>
                 ))}
+                {!!m.entries?.length && (
+                  <div className="flex items-center gap-2 text-[11px] text-muted ps-1">
+                    {!m.rated ? (
+                      <>
+                        <span>أفادك الجواب؟</span>
+                        <button onClick={() => rate(i, true)} className="border border-line rounded-full px-2.5 py-1 hover:bg-paper min-h-[32px]" aria-label="أفاد">👍 نعم</button>
+                        <button onClick={() => rate(i, false)} className="border border-line rounded-full px-2.5 py-1 hover:bg-paper min-h-[32px]" aria-label="ما أفاد">👎 لا</button>
+                      </>
+                    ) : m.rated === "up" ? (
+                      <span>شكرًا 🙏</span>
+                    ) : (
+                      <span className="flex flex-wrap items-center gap-2">
+                        <span>نعتذر — أرسل لنا سؤالك ونرد عليك ونحسّن الجواب للجميع.</span>
+                        <button className="btn btn-wa text-[11px] px-3 py-1" onClick={() => openExternal(waAsk(m.q || ""))}>💬 أرسل سؤالك</button>
+                      </span>
+                    )}
+                  </div>
+                )}
                 {m.noAnswer && (
                   <div className="bg-[#FBF1DF] border border-goldSoft rounded-xl p-3">
                     <div className="text-[13px] text-ink leading-relaxed whitespace-pre-line mb-2.5">{m.text}</div>

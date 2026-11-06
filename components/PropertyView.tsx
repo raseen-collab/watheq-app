@@ -2248,7 +2248,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                   <p className="text-[11px] text-muted mt-4">
                     ما عندك وقت؟{" "}
                     <a className="text-gold font-semibold underline" target="_blank" rel="noreferrer"
-                      href={"https://wa.me/966596300591?text=" + encodeURIComponent("السلام عليكم، أبغى تجهزون لي حسابي في وثيق — عندي ملف/صورة ببيانات العقار")}>
+                      href={"https://wa.me/966550165210?text=" + encodeURIComponent("السلام عليكم، أبغى تجهزون لي حسابي في وثيق — عندي ملف/صورة ببيانات العقار")}>
                       أرسل لنا ملفك أو صورة الدفتر على واتساب ونجهّزه لك
                     </a>
                   </p>

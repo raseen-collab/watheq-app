@@ -39,6 +39,18 @@ export async function POST(req: Request) {
     if (!url || !key2) return NextResponse.json({ ok: false }, { status: 500 });
     const db = admin(url, key2, { auth: { persistSession: false } });
 
+    /* (6 نوفمبر 2026) تقييم الجواب: «أفاد / ما أفاد» — جدول مستقل حتى لا يُعدّ السؤال مرتين */
+    if (body?.kind === "feedback") {
+      if (typeof body?.helpful !== "boolean") return NextResponse.json({ ok: false }, { status: 400 });
+      await db.from("help_feedback").insert({
+        user_id: uid, question,
+        matched_id: body?.matched_id ? String(body.matched_id).slice(0, 40) : null,
+        helpful: body.helpful,
+        path: body?.path ? String(body.path).slice(0, 120) : null,
+      });
+      return NextResponse.json({ ok: true });
+    }
+
     await db.from("help_queries").insert({
       user_id: uid,
       question,

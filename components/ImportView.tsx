@@ -13,6 +13,7 @@ import {
   analyzeColumns, initialConfig, rentBasisFromHeader, paidBasisFromHeader, mappingProblems, configToOptions, headerSignature, validSavedConfig, columnSamples, columnLetter,
   FIELDS, FIELD_LABEL, REQUIRED_FIELDS,
   type Prop, type Row, type ColumnInfo, type ColumnAnalysis, type MapConfig, type Field,
+  adaptRentCollectionSheet, RENT_SHEET_NAME,
 } from "@/lib/importParse";
 import type { Frequency } from "@/lib/contracts";
 
@@ -145,9 +146,20 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
       return;
     }
     if (!list.length) { setFileName(`${f.name} — الملف فارغ`); return; }
+    /* (6 نوفمبر 2026) «جدول تحصيل الإيجارات» المجاني من موقعنا: تُحوَّل ورقة «الإيجارات»
+       وتُفتح هي — كان الملف يفتح «الدفعات» ويقف عند مطابقة تسعة أعمدة محسوبة */
+    let rcAdapted = false;
+    list = list.map((s) => {
+      if (s.name !== RENT_SHEET_NAME) return s;
+      const a = adaptRentCollectionSheet(s.grid);
+      if (a.adapted) rcAdapted = true;
+      return a.adapted ? { ...s, grid: a.grid } : s;
+    });
+    if (rcAdapted) setFileName(`${f.name} — تعرّفنا عليه: «جدول تحصيل الإيجارات» من موقع وثيق (الأسطر التجريبية تُجوهلت)`);
     /* ورقة «الوحدات» (قالبنا) أو «قالب الرفع» (ملف تصدير وثيق) إن وُجدت، وإلا الأكثر صفوفًا — لا الأولى عمياء.
        (11 أكتوبر 2026) ملف التصدير كان يفتح «الدفعات» لأنها الأكثر صفوفًا. */
-    let idx = list.findIndex((s) => s.name === "الوحدات");
+    let idx = rcAdapted ? list.findIndex((s) => s.name === RENT_SHEET_NAME) : -1;
+    if (idx < 0) idx = list.findIndex((s) => s.name === "الوحدات");
     if (idx < 0) idx = list.findIndex((s) => s.name === "قالب الرفع");
     if (idx < 0) idx = list.reduce((b, s, i) => s.grid.length > list[b].grid.length ? i : b, 0);
     setSheets(list); setSheetIdx(idx);

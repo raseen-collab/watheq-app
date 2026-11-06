@@ -212,7 +212,7 @@ function LoginInner() {
       else if (/rate limit|after \d+ seconds|too many/i.test(msg)) setError("محاولات كثيرة متتابعة — انتظر دقيقة ثم أعد المحاولة.");
       else if (/network|fetch failed|Failed to fetch/i.test(msg)) setError("تعذّر الاتصال — تحقّق من الإنترنت وأعد المحاولة.");
       else if (/User not found/i.test(msg)) setError("لا يوجد حساب بهذا البريد — أنشئ حسابًا جديدًا.");
-      else setError("تعذّر إتمام العملية. أعد المحاولة، وإن تكرر راسلنا على واتساب 0596300591 ونساعدك فورًا.");
+      else setError("تعذّر إتمام العملية. أعد المحاولة، وإن تكرر راسلنا على واتساب 0550165210 ونساعدك فورًا.");
     } finally {
       setLoading(false);   // leaving يبقي الزر معطّلًا حتى تُغادر الصفحة
     }

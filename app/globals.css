@@ -158,6 +158,7 @@ html[data-theme="dark"] [class*="text-[#5B21B6]"] { color: #C4A9F5 !important; }
 html[data-theme="dark"] [class*="text-[#9FB8B3]"] { color: var(--d-muted) !important; }
 
 html[data-theme="dark"] [class*="border-[#F5C6C2]"] { border-color: #5B2C2C !important; }
+html[data-theme="dark"] [class*="border-[#F2DCA4]"] { border-color: #5A4520 !important; }
 html[data-theme="dark"] [class*="border-[#B7DFC7]"] { border-color: #1E5641 !important; }
 html[data-theme="dark"] [class*="border-[#EBD9AA]"] { border-color: #55441F !important; }
 

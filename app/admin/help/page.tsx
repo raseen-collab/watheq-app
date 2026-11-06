@@ -2,7 +2,7 @@ import { today, riyadhDate } from "@/lib/utils";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase-server";
 import { createClient as admin } from "@supabase/supabase-js";
-import { KB } from "@/lib/help-kb";
+import { KB, normalizeAr, searchKB } from "@/lib/help-kb";
 import { noStoreFetch } from "@/lib/no-store-fetch";
 
 export const dynamic = "force-dynamic";
@@ -50,16 +50,44 @@ export default async function HelpMonitorPage() {
   const unanswered = all.filter((r) => !r.answered);
   const rate = all.length ? Math.round(((all.length - unanswered.length) / all.length) * 100) : 0;
 
-  /* الأسئلة العاجزة مجمَّعة: عشر صياغات لسؤال واحد تعني حاجة واحدة */
-  const norm = (s: string) => String(s).replace(/\s+/g, " ").trim().toLowerCase();
-  const gaps = new Map<string, { q: string; n: number; last: string }>();
+  /* (6 نوفمبر 2026) تقييم الأجوبة — schema-v80. غيابه لا يُسقط الصفحة */
+  const fb = db ? await db.from("help_feedback").select("question,matched_id,helpful,created_at").gte("created_at", since).limit(3000) : { data: [], error: null as any };
+  const feedback = (fb.error ? [] : fb.data || []) as any[];
+  const fbMissing = !!fb.error;
+  const ups = feedback.filter((f) => f.helpful).length, downs = feedback.length - ups;
+
+  /* من سأل: مكتب مسجّل (اسمه) · زائر · من داخل التجربة — بلا بريد ولا جوال */
+  const uids = [...new Set(all.map((r) => r.user_id).filter(Boolean))] as string[];
+  const names: Record<string, string> = {};
+  if (db && uids.length) {
+    const { data: ps } = await db.from("profiles").select("id,org_name,full_name").in("id", uids.slice(0, 500));
+    for (const p of (ps || []) as any[]) names[p.id] = p.org_name || p.full_name || "مكتب";
+  }
+  const who = (r: any) => String(r.path || "").startsWith("/demo") ? "🧪 التجربة" : r.user_id ? `🏢 ${names[r.user_id] || "مكتب"}` : "👤 زائر";
+  const kbTitle = (id: string | null) => (id ? KB.find((k) => k.id === id)?.q || id : "");
+  const sources = new Map<string, number>();
+  for (const r of all) { const k = who(r).startsWith("🏢") ? "🏢 مكاتب مسجّلة" : who(r); sources.set(k, (sources.get(k) || 0) + 1); }
+
+  /* أجوبة تحتاج مراجعة: قيّمها السائل «ما أفاد»، أو طابقت بثقة ضعيفة
+     («ما هي العقار المسجل» طابقت «تذكير على العقار» — مُجابة شكلًا لا فعلًا) */
+  const downKey = new Set(feedback.filter((f) => !f.helpful).map((f) => normalizeAr(f.question)));
+  const review = all.filter((r) => r.answered && (downKey.has(normalizeAr(r.question)) || (r.score != null && Number(r.score) < 5)))
+    .slice(0, 30).map((r) => ({ ...r, down: downKey.has(normalizeAr(r.question)) }));
+
+  /* الأسئلة العاجزة مجمَّعة: عشر صياغات لسؤال واحد تعني حاجة واحدة —
+     بالتطبيع العربي (همزات، تاء مربوطة، علامات) لا بالمسافات فقط */
+  const norm = (s: string) => normalizeAr(s);
+  const gaps = new Map<string, { q: string; n: number; last: string; who: string }>();
   for (const r of unanswered) {
     const k = norm(r.question);
     const cur = gaps.get(k);
-    if (cur) { cur.n++; if (r.created_at > cur.last) cur.last = r.created_at; }
-    else gaps.set(k, { q: r.question, n: 1, last: r.created_at });
+    if (cur) { cur.n++; if (r.created_at > cur.last) { cur.last = r.created_at; cur.who = who(r); } }
+    else gaps.set(k, { q: r.question, n: 1, last: r.created_at, who: who(r) });
   }
-  const gapList = [...gaps.values()].sort((a, b) => b.n - a.n || b.last.localeCompare(a.last));
+  /* سؤال قديم بلا جواب قد يكون سُدّ بعده: نعيد البحث بالقاعدة الحالية فيُعرف ما بقي مفتوحًا فعلًا */
+  const gapList = [...gaps.values()].map((g) => ({ ...g, now: searchKB(g.q, 1)[0]?.entry.q || "" }))
+    .sort((a, b) => Number(!!a.now) - Number(!!b.now) || b.n - a.n || b.last.localeCompare(a.last));
+  const openGaps = gapList.filter((g) => !g.now).length;
 
   /* المداخل الأكثر طلبًا — تقول أين يتعثّر المكتب فعلًا */
   const hitCount = new Map<string, number>();
@@ -96,12 +124,18 @@ export default async function HelpMonitorPage() {
           </div>
         )}
 
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+        {fbMissing && (
+          <div className="bg-[#FBF1DF] border border-goldSoft rounded-xl p-3 text-xs text-ink">
+            تقييم الأجوبة (👍/👎) يحتاج تشغيل <b>schema-v80-help-feedback.sql</b> مرة واحدة في Supabase.
+          </div>
+        )}
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
           {[
             { v: ar(all.length), l: "سؤالًا" },
             { v: `${rate}%`, l: "وجدت جوابًا", tone: rate >= 80 ? "text-[#137a50]" : rate >= 60 ? "text-[#9A4B00]" : "text-late" },
             { v: ar(unanswered.length), l: "بلا جواب", tone: unanswered.length ? "text-late" : "text-muted" },
-            { v: ar(gapList.length), l: "حاجة مختلفة" },
+            { v: ar(openGaps), l: "حاجة مفتوحة", tone: openGaps ? "text-late" : "text-muted" },
+            { v: fbMissing ? "—" : `${ar(ups)} / ${ar(downs)}`, l: "👍 أفاد / 👎 ما أفاد", tone: downs ? "text-late" : "text-deep" },
           ].map((c) => (
             <div key={c.l} className="bg-white border border-line rounded-xl p-3">
               <div className={`text-xl font-bold tabular-nums ${c.tone || "text-deep"}`}>{c.v}</div>
@@ -114,13 +148,26 @@ export default async function HelpMonitorPage() {
           <h2 className="font-display font-bold text-deep text-sm mb-3">الاستعمال — آخر ١٤ يومًا</h2>
           <div className="flex items-end gap-1 h-24">
             {days.map((x) => (
-              <div key={x.d} className="flex-1 flex flex-col justify-end items-center gap-1" title={`${x.d}: ${x.n}`}>
-                <div className="w-full bg-gold rounded-t" style={{ height: `${(x.n / maxDay) * 100}%`, minHeight: x.n ? 3 : 0 }} />
+              <div key={x.d} className="flex-1 h-full flex flex-col justify-end items-center gap-1" title={`${x.d}: ${x.n}`}>
+                {/* (6 نوفمبر 2026) العمود بلا ارتفاع كان يجعل كل الأعمدة خطًّا بارتفاع 3px */}
+                <div className="w-full flex-1 flex items-end">
+                  <div className="w-full bg-gold rounded-t" style={{ height: `${(x.n / maxDay) * 100}%`, minHeight: x.n ? 3 : 0 }} />
+                </div>
+                {x.n > 0 && <span className="text-[9px] text-deep font-bold tabular-nums">{x.n}</span>}
                 <span className="text-[9px] text-muted">{x.d.slice(8)}</span>
               </div>
             ))}
           </div>
         </div>
+
+        {!!sources.size && (
+          <div className="flex flex-wrap gap-2 text-xs">
+            <span className="text-muted self-center">من يسأل:</span>
+            {[...sources.entries()].sort((a, b) => b[1] - a[1]).map(([k, n]) => (
+              <span key={k} className="bg-white border border-line rounded-full px-3 py-1">{k} <b className="tabular-nums">{ar(n)}</b></span>
+            ))}
+          </div>
+        )}
 
         {/* أثمن ما في الشاشة */}
         <div className="bg-white border-2 border-[#F5C6C2] rounded-2xl p-4">
@@ -134,10 +181,39 @@ export default async function HelpMonitorPage() {
             <div className="space-y-1.5">
               {gapList.slice(0, 40).map((g) => (
                 <div key={g.q} className="flex items-start justify-between gap-3 border-b border-line pb-1.5">
-                  <span className="text-sm text-ink">{g.q}</span>
+                  <span className="min-w-0">
+                    <span className={`text-sm ${g.now ? "text-muted line-through decoration-1" : "text-ink"}`}>{g.q}</span>
+                    <span className="block text-[11px] text-muted">
+                      {g.who}{g.now && <> · <span className="text-[#137a50]">✓ صار له جواب: «{g.now}»</span></>}
+                    </span>
+                  </span>
                   <span className="text-[11px] text-muted shrink-0 tabular-nums">
                     {g.n > 1 && <b className="text-late">×{g.n} </b>}{when(g.last)}
                   </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="bg-white border-2 border-[#F2DCA4] rounded-2xl p-4">
+          <h2 className="font-display font-bold text-[#9A4B00] text-sm mb-1">أجوبة تحتاج مراجعة — هل أجاب المساعد فعلًا؟</h2>
+          <p className="text-[11px] text-muted mb-3">
+            أسئلة حُسبت «مُجابة» لكن السائل قيّمها 👎، أو طابقت مدخلًا بثقة ضعيفة. إن كان الجواب لا يخص السؤال: أضف مدخلًا جديدًا،
+            أو أضف صياغة السؤال في <code>alt</code> للمدخل الصحيح في <code>lib/help-kb.ts</code>.
+          </p>
+          {!review.length ? <p className="text-sm text-muted text-center py-3">لا أجوبة مشكوك فيها.</p> : (
+            <div className="space-y-2">
+              {review.map((r) => (
+                <div key={r.id} className="border-b border-line pb-2">
+                  <div className="flex items-start justify-between gap-3">
+                    <span className="text-sm text-ink">{r.down && <b className="text-late">👎 </b>}{r.question}</span>
+                    <span className="text-[11px] text-muted shrink-0">{when(r.created_at)}</span>
+                  </div>
+                  <div className="text-[11px] text-muted mt-0.5">
+                    أجاب بـ: <span className="text-deep">«{kbTitle(r.matched_id)}»</span>
+                    {r.score != null && <> · الثقة <span className="tabular-nums">{Number(r.score).toFixed(1)}</span></>} · {who(r)}
+                  </div>
                 </div>
               ))}
             </div>
@@ -163,8 +239,11 @@ export default async function HelpMonitorPage() {
           <div className="space-y-1.5 max-h-80 overflow-auto">
             {all.slice(0, 60).map((r) => (
               <div key={r.id} className="flex items-start justify-between gap-3 text-sm border-b border-line pb-1.5">
-                <span className={r.answered ? "text-ink" : "text-late font-semibold"}>
-                  {r.answered ? "✓ " : "✕ "}{r.question}
+                <span className="min-w-0">
+                  <span className={r.answered ? "text-ink" : "text-late font-semibold"}>{r.answered ? "✓ " : "✕ "}{r.question}</span>
+                  <span className="block text-[11px] text-muted">
+                    {r.answered ? <>← «{kbTitle(r.matched_id)}»</> : "بلا جواب"} · {who(r)}{r.path ? <> · <span dir="ltr">{r.path}</span></> : null}
+                  </span>
                 </span>
                 <span className="text-[11px] text-muted shrink-0">{when(r.created_at)}</span>
               </div>

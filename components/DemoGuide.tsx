@@ -115,7 +115,7 @@ export default function DemoGuide({ onEvent }: { onEvent: (event: string) => voi
       </div>
       {last && (
         <div className="mt-2 text-center">
-          <a className="text-[11px] text-muted underline" href="https://wa.me/966596300591?text=%D8%A7%D9%84%D8%B3%D9%84%D8%A7%D9%85%20%D8%B9%D9%84%D9%8A%D9%83%D9%85%D8%8C%20%D8%A3%D8%A8%D8%BA%D9%89%20%D8%A3%D8%AC%D9%87%D9%91%D8%B2%20%D8%AD%D8%B3%D8%A7%D8%A8%D9%8A%20%D9%81%D9%8A%20%D9%88%D8%AB%D9%8A%D9%82%20%D9%88%D8%B9%D9%86%D8%AF%D9%8A%20%D8%A8%D9%8A%D8%A7%D9%86%D8%A7%D8%AA%20%D8%B9%D9%82%D8%A7%D8%B1%D8%A7%D8%AA%D9%8A" target="_blank" rel="noreferrer">
+          <a className="text-[11px] text-muted underline" href="https://wa.me/966550165210?text=%D8%A7%D9%84%D8%B3%D9%84%D8%A7%D9%85%20%D8%B9%D9%84%D9%8A%D9%83%D9%85%D8%8C%20%D8%A3%D8%A8%D8%BA%D9%89%20%D8%A3%D8%AC%D9%87%D9%91%D8%B2%20%D8%AD%D8%B3%D8%A7%D8%A8%D9%8A%20%D9%81%D9%8A%20%D9%88%D8%AB%D9%8A%D9%82%20%D9%88%D8%B9%D9%86%D8%AF%D9%8A%20%D8%A8%D9%8A%D8%A7%D9%86%D8%A7%D8%AA%20%D8%B9%D9%82%D8%A7%D8%B1%D8%A7%D8%AA%D9%8A" target="_blank" rel="noreferrer">
             أو أرسل بياناتك على واتساب ونجهّزها لك مجانًا
           </a>
         </div>
