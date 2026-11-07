@@ -13,7 +13,7 @@ import {
   analyzeColumns, initialConfig, rentBasisFromHeader, paidBasisFromHeader, mappingProblems, configToOptions, headerSignature, validSavedConfig, columnSamples, columnLetter,
   FIELDS, FIELD_LABEL, REQUIRED_FIELDS,
   type Prop, type Row, type ColumnInfo, type ColumnAnalysis, type MapConfig, type Field,
-  adaptRentCollectionSheet, RENT_SHEET_NAME,
+  prepareGrid, RENT_SHEET_NAME,
 } from "@/lib/importParse";
 import type { Frequency } from "@/lib/contracts";
 
@@ -148,12 +148,15 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
     if (!list.length) { setFileName(`${f.name} — الملف فارغ`); return; }
     /* (6 نوفمبر 2026) «جدول تحصيل الإيجارات» المجاني من موقعنا: تُحوَّل ورقة «الإيجارات»
        وتُفتح هي — كان الملف يفتح «الدفعات» ويقف عند مطابقة تسعة أعمدة محسوبة */
+    /* (7 نوفمبر 2026) تجهيز كل ورقة: سطر عنوان فوق الجدول، عمود «م»، «تاريخ نهاية العقد» بدل المدة،
+       صف «الإجمالي» — ملف المكتب النموذجي كان يسقط في المطابقة اليدوية بسببها */
     let rcAdapted = false;
+    const prepNotes = new Map<string, string[]>();
     list = list.map((s) => {
-      if (s.name !== RENT_SHEET_NAME) return s;
-      const a = adaptRentCollectionSheet(s.grid);
-      if (a.adapted) rcAdapted = true;
-      return a.adapted ? { ...s, grid: a.grid } : s;
+      const p = prepareGrid(s.grid);
+      if (p.rentCollection && s.name === RENT_SHEET_NAME) rcAdapted = true;
+      if (p.notes.length) prepNotes.set(s.name, p.notes);
+      return { ...s, grid: p.grid };
     });
     if (rcAdapted) setFileName(`${f.name} — تعرّفنا عليه: «جدول تحصيل الإيجارات» من موقع وثيق (الأسطر التجريبية تُجوهلت)`);
     /* ورقة «الوحدات» (قالبنا) أو «قالب الرفع» (ملف تصدير وثيق) إن وُجدت، وإلا الأكثر صفوفًا — لا الأولى عمياء.
@@ -162,6 +165,8 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
     if (idx < 0) idx = list.findIndex((s) => s.name === "الوحدات");
     if (idx < 0) idx = list.findIndex((s) => s.name === "قالب الرفع");
     if (idx < 0) idx = list.reduce((b, s, i) => s.grid.length > list[b].grid.length ? i : b, 0);
+    const pn = prepNotes.get(list[idx].name);
+    if (pn && !rcAdapted) setFileName(`${f.name} — ${pn.join(" · ")}`);
     setSheets(list); setSheetIdx(idx);
     startSheet(list[idx].grid, false);
   }
@@ -397,7 +402,7 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
                 <button onClick={downloadTemplate} className="btn btn-ghost text-xs">⬇ قالب CSV مجرّد</button>
               </div>
             </StepCard>
-            <StepCard n="٢" title="املأ بياناتك — أو استعمل ملفك" desc="عندك ملف إكسل بأعمدتك؟ ارفعه كما هو: نطابق أعمدته معك خطوة بخطوة." />
+            <StepCard n="٢" title="املأ بياناتك — أو استعمل ملفك" desc="عندك ملف إكسل بأعمدتك؟ ارفعه كما هو — سطر العنوان وعمود «م» وصف الإجمالي تُتجاهل، والمدة تُحسب من «تاريخ نهاية العقد»، والهجري مقبول. وما يلتبس نسألك عنه." />
             <StepCard n="٣" title="ارفعه هنا" desc="يُقرأ داخل متصفحك — لا يُحفظ شيء حتى تراجع المعاينة وتضغط «حفظ»." />
           </div>
 
@@ -435,6 +440,8 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
             /* ملف كل صفوفه أمثلة أو فارغة: كان لا يظهر شيء إطلاقًا فيظن المكتب أن الرفع تعطّل */
             <div className="bg-[#FFF6E5] border border-[#F2D49B] rounded-xl p-4 mb-5 text-sm leading-relaxed">
               <b className="text-deep">لم نجد صفوف مستأجرين في الملف.</b>
+              {/* (6 نوفمبر 2026) جدول التحصيل المجاني كما نُزّل: أسطره الثلاثة تجريبية — قل له ماذا يفعل */}
+              {fileName.includes("جدول تحصيل الإيجارات") && <> الملف فيه الأسطر التجريبية فقط («مستأجر تجريبي»). اكتب وحداتك في ورقة «الإيجارات» — رقم الوحدة، المستأجر، الإيجار السنوي، دورة السداد، بداية العقد ونهايته، والمدفوع — ثم ارفعه من جديد.</>}
               {colInfo && colInfo.examples > 0 && <> تجاهلنا {colInfo.examples} صفوف أمثلة (المعلَّمة «مثال») — أضف بياناتك تحتها أو مكانها ثم ارفعه من جديد.</>}
               {analysis && <> · <button type="button" onClick={() => setStage("map")} className="text-goldInk font-semibold underline underline-offset-2">✎ مطابقة الأعمدة</button></>}
             </div>

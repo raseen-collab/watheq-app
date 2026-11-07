@@ -22,6 +22,9 @@ node tests/edge.js          # حواف معروفة
 npx esbuild lib/importParse.ts --bundle --format=cjs --platform=node --alias:@=. --outfile=/tmp/b/importParse.js
 node tests/import-mapping.js
 TZ=Asia/Riyadh node tests/import-mapping.js   # تواريخ إكسل بتوقيت الرياض
+TZ=Asia/Riyadh node tests/import-office-files.js   # ملفات المكاتب كما تأتي (عنوان، «م»، نهاية العقد، المجموع، الهجري)
+node tests/rent-collection-import.js   # جدول التحصيل المجاني من الموقع
+TZ=Asia/Riyadh node tests/import-600.js   # 600 ملف مكتب مختلف: صفر رقم خاطئ صامت، وكل صف فاسد مرفوض (~15 ثانية)
 ```
 
 ## بحث الزبون في المعروضات
