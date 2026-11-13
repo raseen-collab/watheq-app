@@ -42,6 +42,10 @@ export type Row = {
   _exists?: string;
   /** ملاحظة لا تمنع الرفع ولا تحتاج قرارًا: تحويل المبلغ من سنوي/شهري، أو مبلغ جزئي من المسدَّد (9 أكتوبر 2026) */
   _note?: string;
+  /** (13 نوفمبر 2026) ضمن عقد وحدة أخرى في الملف: رقم الوحدة الرئيسية التي عليها المبلغ */
+  _cover?: string;
+  /** (13 نوفمبر 2026) صف بلا مستأجر ولا مبلغ ولا عقد — يُرفع وحدة شاغرة */
+  _vacant?: boolean;
 };
 
 const FREQ_MAP: Record<string, Frequency> = {
@@ -711,6 +715,48 @@ export function parseGrid(grid: string[][], properties: Prop[], todayIso: string
       _note: !err && notes.length ? notes.join(" · ") : undefined,
     });
   }
+
+  /**
+   * (13 نوفمبر 2026) عقد واحد يشمل عدة شقق: المكتب يكتب كل شقة في صف برقم العقد نفسه،
+   * والمبلغ على شقة واحدة فقط «حتى لا يتكرر». كانت البقية تُرفض «قيمة الدفعة مفقودة».
+   * الآن: صف بلا مبلغ يشارك رقم عقده صفًّا صالحًا له مبلغ في العقار نفسه ⇒ وحدة
+   * «ضمن عقد» تلك الوحدة (إيجارها صفر، لا دفعات عليها، تأخذ تواريخ العقد منها).
+   * وصف بلا مستأجر ولا مبلغ ولا عقد ⇒ وحدة شاغرة (غرف القبو الفارغة مثلًا).
+   */
+  const pk = (r: Row) => r.prop_id || (r.prop_name || "").trim();
+  const leads = new Map<string, Row>();
+  rows.forEach((r) => {
+    if (r._error || !r.contract_no || !(r.rent_amount > 0) || !r.unit) return;
+    const key = `${pk(r)}|${r.contract_no.trim()}`;
+    if (!leads.has(key)) leads.set(key, r);
+  });
+  rows.forEach((r) => {
+    const noAmount = r._error === "قيمة الدفعة مفقودة" || (r._error === "الاسم مفقود" && !(r.rent_amount > 0));
+    if (!noAmount || !r.unit) return;
+    const lead = r.contract_no ? leads.get(`${pk(r)}|${r.contract_no.trim()}`) : undefined;
+    /* أمان: مبلغ نُسي في صف عادي صادف رقم عقده رقمًا آخر لا يصير «مشمولًا» بصمت —
+       يلزم الاسم نفسه (أو خانة اسم فارغة) ولا تاريخ بداية مختلف عن الرئيسية */
+    const sameTenant = !r.name || arKey(r.name) === arKey(lead?.name || "");
+    const sameStart = !r.contract_start || r.contract_start === lead?.contract_start;
+    if (lead && lead !== r && sameTenant && sameStart) {
+      Object.assign(r, {
+        name: r.name || lead.name, rent_amount: 0, paid_periods: 0, partial_amount: undefined, carried_debt: undefined,
+        contract_start: lead.contract_start, payment_frequency: lead.payment_frequency, contract_periods: lead.contract_periods,
+        calendar: lead.calendar, first_due: lead.first_due,
+        _error: undefined, _cover: lead.unit,
+        _note: `ضمن عقد ${r.contract_no} — المبلغ والدفعات على ${lead.unit}`,
+      });
+      return;
+    }
+    if (r._error === "الاسم مفقود" && !r.contract_start && !r.contract_no && !r.phone && !r.national_id) {
+      Object.assign(r, { name: "شاغرة", rent_amount: 0, paid_periods: 0, _error: undefined, _vacant: true, _note: "تُرفع وحدة شاغرة — لا مستأجر في الملف" });
+      return;
+    }
+    if (r._error === "قيمة الدفعة مفقودة" && r.contract_no)
+      r._error = lead && lead !== r
+        ? `قيمة الدفعة مفقودة — العقد ${r.contract_no} عليه مبلغ في ${lead.unit} لكن ${!sameTenant ? `باسم «${lead.name}»` : `ببداية ${lead.contract_start}`}. إن كانت ضمن العقد نفسه فوحّد الاسم واترك البداية فارغة`
+        : `قيمة الدفعة مفقودة — ولا توجد في الملف وحدة أخرى بالعقد ${r.contract_no} عليها المبلغ. إن كانت ضمن عقد شقة أخرى فاكتب رقم العقد نفسه في الصفين والمبلغ على شقة واحدة`;
+  });
 
   /* «أول استحقاق» يختلف عن البداية: مكتبان كتباه لمستأجرين يدفعون يوم بداية العقد،
      فانزاح يوم الدفع الشهري. نصف الأثر لكل صفّ ونطلب قرارًا صريحًا قبل الحفظ. */

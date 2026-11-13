@@ -308,7 +308,14 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
         contract_no: r.contract_no || null, elec_account: r.elec_account || null, water_account: r.water_account || null,
         /* القاعدة تقبل 0–50 عددًا صحيحًا (schema-v22) — كاللوحة: قيمة خارجها كانت توقف الحفظ كله */
         rooms: clampCount(r.rooms), baths: clampCount(r.baths), acs: clampCount(r.acs),
+        /* (13 نوفمبر 2026) صف بلا مستأجر ⇒ وحدة شاغرة كما يُنشئها «إضافة وحدات شاغرة» */
+        ...(r._vacant ? { name: "شاغرة", status: "vacated", move_out_date: today(), contract_start: null, contract_end: null,
+          payment_frequency: "monthly", billing_anchor_day: null } : {}),
       }));
+      /* المشمولة «ضمن عقد» تُحفظ بعد الرئيسية: تحتاج معرّفها (covered_by) */
+      const coveredIdx = fresh.map((r, i) => (r._cover ? i : -1)).filter((i) => i >= 0);
+      const coveredPayload = coveredIdx.map((i) => ({ ...payload[i], _cover: fresh[i]._cover as string }));
+      for (const i of coveredIdx.slice().reverse()) payload.splice(i, 1);
       /* على دفعات من 100 صف: مكتب يرفع 450 وحدة دفعة واحدة قد تنتهي مهلة
          الطلب أو يُرفض حجمه، فيفشل الرفع كله بعد دقيقة انتظار. وبالدفعات
          يُحفظ ما نجح ويُقال له أين توقف بالضبط. */
@@ -330,6 +337,19 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
           return alert(`تعذّر الحفظ: ${error.message}\n\nأُضيف ${inserted + i} صفًّا قبل التوقف.\nراجع اللوحة، واحذف الملف من الصفوف المضافة قبل إعادة الرفع (المكرر يُتخطّى تلقائيًّا).`);
         }
         setProgress(inserted + Math.min(i + BATCH, payload.length));
+      }
+      if (coveredPayload.length) {
+        const { data: leadsNow, error: le } = await supabase.from("tenants").select("id, unit, status, covered_by").eq("property_id", pid).limit(5000);
+        const byUnit = new Map<string, string>();
+        (leadsNow || []).forEach((t: any) => { if (t.status !== "vacated" && !t.covered_by && t.unit) byUnit.set(unitKey(t.unit), t.id); });
+        const part = coveredPayload.map(({ _cover, ...rest }) => ({ ...rest, covered_by: byUnit.get(unitKey(_cover)) || null }));
+        const missing = part.filter((x) => !x.covered_by).length;
+        const { error } = le ? { error: le } : missing ? { error: { message: `تعذّر إيجاد الوحدة الرئيسية لـ${missing} وحدة` } as any } : await supabase.from("tenants").insert(part);
+        if (error) {
+          setBusy(false);
+          const hint = /covered_by/.test(error.message) ? "\n\nقاعدة البيانات تحتاج تحديث schema-v79 (وحدات «ضمن عقد») — أبلغ الدعم." : "";
+          return alert(`حُفظت ${inserted + payload.length} وحدة، وتعذّر حفظ ${part.length} وحدة «ضمن عقد»: ${error.message}${hint}\n\nأعد رفع الملف نفسه بعد الإصلاح — الموجود يُتخطّى تلقائيًّا.`);
+        }
       }
       inserted += fresh.length;
     }
@@ -522,7 +542,7 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
                       <tr key={i} className={`border-t border-line ${blocked(r) ? "bg-[#FBE9E7]" : r._warn ? "bg-[#FFF6E5]" : ""}`}>
                         <td className="p-2 font-medium">{r.name || "—"}{r.prop_name && <div className="text-[11px] text-muted">🏢 {r.prop_name}</div>}</td>
                         <td className="p-2">{r.unit || "—"}</td>
-                        <td className="p-2">{sar(r.rent_amount)}</td>
+                        <td className="p-2">{r._cover ? <span className="text-muted text-xs">ضمن عقد {r._cover}</span> : r._vacant ? <span className="text-muted text-xs">شاغرة</span> : sar(r.rent_amount)}</td>
                         <td className="p-2">{FREQUENCIES.find((f) => f.value === r.payment_frequency)?.label}</td>
                         <td className="p-2">{r.contract_start || "—"}{r.contract_start && <div className="text-[11px] text-muted">{hijriShort(r.contract_start)}</div>}
                           {!r._error && r._due && <div className={`text-[11px] font-semibold ${dueChoice === "drop" ? "text-muted line-through" : "text-[#8a5a11]"}`}>⚠ {r._due}</div>}</td>

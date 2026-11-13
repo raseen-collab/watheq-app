@@ -1282,8 +1282,8 @@ ${/* (30 سبتمبر 2026) الدين المرحَّل ودين المستأج�
       ${mode === "full" ? `<td>${t.unit_type ? (UNIT_TYPE_AR[String(t.unit_type)] || "—") : unitLabel(p.property_type)}${unitSpecs(t) ? `<div style="font-size:.68rem;color:#5C6B67">${unitSpecs(t)}</div>` : ""}${(t as any).elec_account ? `<div style="font-size:.65rem;color:#5C6B67">كهرباء <span dir="ltr">${(t as any).elec_account}</span></div>` : ""}${(t as any).water_account ? `<div style="font-size:.65rem;color:#5C6B67">ماء <span dir="ltr">${(t as any).water_account}</span></div>` : ""}</td>` : ""}
       <td>${vc ? "<span style='color:#5C6B67'>— شاغرة —</span>" : t.name}</td>
       ${mode === "full" ? `<td dir="ltr">${vc ? "—" : (t.phone || "—")}</td><td dir="ltr">${t.contract_no || "—"}</td>` : ""}
-      <td>${vc ? "—" : sar(splitVat(Number(t.rent_amount) || 0, vatOf(p, t)).total)}</td>
-      <td>${vc ? "—" : freqLabel(t.payment_frequency)}</td>
+      <td>${vc ? "—" : (t as any).covered_by ? `<span style="font-size:.7rem;color:#5C6B67">ضمن عقد ${((p.tenants || []) as any[]).find((x) => x.id === (t as any).covered_by)?.unit || "وحدة أخرى"}</span>` : sar(splitVat(Number(t.rent_amount) || 0, vatOf(p, t)).total)}</td>
+      <td>${vc || (t as any).covered_by ? "—" : freqLabel(t.payment_frequency)}</td>
       ${mode === "full" ? `<td>${vc ? "—" : arDateH(t.contract_start)}</td><td>${vc ? "—" : arDateH(st.endDate)}</td>` : ""}
       ${/* «القادمة» من upcomingDate: nextDueDate هو أقدم قسط غير مسدَّد — تاريخ ماضٍ للمتأخر */ ""}
       <td>${vc ? "—" : st.upcomingDate ? arDate(st.upcomingDate) : st.upcomingDate === null ? "—" : arDate(st.nextDueDate)}</td>

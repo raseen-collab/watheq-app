@@ -66,6 +66,7 @@ export function isPartialOnly(st: { status?: string; hasPartial?: boolean; unpai
 export function unitStatus(t: any, st: { incomplete?: boolean; status: string; hasPartial?: boolean; unpaid?: number | null; soonTier?: string | null; expiringSoon?: boolean; daysToEnd?: number | null }): UnitStatus {
   if (isVacant(t)) return "vacant";
   if (st.incomplete) return "incomplete";
+  if (t?.covered_by) return "ok";
   if (t?.litigation) return "litigation";
   if (st.status === "late") return isPartialOnly(st) ? "partial" : "late";
   if (st.status === "soon") return st.soonTier === "near" ? "soon" : "due";
@@ -81,6 +82,8 @@ export function unitStatus(t: any, st: { incomplete?: boolean; status: string; h
  */
 export function renewalDue(t: any, st: { expiringSoon?: boolean; daysToEnd?: number | null }): boolean {
   if (isVacant(t)) return false;
+  /* (13 نوفمبر 2026) الوحدة «ضمن عقد» غيرها تتجدد بتجديد الرئيسية — لا تنبيه مكرر لكل شقة */
+  if (t?.covered_by) return false;
   return !!st.expiringSoon || (st.daysToEnd != null && st.daysToEnd < 0);
 }
 /** الاسم المعروض: «ينتهي قريبًا» لعقد انتهى فعلًا كذب — يُسمّى «انتهى العقد» */

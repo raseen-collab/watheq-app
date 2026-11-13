@@ -45,6 +45,8 @@ type Tenant = {
   rent_amount: number; contract_start: string | null; contract_end: string | null;
   payment_frequency: string | null; paid_periods: number | null; contract_periods: number | null;
   partial_amount?: number | null;
+  /** (schema-v79) ضمن عقد وحدة أخرى — المبلغ والدفعات على الرئيسية */
+  covered_by?: string | null;
   litigation?: boolean | null; enforcement_no?: string | null; enforcement_order?: string | null;
   billing_anchor_day?: number | null;
   status?: string | null; notice_date?: string | null; move_out_date?: string | null;
@@ -341,7 +343,17 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
   const [schedule, setSchedule] = useState<Tenant | null>(null);
   const [renewing, setRenewing] = useState<Tenant | null>(null);
   const [enforcing, setEnforcing] = useState<Tenant | null>(null);
-  const [paying, setPaying] = useState<Tenant | null>(null);
+  const [paying, setPaying0] = useState<Tenant | null>(null);
+  /* (13 نوفمبر 2026) الوحدة ضمن عقد وحدة أخرى لا تُسجَّل عليها دفعة: الدفعة على الرئيسية */
+  const coverLead = (t: Tenant | null | undefined) => t?.covered_by ? (active?.tenants || []).find((x: Tenant) => x.id === t.covered_by) || null : null;
+  function setPaying(t: Tenant | null) {
+    if (t?.covered_by) {
+      const lead = coverLead(t);
+      notify("err", lead ? `${t.unit || ""} ضمن عقد ${lead.unit || lead.name} — سجّل الدفعة على ${lead.unit || lead.name}.` : "هذه الوحدة ضمن عقد وحدة أخرى — سجّل الدفعة على الوحدة الرئيسية.");
+      return;
+    }
+    setPaying0(t);
+  }
   /** (جولة 4) دفعات المستأجر الأخيرة لحارس «دفعة مشابهة»، ومبلغ مقترح حين يحوّل ✔ إلى النافذة */
   const [payRecent, setPayRecent] = useState<any[] | null>(null);
   const [payInit, setPayInit] = useState<{ amount: number; why: string; paidOn?: string; reference?: string | null } | null>(null);
@@ -734,13 +746,17 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       turnover_checklist: d.checklist || [],
     };
     await patchTenant(t.id, patch);
+    /* (13 نوفمبر 2026) الوحدات «ضمن عقد» هذه الوحدة تخرج معها — العقد واحد */
+    const covered = active.tenants.filter((x: Tenant) => x.covered_by === t.id && !isVacant(x));
+    for (const c of covered) await patchTenant(c.id, { status: "vacated", covered_by: null, notice_date: patch.notice_date, move_out_date: patch.move_out_date });
     // توثيق في سجل العقار حتى لا يضيع تاريخ المستأجر السابق
     /* الملاحظة توثيق لا شرط: إن رفضتها الصلاحيات نُكمل ونُعلم بلا إفشال العملية */
     const noteRes = await supabase.from("property_notes").insert({
       property_id: active.id, note_date: today(),
       text: `إخلاء ${unitLabel(active.property_type)} ${t.unit || "—"} — ${t.name} بتاريخ ${arDate(patch.move_out_date)}` +
             (patch.deposit_amount ? ` · تأمين ${sar(patch.deposit_amount)} ريال` : "") +
-            (patch.deposit_deductions ? ` · خصومات ${sar(patch.deposit_deductions)} ريال` : ""),
+            (patch.deposit_deductions ? ` · خصومات ${sar(patch.deposit_deductions)} ريال` : "") +
+            (covered.length ? ` · ومعها ${covered.map((c: Tenant) => c.unit || "—").join("، ")} (ضمن العقد نفسه)` : ""),
     });
     setTurnover(null);
     notify("ok", noteRes.error ? "سُجّل الإخلاء — الوحدة صارت شاغرة. (تعذّر كتابة الملاحظة في السجل)" : "سُجّل الإخلاء — الوحدة صارت شاغرة.");
@@ -2329,7 +2345,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                               {t.contract_no && <div className="text-[11px] text-muted" dir="ltr">عقد {t.contract_no}</div>}
                               {key !== "vacant" && <MeterLine t={t} onSend={meterNoticeDue(t) ? () => { void sendMeterNotice(t); } : undefined} />}
                             </td>
-                            <td className={`px-3 ${cellY} whitespace-nowrap tabular-nums ${key === "vacant" ? "text-muted/70" : "text-muted"}`}>{key === "vacant" && !(Number(t.rent_amount) > 0) ? <span title="أدخله من «تعديل البيانات» ليظهر في عرض السعر وحساب الشغور">— <div className="text-[10px]">الإيجار المطلوب لم يُحدَّد</div></span> : <>{sar(t.rent_amount)} / {freqShort(t.payment_frequency)}{key === "vacant" && <div className="text-[10px]">الإيجار المطلوب</div>}</>}</td>
+                            <td className={`px-3 ${cellY} whitespace-nowrap tabular-nums ${key === "vacant" ? "text-muted/70" : "text-muted"}`}>{t.covered_by && key !== "vacant" ? <span title="المبلغ والدفعات مسجّلة على الوحدة الرئيسية">ضمن عقد {coverLead(t)?.unit || "—"}</span> : key === "vacant" && !(Number(t.rent_amount) > 0) ? <span title="أدخله من «تعديل البيانات» ليظهر في عرض السعر وحساب الشغور">— <div className="text-[10px]">الإيجار المطلوب لم يُحدَّد</div></span> : <>{sar(t.rent_amount)} / {freqShort(t.payment_frequency)}{key === "vacant" && <div className="text-[10px]">الإيجار المطلوب</div>}</>}</td>
                             <td className={`px-3 ${cellY} whitespace-nowrap tabular-nums`}>
                               {key === "vacant" ? <span className="text-muted">—</span>
                               : st.fullyPaid && st.endDate ? (<>

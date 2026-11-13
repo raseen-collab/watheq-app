@@ -151,7 +151,7 @@ export function auditOffice(properties: P[], payments: any[] = [], expenses: any
         }
       }
 
-      if (!vac && !(num(t.rent_amount) > 0)) {
+      if (!vac && !t.covered_by && !(num(t.rent_amount) > 0)) {
         push({ severity: "critical", title: "وحدة مؤجّرة بإيجار صفر", ...base,
           why: "لا تُحتسب لها مستحقات ولا تدخل في الدخل المتوقع — تبدو منتظمة وهي غائبة عن الحساب.",
           fix: "أدخل قيمة الدفعة الواحدة (لا الإيجار السنوي)." });

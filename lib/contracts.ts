@@ -347,6 +347,8 @@ export function contractState(t: {
   status?: string | null;
   move_out_date?: string | null;
   calendar?: string | null; first_due?: string | null; carried_debt?: number | null;
+  /** (schema-v79) الوحدة ضمن عقد وحدة أخرى: المبلغ والدفعات على الرئيسية */
+  covered_by?: string | null;
 }, opts: { graceDays?: number | null; soonDays?: number | null; imminentDays?: number | null; expiringDays?: number | null } = {}): ContractState {
   const anchor = anchorOf(t);
   // الوحدة المُخلاة تتوقّف عن تراكم المتأخرات من تاريخ الإخلاء — لا تبقى "متأخرة" للأبد
@@ -375,6 +377,20 @@ export function contractState(t: {
      والثالثة فجرًا بالرياض يكون «اليوم» أمسًا، بينما عدّ الدفعات المستحقة أدناه
      يستعمل riyadhNow — فتظهر «يستحق اليوم» في تليجرام لدفعة تأخرت يومًا. */
   const today = riyadhNow();
+
+  /* (13 نوفمبر 2026) وحدة ضمن عقد وحدة أخرى: لا مبلغ عليها ولا دفعات — المال كله
+     على الوحدة الرئيسية. ليست «ناقصة» (إيجارها صفر عمدًا) ولا «متأخرة» أبدًا. */
+  if (t.covered_by && !isVacant(t)) {
+    const endD = t.contract_end || null;
+    return {
+      due: 0, paid: 0, unpaid: 0, amountDue: 0, grossDue: 0, partial: 0, hasPartial: false, partialPct: 0, fullyPaid: false,
+      soonTier: null, expiringSoon: false, vacant: false, legacyArrears: 0, carriedDebt: 0, totalOwed: 0,
+      nextDueDate: null, daysToNextDue: null, upcomingDate: null, daysToUpcoming: null,
+      endDate: endD, daysToEnd: null, // التجديد والانتهاء يُتابَعان على الرئيسية
+      status: "ok", incomplete: false, progress: 0, statusLabel: "ضمن عقد وحدة أخرى",
+      inGrace: false, graceDaysLeft: 0,
+    };
+  }
 
   /**
    * «بيانات ناقصة» تشمل كل ما يمنع حسابًا موثوقًا — لا غياب التاريخ وحده.
