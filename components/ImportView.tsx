@@ -308,6 +308,10 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
         contract_no: r.contract_no || null, elec_account: r.elec_account || null, water_account: r.water_account || null,
         /* القاعدة تقبل 0–50 عددًا صحيحًا (schema-v22) — كاللوحة: قيمة خارجها كانت توقف الحفظ كله */
         rooms: clampCount(r.rooms), baths: clampCount(r.baths), acs: clampCount(r.acs),
+        /* (14 نوفمبر 2026) status صريح في كل صف: الإدراج الجماعي يوحّد أعمدة الصفوف، فصف
+           شاغر واحد (status: vacated) كان يجعل status = null لبقية الصفوف ⇒ يفشل الملف كله
+           «null value in column status». لذلك المفتاحان في كل صف لا في الشاغر وحده. */
+        status: "active", move_out_date: null,
         /* (13 نوفمبر 2026) صف بلا مستأجر ⇒ وحدة شاغرة كما يُنشئها «إضافة وحدات شاغرة» */
         ...(r._vacant ? { name: "شاغرة", status: "vacated", move_out_date: today(), contract_start: null, contract_end: null,
           payment_frequency: "monthly", billing_anchor_day: null } : {}),
