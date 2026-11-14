@@ -37,7 +37,35 @@ export type EndNoticeInput = {
   upcomingDate?: string | null;
   upcomingAmount?: number;
   signer: string;
+  /** (14 نوفمبر 2026 — مكتب الأولى) بنود المكتب الاختيارية من الإعدادات — تُطبع فقط إن ضُبطت */
+  terms?: EndNoticeTerms;
+  /** الإيجار السنوي الحالي — يُذكر مع «عند التجديد» إن فعّل المكتب ذكره */
+  annualRent?: number | null;
 };
+
+/**
+ * بنود إشعار الانتهاء (من إعدادات المكتب — profiles.notice_*):
+ * رسوم إدارية للتجديد، أجرة يومية بعد نهاية العقد بموجب مادة فيه، شرط «لا
+ * تجديد مع متأخرات»، وذكر قيمة الإيجار عند التجديد. كلها اختيارية؛ ما لم
+ * يُضبط لا يظهر، فالمكاتب التي لم تطلبها لا يتغيّر نصّها حرفًا.
+ */
+export type EndNoticeTerms = {
+  adminFee?: number | null;
+  dailyRent?: number | null;
+  dailyArticle?: string | null;
+  noRenewWithArrears?: boolean | null;
+  showRent?: boolean | null;
+};
+export function noticeTermsOf(profile: any): EndNoticeTerms {
+  const p = profile || {};
+  return {
+    adminFee: Number(p.notice_admin_fee) > 0 ? Number(p.notice_admin_fee) : null,
+    dailyRent: Number(p.notice_daily_rent) > 0 ? Number(p.notice_daily_rent) : null,
+    dailyArticle: String(p.notice_daily_article || "").trim() || null,
+    noRenewWithArrears: !!p.notice_no_renew_arrears,
+    showRent: !!p.notice_show_rent,
+  };
+}
 
 const daysPhrase = (d: number) =>
   d === 1 ? "يوم واحد" : d === 2 ? "يومين" : d >= 3 && d <= 10 ? `${d} أيام` : `${d} يومًا`;
@@ -98,6 +126,18 @@ export function endNoticeText(i: EndNoticeInput): string {
   }
   if (total > 0 && i.mode === "end") L.push("علمًا بأن تسوية المستحقات تسبق التجديد أو تسليم الوحدة.");
 
+  // ── بنود المكتب الاختيارية (إعدادات المكتب) — لا تظهر ما لم تُضبط
+  const tm = i.terms || {};
+  const renew: string[] = [];
+  if (i.mode === "end" && tm.showRent && (Number(i.annualRent) || 0) > 0) renew.push(`يكون الإيجار السنوي ${sar(Number(i.annualRent))} ريال`);
+  if (i.mode === "end" && (Number(tm.adminFee) || 0) > 0) renew.push(`${renew.length ? "إضافةً إلى" : "تُستحق"} رسوم إدارية قدرها ${sar(Number(tm.adminFee))} ريال`);
+  if (renew.length) L.push(`وفي حال الرغبة في التجديد ${renew.join(" ")}.`);
+  if (i.mode === "end" && tm.noRenewWithArrears && total > 0) L.push("علمًا بأن التجديد لا يتم مع وجود متأخرات.");
+  if ((Number(tm.dailyRent) || 0) > 0) {
+    const art = tm.dailyArticle ? ` بموجب المادة (${tm.dailyArticle}) من العقد` : " حسب العقد";
+    L.push(`وفي حال عدم ${i.mode === "end" ? "التجديد و" : ""}الإخلاء ${ended ? "فورًا" : "قبل نهاية العقد"}، تُحتسب أجرة قدرها ${sar(Number(tm.dailyRent))} ريال عن كل يوم تأخير${art} حتى الإخلاء وتسليم المفاتيح.`);
+  }
+
   L.push("", "شاكرين لكم حسن تعاونكم،", i.signer);
   return L.join("\n");
 }
@@ -129,6 +169,33 @@ export function meterNoticeText(i: MeterNoticeInput): string {
     `ونأمل منكم تسجيل العداد باسمكم بصفتكم المستأجر لدى الشركة السعودية للكهرباء${days ? ` خلال ${daysPhrase(days)} من تاريخه` : ""}، حتى تصدر فواتير الاستهلاك باسمكم طوال مدة العقد.`,
     "", "ونرجو تزويدنا بما يفيد إتمام التسجيل.",
     "", "شاكرين لكم حسن تعاونكم،", i.signer,
+  ];
+  return L.join("\n");
+}
+
+/**
+ * تنبيه تنقيط المكيفات (14 نوفمبر 2026 — من خطاب مكتب «الأولى» الورقي).
+ *
+ * مياه تصريف المكيف تفيض على الجيران أو الواجهة لانسداد المجاري وإهمال
+ * الغسيل الدوري. المكتب يطلب من المستأجر المبادرة بالتنظيف أو تعميد المكتب
+ * به على حسابه. رسالة واتساب من صف الوحدة، بتوقيع المكتب.
+ */
+export type AcDripNoticeInput = {
+  tenantName: string;
+  unitText: string;
+  propertyName: string;
+  /** مهلة بالأيام — 0 أو فارغ = «في أقرب وقت» */
+  days?: number;
+  signer: string;
+};
+export function acDripNoticeText(i: AcDripNoticeInput): string {
+  const d = Math.max(0, Math.floor(Number(i.days) || 0));
+  const L = [
+    `السلام عليكم ورحمة الله، ${i.tenantName || ""}`.trim(), "",
+    `نفيدكم بأن مياه التصريف تفيض من بعض أجهزة التكييف في ${i.unitText} بعقار ${i.propertyName}، وسببها غالبًا انسداد مجاري التصريف وعدم الصيانة.`,
+    "وللإحاطة: أجهزة التكييف تحتاج صيانة وغسيلًا دوريًّا لتعمل بالكفاءة المطلوبة، وهو ما يخفّض فاتورة الكهرباء أيضًا.", "",
+    `وتجنّبًا للإضرار بالجيران وبالمبنى، نأمل منكم المبادرة بإجراء التنظيف اللازم${d > 0 ? ` خلال ${daysPhrase(d)}` : " في أقرب وقت"}، أو تعميدنا بذلك على أن تتحملوا تكلفته.`,
+    "", "شاكرين ومقدّرين تعاونكم،", i.signer,
   ];
   return L.join("\n");
 }

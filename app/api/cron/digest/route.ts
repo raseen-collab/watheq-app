@@ -59,6 +59,13 @@ export async function GET(req: Request) {
     if (accErr && !/Could not find|does not exist/.test(accErr.message)) Sentry.captureMessage("hoa accrue: " + accErr.message);
   } catch (e) { Sentry.captureException(e); }
 
+  /* المصروفات الشهرية المتكررة (schema-v81): راتب الحارس وعقد المصاعد… تُرحَّل
+     لكل المكاتب في موعدها. قبل الترحيل لا تظهر في تقرير المالك. */
+  try {
+    const { error: recErr } = await db.rpc("watheq_post_recurring_all");
+    if (recErr && !/Could not find|does not exist/.test(recErr.message)) Sentry.captureMessage("recurring expenses: " + recErr.message);
+  } catch (e) { Sentry.captureException(e); }
+
   /**
    * الملخص لصاحب المكتب وحده.
    *

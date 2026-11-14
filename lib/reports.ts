@@ -13,7 +13,7 @@ import { annualRentRoll } from "@/lib/income";
 import { fetchAllRows } from "@/lib/fetch-all";
 import { createHash } from "crypto";
 import { arDate } from "@/lib/documents";
-import { endNoticeText } from "@/lib/tenant-messages";
+import { endNoticeText, noticeTermsOf } from "@/lib/tenant-messages";
 import { deriveState, STATE_ORDER, stateMeta, stateLabel, renewalTooEarly, type StateKey } from "./contract-state";
 
 type DB = SupabaseClient<any, any, any>;
@@ -429,8 +429,14 @@ async function payTenant(db: DB, profile: any, tenantId: string, mode: "one" | "
     p_paid_on: todayISO(), p_actor: profile.id,
   });
   if (error) return { ok: false, msg: "تعذّر الحفظ: " + error.message };
-  const r = (data || {}) as { completed?: number };
-  return { ok: true, msg: `سُجّلت ${mode === "all" ? "كامل المتأخرات" : "دفعة"} (${sar(amount)} ريال)${(r.completed || 0) > 1 ? ` — اكتملت ${r.completed} دفعات` : ""}.` };
+  const r = (data || {}) as { completed?: number; payment_id?: string };
+  /* (v80) رقم سند القبض في ردّ البوت — طباعته وإرساله من اللوحة (سجل المدفوعات) */
+  let rc = "";
+  if (r.payment_id) {
+    const { data: pr } = await db.from("payments").select("receipt_no").eq("id", r.payment_id).maybeSingle();
+    if (pr?.receipt_no) rc = ` · سند قبض ${pr.receipt_no}`;
+  }
+  return { ok: true, msg: `سُجّلت ${mode === "all" ? "كامل المتأخرات" : "دفعة"} (${sar(amount)} ريال)${(r.completed || 0) > 1 ? ` — اكتملت ${r.completed} دفعات` : ""}${rc}.` };
 }
 
 /**
@@ -603,6 +609,8 @@ export async function buildNotice(db: DB, profile: any, tenantId: string, kind: 
         overdue: ow.due, overdueVat: ow.vat, unpaid: st.unpaid, carried: ow.carried,
         upcomingDate: st.unpaid === 0 ? st.nextDueDate : st.upcomingDate, upcomingAmount: one.total,
         signer: who,
+        terms: noticeTermsOf(profile),
+        annualRent: (Number(t.rent_amount) || 0) * defaultTermPeriods((t.payment_frequency || "monthly") as Frequency),
       });
     }
 

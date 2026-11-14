@@ -64,6 +64,12 @@ export default function SettingsView({ profile }: { profile: any }) {
       due_soon_days: Math.max(1, Math.min(60, Number(p.due_soon_days) || 10)),
       due_imminent_days: Math.max(1, Math.min(60, Number(p.due_imminent_days) || 5)),
       expiring_days: Math.max(1, Math.min(180, Number(p.expiring_days) || 60)),
+      /* (v82) بنود إشعار انتهاء العقد — اختيارية */
+      notice_admin_fee: Number(p.notice_admin_fee) > 0 ? Number(p.notice_admin_fee) : null,
+      notice_daily_rent: Number(p.notice_daily_rent) > 0 ? Number(p.notice_daily_rent) : null,
+      notice_daily_article: String(p.notice_daily_article || "").trim().slice(0, 40) || null,
+      notice_no_renew_arrears: !!p.notice_no_renew_arrears,
+      notice_show_rent: !!p.notice_show_rent,
     };
 
     /**
@@ -277,6 +283,37 @@ export default function SettingsView({ profile }: { profile: any }) {
             <input type="checkbox" className="w-4 h-4" checked={p.notify_enabled ?? true}
               onChange={(e) => setP({ ...p, notify_enabled: e.target.checked })} />
             <span className="text-sm font-semibold">تفعيل الملخّص اليومي</span>
+          </label>
+        </div>
+      </section>
+
+      {/* (v82) بنود إشعار انتهاء العقد — من خطاب مكتب «الأولى» الورقي */}
+      <section className="bg-white border border-line rounded-2xl p-6 mb-5">
+        <h2 className="font-semibold text-deep text-lg mb-1">📅 إشعار انتهاء العقد</h2>
+        <p className="text-sm text-muted mb-4">بنود اختيارية تُضاف إلى رسالة «إشعار انتهاء العقد» التي تُرسل للمستأجر واتساب. ما تتركه فارغًا لا يظهر في الرسالة.</p>
+        <div className="grid sm:grid-cols-3 gap-3">
+          <label className="block">
+            <span className="block text-sm font-semibold mb-1">رسوم إدارية عند التجديد (ريال)</span>
+            <input className="fld" type="number" min={0} value={p.notice_admin_fee ?? ""} onChange={(e) => setP({ ...p, notice_admin_fee: e.target.value })} placeholder="مثال: 500" />
+          </label>
+          <label className="block">
+            <span className="block text-sm font-semibold mb-1">أجرة يومية بعد نهاية العقد (ريال)</span>
+            <input className="fld" type="number" min={0} value={p.notice_daily_rent ?? ""} onChange={(e) => setP({ ...p, notice_daily_rent: e.target.value })} placeholder="مثال: 200" />
+            <span className="block text-[11px] text-muted mt-1">تُحتسب عن كل يوم تأخير في الإخلاء حتى تسليم المفاتيح.</span>
+          </label>
+          <label className="block">
+            <span className="block text-sm font-semibold mb-1">رقم المادة في العقد <span className="text-muted text-xs font-normal">— اختياري</span></span>
+            <input className="fld" dir="ltr" maxLength={40} value={p.notice_daily_article ?? ""} onChange={(e) => setP({ ...p, notice_daily_article: e.target.value })} placeholder="مثال: 12/3" />
+          </label>
+        </div>
+        <div className="grid sm:grid-cols-2 gap-3 mt-3">
+          <label className="flex items-center gap-2">
+            <input type="checkbox" className="w-4 h-4" checked={!!p.notice_no_renew_arrears} onChange={(e) => setP({ ...p, notice_no_renew_arrears: e.target.checked })} />
+            <span className="text-sm font-semibold">ذكر أن التجديد لا يتم مع وجود متأخرات</span>
+          </label>
+          <label className="flex items-center gap-2">
+            <input type="checkbox" className="w-4 h-4" checked={!!p.notice_show_rent} onChange={(e) => setP({ ...p, notice_show_rent: e.target.checked })} />
+            <span className="text-sm font-semibold">ذكر قيمة الإيجار السنوي الحالي عند التجديد</span>
           </label>
         </div>
       </section>

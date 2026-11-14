@@ -144,6 +144,8 @@ type Property = {
 export type PaymentRow = {
   id?: string; paid_on: string; amount: number;
   method?: string | null; periods_covered?: number | null; note?: string | null;
+  /** (v80) رقم سند القبض — يُطبع في كشف الحساب بجانب الدفعة */
+  receipt_no?: string | null;
 };
 const METHOD_AR: Record<string, string> = {
   transfer: "تحويل بنكي", ejar: "منصة إيجار", cash: "نقدًا", pos: "شبكة", card: "بطاقة", cheque: "شيك", other: "أخرى",
@@ -867,7 +869,7 @@ ${shownPays.length ? `
       <td>${r.paid_on ? arDate(r.paid_on) : "—"}</td>
       <td>${sar(grossPay(r))}</td>
       <td>${payMethod(r)}</td>
-      <td>${r.note ? escH(r.note) : "—"}</td>
+      <td>${[r.receipt_no ? `<span dir="ltr" style="font-family:monospace">سند ${escH(r.receipt_no)}</span>` : "", r.note ? escH(r.note) : ""].filter(Boolean).join(" · ") || "—"}</td>
     </tr>`).join("")}
     <tr style="background:#F3EEE2;font-weight:700">
       <td colspan="2">إجمالي المستلم</td>
@@ -3437,6 +3439,77 @@ ${header("سند صرف", e.voucher_no || "—", issuer, e.spent_on)}
 </div>
 ${footer(issuer)}`;
   return SHELL(`سند صرف ${e.voucher_no || ""} — ${p.name}`, body, markOf(issuer));
+}
+
+/* ═══════════════════ سند قبض دفعة إيجار (schema-v80) ═══════════════════ */
+/**
+ * سند قبض لدفعة إيجار مسجَّلة (14 نوفمبر 2026 — طلب مكتب «الأولى»).
+ *
+ * الرقم من القاعدة (RC-00001 لكل مكتب، يُمنح لحظة التسجيل — لا يُخمَّن هنا).
+ * السند يحمل ما سُجِّل فعلًا: المبلغ والتاريخ والطريقة والمرجع والبيان؛
+ * ولا يطبع «المتبقي الآن» لأن إعادة طباعته بعد شهر تعطي رقمًا آخر.
+ * الجوهر مشترك بين مستند المكتب (SHELL) وصفحة المستأجر (إطار البوابة).
+ */
+export type ReceiptPayment = {
+  id: string; receipt_no?: string | null; paid_on: string; amount: number; method?: string | null;
+  reference?: string | null; periods_covered?: number | null; applies_to?: string | null;
+  payer_name?: string | null; unit_label?: string | null; created_at?: string | null; note?: string | null;
+  /** دفعة عُكست لاحقًا: يُطبع السند بختم «معكوس» لا أن يختفي */
+  reversed_on?: string | null;
+};
+export type ReceiptTenant = { name: string; unit?: string | null; unit_type?: string | null; contract_no?: string | null;
+  payment_frequency?: string | null; vat_mode?: string | null; national_id?: string | null };
+export type ReceiptProperty = { name: string; property_type?: string | null; city?: string | null;
+  vat_enabled?: boolean | null; vat_rate?: number | null; vat_inclusive?: boolean | null };
+
+const receiptStatement = (pay: ReceiptPayment, ul: string, unit: string, freq?: string | null) => {
+  if (pay.applies_to === "carried") return "سداد دين مرحَّل من مدة سابقة";
+  if (pay.applies_to === "past_debt") return "سداد متأخرات مستأجر سابق";
+  const n = Number(pay.periods_covered) || 0;
+  const cov = n > 0 ? ` — ${n === 1 ? "دفعة واحدة" : n === 2 ? "دفعتان" : `${n} دفعات`}${freq ? ` (${freqLabel(freq)})` : ""}` : " — دفعة جزئية";
+  return `أجرة ${ul} رقم (${unit})${cov}`;
+};
+
+/** جوهر السند (صفوف «r») — يُستعمل في مستند المكتب وصفحة المستأجر */
+export function receiptRowsHTML(pay: ReceiptPayment, t: ReceiptTenant, p: ReceiptProperty, who: string): string {
+  const ul = unitWordFor(t.unit_type, p.property_type);
+  const unit = String(pay.unit_label || t.unit || "—");
+  const amount = Number(pay.amount) || 0;
+  return `
+  <div class="r"><span>رقم السند</span><span dir="ltr" style="font-family:monospace;font-weight:700">${pay.receipt_no || "—"}</span></div>
+  <div class="r"><span>التاريخ</span><span>${arDateH(pay.paid_on)}</span></div>
+  <div class="r"><span>استلمنا من</span><span style="font-weight:700">${pay.payer_name || t.name}</span></div>
+  <div class="r"><span>${ul}</span><span>${unit} — ${p.name}</span></div>
+  ${t.contract_no ? `<div class="r"><span>رقم العقد</span><span dir="ltr">${t.contract_no}</span></div>` : ""}
+  <div class="r"><span>المبلغ</span><span style="font-weight:700;font-size:1.1em">${sar(amount)} ريال</span></div>
+  <div class="r"><span>المبلغ بالحروف</span><span>${riyalsInWords(amount)}</span></div>
+  <div class="r"><span>طريقة الدفع</span><span>${methodAr(pay.method)}</span></div>
+  ${pay.reference ? `<div class="r"><span>المرجع</span><span dir="ltr">${pay.reference}</span></div>` : ""}
+  <div class="r"><span>البيان</span><span>${receiptStatement(pay, ul, unit, t.payment_frequency)}</span></div>
+  <div class="r"><span>المستلِم</span><span>${who}</span></div>`;
+}
+
+export function receiptHTML(pay: ReceiptPayment, t: ReceiptTenant, p: ReceiptProperty, issuer: Issuer = {}) {
+  pay = scrub(pay); t = scrub(t); p = scrub(p); issuer = scrub(issuer);
+  const who = issuerName(issuer) || "إدارة الأملاك";
+  const reversed = !!pay.reversed_on;
+  const issueTime = pay.created_at ? riyadhTime(pay.created_at) : "";
+  const body = `
+${header(reversed ? "سند معكوس" : "سند قبض", pay.receipt_no || "—", issuer, pay.paid_on)}
+${reversed ? `<div style="border:3px solid #a5322c;color:#a5322c;text-align:center;font-weight:800;font-size:1.25rem;padding:10px;margin:10px 0;border-radius:10px">معكوس — أُلغيت هذه الدفعة${pay.reversed_on ? ` بتاريخ ${arDate(String(pay.reversed_on).slice(0, 10))}` : ""} ولا يُعتدّ بهذا السند</div>` : ""}
+<h1>سند قبض</h1>
+<div class="sub">${p.name}${t.unit ? ` · ${unitWordFor(t.unit_type, p.property_type)} ${t.unit}` : ""}</div>
+
+<div class="box" style="margin-top:10px">${receiptRowsHTML(pay, t, p, who)}</div>
+
+<div class="note">سند استلام مبلغ صادر عن ${who} للتوثيق بين الطرفين، ولا يُعدّ إبراءً عمّا سواه من مستحقات. منصة وثيق لا تستلم ولا تحوّل أي مبالغ.</div>
+
+<div class="sign">
+  <div>عن ${who}<br><br>التوقيع والختم: ________________</div>
+  <div>تاريخ التسجيل: ${arDate(pay.created_at ? String(pay.created_at).slice(0, 10) : pay.paid_on)}${issueTime ? ` — الساعة <span dir="ltr">${issueTime}</span>` : ""}<br><br>رقم السند: <span dir="ltr">${pay.receipt_no || "—"}</span></div>
+</div>
+${footer(issuer)}`;
+  return SHELL(`${reversed ? "سند معكوس" : "سند قبض"} ${pay.receipt_no || ""} — ${pay.payer_name || t.name}`, body, markOf(issuer));
 }
 
 /**

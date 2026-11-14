@@ -6,7 +6,7 @@
  * تستعمله لوحة المكتب وكشف الحساب (contractState + الضريبة) — لا حساب ثانٍ.
  */
 import { esc, money, gDate, hDate, addDaysIso, methodAr, riyadhDay, frame, topBar } from "./hoaPortal";
-import { REQUEST_CATEGORIES, TENANT_REQUEST_STATUS_AR, requestCatAr, requestLocAr } from "./hoaMoney";
+import { REQUEST_CATEGORIES, TENANT_REQUEST_STATUS_AR, requestCatAr, requestLocAr, amountInWordsAr } from "./hoaMoney";
 import { contractState, splitVat, unitVatApplies, freqLabel } from "./contracts";
 import { statusWindows } from "./contract-state";
 import { visiblePayments } from "./documents";
@@ -180,7 +180,7 @@ export function renderTenantPage(d: TenantPortalData, opts: { nonce: string; bas
   ${shown.length ? shown.map((x: any) => `<div class="row">
     <div><b>${money(f.v.enabled && !f.v.inclusive && (!x.applies_to || x.applies_to === "rent") ? splitVat(Number(x.amount) || 0, f.v).total : Number(x.amount))} ريال</b>
       <div class="muted">${gDate(x.paid_on)} · ${methodAr(x.method)}${x.applies_to === "carried" ? " · سداد دين مرحَّل" : ""}</div></div>
-    ${x.reference ? `<span class="muted" dir="ltr" style="align-self:center">${esc(x.reference)}</span>` : ""}
+    <span style="align-self:center;text-align:left">${x.reference ? `<span class="muted" dir="ltr">${esc(x.reference)}</span><br>` : ""}${Number(x.amount) > 0 && !x.reverses ? `<a class="noprint" href="${base}/p/${esc(String(x.id))}" style="font-size:12px;white-space:nowrap">🧾 سند القبض</a>` : ""}</span>
   </div>`).join("") : `<div class="muted">لا دفعات مسجّلة في هذا العقد بعد.</div>`}
 </section>`;
 
@@ -218,6 +218,53 @@ export function renderTenantPage(d: TenantPortalData, opts: { nonce: string; bas
     flash + inactive + status + contract + claimBox + pays + reqBox + foot, opts.nonce,
     /* منع الإرسال المزدوج — السكربت الوحيد ويحمل nonce الاستجابة */
     `(function(){document.querySelectorAll('form[data-once]').forEach(function(f){f.addEventListener('submit',function(e){if(f.dataset.s){e.preventDefault();return;}f.dataset.s='1';setTimeout(function(){f.querySelectorAll('button').forEach(function(x){x.disabled=true;});},0);});});})();`);
+}
+
+/** سند قبض دفعة إيجار من صفحة المستأجر (schema-v80) — /r/t/{token}/p/{payment} */
+export type TenantReceiptData = {
+  payment: { id: string; paid_on: string; amount: number; method: string | null; reference: string | null; periods_covered: number | null;
+    applies_to: string | null; receipt_no: string | null; created_at: string; payer_name: string | null; unit_label: string | null; reversed_on: string | null };
+  tenant: { name: string; unit: string | null; unit_type: string | null; contract_no: string | null; payment_frequency: string | null; vat_mode: string | null };
+  property: { name: string; city: string | null; property_type: string | null; vat_enabled: boolean | null; vat_rate: number | null; vat_inclusive: boolean | null };
+  office: Record<string, any> | null;
+};
+export function renderTenantReceiptPage(d: TenantReceiptData, opts: { nonce: string; base: string }): string {
+  const { payment: x, tenant: t, property: p } = d; const o = d.office || {};
+  const org = String(o.billing_name || o.org_name || "").trim();
+  const ul = unitWordFor(t.unit_type, p.property_type);
+  const unit = String(x.unit_label || t.unit || "—");
+  const no = x.receipt_no || "—";
+  const reversed = !!x.reversed_on;
+  const n = Number(x.periods_covered) || 0;
+  const statement = x.applies_to === "carried" ? "سداد دين مرحَّل من مدة سابقة"
+    : x.applies_to === "past_debt" ? "سداد متأخرات مستأجر سابق"
+    : `أجرة ${ul} رقم (${unit})${n > 0 ? ` — ${n === 1 ? "دفعة واحدة" : n === 2 ? "دفعتان" : `${n} دفعات`} (${freqLabel(t.payment_frequency)})` : " — دفعة جزئية"}`;
+  const hij = hDate(x.paid_on);
+  const body = `
+<p class="noprint" style="margin:0 0 4px"><a href="${opts.base}">→ العودة إلى صفحتك</a></p>
+<section class="card" style="padding:20px;position:relative">
+  ${reversed ? `<div role="status" style="border:2px solid #A5322C;color:#A5322C;border-radius:10px;padding:8px 12px;margin-bottom:12px;font-weight:700;text-align:center">سند معكوس — أُلغيت هذه الدفعة${x.reversed_on ? ` بتاريخ ${gDate(riyadhDay(x.reversed_on))}` : ""} ولا يُعتدّ بها</div>` : ""}
+  <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;border-bottom:2px solid #0E3A37;padding-bottom:10px">
+    <div style="min-width:0"><div style="font-size:20px;font-weight:700;color:#0E3A37">سند قبض</div>
+      <div class="muted">${esc(org || "إدارة الأملاك")}</div>${o.cr_number ? `<div class="muted" style="font-size:11.5px">س.ت ${esc(o.cr_number)}</div>` : ""}</div>
+    <div style="text-align:left;flex:none"><div class="muted">رقم السند</div><b dir="ltr" style="font-family:monospace;white-space:nowrap">${esc(no)}</b></div>
+  </div>
+  <div class="row"><span>التاريخ</span><b>${gDate(x.paid_on)}${hij ? `<br><span class="muted">${esc(hij)}</span>` : ""}</b></div>
+  <div class="row"><span>استلمنا من</span><b>${esc(x.payer_name || t.name)}</b></div>
+  <div class="row"><span>${esc(ul)}</span><b>${esc(unit)} — ${esc(p.name)}</b></div>
+  ${t.contract_no ? `<div class="row"><span>رقم العقد</span><b dir="ltr">${esc(t.contract_no)}</b></div>` : ""}
+  <div class="row"><span>المبلغ</span><b style="font-size:18px">${money(x.amount)} ريال سعودي</b></div>
+  <div class="row"><span>المبلغ كتابةً</span><b style="text-align:left;font-weight:600;overflow-wrap:anywhere">${esc(amountInWordsAr(x.amount))}</b></div>
+  <div class="row"><span>طريقة الدفع</span><b>${methodAr(x.method)}</b></div>
+  ${x.reference ? `<div class="row"><span>المرجع</span><b dir="ltr">${esc(x.reference)}</b></div>` : ""}
+  <div class="row"><span>البيان</span><b style="text-align:left">${esc(statement)}</b></div>
+  <div class="row"><span>المستلِم</span><b style="text-align:left;overflow-wrap:anywhere">${esc(org || "إدارة الأملاك")}</b></div>
+  <div class="note">سند إلكتروني مستخرج من سجل دفعات المكتب كما سجّلها، ولا يُعدّ إبراءً عمّا سواه من مستحقات.</div>
+</section>
+<div class="noprint" style="margin-top:14px;display:flex;gap:10px"><button class="btn b-deep" id="pr" type="button">طباعة / حفظ PDF</button></div>
+<div class="foot">عبر منصة وثيق</div>`;
+  return frame(`${reversed ? "سند معكوس" : "سند قبض"} ${no}`, topBar(org || null, p.name, `${esc(t.name)}${t.unit ? ` · ${esc(ul)} ${esc(t.unit)}` : ""}`, "سند قبض"),
+    body, opts.nonce, `document.getElementById('pr').addEventListener('click',function(){window.print();});`);
 }
 
 export function renderTenantDeny(msg = "هذا الرابط غير متاح"): string {

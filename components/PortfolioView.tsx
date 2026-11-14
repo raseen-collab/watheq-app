@@ -13,12 +13,12 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { fetchAllRows } from "@/lib/fetch-all";
 import { createClient } from "@/lib/supabase-client";
-import { contractState, isVacant, splitVat, unitVatApplies, dueWithVat, type Frequency } from "@/lib/contracts";
+import { contractState, isVacant, splitVat, unitVatApplies, dueWithVat, defaultTermPeriods, type Frequency } from "@/lib/contracts";
 import { annualRentRoll } from "@/lib/income";
 import { isPartialOnly, renewalDue } from "@/lib/contract-state";
 import { sar, waLink, today, daysAr, normalizeSearch } from "@/lib/utils";
 import { arDate } from "@/lib/documents";
-import { endNoticeText } from "@/lib/tenant-messages";
+import { endNoticeText, noticeTermsOf } from "@/lib/tenant-messages";
 import { getOffice } from "@/lib/office";
 import { alertCount, complianceState, KIND_META, type ComplianceItem } from "@/lib/compliance";
 import ComplianceModal from "@/components/ComplianceModal";
@@ -228,6 +228,8 @@ export default function PortfolioView({ properties, windows, compliance, orgName
       unpaid: Number(st.unpaid) || 0, carried: Math.max(0, Number((t as any).carried_debt) || 0),
       upcomingDate: st.unpaid === 0 ? st.nextDueDate : st.upcomingDate, upcomingAmount: one.total,
       signer: issuer?.billing_name || orgName || (p as any).manager || "إدارة الأملاك",
+      terms: noticeTermsOf(issuer),
+      annualRent: (Number(t.rent_amount) || 0) * defaultTermPeriods((t.payment_frequency || "monthly") as Frequency),
     }));
   };
 

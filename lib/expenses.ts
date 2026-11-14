@@ -5,7 +5,7 @@
 // دوال نقية بلا شبكة — تُستعمل في اللوحة والمستند وصفحة رابط المالك.
 // ============================================================
 
-export type ExpenseCategory = "maintenance" | "utilities" | "government" | "cleaning" | "other";
+export type ExpenseCategory = "maintenance" | "utilities" | "government" | "cleaning" | "salaries" | "contracts" | "other";
 
 export type ExpenseRow = {
   id?: string;
@@ -41,7 +41,17 @@ export const EXPENSE_CATS: Record<ExpenseCategory, { label: string; icon: string
   utilities:   { label: "فواتير خدمات", icon: "💡" },
   government:  { label: "رسوم حكومية",  icon: "🏛️" },
   cleaning:    { label: "نظافة",        icon: "🧹" },
+  /* (14 نوفمبر 2026 — مكتب الأولى) راتب الحارس وعقد المصاعد ليسا «صيانة» ولا «أخرى» */
+  salaries:    { label: "رواتب وأجور",  icon: "👷" },
+  contracts:   { label: "عقود دورية",   icon: "📄" },
   other:       { label: "أخرى",         icon: "📦" },
+};
+
+/** (schema-v81) قالب مصروف شهري متكرر — يُرحَّل مصروفًا عاديًّا كل شهر في يومه */
+export type ExpenseTemplate = {
+  id: string; property_id: string; unit?: string | null; category: ExpenseCategory | string; amount: number;
+  note?: string | null; vendor?: string | null; billable: boolean; paid_by: string; post_status: "paid" | "due";
+  day_of_month: number; start_month: string; end_month?: string | null; active: boolean; last_posted?: string | null;
 };
 
 export const catLabel = (c?: string | null) =>

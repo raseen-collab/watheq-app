@@ -10,7 +10,7 @@ import { createClient } from "@/lib/supabase-client";
 import { officeId } from "@/lib/office";
 import { sar, today } from "@/lib/utils";
 import { arDate, openDoc, expenseVoucherHTML, type ExpenseVoucher } from "@/lib/documents";
-import { EXPENSE_CATS, catIcon, catLabel, sumExpenses, type ExpenseRow, type ExpenseCategory } from "@/lib/expenses";
+import { EXPENSE_CATS, catIcon, catLabel, sumExpenses, PAID_BY, type ExpenseRow, type ExpenseCategory, type ExpenseTemplate } from "@/lib/expenses";
 import DateField from "@/components/DateField";
 
 const AR_MONTHS = ["يناير","فبراير","مارس","أبريل","مايو","يونيو","يوليو","أغسطس","سبتمبر","أكتوبر","نوفمبر","ديسمبر"];
@@ -32,8 +32,56 @@ export default function ExpensesModal({ propertyId, propertyName, unitWord, onCl
   const [adding, setAdding] = useState(false);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<null | { k: "ok" | "err"; m: string }>(null);
+  /* (schema-v81) المصروفات الشهرية المتكررة: راتب الحارس، عقد المصاعد… */
+  const [tpls, setTpls] = useState<ExpenseTemplate[] | null>(null);
+  const [tplOpen, setTplOpen] = useState(false);
+  const [tplAdding, setTplAdding] = useState(false);
 
   function flash(k: "ok" | "err", m: string) { setMsg({ k, m }); setTimeout(() => setMsg(null), 3500); }
+
+  async function loadTemplates() {
+    const { data, error } = await supabase.from("expense_templates").select("*").eq("property_id", propertyId).order("created_at", { ascending: true });
+    /* قبل تشغيل v81: لا قسم متكرر، بلا خطأ */
+    if (error) { setTpls(/relation|schema cache|does not exist/i.test(String(error.message)) ? null : []); return; }
+    setTpls((data || []) as ExpenseTemplate[]);
+  }
+  /** ترحيل ما حلّ موعده من القوالب (يومه في الشهر مضى) ثم إعادة تحميل الشهر */
+  async function postRecurring(silent = true) {
+    const { data, error } = await supabase.rpc("watheq_post_recurring_expenses", { p_property: propertyId });
+    if (error) { if (!silent) flash("err", friendly(error)); return 0; }
+    const n = Number(data) || 0;
+    if (n > 0) { await load(ym); flash("ok", `رُحِّل ${n === 1 ? "مصروف شهري واحد" : `${n} مصروفات شهرية`} إلى سجل المصروفات`); }
+    else if (!silent) flash("ok", "لا مصروفات متكررة حلّ موعدها بعد.");
+    await loadTemplates();
+    return n;
+  }
+  async function saveTemplate(d: Partial<ExpenseTemplate>) {
+    setBusy(true);
+    try {
+      const uid = await officeId(supabase);
+      if (!uid) throw new Error("انتهت الجلسة — سجّل الدخول مجددًا");
+      const { data, error } = await supabase.from("expense_templates").insert({ ...d, property_id: propertyId, user_id: uid }).select("*").single();
+      if (error) throw error;
+      setTpls([...(tpls || []), data as ExpenseTemplate]);
+      setTplAdding(false);
+      flash("ok", "حُفظ المصروف المتكرر — يُرحَّل تلقائيًّا في يومه كل شهر");
+      await postRecurring(true);
+    } catch (e) { flash("err", friendly(e)); } finally { setBusy(false); }
+  }
+  async function toggleTemplate(t: ExpenseTemplate, active: boolean) {
+    const { data, error } = await supabase.from("expense_templates").update({ active }).eq("id", t.id).select("*");
+    if (error) return flash("err", friendly(error));
+    if (!data || !data.length) return flash("err", "هذا الإجراء يحتاج صلاحية تسجيل المصروفات — اطلبه من صاحب المكتب.");
+    setTpls((tpls || []).map((x) => (x.id === t.id ? (data[0] as ExpenseTemplate) : x)));
+    flash("ok", active ? "أُعيد تشغيل المصروف المتكرر" : "أُوقف — ما رُحِّل سابقًا يبقى في السجل");
+  }
+  async function removeTemplate(t: ExpenseTemplate) {
+    if (!confirm(`حذف المصروف المتكرر «${catLabel(t.category)} — ${sar(Number(t.amount))} ريال شهريًّا»؟\n\nما رُحِّل من مصروفات سابقة يبقى في السجل كما هو.`)) return;
+    const { data, error } = await supabase.from("expense_templates").delete().eq("id", t.id).select("id");
+    if (error) return flash("err", friendly(error));
+    if (!data || !data.length) return flash("err", "هذا الإجراء يحتاج صلاحية تسجيل المصروفات — اطلبه من صاحب المكتب.");
+    setTpls((tpls || []).filter((x) => x.id !== t.id));
+  }
 
   function friendly(e: any) {
     const t = String(e?.message || e);
@@ -57,6 +105,9 @@ export default function ExpensesModal({ propertyId, propertyName, unitWord, onCl
   }
   useEffect(() => { void load(ym); /* إعادة التحميل عند تغيير الشهر */ // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ym]);
+  /* عند الفتح: ترحيل ما حلّ موعده ثم قوالب العقار — مرة واحدة */
+  useEffect(() => { void (async () => { await loadTemplates(); await postRecurring(true); })(); // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [propertyId]);
 
   const total = useMemo(() => sumExpenses(rows || []), [rows]);
 
@@ -151,6 +202,42 @@ export default function ExpensesModal({ propertyId, propertyName, unitWord, onCl
         </div>
 
         {adding && <ExpenseForm unitWord={unitWord} busy={busy} payeeHints={payeeHints || []} onCancel={() => setAdding(false)} onSave={save} />}
+
+        {/* (v81) المتكرر شهريًّا: راتب الحارس، عقد المصاعد، النظافة بعقد… يُرحَّل في يومه كل شهر */}
+        {tpls !== null && (
+          <div className="mt-4 rounded-xl border border-line bg-white">
+            <button type="button" className="w-full flex items-center justify-between gap-2 px-3 py-2 text-sm" onClick={() => setTplOpen(!tplOpen)} aria-expanded={tplOpen}>
+              <span className="font-semibold">🔁 مصروفات شهرية متكررة{tpls.length ? ` (${tpls.filter((t) => t.active).length} نشطة)` : ""}</span>
+              <span className="text-muted text-xs">{tplOpen ? "إخفاء ▴" : "عرض ▾"}</span>
+            </button>
+            {tplOpen && (
+              <div className="px-3 pb-3 border-t border-line">
+                <p className="text-[11px] text-muted mt-2">كل قالب يُسجَّل مصروفًا عاديًّا في يومه من كل شهر، ويدخل تقرير المالك بحسب «على من تُحسب». أوقفه أو احذفه متى شئت؛ ما رُحِّل يبقى.</p>
+                {tpls.length > 0 && (
+                  <div className="mt-2 flex flex-col gap-1.5">
+                    {tpls.map((t) => (
+                      <div key={t.id} className={`flex items-center gap-2 flex-wrap rounded-lg border px-2.5 py-1.5 text-sm ${t.active ? "border-line bg-paper" : "border-dashed border-line opacity-60"}`}>
+                        <span aria-hidden>{catIcon(t.category)}</span>
+                        <div className="min-w-0 flex-1">
+                          <div className="font-semibold">{catLabel(t.category)}{t.unit ? ` — ${unitWord} ${t.unit}` : ""}{t.note ? ` · ${t.note}` : ""}</div>
+                          <div className="text-[11px] text-muted">يوم {t.day_of_month} من كل شهر · {t.billable === false ? "على المكتب" : "تُخصم من المالك"} · {PAID_BY[t.paid_by] || ""}{t.vendor ? ` · ${t.vendor}` : ""}{t.last_posted ? ` · آخر ترحيل ${ymLabel(String(t.last_posted).slice(0, 7))}` : " · لم يُرحَّل بعد"}{!t.active ? " · متوقف" : ""}</div>
+                        </div>
+                        <b className="shrink-0">{sar(Number(t.amount))}<span className="text-[10px] font-normal text-muted"> /شهر</span></b>
+                        <button className="btn btn-ghost text-[11px] px-2 py-0.5" onClick={() => toggleTemplate(t, !t.active)}>{t.active ? "إيقاف" : "تشغيل"}</button>
+                        <button className="btn btn-ghost text-[11px] px-2 py-0.5 text-late" onClick={() => removeTemplate(t)}>حذف</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <div className="flex gap-2 mt-2">
+                  <button className="btn btn-gold text-xs" onClick={() => setTplAdding(true)}>+ مصروف متكرر</button>
+                  {tpls.some((t) => t.active) && <button className="btn btn-ghost text-xs" onClick={() => postRecurring(false)}>ترحيل ما حلّ موعده الآن</button>}
+                </div>
+                {tplAdding && <RecurringForm unitWord={unitWord} busy={busy} onCancel={() => setTplAdding(false)} onSave={saveTemplate} />}
+              </div>
+            )}
+          </div>
+        )}
         {(payeeHints || []).length > 0 && (
           <datalist id="wq-payee-hints">{Array.from(new Set(payeeHints)).map((n) => <option key={n} value={n} />)}</datalist>
         )}
@@ -169,7 +256,7 @@ export default function ExpensesModal({ propertyId, propertyName, unitWord, onCl
                   <span className="text-lg" aria-hidden>{catIcon(x.category)}</span>
                   <div className="min-w-0 flex-1">
                     <div className="text-sm font-semibold">{catLabel(x.category)}{x.unit ? ` — ${unitWord} ${x.unit}` : ""}</div>
-                    <div className="text-xs text-muted">{arDate(x.spent_on)}{x.note ? ` · ${x.note}` : ""}</div>
+                    <div className="text-xs text-muted">{arDate(x.spent_on)}{x.note ? ` · ${x.note}` : ""}{(x as any).recurring_id ? " · 🔁 شهري" : ""}{x.status === "due" ? " · مستحقة لم تُدفع" : ""}</div>
                     {x.voucher_no && (
                       <div className="text-xs text-deep mt-0.5">🧾 سند <span dir="ltr" className="font-mono">{x.voucher_no}</span> · المستلم: <b>{x.payee_name}</b></div>
                     )}
@@ -213,7 +300,7 @@ function ExpenseForm({ unitWord, busy, onSave, onCancel, payeeHints }: {
     <div className="mt-4 border border-line rounded-xl p-4 bg-paper space-y-3">
       <div>
         <span className="block text-sm font-semibold mb-1">التصنيف</span>
-        <div className="grid grid-cols-5 gap-2">
+        <div className="grid grid-cols-4 gap-2">
           {(Object.keys(EXPENSE_CATS) as ExpenseCategory[]).map((k) => (
             <button key={k} type="button" onClick={() => setD({ ...d, category: k })}
               className={`border-2 rounded-lg py-2 text-[.68rem] font-semibold transition ${
@@ -300,6 +387,76 @@ function ExpenseForm({ unitWord, busy, onSave, onCancel, payeeHints }: {
           })}>
           {busy ? "…" : d.voucher ? "تسجيل وإصدار السند" : "تسجيل"}
         </button>
+      </div>
+    </div>
+  );
+}
+
+/** (v81) نموذج المصروف المتكرر — نفس خيارات المصروف العادي، بيوم الشهر بدل التاريخ */
+function RecurringForm({ unitWord, busy, onSave, onCancel }: {
+  unitWord: string; busy: boolean; onSave: (d: Partial<ExpenseTemplate>) => void; onCancel: () => void;
+}) {
+  const [d, setD] = useState<any>({ category: "salaries", amount: "", day_of_month: 1, unit: "", note: "", vendor: "",
+    billable: true, paid_by: "collections", post_status: "paid", start_month: today().slice(0, 7) });
+  const ready = Number(d.amount) > 0 && Number(d.day_of_month) >= 1 && Number(d.day_of_month) <= 28 && /^\d{4}-\d{2}$/.test(d.start_month);
+  return (
+    <div className="mt-3 border border-gold rounded-xl p-3 bg-[#FBF1DF] space-y-3">
+      <div>
+        <span className="block text-sm font-semibold mb-1">التصنيف</span>
+        <div className="grid grid-cols-4 gap-2">
+          {(Object.keys(EXPENSE_CATS) as ExpenseCategory[]).map((k) => (
+            <button key={k} type="button" onClick={() => setD({ ...d, category: k })}
+              className={`border-2 rounded-lg py-2 text-[.68rem] font-semibold transition ${d.category === k ? "border-gold bg-white" : "border-line bg-white/60 hover:border-goldSoft"}`}>
+              {EXPENSE_CATS[k].icon}<br />{EXPENSE_CATS[k].label}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="grid grid-cols-3 gap-3">
+        <label className="block"><span className="block text-sm font-semibold mb-1">المبلغ شهريًّا (ريال)</span>
+          <input className="fld" type="number" min={1} value={d.amount} onChange={(e) => setD({ ...d, amount: e.target.value })} placeholder="2500" /></label>
+        <label className="block"><span className="block text-sm font-semibold mb-1">يوم الاستحقاق في الشهر</span>
+          <input className="fld" type="number" min={1} max={28} value={d.day_of_month} onChange={(e) => setD({ ...d, day_of_month: e.target.value })} />
+          <span className="block text-[11px] text-muted mt-1">1 إلى 28 — يُرحَّل المصروف في هذا اليوم من كل شهر</span></label>
+        <label className="block"><span className="block text-sm font-semibold mb-1">من شهر</span>
+          <input className="fld" type="month" value={d.start_month} onChange={(e) => setD({ ...d, start_month: e.target.value })} />
+          <span className="block text-[11px] text-muted mt-1">شهر سابق = تُرحَّل أشهره الماضية أيضًا</span></label>
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <label className="block"><span className="block text-sm font-semibold mb-1">البيان</span>
+          <input className="fld" value={d.note} maxLength={300} onChange={(e) => setD({ ...d, note: e.target.value })} placeholder="راتب حارس العمارة" /></label>
+        <label className="block"><span className="block text-sm font-semibold mb-1">المورّد / المستفيد <span className="text-muted text-xs font-normal">— اختياري</span></span>
+          <input className="fld" value={d.vendor} maxLength={120} onChange={(e) => setD({ ...d, vendor: e.target.value })} placeholder="شركة المصاعد" /></label>
+      </div>
+      <div className="grid grid-cols-3 gap-3">
+        <label className="block"><span className="block text-sm font-semibold mb-1">على من تُحسب</span>
+          <select className="fld" value={d.billable === false ? "office" : "owner"} onChange={(e) => setD({ ...d, billable: e.target.value === "owner" })}>
+            <option value="owner">تُخصم من المالك</option>
+            <option value="office">على المكتب (لا تُخصم)</option>
+          </select></label>
+        <label className="block"><span className="block text-sm font-semibold mb-1">من يدفعها</span>
+          <select className="fld" value={d.paid_by} onChange={(e) => setD({ ...d, paid_by: e.target.value })}>
+            <option value="collections">من تحصيل العقار</option>
+            <option value="office">من المكتب (يُستردّ)</option>
+            <option value="owner">يدفعها المالك مباشرة</option>
+          </select></label>
+        <label className="block"><span className="block text-sm font-semibold mb-1">تُسجَّل كـ</span>
+          <select className="fld" value={d.post_status} onChange={(e) => setD({ ...d, post_status: e.target.value })}>
+            <option value="paid">مدفوعة في يومها</option>
+            <option value="due">مستحقة حتى تُدفع</option>
+          </select></label>
+        <label className="block col-span-3 sm:col-span-1"><span className="block text-sm font-semibold mb-1">{unitWord} <span className="text-muted text-xs font-normal">— اختياري</span></span>
+          <input className="fld" value={d.unit} onChange={(e) => setD({ ...d, unit: e.target.value })} /></label>
+      </div>
+      <div className="flex gap-2 justify-end">
+        <button className="btn btn-ghost text-sm" onClick={onCancel} disabled={busy}>إلغاء</button>
+        <button className="btn btn-gold text-sm" disabled={!ready || busy}
+          onClick={() => onSave({
+            category: d.category, amount: Number(d.amount), day_of_month: Math.min(28, Math.max(1, Number(d.day_of_month) || 1)),
+            unit: String(d.unit || "").trim() || null, note: String(d.note || "").trim() || null, vendor: String(d.vendor || "").trim() || null,
+            billable: d.billable !== false, paid_by: d.paid_by || "collections", post_status: d.post_status === "due" ? "due" : "paid",
+            start_month: `${d.start_month}-01`, active: true,
+          })}>{busy ? "…" : "حفظ المصروف المتكرر"}</button>
       </div>
     </div>
   );

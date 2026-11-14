@@ -15,11 +15,11 @@ import type { ComplianceItem } from "@/lib/compliance";
 import { fetchAllRows } from "@/lib/fetch-all";
 import { hijriShort, hijriText, parseHijriInput } from "@/lib/hijri";
 import { sar, waLink, today, WATHEQ_WA, openExternal, daysAr, countAr, normalizeSearch, csvCell } from "@/lib/utils";
-import { endNoticeText, meterNoticeText } from "@/lib/tenant-messages";
+import { endNoticeText, meterNoticeText, noticeTermsOf, acDripNoticeText } from "@/lib/tenant-messages";
 import { contractState, expectedNext12, buildSchedule, FREQUENCIES, freqLabel, freqShort, derivedEndDate, renewContract, needsRenewal, applyPayment, splitVat, isCommercial, isVacant, settleDeposit, unitVatApplies,
   vacancyDays, TURNOVER_CHECKLIST, defaultTermPeriods, parseDate, dueWithVat, rentWithVat, withVat, unitVat, firstDueGap, type Frequency } from "@/lib/contracts";
 import { PROPERTY_TYPES, typeLabel, unitLabel, typeIcon, unitWordFor } from "@/lib/domain";
-import { statementHTML, invoiceHTML, propertyStatementHTML, moveOutSettlementHTML, quotationHTML, ownerReportHTML, DEFAULT_CHARGES, openDoc, type ChargeRow, type OwnerReportPayment } from "@/lib/documents";
+import { statementHTML, invoiceHTML, propertyStatementHTML, moveOutSettlementHTML, quotationHTML, ownerReportHTML, receiptHTML, DEFAULT_CHARGES, openDoc, type ChargeRow, type OwnerReportPayment } from "@/lib/documents";
 import OwnerStatementModal from "@/components/OwnerStatementModal";
 import ActivityLog from "@/components/ActivityLog";
 import StatusLegend from "@/components/StatusLegend";
@@ -373,7 +373,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
   useEffect(() => { setTPage(0); }, [filter, q, tSort, activeId]);
   useEffect(() => { setCardsShown(60); }, [filter, q, activeId]);
   const [sort, setSort] = useState<"urgent" | "due" | "amount" | "name">("urgent");
-  const [toast, setToast] = useState<null | { k: "ok" | "err"; m: string; undo?: () => void }>(null);
+  const [toast, setToast] = useState<null | { k: "ok" | "err"; m: string; undo?: () => void; extra?: { label: string; run: () => void } }>(null);
   /* ديون المستأجرين السابقين المفتوحة (schema-v45). قبل الترحيل لا يوجد
      الجدول — فالخطأ يُتجاهَل ويبقى المؤشر كما كان. */
   const [past, setPast] = useState<{ id: string; property_id: string; name: string; unit: string | null;
@@ -403,11 +403,41 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
     router.refresh();
     setTimeout(() => setRefreshing(false), 1200);
   }
-  function notify(k: "ok" | "err", m: string, undo?: () => void) {
-    setToast({ k, m, undo });
+  function notify(k: "ok" | "err", m: string, undo?: () => void, extra?: { label: string; run: () => void }) {
+    setToast({ k, m, undo, extra });
     /* الإشعار القابل للتراجع يبقى أطول: زرّ ✔ ينفّذ بنقرة واحدة وهو ملاصق
        لزر السداد الجزئي — فالخطأ وارد، والتراجع كان مدفونًا في قائمة ⋯. */
-    setTimeout(() => setToast(null), undo ? 7000 : 3600);
+    setTimeout(() => setToast(null), undo || extra ? 9000 : 3600);
+  }
+
+  /**
+   * (schema-v80) سند قبض دفعة إيجار: يُفتح بمعرّف الدفعة بعد تسجيلها، أو من
+   * «سجل المدفوعات»، أو «آخر دفعة» من قائمة الوحدة. الرقم من القاعدة.
+   */
+  async function openReceipt(t: Tenant, paymentId?: string) {
+    if (!active) return;
+    let q = supabase.from("payments").select("*").eq("tenant_id", t.id).gt("amount", 0).is("reverses", null);
+    q = paymentId ? q.eq("id", paymentId) : q.order("created_at", { ascending: false }).limit(1);
+    const { data, error } = await q;
+    if (error) return notify("err", error.message);
+    const pay = (data || [])[0];
+    if (!pay) return notify("err", `لا دفعة مسجّلة لـ${t.name} بعد.`);
+    if (!pay.receipt_no) return notify("err", "هذه الدفعة بلا رقم سند (شغّل تحديث قاعدة البيانات v80، أو هي دفعة تجريبية).");
+    const { data: rv } = await supabase.from("payments").select("created_at").eq("reverses", pay.id).limit(1);
+    openDoc(receiptHTML({ ...pay, reversed_on: rv && rv[0] ? rv[0].created_at : null }, t as any, active as any, issuer || {}));
+  }
+
+  /** إرسال السند للمستأجر واتساب: رابط سنده في صفحته الخاصة (يُنشأ إن لم يوجد) */
+  async function sendReceiptWa(t: Tenant, pay: { id: string; amount: number; receipt_no?: string | null; paid_on: string }) {
+    if (!active) return;
+    if (demo) return notify("err", "في المكتب التجريبي لا تُرسل رسائل.");
+    const { data, error } = await supabase.rpc("watheq_tenant_link_get_or_create", { p_tenant: t.id });
+    if (error || !data?.token) return notify("err", friendlyError(String(error?.message || "تعذّر تجهيز رابط السند")));
+    const url = `${window.location.origin}/r/t/${data.token}/p/${pay.id}`;
+    const who = (issuer as any)?.billing_name || orgName || active.manager || "إدارة الأملاك";
+    const msg = [`السلام عليكم ${t.name}،`, `استلمنا ${sar(Number(pay.amount))} ريال بتاريخ ${arDate(pay.paid_on)}${pay.receipt_no ? ` — سند قبض رقم ${pay.receipt_no}` : ""}.`,
+      `سند القبض: ${url}`, "", `شاكرين لكم، ${who}`].join("\n");
+    openExternal(waLink(t.phone || "", msg));
   }
 
   /** «+ عقار»: الحساب المنتهي للقراءة فقط، وباقة المالك عقار واحد (التجريبي لا يُحسب) */
@@ -513,11 +543,14 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       collected: (p.collected || 0) + amt,
       tenants: p.tenants.map((x) => (x.id === t.id ? { ...x, paid_periods: r.paid_periods, partial_amount: r.partial_amount } : x)),
     } : p));
+    const payId = (r as any).payment_id as string | undefined;
     notify("ok", r.completed > 0
       ? `سُجّل ${sar(amt)} ريال — اكتملت ${r.completed} دفعة`
       : `سُجّل ${sar(amt)} ريال كسداد جزئي`,
       /* تراجع بنقرة واحدة لسبع ثوانٍ: أقرب من قائمة ⋯ حين يكون الخطأ طازجًا */
-      may("undo_actions") ? () => undoPayment(t) : undefined);
+      may("undo_actions") ? () => undoPayment(t) : undefined,
+      /* (v80) سند القبض بنقرة من الإشعار نفسه — أكثر ما يُطلب بعد التسجيل */
+      payId ? { label: "🧾 سند قبض", run: () => { void openReceipt(t, payId); } } : undefined);
     return true;
     });
   }
@@ -1371,6 +1404,17 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       }
       return notify("err", "هذا الإجراء يحتاج صلاحية أعلى — اطلبه من صاحب المكتب.");
     }
+    /* (schema-v79) الوحدات «ضمن عقد» هذه الوحدة تأخذ مدة العقد الجديدة معها —
+       تواريخها فقط؛ المال كله يبقى على الرئيسية (الحارس في القاعدة يُبقيه صفرًا) */
+    const coveredUnits = active.tenants.filter((x: Tenant) => x.covered_by === t.id && !isVacant(x));
+    const coveredSync = {
+      contract_start: fields.contract_start, contract_end: fields.contract_end, payment_frequency: fields.payment_frequency,
+      contract_periods: fields.contract_periods, first_due: (fields as any).first_due ?? null, term_started_at: (fields as any).term_started_at,
+    };
+    if (coveredUnits.length) {
+      const { error: ce } = await supabase.from("tenants").update(coveredSync).in("id", coveredUnits.map((x: Tenant) => x.id));
+      if (ce) notify("err", `جُدّد العقد، لكن تعذّر تحديث مدة الوحدات المشمولة (${coveredUnits.map((x: Tenant) => x.unit || "—").join("، ")}): ${ce.message}`);
+    }
     /* ما رحّله التجديد فعلًا — هو ما يُسدَّد أو يُشطب، لا رقمٌ محسوب منفصلًا */
     const carriedNow = Number((fields as any).carried_debt) || 0;
     const moved = Math.round((carriedNow - (Number(t.carried_debt) || 0)) * 100) / 100;
@@ -1397,7 +1441,8 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
     });
     setItems(items.map((pp) => pp.id === active.id ? {
       ...pp,
-      tenants: pp.tenants.map((x) => (x.id === t.id ? { ...x, ...fields, carried_debt: carriedAfter } as Tenant : x)),
+      tenants: pp.tenants.map((x) => (x.id === t.id ? { ...x, ...fields, carried_debt: carriedAfter } as Tenant
+        : x.covered_by === t.id && !isVacant(x) ? { ...x, ...coveredSync } as Tenant : x)),
     } : pp));
     setRenewing(null);
     if (noteRes.error) notify("err", "جُدّد العقد، لكن تعذّرت كتابة الملاحظة في سجل العقار.");
@@ -1662,6 +1707,16 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
   }
 
   /** هل يظهر «إشعار انتهاء العقد»؟ عقد منتهٍ أو داخل نافذة «ينتهي قريبًا» للمكتب */
+  /** واتساب: تنبيه تنقيط المكيفات (طلب مكتب الأولى) — من صف الوحدة، بتوقيع المكتب */
+  function acDripLink(t: Tenant) {
+    if (!active) return "#";
+    const who = (issuer as any)?.billing_name || orgName || active.manager || "إدارة الأملاك";
+    return waLink(t.phone || "", acDripNoticeText({
+      tenantName: t.name || "", unitText: `${unitWordFor(t.unit_type, active.property_type)} (${t.unit || "—"})`,
+      propertyName: active.name, days: 7, signer: who,
+    }));
+  }
+
   function endNoticeDue(t: Tenant, st: ReturnType<typeof contractState>) {
     return !isVacant(t) && !t.litigation && !!st.endDate && st.daysToEnd !== null
       && (st.daysToEnd < 0 || st.expiringSoon) && may("send_reminders");
@@ -1688,6 +1743,9 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       upcomingDate: st.unpaid === 0 ? st.nextDueDate : st.upcomingDate,
       upcomingAmount: one.total,
       signer: who,
+      /* (14 نوفمبر 2026) بنود المكتب من الإعدادات: رسوم التجديد، الأجرة اليومية، شرط المتأخرات */
+      terms: noticeTermsOf(issuer),
+      annualRent: (Number(t.rent_amount) || 0) * defaultTermPeriods((t.payment_frequency || "monthly") as Frequency),
     }));
   }
 
@@ -1955,6 +2013,10 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
         <div className={`fixed top-5 left-1/2 -translate-x-1/2 z-[70] rounded-xl px-4 py-3 text-sm font-semibold shadow-lg border flex items-center ${
           toast.k === "ok" ? "bg-[#E6F4EC] text-[#137a50] border-[#B7DFC7]" : "bg-[#FBE9E7] text-[#a5322c] border-[#F5C6C2]"}`}>
           <span>{toast.m}</span>
+          {toast.extra && (
+            <button type="button" onClick={() => { const r = toast.extra!.run; setToast(null); r(); }}
+              className="ms-3 underline underline-offset-4 font-bold">{toast.extra.label}</button>
+          )}
           {toast.undo && (
             <button type="button" onClick={() => { const u = toast.undo!; setToast(null); u(); }}
               className="ms-3 underline underline-offset-4 font-bold">تراجع</button>
@@ -2410,24 +2472,26 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                                   { sep: "📄 مستندات" } as any,
                                   { label: "كشف حساب شامل", run: () => openStatement(t, "full") },
                                   { label: "كشف حساب مختصر", run: () => openStatement(t, "brief") },
-                                  ...(may("issue_invoices") ? [{ label: "فاتورة", run: () => openInvoice(t) }] : []),
+                                  ...(may("issue_invoices") && !t.covered_by ? [{ label: "فاتورة", run: () => openInvoice(t) }] : []),
                                   { label: "سجل الفواتير", run: () => setInvoicesFor(t) },
                                   { label: "جدول الدفعات", run: () => setSchedule(t) },
                                   { label: "سجل المدفوعات", run: () => openHistory(t) },
+                                  ...(!isVacant(t) && !t.covered_by ? [{ label: "🧾 سند قبض آخر دفعة", run: () => { void openReceipt(t); } }] : []),
                                   ...(isVacant(t) ? [{ label: "مخالصة الإخلاء", run: () => openSettlement(t) }] : []),
 
                                   { sep: "✉️ مراسلة" } as any,
                                   ...(endNoticeDue(t, st) ? [{ label: "📅 إشعار انتهاء العقد (واتساب)", run: () => openExternal(endNoticeLink(t)) }] : []),
                                   ...(meterNoticeDue(t) ? [{ label: "⚡ إشعار تسجيل عداد الكهرباء (واتساب)", run: () => { void sendMeterNotice(t); } }] : []),
+                                  ...(!isVacant(t) && t.phone && may("send_reminders") ? [{ label: "❄️ تنبيه تنقيط المكيفات (واتساب)", run: () => openExternal(acDripLink(t)) }] : []),
                                   ...(!isVacant(t) && !String(t.elec_account || "").trim() && may("edit_tenants") ? [{ label: "⚡ أضف رقم عداد الكهرباء", run: () => setModal({ kind: "tenant", id: t.id }) }] : []),
                                   ...(st.unpaid > 0 && may("send_reminders") ? [{ label: "خطاب إشعار رسمي", run: () => makeNotice(t) }] : []),
-                                  ...(!isVacant(t) && may("record_payments") ? [{ label: "🔑 رابط المستأجر", run: () => setTenantLinkFor(t) }] : []),
+                                  ...(!isVacant(t) && !t.covered_by && may("record_payments") ? [{ label: "🔑 رابط المستأجر", run: () => setTenantLinkFor(t) }] : []),
                                   { label: "ناقش مع الفريق", run: () => window.dispatchEvent(new CustomEvent("watheq:chat", { detail: { propertyId: active?.id, propertyName: active?.name, tenantId: t.id, tenantName: t.name, unit: t.unit } })) },
 
                                   ...(may("edit_tenants") || may("renew_contracts") || may("move_out") || may("undo_actions") || isManager
                                     ? [{ sep: "🔧 العقد" } as any] : []),
                                   ...(may("edit_tenants") ? [{ label: "تعديل البيانات", run: () => setModal({ kind: "tenant", id: t.id }) }] : []),
-                                  ...(needsRenewal(t) && may("renew_contracts") ? [{ label: "تجديد العقد", run: () => askRenew(t) }] : []),
+                                  ...(needsRenewal(t) && !t.covered_by && may("renew_contracts") ? [{ label: "تجديد العقد", run: () => askRenew(t) }] : []),
                                   ...(may("move_out") && !isVacant(t) ? [{ label: "إنهاء العقد وإخلاء", run: () => setTurnover(t) }] : []),
                                   ...(isManager && !t.litigation && st.unpaid > 0 ? [{ label: "رفع للتنفيذ القضائي", run: () => setEnforcing(t) }] : []),
                                   ...(may("undo_actions") && (t.paid_periods || 0) > 0 ? [{ label: "↩︎ تراجع عن آخر دفعة", run: () => undoPayment(t), danger: true }] : []),
@@ -2561,10 +2625,11 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                   */}
                 {(() => {
                   const closed = st.fullyPaid || ((st.daysToEnd ?? 0) < 0 && st.unpaid === 0);
-                  const canPay = canCollect && !closed;
-                  const canRemind = may("send_reminders") && !closed;
+                  /* (v79) الوحدة «ضمن عقد» غيرها: لا دفعة ولا تذكير عليها — كلاهما على الرئيسية */
+                  const canPay = canCollect && !closed && !t.covered_by;
+                  const canRemind = may("send_reminders") && !closed && !t.covered_by;
                   const primaryPay = canPay && (key === "late" || key === "partial" || key === "due");
-                  const primaryRenew = !primaryPay && key === "expiring" && needsRenewal(t) && may("renew_contracts");
+                  const primaryRenew = !primaryPay && key === "expiring" && needsRenewal(t) && !t.covered_by && may("renew_contracts");
                   const primaryEdit = key === "incomplete" && may("edit_tenants");
                   const wide = "max-sm:!hidden";   // ثانوي: ظاهر على الشاشة الأوسع، وفي ⋯ على الجوال (! لأن .btn يفرض inline-flex فيغلب hidden)
                   const tel = t.phone ? `tel:${String(t.phone).replace(/[^0-9+]/g, "")}` : null;
@@ -2600,7 +2665,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                         <span className="whitespace-nowrap"><Icon name="doc" /> فاتورة</span>
                       </QuickBtn></span>}
                       {st.unpaid > 0 && may("send_reminders") && <button className={`btn btn-gold text-xs ${wide}`} onClick={() => makeNotice(t)}>نموذج إشعار</button>}
-                      {!primaryRenew && needsRenewal(t) && may("renew_contracts") && <button className={`btn text-xs ${wide}`} style={{ background: "#0E3A37", color: "#F6F1E4" }} onClick={() => askRenew(t)}>تجديد</button>}
+                      {!primaryRenew && needsRenewal(t) && !t.covered_by && may("renew_contracts") && <button className={`btn text-xs ${wide}`} style={{ background: "#0E3A37", color: "#F6F1E4" }} onClick={() => askRenew(t)}>تجديد</button>}
                     </>
                   )}
                   <RowMenu
@@ -2614,24 +2679,26 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                       { sep: "📄 مستندات" } as any,
                       { label: "كشف حساب شامل", run: () => openStatement(t, "full") },
                       { label: "كشف حساب مختصر", run: () => openStatement(t, "brief") },
-                      ...(may("issue_invoices") ? [{ label: "فاتورة", run: () => openInvoice(t) }] : []),
+                      ...(may("issue_invoices") && !t.covered_by ? [{ label: "فاتورة", run: () => openInvoice(t) }] : []),
                       { label: "سجل الفواتير", run: () => setInvoicesFor(t) },
                       { label: "جدول الدفعات", run: () => setSchedule(t) },
                       { label: "سجل المدفوعات", run: () => openHistory(t) },
+                      ...(!isVacant(t) && !t.covered_by ? [{ label: "🧾 سند قبض آخر دفعة", run: () => { void openReceipt(t); } }] : []),
                       ...(isVacant(t) ? [{ label: "مخالصة الإخلاء", run: () => openSettlement(t) }] : []),
 
                       { sep: "✉️ مراسلة" } as any,
                       ...(endNoticeDue(t, st) ? [{ label: "📅 إشعار انتهاء العقد (واتساب)", run: () => openExternal(endNoticeLink(t)) }] : []),
                       ...(meterNoticeDue(t) ? [{ label: "⚡ إشعار تسجيل عداد الكهرباء (واتساب)", run: () => { void sendMeterNotice(t); } }] : []),
+                      ...(!isVacant(t) && t.phone && may("send_reminders") ? [{ label: "❄️ تنبيه تنقيط المكيفات (واتساب)", run: () => openExternal(acDripLink(t)) }] : []),
                       ...(!isVacant(t) && !String(t.elec_account || "").trim() && may("edit_tenants") ? [{ label: "⚡ أضف رقم عداد الكهرباء", run: () => setModal({ kind: "tenant", id: t.id }) }] : []),
                       ...(st.unpaid > 0 && may("send_reminders") ? [{ label: "خطاب إشعار رسمي", run: () => makeNotice(t) }] : []),
-                      ...(!isVacant(t) && may("record_payments") ? [{ label: "🔑 رابط المستأجر", run: () => setTenantLinkFor(t) }] : []),
+                      ...(!isVacant(t) && !t.covered_by && may("record_payments") ? [{ label: "🔑 رابط المستأجر", run: () => setTenantLinkFor(t) }] : []),
                       { label: "ناقش مع الفريق", run: () => window.dispatchEvent(new CustomEvent("watheq:chat", { detail: { propertyId: active?.id, propertyName: active?.name, tenantId: t.id, tenantName: t.name, unit: t.unit } })) },
 
                       ...(may("edit_tenants") || may("renew_contracts") || may("move_out") || may("undo_actions") || isManager
                         ? [{ sep: "🔧 العقد" } as any] : []),
                       ...(may("edit_tenants") ? [{ label: "تعديل البيانات", run: () => setModal({ kind: "tenant", id: t.id }) }] : []),
-                      ...(needsRenewal(t) && may("renew_contracts") ? [{ label: "تجديد العقد", run: () => askRenew(t) }] : []),
+                      ...(needsRenewal(t) && !t.covered_by && may("renew_contracts") ? [{ label: "تجديد العقد", run: () => askRenew(t) }] : []),
                       ...(may("move_out") && !isVacant(t) ? [{ label: "إنهاء العقد وإخلاء", run: () => setTurnover(t) }] : []),
                       ...(may("move_out") && isVacant(t) ? [{ label: "تعديل بيانات الإخلاء", run: () => setTurnover(t) }] : []),
                       ...(isManager && t.litigation ? [{ label: "إلغاء الرفع للتنفيذ", run: () => { if (confirm("إلغاء رفع العقد للتنفيذ؟ ستعود الإشعارات الودية.")) patchTenant(t.id, { litigation: false }); } }] : []),
@@ -2824,7 +2891,8 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       {turnover && <TurnoverModal key={turnover.id} tenant={turnover} unitWord={ul} onClose={() => setTurnover(null)}
         vat={active ? { enabled: unitVatApplies(turnover, active), rate: Number(active.vat_rate) || 15, inclusive: active.vat_inclusive !== false } : undefined}
         onSubmit={(d) => saveTurnover(turnover, d)} />}
-      {history && <HistoryModal data={history} unitWord={ul} db={db} canEdit={may("undo_actions")} onChanged={() => { setInboxKey((k) => k + 1); router.refresh(); }} onClose={() => setHistory(null)} />}
+      {history && <HistoryModal data={history} unitWord={ul} db={db} canEdit={may("undo_actions")} onChanged={() => { setInboxKey((k) => k + 1); router.refresh(); }} onClose={() => setHistory(null)}
+        onReceipt={(r) => { void openReceipt(history.tenant, r.id); }} onReceiptWa={may("send_reminders") && history.tenant.phone ? (r) => { void sendReceiptWa(history.tenant, r); } : undefined} />}
       {remindAll && <RemindAllModal rows={lateRows} unitWord={ul} linkOf={remindLink} demo={demo} dueOf={(r) => dueWithVat(r.st, r.t, active)}
         onClose={() => setRemindAll(false)} />}
       {doc && <DocModal doc={doc} onClose={() => setDoc(null)} />}
@@ -3267,10 +3335,12 @@ function TurnoverModal({ tenant, unitWord, onClose, onSubmit, vat }: {
  * أسبوع يحتاج تصحيح تاريخ وصول المال أو إضافة مرجعه — بلا مساس بالمبلغ
  * (تغييره يفسد عدّاد الدفعات). القاعدة تسمح بهذين العمودين فقط.
  */
-function HistoryModal({ data, unitWord, onClose, canEdit = true, onChanged, db }: {
+function HistoryModal({ data, unitWord, onClose, canEdit = true, onChanged, db, onReceipt, onReceiptWa }: {
   data: { tenant: Tenant; rows: any[] }; unitWord: string; onClose: () => void; canEdit?: boolean; db?: any;
   /** تُستدعى بعد عكس دفعة ليُعاد تحميل أرقام اللوحة */
   onChanged?: () => void;
+  /** (v80) سند قبض الدفعة: طباعة، وإرساله للمستأجر واتساب (إن كان له جوال وصلاحية الإرسال) */
+  onReceipt?: (r: any) => void; onReceiptWa?: (r: any) => void;
 }) {
   const { tenant } = data;
   const supabase: any = useMemo(() => db || createClient(), [db]);
@@ -3361,6 +3431,7 @@ function HistoryModal({ data, unitWord, onClose, canEdit = true, onChanged, db }
               <th className="p-2 text-right font-semibold">الطريقة</th>
               <th className="p-2 text-right font-semibold">المرجع</th>
               <th className="p-2 text-right font-semibold">اكتملت</th>
+              <th className="p-2 text-right font-semibold">السند</th>
               <th className="p-2 text-right font-semibold">ملاحظة</th>
               {canEdit && <th className="p-2"></th>}
             </tr></thead>
@@ -3389,6 +3460,16 @@ function HistoryModal({ data, unitWord, onClose, canEdit = true, onChanged, db }
                       : (r.reference || "—")}
                   </td>
                   <td className="p-2 text-muted">{r.periods_covered || "—"}</td>
+                  {/* (v80) سند القبض: رقمه من القاعدة؛ الطباعة وإرساله واتساب. المعكوسة تُطبع بختمها. */}
+                  <td className="p-2 whitespace-nowrap">
+                    {Number(r.amount) > 0 && r.receipt_no ? (
+                      <span className="inline-flex items-center gap-1">
+                        <span className="font-mono text-xs" dir="ltr">{r.receipt_no}</span>
+                        {onReceipt && <button className="btn btn-ghost text-[10px] px-1.5 py-0.5" title="طباعة سند القبض" onClick={() => onReceipt(r)}>🖨</button>}
+                        {onReceiptWa && !reversedIds.has(String(r.id)) && <button className="btn btn-ghost text-[10px] px-1.5 py-0.5" title="إرسال السند للمستأجر واتساب" onClick={() => onReceiptWa(r)}>واتساب</button>}
+                      </span>
+                    ) : <span className="text-muted text-xs">—</span>}
+                  </td>
                   {/* العكس يبقى ظاهرًا هنا (سجلّ تدقيق للمكتب) — بلا المعرّف الخام */}
                   <td className="p-2 text-muted text-xs">{r.note ? String(r.note).replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, "").replace(/\s*—\s*$/, "") : "—"}</td>
                   {canEdit && (
