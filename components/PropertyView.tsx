@@ -32,7 +32,7 @@ import DueListModal from "@/components/DueListModal";
 import ExpensesModal from "@/components/ExpensesModal";
 import OwnerLinkModal from "@/components/OwnerLinkModal";
 import { TenantLinkModal, TenantPortalInbox, type TenantClaim } from "@/components/TenantPortal";
-import type { ExpenseRow } from "@/lib/expenses";
+import { FEE_PERIODS, type ExpenseRow } from "@/lib/expenses";
 import DateField from "@/components/DateField";
 
 /** تحويل كل دورة إلى مكافئ شهري لحساب الدخل التقريبي */
@@ -85,6 +85,9 @@ type Property = {
   grace_days?: number | null; soon_days?: number | null; imminent_days?: number | null; expiring_days?: number | null; usage?: string | null;
   vat_enabled?: boolean | null; vat_rate?: number | null; vat_inclusive?: boolean | null;
   mgmt_fee_pct?: number | null;
+  /** (v86) نسبة أو مبلغ شهري ثابت */
+  mgmt_fee_mode?: "pct" | "fixed" | string | null; mgmt_fee_amount?: number | null;
+  mgmt_fee_period?: "month" | "half" | "year" | "once" | string | null; mgmt_fee_on?: string | null;
   owner_name?: string | null;
   /** عدادات العقار الرئيسية (schema-v68) — المصعد، الخدمات، الماء… */
   meters?: PropertyMeter[] | null;
@@ -901,6 +904,11 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       vat_inclusive: d.vat_inclusive !== false,
       // نسبة أتعاب الإدارة: تُخصم من المحصَّل في تقرير المالك (فارغة = لا أتعاب)
       mgmt_fee_pct: Number(d.mgmt_fee_pct) > 0 && Number(d.mgmt_fee_pct) <= 100 ? Number(d.mgmt_fee_pct) : null,
+      /* (v86) مبلغ شهري ثابت بدل النسبة — عمارة تُدار بمبلغ مقتطع كل شهر */
+      mgmt_fee_mode: d.mgmt_fee_mode === "fixed" ? "fixed" : "pct",
+      mgmt_fee_amount: d.mgmt_fee_mode === "fixed" && Number(d.mgmt_fee_amount) > 0 ? Math.round(Number(d.mgmt_fee_amount) * 100) / 100 : null,
+      mgmt_fee_period: ["month", "half", "year", "once"].includes(String(d.mgmt_fee_period)) ? d.mgmt_fee_period : "month",
+      mgmt_fee_on: d.mgmt_fee_mode === "fixed" && d.mgmt_fee_period && d.mgmt_fee_period !== "month" && /^\d{4}-\d{2}-\d{2}$/.test(String(d.mgmt_fee_on || "")) ? d.mgmt_fee_on : null,
       // اسم المالك يجمع عقاراته في كشف واحد (schema-v10) — يُقصّ حتى لا تتشتت الأسماء بمسافات
       owner_name: (d.owner_name || "").trim() || null,
       // عدادات العقار الرئيسية: الصف بلا رقم حساب يُسقط، والفارغ يُحفظ null
@@ -3888,9 +3896,36 @@ function PropertyModal({ open, initial, orgName, ownerNames = [], officeSoon = 1
           </div>
         </div>
 
-        <Field label="نسبة أتعاب الإدارة %" hint="اختياري — تُخصم من المحصَّل ويظهر الصافي في تقرير المالك">
-          <input className="fld" type="number" min={0} max={100} step={0.5} placeholder="مثال: 5"
-            value={d.mgmt_fee_pct ?? ""} onChange={(e) => setD({ ...d, mgmt_fee_pct: e.target.value })} />
+        <Field label="أتعاب الإدارة" hint={d.mgmt_fee_mode === "fixed"
+          ? ((d.mgmt_fee_period || "month") === "month" ? "مبلغ ثابت يُخصم كل شهر في تقرير المالك (كشف شهرَين = مرتان)"
+            : d.mgmt_fee_period === "once" ? "يُخصم مرة واحدة فقط في التقرير الذي تقع فيه فترتُه على تاريخ الاستحقاق"
+            : "يُخصم في كل تقرير يقع في فترته استحقاق: التاريخ المحدد ثم كل " + (d.mgmt_fee_period === "half" ? "٦ أشهر" : "سنة") + " بعده")
+          : "اختياري — نسبة من المحصَّل تُخصم ويظهر الصافي في تقرير المالك"}>
+          <div className="flex gap-2 items-stretch flex-wrap">
+            <div className="flex rounded-lg border border-line overflow-hidden shrink-0">
+              <button type="button" onClick={() => setD({ ...d, mgmt_fee_mode: "pct" })} className={`px-3 py-2 text-xs font-semibold ${d.mgmt_fee_mode !== "fixed" ? "bg-deep text-white" : "bg-white text-deep"}`}>نسبة %</button>
+              <button type="button" onClick={() => setD({ ...d, mgmt_fee_mode: "fixed", mgmt_fee_period: d.mgmt_fee_period || "month" })} className={`px-3 py-2 text-xs font-semibold ${d.mgmt_fee_mode === "fixed" ? "bg-deep text-white" : "bg-white text-deep"}`}>مبلغ ثابت</button>
+            </div>
+            {d.mgmt_fee_mode === "fixed" ? (
+              <>
+                <input className="fld flex-1 min-w-[8rem]" type="number" min={0} step={1} placeholder="المبلغ بالريال"
+                  value={d.mgmt_fee_amount ?? ""} onChange={(e) => setD({ ...d, mgmt_fee_amount: e.target.value })} />
+                <select className="fld shrink-0 w-auto" value={d.mgmt_fee_period || "month"}
+                  onChange={(e) => setD({ ...d, mgmt_fee_period: e.target.value, mgmt_fee_on: e.target.value === "month" ? null : (d.mgmt_fee_on || new Date().toISOString().slice(0, 10)) })}>
+                  {FEE_PERIODS.map((o) => <option key={o.v} value={o.v}>{o.label}</option>)}
+                </select>
+                {(d.mgmt_fee_period || "month") !== "month" && (
+                  <label className="flex items-center gap-2 text-xs text-ink shrink-0">
+                    <span>تاريخ الاستحقاق</span>
+                    <input className="fld w-auto" type="date" value={d.mgmt_fee_on || ""} onChange={(e) => setD({ ...d, mgmt_fee_on: e.target.value })} />
+                  </label>
+                )}
+              </>
+            ) : (
+              <input className="fld flex-1" type="number" min={0} max={100} step={0.5} placeholder="مثال: 5"
+                value={d.mgmt_fee_pct ?? ""} onChange={(e) => setD({ ...d, mgmt_fee_pct: e.target.value })} />
+            )}
+          </div>
         </Field>
 
         <div className="border border-line rounded-xl p-3 bg-paper">

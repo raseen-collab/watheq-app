@@ -1,7 +1,7 @@
 import { contractState, buildSchedule, freqLabel, splitVat, settleDeposit, vacancyDays, isVacant, unitVatApplies, expectedNext12 } from "./contracts";
 import { complianceState, brokerageEnd, expectedCommission, UI_LEGAL, LEGAL_DISCLAIMER, DEFAULT_COMMISSION_PCT, type ComplianceItem } from "./compliance";
 import { KIND_META as L_KIND, OFFER_LABEL, STATUS_META, freshness, pricePerMeter, shortDesc, sortListings, summarize, STALE_DAYS, type Listing } from "./listings";
-import { ownerNet, sumByCategory, catLabel, sumAllExpenses, sumDue, isBillable, PAID_BY, type ExpenseRow } from "./expenses";
+import { ownerNet, feeSpecOf, feeTimes, feeLabel, sumByCategory, catLabel, sumAllExpenses, sumDue, isBillable, PAID_BY, type ExpenseRow } from "./expenses";
 import { unitLabel, typeLabel, unitWordFor } from "./domain";
 import { hijriText, hijriShort } from "@/lib/hijri";
 import { annualRentRoll } from "./income";
@@ -1211,7 +1211,8 @@ export function propertyStatementHTML(
    * مصروفات المالك − الأتعاب (وضريبتها) — كتقرير المالك حرفيًّا.
    */
   const periodExpRows = period ? expenses.filter((x) => inRange((x as any).spent_on)) : [];
-  const pFin = ownerNet(periodCollected + pvt.onTop, periodExpRows, (p as any).mgmt_fee_pct,
+  /* (v86) نسبة أو مبلغ ثابت × مرات الاستحقاق في الفترة (شهري/٦ أشهر/سنوي/مرة واحدة) */
+  const pFin = ownerNet(periodCollected + pvt.onTop, periodExpRows, feeSpecOf(p as any, feeTimes(p as any, period?.from, period?.to)),
     pvt.inside + pvt.onTop, issuer.vat_number ? (Number(p.vat_rate) || 15) : 0);
   const periodVat = pvt.inside + pvt.onTop;
   const expiringCount = rows.filter((r) => renewalDue(r.t, r.st)).length;
@@ -1262,7 +1263,7 @@ ${mode === "full" ? `
     ${stArr.legacy > 0 ? `<div class="r"><span style="padding-inline-start:12px">— على مستأجرين سابقين (وحدات شاغرة)</span><span>${sar(stArr.legacy)} ريال</span></div>` : ""}
     ${/* الرقم نفسه في مربّع «حركة الفترة» أعلاه (دفعات داخل الفترة فقط) */ ""}
     ${period ? `<div class="r"><span>المحصَّل خلال الفترة</span><span><b>${sar(periodCollected)} ريال</b></span></div>` : ""}
-    ${(p as any).mgmt_fee_pct ? `<div class="r"><span>أتعاب الإدارة</span><span>${(p as any).mgmt_fee_pct}%</span></div>` : ""}
+    ${feeLabel(p as any) ? `<div class="r"><span>أتعاب الإدارة</span><span>${feeLabel(p as any)}</span></div>` : ""}
     ${Number(p.grace_days) > 0 ? `<div class="r"><span>فترة السماح</span><span>${daysAr(Number(p.grace_days))}</span></div>` : ""}
     ${p.vat_enabled ? `<div class="r"><span>ضريبة القيمة المضافة</span><span>${Number(p.vat_rate) || 15}% على الوحدات التجارية</span></div>` : ""}
   </div>
@@ -2394,7 +2395,9 @@ export function ownerReportHTML(
   const activeLate = stRows.filter((r) => !r.cs.vacant && r.cs.amountDue > 0).length;
   const vacantOwing = stRows.filter((r) => r.cs.vacant && r.cs.legacyArrears > 0).length;
   /* «غير شاملة»: المقبوض فعلًا = المسجَّل + الضريبة التي دُفعت فوقه */
-  const fin = ownerNet(collected + vt.onTop, exp, extra.fee_pct, vatCollected, feeVatRate);
+  /* (v86) الأتعاب من إعداد العقار نفسه (نسبة أو ثابت × مرات الاستحقاق في الفترة)؛ extra.fee_pct يبقى احتياطًا للقديم */
+  const feeSpec = (p as any).mgmt_fee_mode === "fixed" ? feeSpecOf(p as any, feeTimes(p as any, period.from, period.to)) : { pct: extra.fee_pct ?? (p as any).mgmt_fee_pct ?? null };
+  const fin = ownerNet(collected + vt.onTop, exp, feeSpec, vatCollected, feeVatRate);
   /* «صافي المالك» صافي دخل العقار: يخصم كل مصروفاته — ومنها ما دفعه المالك
      بنفسه. فمن حوّل له «الصافي» خصم ذلك مرتين. (دراسة 685 احتمالًا: 53
      تقريرًا.) السطر الإضافي يقول المحوَّل صراحةً، ويظهر حين يلزم فقط. */
@@ -2473,7 +2476,7 @@ ${mode === "full" ? `
     ${arr.carried > 0 ? `<div class="r"><span>دين مُرحَّل من مدة سابقة</span><span><b style="color:#9A4B00">${sar(arr.carried)}</b> ريال</span></div>` : ""}
     ${arr.legacy > 0 ? `<div class="r"><span>على مستأجرين سابقين (وحدات شاغرة)</span><span><b style="color:#9A4B00">${sar(arr.legacy)}</b> ريال</span></div>` : ""}
     ${arr.grand !== arr.total ? `<div class="r"><span><b>إجمالي المستحق على العقار</b></span><span><b style="color:${arr.grand > 0 ? "#a5322c" : "#137a50"}">${sar(arr.grand)}</b> ريال</span></div>` : ""}
-    ${extra.fee_pct ? `<div class="r"><span>أتعاب الإدارة</span><span>${extra.fee_pct}%</span></div>` : ""}
+    ${feeLabel({ ...(p as any), mgmt_fee_pct: extra.fee_pct ?? (p as any).mgmt_fee_pct }) ? `<div class="r"><span>أتعاب الإدارة</span><span>${feeLabel({ ...(p as any), mgmt_fee_pct: extra.fee_pct ?? (p as any).mgmt_fee_pct })}${fin.feeFixed && fin.feeTimes !== undefined && fin.feeTimes !== 1 ? (fin.feeTimes === 0 ? " — لا استحقاق في هذه الفترة" : ` × ${fin.feeTimes}`) : ""}</span></div>` : ""}
     ${Number(p.grace_days) > 0 ? `<div class="r"><span>فترة السماح</span><span>${daysAr(Number(p.grace_days))}</span></div>` : ""}
   </div>
 </div>
@@ -2614,7 +2617,9 @@ export function ownerConsolidatedStatementHTML(
     const vt = vatOfPayments(s.property, s.payments as any[], s.pastVat);
     const vatCollected = vt.inside + vt.onTop;
     const feeVatRate = issuer.vat_number ? (Number(s.property.vat_rate) || 15) : 0;
-    const fin = ownerNet(collected + vt.onTop, s.expenses, s.fee_pct, vatCollected, feeVatRate);
+    const fin = ownerNet(collected + vt.onTop, s.expenses,
+      (s.property as any).mgmt_fee_mode === "fixed" ? feeSpecOf(s.property as any, feeTimes(s.property as any, period.from, period.to)) : { pct: s.fee_pct ?? (s.property as any).mgmt_fee_pct ?? null },
+      vatCollected, feeVatRate);
     /* الدين المرحَّل (كل الوحدات) ودين المستأجرين السابقين — لسطر المتأخرات */
     const carried = ten.reduce((a, r) => a + (Number(r.st.carriedDebt) || 0), 0);
     const legacy = ten.reduce((a, r) => a + (r.vacant ? dueIncl({ amountDue: r.st.legacyArrears }, vatOf(s.property, r.t)) : 0), 0);

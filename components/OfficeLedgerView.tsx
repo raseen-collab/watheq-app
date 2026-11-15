@@ -95,7 +95,7 @@ export default function OfficeLedgerView({ orgName, issuer }: { orgName: string;
         const pastQ = await supabase.from("past_tenancies").select("id, snapshot").in("property_id", ids).limit(5000);
         const { fin } = buildCollection({
           periodPayments: pays || [], allTenantPayments: [], expenses: exps || [], tenants: tenants || [],
-          properties: real, pastVat: pastQ.error ? undefined : pastVatOf(pastQ.data as any), issuer: issuer || {}, from: bounds.from,
+          properties: real, pastVat: pastQ.error ? undefined : pastVatOf(pastQ.data as any), issuer: issuer || {}, from: bounds.from, to: bounds.to,
         });
         fees = { fee: fin.fee, feeVat: fin.feeVat };
       }

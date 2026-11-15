@@ -10,7 +10,7 @@
 //    يسمّي أول دفعة فيه «القسط الأول» وهي السابعة.
 //  • دفعات الدين (مرحَّل/سابق) ودفعات مدة سابقة تُسمّى بما هي، لا أقساطًا.
 // ============================================================
-import { ownerNet } from "@/lib/expenses";
+import { ownerNet, feeSpecOf, feeTimes } from "@/lib/expenses";
 import { vatOfPaymentsFor, type PastVat } from "@/lib/documents";
 
 export type CollectionRowX = {
@@ -38,8 +38,10 @@ export function buildCollection(input: {
   pastVat?: PastVat;
   issuer?: { vat_number?: string | null };
   from: string;
+  /** (v86) نهاية الفترة — لحساب مرات استحقاق الأتعاب الثابتة؛ بدونه تُعدّ مرة واحدة */
+  to?: string;
 }) {
-  const { periodPayments, allTenantPayments, expenses, tenants, properties, pastVat, issuer, from } = input;
+  const { periodPayments, allTenantPayments, expenses, tenants, properties, pastVat, issuer, from, to } = input;
   const pName: Record<string, string> = Object.fromEntries((properties || []).map((p: any) => [p.id, p.name]));
   const tById: Record<string, any> = Object.fromEntries((tenants || []).map((t: any) => [t.id, t]));
 
@@ -109,7 +111,7 @@ export function buildCollection(input: {
     const vt = vatOfPaymentsFor({ ...p, tenants: (tenants || []).filter((t: any) => t.property_id === p.id) }, payU, pastVat);
     const exps = billable.filter((e: any) => e.property_id === p.id);
     const recorded = pays.reduce((a: number, x: any) => a + (Number(x.amount) || 0), 0);
-    const f = ownerNet(recorded + vt.onTop, exps, p.mgmt_fee_pct, vt.inside + vt.onTop, issuer?.vat_number ? (Number(p.vat_rate) || 15) : 0);
+    const f = ownerNet(recorded + vt.onTop, exps, feeSpecOf(p, feeTimes(p, from, to)), vt.inside + vt.onTop, issuer?.vat_number ? (Number(p.vat_rate) || 15) : 0);
     fin.gross += f.grossCollected ?? f.collected; fin.vat += f.vatCollected ?? 0; fin.collected += f.collected;
     fin.expenses += f.expenses; fin.fee += f.feeBase ?? f.fee; fin.feeVat += f.feeVat ?? 0; fin.net += f.net;
     fin.ownerPaid += exps.filter((e: any) => e.paid_by === "owner").reduce((a: number, e: any) => a + (Number(e.amount) || 0), 0);

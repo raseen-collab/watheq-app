@@ -93,6 +93,78 @@ export function sumByCategory(rows: ExpenseRow[]): { category: string; label: st
     .sort((a, b) => b.total - a.total);
 }
 
+/**
+ * (v86) أتعاب الإدارة: نسبة من المحصَّل، أو مبلغ ثابت بدورية:
+ *   month = كل شهر (× أشهر الفترة) · half = كل ٦ أشهر · year = كل سنة · once = مرة واحدة فقط.
+ * للدوريات غير الشهرية يلزم تاريخ استحقاق (mgmt_fee_on): يُخصم المبلغ في كل فترة يقع فيها
+ * استحقاق (الاستحقاق ثم كل ٦/١٢ شهرًا بعده؛ «مرة واحدة» = التاريخ نفسه فقط).
+ * times = عدد مرات الخصم في الفترة.
+ */
+export type FeeSpec = { pct?: number | null; fixed?: number | null; times?: number };
+export type FeePeriod = "month" | "half" | "year" | "once";
+export const FEE_PERIODS: { v: FeePeriod; label: string; adv: string }[] = [
+  { v: "month", label: "شهري", adv: "شهريًّا" },
+  { v: "half", label: "كل ٦ أشهر", adv: "كل ٦ أشهر" },
+  { v: "year", label: "سنوي", adv: "سنويًّا" },
+  { v: "once", label: "مرة واحدة", adv: "مرة واحدة" },
+];
+type FeeProp = { mgmt_fee_pct?: number | null; mgmt_fee_mode?: string | null; mgmt_fee_amount?: number | null; mgmt_fee_period?: string | null; mgmt_fee_on?: string | null } | null | undefined;
+
+export function feePeriodOf(p: FeeProp): FeePeriod {
+  const v = p?.mgmt_fee_period;
+  return v === "half" || v === "year" || v === "once" ? v : "month";
+}
+
+/** مواصفة الأتعاب من صف العقار كما في القاعدة؛ times = مرات الخصم (افتراضيًّا 1) */
+export function feeSpecOf(p: FeeProp, times = 1): FeeSpec {
+  if (!p) return { pct: null, fixed: null, times };
+  if (p.mgmt_fee_mode === "fixed") return { pct: null, fixed: Number(p.mgmt_fee_amount) > 0 ? Number(p.mgmt_fee_amount) : null, times };
+  return { pct: p.mgmt_fee_pct ?? null, fixed: null, times };
+}
+
+/** عدد الأشهر التقويمية التي تلمسها الفترة (1–15 نوفمبر = 1 · نوفمبر–ديسمبر = 2) */
+export function monthsInPeriod(from?: string | null, to?: string | null): number {
+  if (!from || !to || !/^\d{4}-\d{2}/.test(from) || !/^\d{4}-\d{2}/.test(to)) return 1;
+  const n = (Number(to.slice(0, 4)) - Number(from.slice(0, 4))) * 12 + (Number(to.slice(5, 7)) - Number(from.slice(5, 7))) + 1;
+  return n >= 1 ? n : 1;
+}
+
+const D10 = /^\d{4}-\d{2}-\d{2}/;
+function addMonths(iso: string, n: number): string {
+  const y = Number(iso.slice(0, 4)), m = Number(iso.slice(5, 7)) - 1 + n, d = Number(iso.slice(8, 10));
+  const dt = new Date(Date.UTC(y + Math.floor(m / 12), ((m % 12) + 12) % 12, 1));
+  const last = new Date(Date.UTC(dt.getUTCFullYear(), dt.getUTCMonth() + 1, 0)).getUTCDate();
+  dt.setUTCDate(Math.min(d, last));
+  return dt.toISOString().slice(0, 10);
+}
+
+/**
+ * مرات خصم الأتعاب الثابتة في الفترة [from, to]:
+ *   شهري → أشهر الفترة · ٦ أشهر/سنوي → عدد الاستحقاقات الواقعة في الفترة · مرة واحدة → 1 إن وقع التاريخ فيها.
+ * بلا تاريخ استحقاق للدوريات غير الشهرية، أو بلا فترة محددة: تُخصم مرة واحدة (أسلم من الصفر الصامت).
+ */
+export function feeTimes(p: FeeProp, from?: string | null, to?: string | null): number {
+  if (!p || p.mgmt_fee_mode !== "fixed") return 1;
+  const per = feePeriodOf(p);
+  if (per === "month") return monthsInPeriod(from, to);
+  const on = p.mgmt_fee_on && D10.test(p.mgmt_fee_on) ? p.mgmt_fee_on.slice(0, 10) : null;
+  if (!on || !from || !to || !D10.test(from) || !D10.test(to)) return 1;
+  const f = from.slice(0, 10), t = to.slice(0, 10);
+  if (per === "once") return on >= f && on <= t ? 1 : 0;
+  const step = per === "half" ? 6 : 12;
+  let n = 0;
+  for (let k = 0, d = on; d <= t && k < 600; k++, d = addMonths(on, k * step)) if (d >= f) n++;
+  return n;
+}
+
+/** نص الأتعاب للمستندات: «5%» أو «1,500 ريال شهريًّا / كل ٦ أشهر / سنويًّا / مرة واحدة» — null إن لم تُحدَّد */
+export function feeLabel(p: FeeProp): string | null {
+  const f = feeSpecOf(p);
+  if (f.fixed) return `${f.fixed.toLocaleString("en-US")} ريال ${FEE_PERIODS.find((x) => x.v === feePeriodOf(p))!.adv}`;
+  if (f.pct) return `${f.pct}%`;
+  return null;
+}
+
 export type OwnerNet = {
   /** إجمالي المقبوض شاملًا الضريبة، والضريبة منه */
   grossCollected?: number; vatCollected?: number;
@@ -100,8 +172,10 @@ export type OwnerNet = {
   feeBase?: number; feeVat?: number;
   collected: number;      // المحصَّل خلال الفترة
   expenses: number;       // مصروفات الفترة
-  feePct: number | null;  // نسبة أتعاب الإدارة المطبَّقة (null = لا أتعاب)
-  fee: number;            // قيمة الأتعاب = المحصَّل × النسبة
+  feePct: number | null;  // نسبة أتعاب الإدارة المطبَّقة (null = لا أتعاب أو أتعاب ثابتة)
+  /** (v86) المبلغ الشهري الثابت وعدد الأشهر المطبَّق — إن كانت الأتعاب ثابتة */
+  feeFixed?: number | null; feeTimes?: number;
+  fee: number;            // قيمة الأتعاب = المحصَّل × النسبة، أو الثابت × الأشهر
   net: number;            // الصافي للمالك
   /** الأتعاب + ضريبتها تتجاوز ما حُصّل — خطأ إدخال شبه مؤكّد في النسبة */
   feeExceedsCollected: boolean;
@@ -125,9 +199,14 @@ export type OwnerNet = {
  *                    مسجَّلًا ضريبيًّا (إدارة الأملاك خدمة خاضعة 15%)
  */
 export function ownerNet(
-  collected: number, expenses: ExpenseRow[], feePct?: number | null,
+  collected: number, expenses: ExpenseRow[], feeIn?: number | FeeSpec | null,
   vatIncluded = 0, feeVatRate = 0,
 ): OwnerNet {
+  /* (v86) رقم = نسبة (توافق خلفي)؛ كائن = نسبة أو مبلغ ثابت × مرات الخصم (0 = لا استحقاق في الفترة) */
+  const spec: FeeSpec = feeIn && typeof feeIn === "object" ? feeIn : { pct: feeIn as number | null | undefined };
+  const feePct = spec.pct;
+  const fixed = Number(spec.fixed) > 0 ? Number(spec.fixed) : null;
+  const times = spec.times === undefined || spec.times === null ? 1 : Math.max(0, Math.round(Number(spec.times) || 0));
   const gross = r2(Number(collected) || 0);
   /* الضريبة لا تتجاوز المقبوض منطقيًّا؛ لكن خطأ بيانات (تصحيح دفعة، تراجع،
      أو استيراد ناقص) قد يجعلها أكبر — فتُقصّ هنا بدل أن تُنتج إيرادًا سالبًا
@@ -136,8 +215,8 @@ export function ownerNet(
   const c = r2(gross - vat);                       // إيراد المالك الفعلي
   const e = sumExpenses(expenses);
   const pct = Number(feePct);
-  const validPct = pct > 0 && pct <= 100 ? pct : null;
-  const feeBase = validPct ? r2((c * validPct) / 100) : 0;
+  const validPct = !fixed && pct > 0 && pct <= 100 ? pct : null;
+  const feeBase = fixed ? r2(fixed * times) : validPct ? r2((c * validPct) / 100) : 0;
   const feeVat = feeBase > 0 && feeVatRate > 0 ? r2((feeBase * feeVatRate) / 100) : 0;
   const fee = r2(feeBase + feeVat);
   /**
@@ -150,5 +229,6 @@ export function ownerNet(
    */
   const feeExceedsCollected = fee > c + 0.01;
   return { collected: c, grossCollected: gross, vatCollected: vat, expenses: e,
-           feePct: validPct, fee, feeBase, feeVat, feeExceedsCollected, net: r2(c - e - fee) };
+           feePct: validPct, feeFixed: fixed, feeTimes: fixed ? times : undefined,
+           fee, feeBase, feeVat, feeExceedsCollected, net: r2(c - e - fee) };
 }

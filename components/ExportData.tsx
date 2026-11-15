@@ -1,5 +1,6 @@
 "use client";
 import { today } from "@/lib/utils";
+import { feeLabel } from "@/lib/expenses";
 // ============================================================
 // وثيق — تصدير كل بيانات الحساب إلى Excel
 //
@@ -205,7 +206,7 @@ export default function ExportData() {
       add("العقارات", props.map((p) => ({
         "العقار": p.name, "النوع": p.property_type || "", "المدينة": p.city || "", "الحي/العنوان": p.address || "",
         "المالك": p.owner_name || "", "المدير/المكتب": p.manager || "", "فترة السماح (أيام)": p.grace_days || 0,
-        "أتعاب الإدارة %": p.mgmt_fee_pct || "", "ضريبة مفعّلة": p.vat_enabled ? "نعم" : "لا",
+        "أتعاب الإدارة": feeLabel(p) || "", "ضريبة مفعّلة": p.vat_enabled ? "نعم" : "لا",
         "عدد الوحدات": tenants.filter((t) => t.property_id === p.id).length,
         "الاستخدام": ({ families: "سكني — عوائل", singles: "سكني — عزّاب", mixed: "سكني تجاري", commercial: "تجاري" } as any)[p.usage] || "",
         "نسبة الضريبة": p.vat_rate ?? "", "الضريبة شاملة": p.vat_inclusive === false ? "لا" : "نعم",

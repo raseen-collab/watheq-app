@@ -108,7 +108,7 @@ export default function CollectionStatementModal({ properties, issuer, onClose, 
       const { rows, expRows, fin } = buildCollection({
         periodPayments: pays || [], allTenantPayments: allTenantPayments || [], expenses: exps || [],
         tenants: tenants || [], properties: inScope as any[], pastVat: pastQ.error ? undefined : pastVatOf(pastQ.data as any),
-        issuer: issuer || {}, from,
+        issuer: issuer || {}, from, to,
       });
       const pName: Record<string, string> = Object.fromEntries(properties.map((p) => [p.id, p.name]));
 
