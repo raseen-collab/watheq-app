@@ -19,7 +19,7 @@ import { openDoc, listingsRegisterHTML, arDate } from "@/lib/documents";
 import {
   KIND_META, OFFER_LABEL, STATUS_META, freshness, pricePerMeter, shortDesc,
   summarize, nextCode, isOpen, STALE_DAYS, filterListings, sortListingsBy, hasSeekerCriteria, SORT_LABEL,
-  authorizationWarning, commissionLine,
+  authorizationWarning, commissionLine, expectedCommission,
   type Listing, type ListingKind, type OfferType, type ListingStatus, type StatusFilter, type ListingSort, type ListingQuery,
 } from "@/lib/listings";
 import { complianceState, type ComplianceItem } from "@/lib/compliance";
@@ -586,7 +586,13 @@ function Card({ l, compact, cover, brokerages, requests, busy, onConfirm, onEdit
               </div>
             )}
             {commission && (
-              <div className="text-[11.5px] text-[#33413D] inline-flex items-center gap-1.5"><Icon name="percent" size={13} /> {commission}</div>
+              <div className="text-[11.5px] text-[#33413D] inline-flex items-center gap-1.5 flex-wrap"><Icon name="percent" size={13} /> {commission}
+                {/* (15 نوفمبر 2026) معروض متعاقَد عليه ← سعيه دخلٌ للمكتب: يُفتح دفتر المكتب معبّأً — المسوّق لا دفتر له */}
+                {!marketer && l.status === "contracted" && (
+                  <a className="underline text-deep" href={`/dashboard/property/ledger?add=income&cat=brokerage${expectedCommission(l) ? `&amount=${expectedCommission(l)}` : ""}&note=${encodeURIComponent(`سعي ${l.title || l.code || ""}`.trim())}&ref=${encodeURIComponent(`معروض ${l.code || l.id}`)}`}
+                    title="تسجيل السعي دخلًا في دفتر حسابات المكتب">سجّل السعي في دفتر المكتب ←</a>
+                )}
+              </div>
             )}
             {l.others_marketing && open && (
               <div className="text-[11.5px] text-muted inline-flex items-center gap-1.5" title="المالك يسوّقه عبر وسطاء آخرين — السعي لمن يعرّف الطرفين أولًا"><Icon name="users" size={13} /> وسطاء آخرون يسوّقونه — أكّد السعر قبل كل عرض</div>

@@ -87,7 +87,12 @@ export default function ExpensesModal({ propertyId, propertyName, unitWord, onCl
     const t = String(e?.message || e);
     if (/payee_name|payee_ref|voucher_no/.test(t) && /(column|schema cache)/i.test(t))
       return "سند الصرف يحتاج تشغيل schema-v74 في Supabase أولًا — سجّل المصروف بلا سند الآن، أو اطلب التحديث.";
-    return /expenses/.test(t) && /(not exist|relation|schema cache)/i.test(t)
+    /* (15 نوفمبر 2026) رفض قيد CHECK كان يُعرض «شغّل schema-v8» لأن نصه فيه «relation "expenses"» */
+    if (e?.code === "23514" || /check constraint/i.test(t))
+      return /category/i.test(t)
+        ? "هذا التصنيف يحتاج تحديث قاعدة البيانات (schema-v83) — اختر «أخرى» مؤقتًا، أو تواصل معنا على واتساب 0550165210."
+        : "قيمة غير مقبولة في أحد الحقول — راجع المدخلات.";
+    return /expenses/.test(t) && /(does not exist|schema cache)/i.test(t)
       ? "شغّل ملف schema-v8.sql في Supabase أولًا ثم أعد المحاولة" : t;
   }
 
@@ -334,7 +339,7 @@ function ExpenseForm({ unitWord, busy, onSave, onCancel, payeeHints }: {
             <option value="office">على المكتب (لا تُخصم)</option>
           </select>
           <span className="block text-[11px] text-muted mt-1">
-            {d.billable === false ? "لن تدخل في صافي المالك — مثل مصروفات المكتب نفسه." : "تدخل في حساب صافي المالك بتقريره."}
+            {d.billable === false ? "لن تدخل في صافي المالك — وتظهر في «📒 حسابات المكتب» مصروفًا على المكتب." : "تدخل في حساب صافي المالك بتقريره."}
           </span>
         </label>
         <label className="block"><span className="block text-sm font-semibold mb-1">من دفعها</span>

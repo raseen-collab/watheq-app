@@ -82,6 +82,14 @@ export function commissionLine(l: Listing): string | null {
   return bits.join(" · ");
 }
 const fmtPct = (n: number) => (Number.isInteger(n) ? String(n) : String(Math.round(n * 100) / 100));
+/** نصيب المكتب المتوقع من السعي بالريال (السعر × النسبة × النصيب) — null إن نقصت المدخلات */
+export function expectedCommission(l: Listing): number | null {
+  const c = Number(l.commission_pct), price = Number(l.price) || 0;
+  if (!(c > 0) || !(price > 0)) return null;
+  const share = l.my_share_pct == null ? 100 : Number(l.my_share_pct);
+  const mine = Math.round(price * (c / 100) * (share / 100));
+  return mine > 0 ? mine : null;
+}
 
 /** الأرض حقولها صك ومخطط وقطعة؛ والمبني حقوله دور وغرف — لا يخلطان */
 export const KIND_META: Record<ListingKind, { label: string; prefix: string; land: boolean; icon: string }> = {
