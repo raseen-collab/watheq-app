@@ -42,6 +42,8 @@ const PERIODS_PER_MONTH: Record<Frequency, number> = {
 
 type Tenant = {
   id: string; name: string; unit: string | null; phone: string | null; national_id: string | null;
+  /** (v85) جوال إضافي اختياري — الأول يبقى الأساسي */
+  phone2?: string | null;
   rent_amount: number; contract_start: string | null; contract_end: string | null;
   payment_frequency: string | null; paid_periods: number | null; contract_periods: number | null;
   partial_amount?: number | null;
@@ -466,7 +468,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       if (filter !== "all" && r.key !== filter && !(filter === "soon" && r.key === "due")) return false;
       if (!needle) return true;
       // نفس حقول بحث «النظرة العامة» — لا يجد المستأجر في صفحة ويعجز في أخرى
-      return [r.t.name, r.t.unit, r.t.phone, r.t.contract_no, r.t.national_id, r.t.elec_account, r.t.water_account].filter(Boolean)
+      return [r.t.name, r.t.unit, r.t.phone, r.t.phone2, r.t.contract_no, r.t.national_id, r.t.elec_account, r.t.water_account].filter(Boolean)
         .some((v) => normalizeSearch(v).includes(needle));
     });
     out = [...out].sort((a, b) => {
@@ -1025,6 +1027,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       status: String(d.status || "active") === "vacated" ? "vacated" : "active",
       move_out_date: String(d.status || "active") === "vacated" ? (d.move_out_date || today()) : null,
       property_id: active.id, name: d.name, unit: d.unit || null, phone: d.phone || null,
+      phone2: String(d.phone2 || "").trim() || null,
       national_id: d.national_id || null, rent_amount: Number(d.rent_amount) || 0,
       contract_start: d.contract_start || null,
       payment_frequency: freq,
@@ -1556,12 +1559,12 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
     if (!active) return;
     const ul = unitLabel(active.property_type);
     const g = { graceDays: Number(active.grace_days) || 0 };
-    const head = ["الاسم", ul, "الجوال", "الهوية/السجل", "الإيجار", "الدورة",
+    const head = ["الاسم", ul, "الجوال", "جوال إضافي", "الهوية/السجل", "الإيجار", "الدورة",
       "بداية العقد", "نهاية العقد", "الحالة", "المتأخر (ريال)", "الدفعة القادمة"];
     const lines = (active.tenants || []).map((t) => {
       const st = contractState(t, g);
       const key = rowKey(t, st);
-      return [t.name, t.unit || "", t.phone || "", t.national_id || "",
+      return [t.name, t.unit || "", t.phone || "", t.phone2 || "", t.national_id || "",
         Number(t.rent_amount) || 0, freqShort(t.payment_frequency),
         t.contract_start || "", st.endDate || "", unitStatusLabel(key as any, st),
         key === "late" || key === "partial" ? dueWithVat(st, t, active) : 0, st.nextDueDate || ""]
@@ -1644,7 +1647,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
   }
 
   /** تذكير ودّي — يوضّح تفاصيل المطالبة وتاريخ استحقاقها */
-  function remindLink(t: Tenant) {
+  function remindLink(t: Tenant, toPhone?: string | null) {
     if (!active) return "#";
     const st = contractState(t, { graceDays: Number(active?.grace_days) || 0, ...windowsOf(active) });
     /* الموقِّع: المكتب لا «مدير العقار» (مراجعة 29 سبتمبر 2026) — ذاك الحقل
@@ -1703,7 +1706,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
     L.push("");
     L.push("شاكرين لكم حسن تعاونكم،");
     L.push(who);
-    return waLink(t.phone, L.join("\n"));
+    return waLink(toPhone || t.phone, L.join("\n"));
   }
 
   /** هل يظهر «إشعار انتهاء العقد»؟ عقد منتهٍ أو داخل نافذة «ينتهي قريبًا» للمكتب */
@@ -1943,7 +1946,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
   /* الحقول والتوحيد نفسها التي تصفّي الصفوف — كانت الشرائح تعدّ بحقول أقل وبلا توحيد (30 سبتمبر 2026) */
   const qNeedle = normalizeSearch(q);
   const searched = qNeedle.length >= 1
-    ? allRows.filter(({ t }) => [t.name, t.unit, t.phone, t.national_id, t.contract_no, t.elec_account, t.water_account]
+    ? allRows.filter(({ t }) => [t.name, t.unit, t.phone, t.phone2, t.national_id, t.contract_no, t.elec_account, t.water_account]
         .some((v) => v && normalizeSearch(v).includes(qNeedle)))
     : allRows;
   const counts = searched.reduce((acc, r) => { acc[r.key] = (acc[r.key] || 0) + 1; return acc; },
@@ -2675,6 +2678,9 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                       ...(key !== "vacant" && key !== "litigation" && canCollect ? [{ label: "💰 تسجيل دفعة", run: () => setPaying(t) }] : []),
                       ...(key !== "vacant" && key !== "litigation" && canRemind ? [{ label: "💬 تذكير واتساب", run: () => openExternal(remindLink(t)) }] : []),
                       ...(tel && key !== "vacant" ? [{ label: "📞 اتصال", run: () => { window.location.href = tel; } }] : []),
+                      /* (v85) جوال إضافي: تذكير واتصال بالرقم الثاني — الأول يبقى الأساسي للتذكير الجماعي */
+                      ...(t.phone2 && key !== "vacant" && key !== "litigation" && canRemind ? [{ label: `💬 تذكير للجوال الإضافي (${t.phone2})`, run: () => openExternal(remindLink(t, t.phone2)) }] : []),
+                      ...(t.phone2 && key !== "vacant" ? [{ label: `📞 اتصال بالجوال الإضافي (${t.phone2})`, run: () => { window.location.href = `tel:${String(t.phone2).replace(/[^0-9+]/g, "")}`; } }] : []),
 /* نفس ترتيب الجدول حرفيًّا: المستخدم لا يتعلّم قائمتين */
                       { sep: "📄 مستندات" } as any,
                       { label: "كشف حساب شامل", run: () => openStatement(t, "full") },
@@ -4047,7 +4053,7 @@ function TenantModal({ open, initial, unitWord, error, saving, onClose, onSubmit
      المتابعة من دفعته القادمة. كان المكتب مضطرًّا لاختيار «لم يسكن بعد» وهو ساكن. */
   const [occ, setOcc] = useState<"" | "current" | "new" | "fresh">("");
   const [localErr, setLocalErr] = useState<string | null>(null);
-  const [extraOpen] = useState(() => !!(initial && ((initial as any).first_due || (initial as any).national_id || Number((initial as any).carried_debt) > 0
+  const [extraOpen] = useState(() => !!(initial && ((initial as any).first_due || (initial as any).national_id || (initial as any).phone2 || Number((initial as any).carried_debt) > 0
     || (initial as any).contract_no || (initial as any).elec_account || (initial as any).water_account || (initial as any).meter_elec_in
     || (initial as any).meter_water_in || ((initial as any).vat_mode && (initial as any).vat_mode !== "auto"))));
   if (!open) return null;
@@ -4387,10 +4393,11 @@ function TenantModal({ open, initial, unitWord, error, saving, onClose, onSubmit
             عشرين حقلًا دفعة واحدة. تنفتح وحدها إن كان فيها بيانات، فلا يُخفى شيء. */}
         <details open={extraOpen} className="mt-3 border border-line rounded-xl p-3 bg-paper">
           <summary className="cursor-pointer text-sm font-semibold text-deep">تفاصيل إضافية
-            <span className="text-xs text-muted font-normal"> — اختيارية: رقم العقد، الهوية، دين سابق{vatEnabled ? "، الضريبة" : ""}، الكهرباء والماء</span></summary>
+            <span className="text-xs text-muted font-normal"> — اختيارية: رقم العقد، الهوية، جوال إضافي، دين سابق{vatEnabled ? "، الضريبة" : ""}، الكهرباء والماء</span></summary>
           <div className="space-y-3 mt-3">
           <Field label="رقم العقد" hint="رقمه لديكم أو في «إيجار» — يظهر في كشوف الحساب والخطابات"><input className="fld" dir="ltr" value={d.contract_no || ""} onChange={(e) => setD({ ...d, contract_no: e.target.value })} /></Field>
           <Field label="رقم الهوية / السجل" hint="اختياري — أدخله فقط إن احتجته في الخطابات"><input className="fld" value={d.national_id || ""} onChange={(e) => setD({ ...d, national_id: e.target.value })} /></Field>
+          <Field label="جوال إضافي" hint="اختياري — رقم ثانٍ للمستأجر (الأول يبقى الأساسي للتذكير)"><input className="fld" value={d.phone2 || ""} onChange={(e) => setD({ ...d, phone2: e.target.value })} placeholder="05xxxxxxxx" /></Field>
           <Field label="دين مرحَّل (ريال)" hint="متأخرات من عقد سابق أو مستأجر سابق — تظهر في الكشوف ولا تدخل في دفعات العقد الجاري">
             <input className="fld" type="number" min={0} value={d.carried_debt ?? ""} onChange={(e) => setD({ ...d, carried_debt: e.target.value })} placeholder="0" />
           </Field>

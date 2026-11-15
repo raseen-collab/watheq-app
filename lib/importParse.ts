@@ -10,12 +10,12 @@ import { parseHijriInput } from "./hijri";
 // العمود التاسع «الدفعات المسدّدة» اختياري: بدونه يُعدّ العقد لم يُسدَّد منه شيء —
 // وهذا كارثة لمكتب ينقل عقودًا قائمة (عقد من يناير يُرفع في سبتمبر = 8 «متأخرات» وهمية).
 // القوالب القديمة بثمانية أعمدة تبقى تعمل: الغائب = 0.
-export const HEADERS = ["اسم المستأجر", "رقم الوحدة", "قيمة الدفعة", "دورة السداد", "بداية العقد", "عدد الدفعات", "الجوال", "رقم الهوية", "الدفعات المسدّدة", "العقار", "حساب الكهرباء", "حساب الماء", "رقم العقد", "نوع الوحدة", "الغرف", "دورات المياه", "المكيفات", "أول استحقاق", "الضريبة", "التقويم", "مدة العقد (أشهر)", "دين مرحَّل"];
+export const HEADERS = ["اسم المستأجر", "رقم الوحدة", "قيمة الدفعة", "دورة السداد", "بداية العقد", "عدد الدفعات", "الجوال", "رقم الهوية", "الدفعات المسدّدة", "العقار", "حساب الكهرباء", "حساب الماء", "رقم العقد", "نوع الوحدة", "الغرف", "دورات المياه", "المكيفات", "أول استحقاق", "الضريبة", "التقويم", "مدة العقد (أشهر)", "دين مرحَّل", "جوال إضافي"];
 // عمود عاشر اختياري «العقار»: ملف واحد لكل المحفظة بدل ملف لكل عقار — مكتب بـ40
 // عقارًا لا يرفع 40 مرة. الاسم يجب أن يطابق عقارًا موجودًا؛ الصف الفارغ يذهب للعقار المختار.
 
 /** مفاتيح الحقول بترتيب HEADERS نفسه — الترتيب هو القراءة الموضعية للقوالب القديمة */
-export const FIELDS = ["name", "unit", "rent", "freq", "start", "periods", "phone", "nid", "paid", "prop", "elec", "water", "contract_no", "unit_type", "rooms", "baths", "acs", "first_due", "vat", "calendar", "months", "carried"] as const;
+export const FIELDS = ["name", "unit", "rent", "freq", "start", "periods", "phone", "nid", "paid", "prop", "elec", "water", "contract_no", "unit_type", "rooms", "baths", "acs", "first_due", "vat", "calendar", "months", "carried", "phone2"] as const;
 export type Field = typeof FIELDS[number];
 
 /** عمود الملاحظة في القالب — يحمل علامة «مثال» ولا يُستورد */
@@ -25,6 +25,8 @@ export const EXAMPLE_MARK = "مثال — احذف هذا الصف";
 export type Prop = { id: string; name: string; property_type: string | null };
 export type Row = {
   name: string; unit: string; rent_amount: number; phone: string; national_id: string;
+  /** (v85) جوال إضافي اختياري */
+  phone2?: string;
   contract_start: string; payment_frequency: Frequency; contract_periods: number | null;
   paid_periods: number;
   elec_account?: string; water_account?: string; contract_no?: string; calendar?: string;
@@ -258,6 +260,8 @@ const SYNONYMS: Record<Field, string[]> = {
   calendar: ["التقويم", "calendar"],
   months: ["مدة العقد (أشهر)", "مدة العقد بالأشهر", "مدة العقد", "المدة بالأشهر", "عدد الأشهر", "عدد الشهور", "مدة الإيجار", "مدة العقد بالشهور"],
   carried: ["دين مرحَّل", "الدين المرحل", "رصيد سابق", "متأخرات سابقة"],
+  /* (v85) الرقم الثاني للمستأجر */
+  phone2: ["جوال إضافي", "جوال اضافي", "الجوال الإضافي", "جوال 2", "جوال ٢", "الجوال الثاني", "جوال ثاني", "رقم إضافي", "رقم اضافي", "رقم آخر", "جوال آخر", "هاتف إضافي", "phone2", "phone 2", "mobile2", "second phone"],
 };
 export const HEADER_LOOKUP: Record<string, Field> = (() => {
   const out: Record<string, Field> = {};
@@ -680,12 +684,8 @@ export function parseGrid(grid: string[][], properties: Prop[], todayIso: string
     if (propName && !target && !err) err = `العقار «${propName}» غير موجود — أنشئه أولًا أو صحّح الاسم`;
 
     /* جوال حُفظ رقمًا في إكسل (سقط صفره) يُعاد صفره — أشهر تلف يصيب الجوالات */
-    let phone = toEnDigits(phoneRaw);
-    /* (7 نوفمبر 2026) «055 123 4567» / «055-123-4567» ← 0551234567 */
-    if (/^05\d{8}$/.test(phone.replace(/[\s\-().]/g, ""))) phone = phone.replace(/[\s\-().]/g, "");
-    else if (/^5\d{8}$/.test(phone.replace(/\D/g, ""))) phone = "0" + phone.replace(/\D/g, "");
-    /* (7 نوفمبر 2026) +966 5x / 00966 5x / 966 5x ← 05x: صيغة واحدة للمطابقة وروابط واتساب */
-    else if (/^(\+|00)?9665\d{8}$/.test(phone.replace(/[\s\-()]/g, ""))) phone = "0" + phone.replace(/\D/g, "").replace(/^(00)?966/, "");
+    const phone = normalizePhone(phoneRaw);
+    const phone2 = normalizePhone(g("phone2"));
     const optInt = (t: string) => { if (!t) return undefined; const n = parseNum(t); return isNaN(n) ? 0 : n; };
     const vatK = arKey(vatTxt);
     /* كانت /on/ تطابق «none» و«إلكتروني» — الآن قيم صريحة فقط (30 سبتمبر 2026) */
@@ -694,7 +694,7 @@ export function parseGrid(grid: string[][], properties: Prop[], todayIso: string
       : /تطبق|خاضع|^نعم$|^(on|yes)$/.test(vatK) ? "on" : undefined;
 
     rows.push({
-      name, unit, rent_amount: rentPay, phone, national_id: toEnDigits(nid),
+      name, unit, rent_amount: rentPay, phone, phone2: phone2 || undefined, national_id: toEnDigits(nid),
       contract_start: cs, payment_frequency: frequency, contract_periods: pr, paid_periods: pd,
       elec_account: toEnDigits(elecAcc) || undefined, water_account: toEnDigits(waterAcc) || undefined,
       contract_no: contractNo || undefined, calendar,
@@ -819,7 +819,7 @@ export function tenantTemplateCells(t: any, propName: string): Partial<Record<Fi
     name: t.name, unit: t.unit || "", rent: t.rent_amount,
     freq: EXPORT_FREQ_AR[t.payment_frequency] || t.payment_frequency || "شهري",
     start: t.contract_start || "", periods: t.contract_periods || "",
-    phone: t.phone || "", nid: t.national_id || "",
+    phone: t.phone || "", nid: t.national_id || "", phone2: t.phone2 || "",
     paid: t.paid_periods || 0, prop: propName,
     elec: t.elec_account || "", water: t.water_account || "",
     contract_no: t.contract_no || "", unit_type: EXPORT_UNIT_AR[t.unit_type] || "",
@@ -962,4 +962,17 @@ export function prepareGrid(grid0: string[][]): PreparedGrid {
   if (rows.length < before) notes.push(`تجاهلنا ${before - rows.length === 1 ? "صف المجموع" : `${before - rows.length} صفوف مجاميع`}`);
 
   return { grid: rows, notes, rentCollection: false };
+}
+
+/**
+ * (v85) توحيد صيغة الجوال السعودي: «055 123 4567» / «+966 55…» / «5xxxxxxxx» ← 05xxxxxxxx.
+ * غير السعودي أو غير المفهوم يُعاد كما هو بعد تحويل الأرقام العربية.
+ */
+export function normalizePhone(raw: string | null | undefined): string {
+  let phone = toEnDigits(String(raw || "")).trim();
+  if (!phone) return "";
+  if (/^05\d{8}$/.test(phone.replace(/[\s\-().]/g, ""))) phone = phone.replace(/[\s\-().]/g, "");
+  else if (/^5\d{8}$/.test(phone.replace(/\D/g, ""))) phone = "0" + phone.replace(/\D/g, "");
+  else if (/^(\+|00)?9665\d{8}$/.test(phone.replace(/[\s\-()]/g, ""))) phone = "0" + phone.replace(/\D/g, "").replace(/^(00)?966/, "");
+  return phone;
 }

@@ -276,7 +276,7 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
       if (!fresh.length) continue;
       const payload = fresh.map((r) => ({
         property_id: pid,
-        name: r.name, unit: r.unit || null, phone: r.phone || null, national_id: r.national_id || null,
+        name: r.name, unit: r.unit || null, phone: r.phone || null, phone2: r.phone2 || null, national_id: r.national_id || null,
         rent_amount: r.rent_amount, contract_start: r.contract_start || null,
         payment_frequency: r.payment_frequency, contract_periods: r.contract_periods,
         /* بتقويم العقد لا ميلاديًّا دائمًا: عقد هجري مرفوع من إكسل كان
