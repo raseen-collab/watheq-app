@@ -7,6 +7,7 @@ import { trialDaysLeft } from "@/lib/domain";
 import { isMarketer, marketerAllowed, type AccountType } from "@/lib/roles";
 import type { SubState } from "@/lib/subscription";
 import OfficeChat from "@/components/OfficeChat";
+import BackupReminder from "@/components/BackupReminder";
 import { daysAr } from "@/lib/utils";
 
 /* أزرار التجديد والاشتراك تفتح صفحة /subscribe (v71) بدل واتساب */
@@ -135,6 +136,8 @@ export default function DashboardShell({
         </div>
       </header>
 
+      {/* (v87) تذكير شهري بحفظ نسخة من البيانات — لصاحب المكتب */}
+      {isOwner && <BackupReminder />}
       {/* دورة التذكير بالتجديد: 7 أيام قبل (ذهبي) → سماح 5 أيام (أحمر بعدّاد) → انتهى */}
       {sub?.kind === "paid_soon" && sub.subDaysLeft !== null && (
         <div className="text-center text-sm py-2 px-4 bg-[#FBF1DF] text-[#8a5a11] border-b border-[#EBD9AA]">

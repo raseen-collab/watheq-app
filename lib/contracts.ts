@@ -869,7 +869,7 @@ export const isCommercial = (propertyType?: string | null) =>
   COMMERCIAL_TYPES.includes(String(propertyType || "").toLowerCase());
 
 /** أنواع الوحدات التي يخضع إيجارها لضريبة القيمة المضافة */
-const COMMERCIAL_UNITS = ["shop", "office", "warehouse", "land"];
+const COMMERCIAL_UNITS = ["shop", "showroom", "office", "warehouse", "land"];
 
 /**
  * هل تُطبَّق الضريبة على هذه الوحدة؟

@@ -25,6 +25,8 @@ export type SandboxStore = {
   office_messages: Row[];
   /** أرشيف المستأجرين السابقين (schema-v45) — اختياري في التجربة */
   past_tenancies?: Row[];
+  /** (v87) الأمانات — تأمين وحصص عداد مشترك؛ تُنشأ عند أول قيد في التجربة */
+  trust_ledger?: Row[];
 };
 
 /** منشئ استعلامات يحاكي سلسلة Supabase: select/eq/order/limit ثم await */
@@ -66,6 +68,13 @@ function table(store: SandboxStore, name: keyof SandboxStore) {
           /* سند الصرف (v74): القاعدة تُصدر الرقم عند وجود المستلم — نحاكيها في التجربة */
           if (name === "expenses") for (const x of added as any[]) if (String(x.payee_name || "").trim() && !x.voucher_no)
             x.voucher_no = `PV-${String((store.expenses || []).filter((e) => e.voucher_no).length + 1).padStart(5, "0")}`;
+          /* سندات الأمانات (v87): قبض TR- وصرف TV- — نحاكي ترقيم القاعدة */
+          if (name === "trust_ledger") for (const x of added as any[]) {
+            const pfx = /_in$/.test(String(x.kind)) ? "TR-" : "TV-";
+            const n = [...rows, ...(added as any[])].filter((e) => String(e.doc_no || "").startsWith(pfx)).length + 1;
+            x.doc_no = `${pfx}${String(n).padStart(5, "0")}`;
+            x.entry_on = x.entry_on || new Date().toISOString().slice(0, 10);
+          }
           store[name] = [...added, ...rows];
           data = clone(added);
         } else if (pending?.op === "update") {

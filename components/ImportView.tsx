@@ -2,7 +2,7 @@
 import { useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase-client";
-import { derivedEndDate, FREQUENCIES, parseDate } from "@/lib/contracts";
+import { FREQUENCIES } from "@/lib/contracts";
 import { typeIcon, unitLabel } from "@/lib/domain";
 import { sar, openExternal, today } from "@/lib/utils";
 import { hijriShort } from "@/lib/hijri";
@@ -16,11 +16,10 @@ import {
   prepareGrid, RENT_SHEET_NAME,
 } from "@/lib/importParse";
 import type { Frequency } from "@/lib/contracts";
+import { buildImportPayload, resolveCovered, importPayloadProblems } from "@/lib/importPayload";
 
 /* التحليل كله في lib/importParse (دوال نقية مختبَرة) — هنا الواجهة والحفظ فقط (30 سبتمبر 2026) */
 const blocked = (r: Row) => !!(r._error || r._exists);
-/** عدد الغرف/دورات المياه/المكيفات كما تقبله القاعدة: صحيح بين 0 و50، وإلا فارغ */
-const clampCount = (n: any): number | null => { const v = Number(n); return n == null || n === "" || !isFinite(v) ? null : Math.max(0, Math.min(50, Math.round(v))); };
 
 type Sheet = { name: string; grid: string[][] };
 /* مطابقة المكتب لملفه تُتذكّر في متصفحه (بصمة العناوين فقط — لا بيانات) فلا يُسأل
@@ -257,6 +256,19 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
     try { unitsNow = await fetchExistingUnits(Array.from(groups.keys())); }
     catch (e: any) { setBusy(false); return alert(`تعذّر التحقق من الوحدات الموجودة: ${e?.message || e}`); }
     const skippedRows = new Set<Row>();
+    const opts = { dueChoice, today: today() };
+    /* (16 نوفمبر 2026) فحص الحمولة كلها قبل أول إدراج: ما سيرفضه Postgres يُقال الآن
+       بسطر واضح — لا «null value in column …» بعد حفظ نصف الملف */
+    {
+      const problems = Array.from(groups).flatMap(([pid, list]) => {
+        const { main, covered } = buildImportPayload(list, pid, opts);
+        return [...importPayloadProblems(main), ...importPayloadProblems(covered.map(({ _cover, ...r }) => r))];
+      });
+      if (problems.length) {
+        setBusy(false);
+        return alert(`لم يُحفظ شيء — في الملف ما سترفضه قاعدة البيانات:\n\n${problems.slice(0, 8).join("\n")}${problems.length > 8 ? `\n… و${problems.length - 8} غيرها` : ""}\n\nأرسل الملف للدعم (واتساب) ونصلحه لك.`);
+      }
+    }
     for (const [pid, list] of groups) {
       /**
        * حماية من الرفع المكرر: نفس الملف مرتين = كل الوحدات مكررة. الوحدة ذات
@@ -274,52 +286,9 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
       });
       skipped += list.length - fresh.length;
       if (!fresh.length) continue;
-      const payload = fresh.map((r) => ({
-        property_id: pid,
-        name: r.name, unit: r.unit || null, phone: r.phone || null, phone2: r.phone2 || null, national_id: r.national_id || null,
-        rent_amount: r.rent_amount, contract_start: r.contract_start || null,
-        payment_frequency: r.payment_frequency, contract_periods: r.contract_periods,
-        /* بتقويم العقد لا ميلاديًّا دائمًا: عقد هجري مرفوع من إكسل كان
-           يُحفظ بنهاية متأخرة 11 يومًا (السنة الميلادية 365 والهجرية 354). */
-        contract_end: r.contract_start
-          ? derivedEndDate(r.contract_start, r.payment_frequency, r.contract_periods, null,
-              r.calendar === "hijri" ? "hijri" : "gregorian")
-          : null,
-        paid_periods: r.paid_periods,
-        /* (20 أكتوبر 2026) الجزئي المدفوع قبل وثيق رصيدًا افتتاحيًّا — كان يُطلب تسجيله بعد الرفع
-           فيُسجَّل نقدًا بتاريخ اليوم ويدخل محصَّل هذا الشهر وتقرير المالك */
-        partial_amount: r.partial_amount && r.partial_amount > 0 ? r.partial_amount : 0,
-        // يوم المرساة كما يفعل الإدخال اليدوي: يُشتق من البداية عند غيابه،
-        // لكن حفظه صراحةً يبقي المواعيد ثابتة لو عُدّل تاريخ البداية لاحقًا
-        /* من «أول استحقاق» إن وُجد في الملف، وإلا من البداية — كالإدخال اليدوي */
-        billing_anchor_day: (r.first_due && !(r._due && dueChoice === "drop")) ? parseDate(r.first_due).getDate()
-          : r.contract_start ? parseDate(r.contract_start).getDate() : null,
-        /* كل ما يُقرأ من الملف يُحفظ. كانت الحمولة 11 حقلًا فقط، فيضيع ما يعرضه
-           الرفع في المراجعة: العقد الهجري يُحفظ ميلاديًّا (تنحرف أقساطه 11 يومًا
-           كل سنة)، والدين المرحَّل يختفي، و«أول استحقاق» يسقط فتُحسب الأقساط من
-           البداية، ونوع الوحدة ووضع الضريبة يضيعان. */
-        calendar: r.calendar === "hijri" ? "hijri" : "gregorian",
-        carried_debt: r.carried_debt && r.carried_debt > 0 ? r.carried_debt : 0,
-        ...(r.carried_debt && r.carried_debt > 0 ? { carried_debt_note: "رصيد سابق من ملف الرفع" } : {}),
-        first_due: (r._due && dueChoice === "drop") ? null : (r.first_due || null),
-        /* (11 أكتوبر 2026) vat_mode عمود NOT NULL افتراضه 'auto' — كانت null تُفشل الدفعة كلها،
-           فيحذف حلقة الإعادة العمود من 100 صف معًا ويضيع «تُطبَّق/معفاة» من بقيتها بصمت */
-        unit_type: r.unit_type || null, vat_mode: r.vat_mode || "auto",
-        contract_no: r.contract_no || null, elec_account: r.elec_account || null, water_account: r.water_account || null,
-        /* القاعدة تقبل 0–50 عددًا صحيحًا (schema-v22) — كاللوحة: قيمة خارجها كانت توقف الحفظ كله */
-        rooms: clampCount(r.rooms), baths: clampCount(r.baths), acs: clampCount(r.acs),
-        /* (14 نوفمبر 2026) status صريح في كل صف: الإدراج الجماعي يوحّد أعمدة الصفوف، فصف
-           شاغر واحد (status: vacated) كان يجعل status = null لبقية الصفوف ⇒ يفشل الملف كله
-           «null value in column status». لذلك المفتاحان في كل صف لا في الشاغر وحده. */
-        status: "active", move_out_date: null,
-        /* (13 نوفمبر 2026) صف بلا مستأجر ⇒ وحدة شاغرة كما يُنشئها «إضافة وحدات شاغرة» */
-        ...(r._vacant ? { name: "شاغرة", status: "vacated", move_out_date: today(), contract_start: null, contract_end: null,
-          payment_frequency: "monthly", billing_anchor_day: null } : {}),
-      }));
-      /* المشمولة «ضمن عقد» تُحفظ بعد الرئيسية: تحتاج معرّفها (covered_by) */
-      const coveredIdx = fresh.map((r, i) => (r._cover ? i : -1)).filter((i) => i >= 0);
-      const coveredPayload = coveredIdx.map((i) => ({ ...payload[i], _cover: fresh[i]._cover as string }));
-      for (const i of coveredIdx.slice().reverse()) payload.splice(i, 1);
+      /* الحمولة في lib/importPayload (نقية ومختبَرة): مفاتيح ثابتة لكل الصفوف، والمشمولة
+         «ضمن عقد» تُحفظ بعد الرئيسية لأنها تحتاج معرّفها (covered_by) */
+      const { main: payload, covered: coveredPayload } = buildImportPayload(fresh, pid, opts);
       /* على دفعات من 100 صف: مكتب يرفع 450 وحدة دفعة واحدة قد تنتهي مهلة
          الطلب أو يُرفض حجمه، فيفشل الرفع كله بعد دقيقة انتظار. وبالدفعات
          يُحفظ ما نجح ويُقال له أين توقف بالضبط. */
@@ -346,8 +315,7 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
         const { data: leadsNow, error: le } = await supabase.from("tenants").select("id, unit, status, covered_by").eq("property_id", pid).limit(5000);
         const byUnit = new Map<string, string>();
         (leadsNow || []).forEach((t: any) => { if (t.status !== "vacated" && !t.covered_by && t.unit) byUnit.set(unitKey(t.unit), t.id); });
-        const part = coveredPayload.map(({ _cover, ...rest }) => ({ ...rest, covered_by: byUnit.get(unitKey(_cover)) || null }));
-        const missing = part.filter((x) => !x.covered_by).length;
+        const { rows: part, missing } = resolveCovered(coveredPayload, (u) => byUnit.get(unitKey(u)));
         const { error } = le ? { error: le } : missing ? { error: { message: `تعذّر إيجاد الوحدة الرئيسية لـ${missing} وحدة` } as any } : await supabase.from("tenants").insert(part);
         if (error) {
           setBusy(false);

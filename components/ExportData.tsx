@@ -1,6 +1,9 @@
 "use client";
 import { today } from "@/lib/utils";
-import { feeLabel } from "@/lib/expenses";
+import { feeLabel, catLabel as expCatLabel } from "@/lib/expenses";
+import { typeLabel } from "@/lib/domain";
+import { ledgerCatLabel } from "@/lib/office-ledger";
+import { trustKindLabel, isTrustIn, depositBalances, meterBalances } from "@/lib/trust";
 // ============================================================
 // وثيق — تصدير كل بيانات الحساب إلى Excel
 //
@@ -20,7 +23,7 @@ import { KIND_META as LISTING_KIND, OFFER_LABEL, STATUS_META as LISTING_STATUS }
 import { KIND_META as COMPLIANCE_KIND } from "@/lib/compliance";
 import { HEADERS, templateRow, tenantTemplateCells } from "@/lib/importParse";
 
-const UNIT_AR: Record<string, string> = { apartment: "شقة", annex: "شقة ملحق", studio: "استديو", room: "غرفة", shop: "محل", office: "مكتب", warehouse: "مستودع", land: "أرض", villa: "فيلا", other: "أخرى" };
+const UNIT_AR: Record<string, string> = { apartment: "شقة", annex: "شقة ملحق", studio: "استديو", room: "غرفة", shop: "محل", showroom: "معرض", office: "مكتب", warehouse: "مستودع", land: "أرض", villa: "فيلا", other: "أخرى" };
 
 const FREQ_AR: Record<string, string> = {
   daily: "يومي", weekly: "اسبوعي", monthly: "شهري", quarterly: "كل 3 اشهر", trimester: "كل 4 اشهر",
@@ -28,10 +31,6 @@ const FREQ_AR: Record<string, string> = {
 };
 const METHOD_AR: Record<string, string> = { cash: "نقدًا", transfer: "تحويل بنكي", ejar: "منصة إيجار", card: "بطاقة", pos: "شبكة", cheque: "شيك", other: "أخرى" };
 /* مسمّيات عربية للحقول المضافة — الملف يُقرأ بيد الإنسان لا بالكود */
-const EXP_CAT_AR: Record<string, string> = {
-  maintenance: "صيانة", utilities: "فواتير", cleaning: "نظافة",
-  government: "رسوم حكومية", security: "أمن", insurance: "تأمين", other: "أخرى",
-};
 const PAID_BY_AR: Record<string, string> = {
   collections: "من التحصيل", office: "المكتب", owner: "المالك",
 };
@@ -63,7 +62,13 @@ const BACKUP_TABLES: [string, string][] = [
   ["associations", "created_at"], ["owners", "created_at"], ["association_notes", "created_at"], ["association_expenses", "created_at"],
   ["association_budgets", "created_at"], ["hoa_documents", "created_at"], ["hoa_signatures", "created_at"],
   ["hoa_requests", "created_at"], ["hoa_request_log", "created_at"], ["hoa_payment_claims", "created_at"],
+  /* (16 نوفمبر 2026 — مراجعة التصدير) كانت خارج النسخة: دفتر حسابات المكتب (v84)، المصروفات الشهرية
+     المتكررة (v81) وما أُوقف منها، الأمانات (v87)، الفريق وصلاحياته، وسجل تدقيق الجمعيات */
+  ["office_ledger", "entry_on"], ["expense_templates", "created_at"], ["expense_template_skips", "month"],
+  ["trust_ledger", "entry_on"], ["team_members", "created_at"], ["hoa_audit", "created_at"],
 ];
+/** جداول بلا عمود «id» (مفتاح مركّب): ترتيبها الثانوي بأعمدة مفتاحها */
+const TIE_COLS: Record<string, string[]> = { team_members: ["owner_id", "member_id"], expense_template_skips: ["template_id", "month"] };
 const SECRET_KEYS = new Set(["token", "token_hash", "ip"]);
 const stripSecrets = (rows: any[]) => rows.map((r) => Object.fromEntries(Object.entries(r || {}).filter(([k]) => !SECRET_KEYS.has(k))));
 /** جدول غير موجود في قاعدة هذا المكتب (ترحيل لم يُشغَّل) — ليس خطأً */
@@ -84,18 +89,23 @@ export default function ExportData() {
   useEffect(() => { getOffice(supabase).then((o) => setAllowed(!o || o.isOwner || o.perms?.export_data !== false)); }, [supabase]);
 
   /** Supabase يقصّ عند 1000 صف بصمت — نجلب حتى ينتهي الجدول فعلًا */
-  async function all(table: string, select = "*", order = "created_at"): Promise<any[]> {
+  async function all(table: string, select = "*", order = "created_at", tie: string[] = ["id"]): Promise<any[]> {
     const out: any[] = [];
     let ord: string | null = order;
+    let ties = tie;
     for (let i = 0; ; i += 1000) {
-      /* ترتيب ثانوي بالمعرّف: صفّان بوقت إنشاء واحد عند حدّ صفحة قد يتكرر أحدهما أو يسقط */
+      /* ترتيب ثانوي بالمعرّف: صفّان بوقت إنشاء واحد عند حدّ صفحة قد يتكرر أحدهما أو يسقط.
+         جداول بمفتاح مركّب (الفريق، تخطّيات المتكرر) بلا «id» — تُمرَّر أعمدة مفتاحها */
       let q = supabase.from(table).select(select);
       if (ord) q = q.order(ord, { ascending: true });
-      const { data, error } = await q.order("id", { ascending: true }).range(i, i + 999);
+      for (const c of ties) q = q.order(c, { ascending: true });
+      const { data, error } = await q.range(i, i + 999);
       if (error) {
         if (out.length === 0 && missingTable(error)) return [];
         /* عمود الترتيب غير موجود في هذا الجدول: نعيد بالمعرّف وحده — لا نُسقط الجدول */
         if (out.length === 0 && ord && missingColumn(error)) { ord = null; i -= 1000; continue; }
+        /* ولا «id» أيضًا: بلا ترتيب ثانوي (جدول صغير) — خير من ورقة فارغة */
+        if (out.length === 0 && !ord && ties.length && missingColumn(error)) { ties = []; i -= 1000; continue; }
         throw new Error(`${table}: ${error.message}`);
       }
       out.push(...(data || []));
@@ -106,9 +116,19 @@ export default function ExportData() {
     return out;
   }
   /** جدول ثانوي: فشله لا يوقف التصدير، لكنه يُسجَّل ويُقال للمستخدم (كان يُبتلع فتخرج ورقته «لا بيانات») */
-  async function opt(table: string, failed: string[], select = "*", order = "created_at"): Promise<any[]> {
-    try { return await all(table, select, order); }
+  async function opt(table: string, failed: string[], select = "*", order = "created_at", tie?: string[]): Promise<any[]> {
+    try { return await all(table, select, order, tie); }
     catch (e: any) { failed.push(String(e?.message || e)); return []; }
+  }
+
+  /** (v87) تاريخ آخر نسخة — يُطفئ تذكير «صدّر نسخة شهرية». فشله (قبل الترحيل) لا يعني شيئًا للمستخدم */
+  async function markBackup() {
+    try {
+      const o = await getOffice(supabase);
+      if (o?.isOwner) await supabase.from("profiles").update({ last_backup_at: new Date().toISOString() }).eq("id", o.officeId);
+      try { localStorage.setItem("wq_backup_snooze", ""); } catch { /* */ }
+      window.dispatchEvent(new Event("wq-backup-done"));
+    } catch { /* */ }
   }
 
   /** النسخة الاحتياطية الكاملة — كل الجداول بكل الأعمدة، ملف JSON واحد */
@@ -117,7 +137,7 @@ export default function ExportData() {
     try {
       const failed: string[] = [];
       const tables: Record<string, any[]> = {};
-      for (const [t, ord] of BACKUP_TABLES) tables[t] = stripSecrets(await opt(t, failed, "*", ord));
+      for (const [t, ord] of BACKUP_TABLES) tables[t] = stripSecrets(await opt(t, failed, "*", ord, TIE_COLS[t]));
       const oid = await officeId(supabase).catch(() => null);
       let settings: any = null;
       if (oid) {
@@ -131,6 +151,7 @@ export default function ExportData() {
       a.href = URL.createObjectURL(blob); a.download = `watheq-backup-${today()}.json`;
       document.body.appendChild(a); a.click(); a.remove();
       setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+      if (!failed.length) void markBackup();
       const total = Object.values(tables).reduce((n, r) => n + r.length, 0);
       setMsg(failed.length
         ? `⚠ صُدّرت النسخة (${total} صف) — وتعذّر ${failed.length} جدول: ${failed.join(" · ")}`
@@ -164,6 +185,10 @@ export default function ExportData() {
       /* المسوّق العقاري (v78): سجل «عُرض على» ومشاهدات روابط الزبائن — الرمز لا يُطلب أصلًا */
       const shows = await opt("listing_shows", failed, "*", "shown_at");
       const lLinks = await opt("listing_links", failed, "listing_id,views,revoked,last_view_at,created_at");
+      /* (16 نوفمبر 2026) دفتر المكتب (v84) · المتكرر (v81) · الأمانات (v87) — كانت لا تُصدَّر */
+      const officeLedger = await opt("office_ledger", failed, "*", "entry_on");
+      const expTemplates = await opt("expense_templates", failed);
+      const trust = await opt("trust_ledger", failed, "*", "entry_on");
       const listingCode: Record<string, string> = {}; listings.forEach((l: any) => { listingCode[l.id] = l.code; });
       const showsBy: Record<string, number> = {}; shows.forEach((x: any) => { showsBy[x.listing_id] = (showsBy[x.listing_id] || 0) + 1; });
       const viewsBy: Record<string, number> = {}; lLinks.forEach((x: any) => { viewsBy[x.listing_id] = (viewsBy[x.listing_id] || 0) + (Number(x.views) || 0); });
@@ -204,7 +229,7 @@ export default function ExportData() {
       }
 
       add("العقارات", props.map((p) => ({
-        "العقار": p.name, "النوع": p.property_type || "", "المدينة": p.city || "", "الحي/العنوان": p.address || "",
+        "العقار": p.name, "النوع": p.property_type ? typeLabel(p.property_type) : "", "المدينة": p.city || "", "الحي/العنوان": p.address || "",
         "المالك": p.owner_name || "", "المدير/المكتب": p.manager || "", "فترة السماح (أيام)": p.grace_days || 0,
         "أتعاب الإدارة": feeLabel(p) || "", "ضريبة مفعّلة": p.vat_enabled ? "نعم" : "لا",
         "عدد الوحدات": tenants.filter((t) => t.property_id === p.id).length,
@@ -291,7 +316,8 @@ export default function ExportData() {
          المالي — وبدونها لا يستطيع المكتب إعادة بناء صافي أي مالك من الملف. */
       add("المصروفات", expenses.map((x) => ({
         "التاريخ": x.spent_on, "العقار": pName[x.property_id] || "", "الوحدة": x.unit || "",
-        "التصنيف": EXP_CAT_AR[x.category] || x.category || "", "المبلغ": x.amount,
+        /* التصنيفات من مصدرها (lib/expenses): «رواتب وأجور» و«عقود دورية» (14 نوفمبر) كانت تُصدَّر بأكوادها */
+        "التصنيف": expCatLabel(x.category), "المبلغ": x.amount,
         "يُخصم من المالك": x.billable === false ? "لا" : "نعم",
         "من دفعه": PAID_BY_AR[x.paid_by] || x.paid_by || "",
         "الحالة": x.status === "due" ? "مستحق" : "مدفوع",
@@ -299,6 +325,42 @@ export default function ExportData() {
         "هوية/سجل المستلم": x.payee_ref || "",
         "ملاحظة": x.note || "",
       })), [12, 22, 10, 14, 12, 14, 14, 10, 18, 14, 14, 18, 16, 30]);
+
+      add("المصروفات المتكررة", expTemplates.map((x: any) => ({
+        "العقار": pName[x.property_id] || "", "الوحدة": x.unit || "", "التصنيف": expCatLabel(x.category), "المبلغ الشهري": Number(x.amount) || 0,
+        "يوم الترحيل": x.day_of_month, "من شهر": String(x.start_month || "").slice(0, 7), "حتى شهر": String(x.end_month || "").slice(0, 7),
+        "يُخصم من المالك": x.billable === false ? "لا" : "نعم", "من دفعه": PAID_BY_AR[x.paid_by] || x.paid_by || "",
+        "يُرحَّل": x.post_status === "due" ? "مستحقًّا" : "مدفوعًا", "نشط": x.active ? "نعم" : "متوقف",
+        "آخر ترحيل": String(x.last_posted || "").slice(0, 10), "المورّد": x.vendor || "", "ملاحظة": x.note || "",
+      })), [22, 10, 14, 12, 10, 10, 10, 12, 12, 10, 8, 12, 18, 30]);
+
+      /* الأمانات (v87): التأمين وحصص العدادات المشتركة — ليست إيجارًا ولا مصروفًا؛ الأرصدة في ورقة تالية */
+      add("الأمانات", trust.map((x: any) => ({
+        "التاريخ": x.entry_on, "رقم السند": x.doc_no || "", "النوع": trustKindLabel(x.kind),
+        "قبض/صرف": isTrustIn(x.kind) ? "قبض" : "صرف", "المبلغ": Number(x.amount) || 0,
+        "العقار": pName[x.property_id] || "", "الوحدة": (x.tenant_id && tById[x.tenant_id]?.unit) || x.unit || "",
+        "الطرف": x.party || "", "العداد": x.meter || "", "فترة الفاتورة": x.bill_period || "",
+        "الطريقة": METHOD_AR[x.method] || x.method || "", "المرجع": x.reference || "", "ملاحظة": x.note || "",
+        "محوّلة من دفعة إيجار": x.source_payment ? "نعم" : "",
+      })), [12, 12, 18, 8, 12, 22, 10, 20, 14, 12, 12, 14, 30, 10]);
+      if (trust.length) {
+        const byProp: Record<string, any[]> = {};
+        trust.forEach((x: any) => { (byProp[x.property_id] ||= []).push(x); });
+        const balRows: Record<string, any>[] = [];
+        for (const [pid, rs] of Object.entries(byProp)) {
+          depositBalances(rs).forEach((d) => balRows.push({ "العقار": pName[pid] || "", "البند": "تأمين", "الوحدة / العداد": d.unit || "",
+            "الطرف": (d.tenant_id && tById[d.tenant_id]?.name) || d.party || "", "المستلم/المجموع": d.received, "المردود/المسدَّد": d.refunded, "الرصيد": d.held }));
+          meterBalances(rs).forEach((m) => balRows.push({ "العقار": pName[pid] || "", "البند": "عداد مشترك", "الوحدة / العداد": m.meter || "بلا رقم",
+            "الطرف": "", "المستلم/المجموع": m.collected, "المردود/المسدَّد": m.paid, "الرصيد": m.balance }));
+        }
+        add("أرصدة الأمانات", balRows, [22, 12, 16, 22, 14, 14, 12]);
+      }
+
+      add("دفتر المكتب", officeLedger.map((x: any) => ({
+        "التاريخ": x.entry_on, "النوع": x.kind === "income" ? "دخل" : "مصروف", "البند": ledgerCatLabel(x.kind, x.category),
+        "المبلغ": Number(x.amount) || 0, "العقار": pName[x.property_id] || "", "الوحدة": x.unit || "",
+        "الطرف": x.party || "", "المرجع": x.reference || "", "ملاحظة": x.note || "",
+      })), [12, 8, 18, 12, 22, 10, 20, 14, 30]);
 
       add("سجل العقار", notes.map((n) => ({
         "التاريخ": n.note_date, "العقار": pName[n.property_id] || "", "الوحدة": n.unit || "",
@@ -404,7 +466,8 @@ export default function ExportData() {
         [`تاريخ التصدير: ${new Date().toLocaleDateString("ar-SA-u-ca-gregory-nu-latn", { timeZone: "Asia/Riyadh" })}`],
         [""],
         ["ورقة «قالب الرفع» بنفس أعمدة قالب الرفع في وثيق — لو رجعت يومًا، ارفعها من صفحة «رفع Excel» وتعود وحداتك القائمة بعقودها وعدد دفعاتها المسدّدة ودينها المرحَّل."],
-        ["ما لا يعود بالرفع (محفوظ هنا للرجوع إليه): سجل الدفعات بتواريخها، الوحدات المُخلاة، المبالغ الجزئية، الفواتير، المستأجرون السابقون. أنشئ العقارات بأسمائها نفسها قبل الرفع."],
+        ["ما لا يعود بالرفع (محفوظ هنا للرجوع إليه): سجل الدفعات بتواريخها، الوحدات المُخلاة، المبالغ الجزئية، الفواتير، المستأجرون السابقون، المصروفات، الأمانات، دفتر المكتب. أنشئ العقارات بأسمائها نفسها قبل الرفع."],
+        ["احفظ نسخة كل شهر في مكان آمن خارج جهازك (بريدك أو قوقل درايف): تصدير Excel للقراءة + «نسخة احتياطية كاملة (JSON)» لاستعادة كل الحقول كما هي."],
         ["بقية الأوراق للعمل خارج وثيق: كل جدول بأسماء أعمدة عربية واضحة، بلا أكواد داخلية."],
         ["للنسخة الكاملة بكل الحقول كما هي في النظام: زر «نسخة احتياطية كاملة (JSON)» في الصفحة نفسها."],
         ...(failed.length ? [[""], ["⚠ تعذّر تصدير هذه الجداول (أوراقها فارغة في هذا الملف — أعد المحاولة):"], ...failed.map((f) => [f])] : []),
@@ -413,6 +476,7 @@ export default function ExportData() {
 
       const stamp = today();
       XLSX.writeFile(wb, `watheq-export-${stamp}.xlsx`);
+      if (!failed.length) void markBackup();
       setMsg(failed.length
         ? `⚠ صُدّر الملف — وتعذّر ${failed.length} جدول (مذكورة في ورقة «اقرأني»): ${failed.map((f) => f.split(":")[0]).join("، ")}. أعد المحاولة.`
         : `✓ صُدّر: ${props.length} عقار · ${tenants.length} وحدة · ${payments.length} دفعة · ${expenses.length} مصروف · ${invoices.length} فاتورة.`);
@@ -428,10 +492,11 @@ export default function ExportData() {
   );
 
   return (
-    <div className="bg-white border border-line rounded-2xl p-5">
+    <div id="export" className="bg-white border border-line rounded-2xl p-5 scroll-mt-24">
       <h3 className="font-display font-bold text-deep text-lg mb-1">📦 تصدير بياناتي</h3>
       <p className="text-xs text-muted mb-4 leading-relaxed">
-        ملف Excel واحد فيه كل شيء: العقارات، الوحدات والعقود، الدفعات، المصروفات، الفواتير، المستأجرون السابقون، طلبات الصيانة بفنيّها وتكلفتها، السجل، المعروضات وسجل «عُرض على»، طلبات الزبائن، الالتزامات، والجمعيات.
+        ملف Excel واحد فيه كل شيء: العقارات، الوحدات والعقود، الدفعات بسنداتها، المصروفات والمتكرر منها، الأمانات (التأمين وحصص العدادات المشتركة)، دفتر المكتب، الفواتير، المستأجرون السابقون، طلبات الصيانة بفنيّها وتكلفتها، السجل، المعروضات وسجل «عُرض على»، طلبات الزبائن، الالتزامات، والجمعيات.
+        <b className="text-deep"> احفظ نسخة كل شهر</b> — إن تعطّل شيء يومًا تبقى بياناتك كاملة عندك.
         بياناتك ملكك — تأخذها كاملة متى شئت، وتعيد رفعها كما هي إن عدت.
       </p>
       <div className="flex flex-wrap items-center gap-3">

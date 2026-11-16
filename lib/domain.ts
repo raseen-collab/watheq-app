@@ -1,7 +1,10 @@
-export type PropertyType = "residential" | "showroom" | "office" | "warehouse" | "villa" | "land";
+export type PropertyType = "residential" | "mixed" | "showroom" | "office" | "warehouse" | "villa" | "land";
 
 export const PROPERTY_TYPES: { value: PropertyType; label: string; unitLabel: string; icon: string }[] = [
   { value: "residential", label: "عمارة سكنية",   unitLabel: "شقة",   icon: "🏢" },
+  /* (16 نوفمبر 2026 — مكتب «الأولى») مجمّع فيه شقق ومعارض ومحلات: كان يُسجَّل «سكنية» فيُكتب «شقة»
+     لمستأجر المعرض في كل مستند. هنا الكلمة العامة «وحدة»، ونوع كل وحدة يحدّد اسمها وضريبتها. */
+  { value: "mixed",       label: "عمارة سكنية تجارية", unitLabel: "وحدة", icon: "🏘️" },
   { value: "showroom",    label: "معرض تجاري",    unitLabel: "معرض",  icon: "🏬" },
   { value: "office",      label: "مبنى مكاتب",    unitLabel: "مكتب",  icon: "🏛️" },
   { value: "warehouse",   label: "مستودع",        unitLabel: "مستودع", icon: "🏭" },
@@ -26,6 +29,8 @@ export const unitLabel = (t?: string | null) =>
 const UNIT_TYPE_WORD: Record<string, string> = {
   apartment: "شقة", annex: "شقة ملحق", studio: "استديو", room: "غرفة", shop: "محل",
   office: "مكتب", warehouse: "مستودع", land: "أرض", villa: "فيلا",
+  /* (16 نوفمبر 2026) المعرض كان بلا نوع وحدة فيأخذ «شقة» من نوع العقار؛ و«أخرى» تُكتب «وحدة» لا «شقة» */
+  showroom: "معرض", other: "وحدة",
 };
 export const unitWordFor = (unitType?: string | null, propertyType?: string | null) =>
   (unitType && UNIT_TYPE_WORD[unitType]) || unitLabel(propertyType);

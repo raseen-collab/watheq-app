@@ -91,7 +91,7 @@ export function arKey(v: string): string {
 }
 const UNIT_TYPE_KEY: Record<string, string> = Object.fromEntries(Object.entries({
   "شقة": "apartment", "شقة ملحق": "annex", "ملحق": "annex", "استديو": "studio", "ستوديو": "studio", "استوديو": "studio",
-  "غرفة": "room", "محل": "shop", "مكتب": "office", "مستودع": "warehouse", "أرض": "land", "فيلا": "villa",
+  "غرفة": "room", "محل": "shop", "معرض": "showroom", "معرض تجاري": "showroom", "صالة عرض": "showroom", "مكتب": "office", "مستودع": "warehouse", "أرض": "land", "فيلا": "villa",
   /* «أخرى» يصدّرها التصدير نفسه — كانت تضيع عند إعادة الرفع (30 سبتمبر 2026) */
   "أخرى": "other",
 }).map(([k, v]) => [arKey(k), v]));
@@ -683,9 +683,13 @@ export function parseGrid(grid: string[][], properties: Prop[], todayIso: string
     const target = propName ? propByName.get(norm(propName)) : undefined;
     if (propName && !target && !err) err = `العقار «${propName}» غير موجود — أنشئه أولًا أو صحّح الاسم`;
 
-    /* جوال حُفظ رقمًا في إكسل (سقط صفره) يُعاد صفره — أشهر تلف يصيب الجوالات */
-    const phone = normalizePhone(phoneRaw);
-    const phone2 = normalizePhone(g("phone2"));
+    /* جوال حُفظ رقمًا في إكسل (سقط صفره) يُعاد صفره — أشهر تلف يصيب الجوالات.
+       (16 نوفمبر 2026) جوالان في خانة واحدة يُفصلان، وخانة «جوال إضافي» بنص طويل
+       يُستخرج منها الرقم — كان نصها يُحفظ كما هو فيتجاوز 30 حرفًا فيرفض القيد
+       الدفعة كلها (100 صف) بـ«تعذّر الحفظ». */
+    const ph = splitPhones(phoneRaw, g("phone2"));
+    const phone = ph.phone, phone2 = ph.phone2;
+    notes.push(...ph.notes);
     const optInt = (t: string) => { if (!t) return undefined; const n = parseNum(t); return isNaN(n) ? 0 : n; };
     const vatK = arKey(vatTxt);
     /* كانت /on/ تطابق «none» و«إلكتروني» — الآن قيم صريحة فقط (30 سبتمبر 2026) */
@@ -780,6 +784,15 @@ export function parseGrid(grid: string[][], properties: Prop[], todayIso: string
     if ((seenInFile.get(k(r)) || 0) > 1) r._error = `رقم الوحدة «${r.unit}» مكرّر في الملف`;
   });
 
+  /* (16 نوفمبر 2026) «ضمن عقد» وحدتها الرئيسية لن تُرفع (مكرّرة في الملف مثلًا): كانت
+     تمرّ في المراجعة ثم تفشل بعد حفظ كل ما سواها «تعذّر إيجاد الوحدة الرئيسية». تُعلَّم الآن. */
+  const blockedUnits = new Set(rows.filter((r) => r._error && r.unit).map(k));
+  rows.forEach((r) => {
+    if (r._error || !r._cover) return;
+    if (blockedUnits.has(`${pk(r)}|${unitKey(r._cover)}`))
+      r._error = `ضمن عقد ${r.contract_no} — والوحدة الرئيسية ${r._cover} بها خطأ؛ صحّحها أولًا`;
+  });
+
   return { rows, info: { ...info, examples } };
 }
 
@@ -808,7 +821,7 @@ const EXPORT_FREQ_AR: Record<string, string> = {
   daily: "يومي", weekly: "اسبوعي", monthly: "شهري", quarterly: "كل 3 اشهر", trimester: "كل 4 اشهر",
   semiannual: "نصف سنوي", annual: "سنوي", yearly: "سنوي",
 };
-const EXPORT_UNIT_AR: Record<string, string> = { apartment: "شقة", annex: "شقة ملحق", studio: "استديو", room: "غرفة", shop: "محل", office: "مكتب", warehouse: "مستودع", land: "أرض", villa: "فيلا", other: "أخرى" };
+const EXPORT_UNIT_AR: Record<string, string> = { apartment: "شقة", annex: "شقة ملحق", studio: "استديو", room: "غرفة", shop: "محل", showroom: "معرض", office: "مكتب", warehouse: "مستودع", land: "أرض", villa: "فيلا", other: "أخرى" };
 
 /**
  * صف مستأجر من القاعدة → خانات قالب الرفع. هنا لا في التصدير: الطرفان (التصدير
@@ -968,6 +981,50 @@ export function prepareGrid(grid0: string[][]): PreparedGrid {
  * (v85) توحيد صيغة الجوال السعودي: «055 123 4567» / «+966 55…» / «5xxxxxxxx» ← 05xxxxxxxx.
  * غير السعودي أو غير المفهوم يُعاد كما هو بعد تحويل الأرقام العربية.
  */
+/** كل أرقام الجوال السعودية في نص (05xxxxxxxx بأي كتابة: +966/00966/بلا صفر/مسافات) */
+export function saudiMobiles(raw: string | null | undefined): string[] {
+  /* الفواصل داخل الرقم مسموحة («+966 55 000 0001») لكن لا تُحذف من النص كله أولًا:
+     حذفها كان يلصق رقمين «0555… - 0566…» في سلسلة واحدة من 20 خانة فلا يُعرف أيّ منهما */
+  const s = toEnDigits(String(raw || ""));
+  const out: string[] = [];
+  for (const m of s.matchAll(/(?<!\d)(?:\+?966|00966|0)?[\s\-().]*(5(?:[\s\-.]*\d){8})(?!\d)/g)) {
+    const n = "0" + m[1].replace(/\D/g, "");
+    if (!out.includes(n)) out.push(n);
+  }
+  return out;
+}
+
+export const PHONE2_MAX = 30;   // قيد tenants_phone2_len (schema-v85)
+
+/**
+ * الجوالان كما يُحفظان. الحالات التي كانت تفسد الرفع أو تضيع رقمًا:
+ *  • «0555… / 0566…» في خانة الجوال ⇒ الأول جوالًا والثاني «جوالًا إضافيًّا» (إن كانت خانته فارغة).
+ *  • «جوال إضافي» بنص طويل («0566… أخوه») ⇒ يُستخرج الرقم؛ وإن لم يوجد رقم والنص أطول
+ *    من القيد لا يُحفظ ويُنبَّه — بدل أن يُسقط دفعة كاملة من 100 صف.
+ */
+export function splitPhones(phoneRaw: string, phone2Raw: string): { phone: string; phone2: string; notes: string[] } {
+  const notes: string[] = [];
+  let phone = normalizePhone(phoneRaw);
+  let phone2 = normalizePhone(phone2Raw);
+  const inMain = saudiMobiles(phoneRaw);
+  if (inMain.length >= 2 && phone.length > 10) {
+    phone = inMain[0];
+    if (!phone2) { phone2 = inMain[1]; notes.push(`في خانة الجوال رقمان — ${inMain[1]} حُفظ «جوالًا إضافيًّا»`); }
+    else notes.push(`في خانة الجوال رقمان — حُفظ الأول ${inMain[0]} (خانة الجوال الإضافي مشغولة)`);
+  } else if (inMain.length === 1 && phone.length > 10) {
+    /* «0555… أبو محمد»: النص يكسر رابط واتساب والرسائل — يُحفظ الرقم وحده */
+    notes.push(`خانة الجوال فيها نص — حُفظ الرقم ${inMain[0]} وحده`);
+    phone = inMain[0];
+  }
+  if (phone2.length > 10) {
+    const m2 = saudiMobiles(phone2Raw);
+    if (m2.length) phone2 = m2[0];
+    else if (phone2.length > PHONE2_MAX) { notes.push(`⚠️ «جوال إضافي» غير مفهوم ولم يُحفظ: «${phone2.slice(0, 40)}»`); phone2 = ""; }
+  }
+  if (phone2 && phone2 === phone) phone2 = "";
+  return { phone, phone2, notes };
+}
+
 export function normalizePhone(raw: string | null | undefined): string {
   let phone = toEnDigits(String(raw || "")).trim();
   if (!phone) return "";

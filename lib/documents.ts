@@ -11,6 +11,7 @@ import { daysAr, monthsAr, today as riyadhTodayISO } from "./utils";
 import { moneySigned } from "./hoaMoney";
 import { metersCountLine, METER_TYPE_AR, type PropertyMeter } from "./meters";
 import { riyalsInWords } from "./tafqit";
+import { trustDocTitle, isTrustIn, isDepositKind, type TrustRow } from "./trust";
 
 const sar = (n: number) => {
   const v = Number(n) || 0;
@@ -635,7 +636,7 @@ function unitsRegisterHTML(p: any, tenants: any[], g: any, issuer: any = {}): st
 }
 
 /** «دخل العمارة» كان ثابتًا حتى لمعرض أو فيلا — الاسم بنوع العقار */
-const PROP_THE: Record<string, string> = { residential: "العمارة", showroom: "المعرض", office: "المبنى", warehouse: "المستودع", villa: "الفيلا", land: "الأرض" };
+const PROP_THE: Record<string, string> = { residential: "العمارة", mixed: "العمارة", showroom: "المعرض", office: "المبنى", warehouse: "المستودع", villa: "الفيلا", land: "الأرض" };
 
 /** فترة السماح الخاصة بالعقار */
 /** عتبات العقار مع عتبات المكتب — التعريف في lib/contract-state */
@@ -3444,6 +3445,55 @@ ${header("سند صرف", e.voucher_no || "—", issuer, e.spent_on)}
 </div>
 ${footer(issuer)}`;
   return SHELL(`سند صرف ${e.voucher_no || ""} — ${p.name}`, body, markOf(issuer));
+}
+
+/* ═══════════════════ سندات الأمانات (schema-v87) ═══════════════════ */
+/**
+ * سند قبض أمانة (TR-) أو سند صرف أمانة (TV-) — تأمين أو حصة عداد مشترك.
+ * (16 نوفمبر 2026 — طلب مكتب «الأولى»). السند يقول صراحة إن المبلغ أمانة
+ * وليس إيجارًا: لا يدخل المحصَّل ولا تقرير المالك ولا أتعاب المكتب.
+ */
+export function trustDocHTML(r: TrustRow, p: { name: string; property_type?: string | null }, issuer: Issuer = {},
+  unit?: { unit?: string | null; unit_type?: string | null; name?: string | null } | null) {
+  r = scrub(r); p = scrub(p); issuer = scrub(issuer); unit = unit ? scrub(unit) : null;
+  const who = issuerName(issuer) || "إدارة الأملاك";
+  const amount = Math.abs(Number(r.amount) || 0);
+  const incoming = isTrustIn(r.kind);
+  const title = trustDocTitle(r.kind);
+  const ul = unitWordFor(unit?.unit_type, p.property_type);
+  const unitNo = String(unit?.unit || r.unit || "").trim();
+  const party = String(r.party || unit?.name || "").trim();
+  const statement = isDepositKind(r.kind)
+    ? (incoming ? `تأمين ${unitNo ? `${ul} رقم (${unitNo})` : ""} — أمانة تُردّ عند انتهاء العقد بعد خصم ما يثبت استحقاقه`
+                : `استرداد تأمين ${unitNo ? `${ul} رقم (${unitNo})` : ""}`)
+    : (incoming ? `حصة من فاتورة عداد مشترك${r.meter ? ` رقم ${r.meter}` : ""}${r.bill_period ? ` عن ${r.bill_period}` : ""}`
+                : `سداد فاتورة عداد مشترك${r.meter ? ` رقم ${r.meter}` : ""}${r.bill_period ? ` عن ${r.bill_period}` : ""}`);
+  const body = `
+${header(title, r.doc_no || "—", issuer, r.entry_on)}
+<h1>${title}</h1>
+<div class="sub">${p.name}${unitNo ? ` · ${ul} ${unitNo}` : ""}</div>
+
+<div class="box" style="margin-top:10px">
+  <div class="r"><span>رقم السند</span><span dir="ltr" style="font-family:monospace;font-weight:700">${r.doc_no || "—"}</span></div>
+  <div class="r"><span>التاريخ</span><span>${arDateH(r.entry_on)}</span></div>
+  <div class="r"><span>${incoming ? "استلمنا من" : "صُرف إلى"}</span><span style="font-weight:700">${party || "________________"}</span></div>
+  <div class="r"><span>المبلغ</span><span style="font-weight:700;font-size:1.1em">${sar(amount)} ريال</span></div>
+  <div class="r"><span>المبلغ بالحروف</span><span>${riyalsInWords(amount)}</span></div>
+  <div class="r"><span>طريقة ${incoming ? "الدفع" : "الصرف"}</span><span>${methodAr(r.method)}</span></div>
+  ${r.reference ? `<div class="r"><span>المرجع</span><span dir="ltr">${r.reference}</span></div>` : ""}
+  <div class="r"><span>البيان</span><span style="overflow-wrap:anywhere">${statement}</span></div>
+  ${r.note ? `<div class="r"><span>ملاحظة</span><span style="overflow-wrap:anywhere">${r.note}</span></div>` : ""}
+</div>
+
+<div class="note">مبلغ أمانة — ليس إيجارًا ولا يُحتسب من الأجرة${isDepositKind(r.kind) ? "" : "، ويُسدَّد به المستحق لجهة الخدمة"}. منصة وثيق لا تستلم ولا تحوّل أي مبالغ.</div>
+
+<div class="sign">
+  ${incoming
+    ? `<div>عن ${who}<br><br>التوقيع والختم: ________________</div><div>رقم السند: <span dir="ltr">${r.doc_no || "—"}</span></div>`
+    : `<div>المستلم: ${party || "________________"}<br><br>التوقيع: ________________<br><br>التاريخ: ____ / ____ / ________</div><div>عن ${who}<br><br>التوقيع والختم: ________________</div>`}
+</div>
+${footer(issuer)}`;
+  return SHELL(`${title} ${r.doc_no || ""} — ${p.name}`, body, markOf(issuer));
 }
 
 /* ═══════════════════ سند قبض دفعة إيجار (schema-v80) ═══════════════════ */

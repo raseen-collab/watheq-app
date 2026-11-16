@@ -30,6 +30,7 @@ import UnitInvoicesModal from "@/components/UnitInvoicesModal";
 import CollectionStatementModal from "@/components/CollectionStatementModal";
 import DueListModal from "@/components/DueListModal";
 import ExpensesModal from "@/components/ExpensesModal";
+import TrustLedgerModal from "@/components/TrustLedgerModal";
 import OwnerLinkModal from "@/components/OwnerLinkModal";
 import { TenantLinkModal, TenantPortalInbox, type TenantClaim } from "@/components/TenantPortal";
 import { FEE_PERIODS, type ExpenseRow } from "@/lib/expenses";
@@ -167,7 +168,7 @@ function rowKey(t: Tenant, st: ReturnType<typeof contractState>): RowKey {
 }
 
 const UNIT_TYPES: Record<string, string> = {
-  apartment: "شقة", annex: "شقة ملحق", studio: "استديو", room: "غرفة", shop: "محل", office: "مكتب", warehouse: "مستودع", land: "أرض", villa: "فيلا", other: "أخرى",
+  apartment: "شقة", annex: "شقة ملحق", studio: "استديو", room: "غرفة", shop: "محل", showroom: "معرض", office: "مكتب", warehouse: "مستودع", land: "أرض", villa: "فيلا", other: "أخرى",
 };
 const PROPERTY_USAGE: Record<string, string> = { families: "سكني — عوائل", singles: "سكني — عزّاب", mixed: "سكني تجاري — عزّاب أو عوائل", commercial: "تجاري" };
 
@@ -337,6 +338,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
     setPerms(o?.isOwner === false ? (o.perms || {}) : OWNER_PERMS);
   }); }, [supabase]);
   const may = (k: string) => perms[k] !== false;           // صلاحية دقيقة
+  const canTrust = may("view_financials") || may("record_payments") || may("manage_expenses");
   const isManager = role === null || role === "manager";   // المالك أو المدير
   const canCollect = may("record_payments");
   const ownerNames = Array.from(new Set(items.map((p) => (p.owner_name || "").trim()).filter(Boolean))).sort();
@@ -345,6 +347,8 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
   const [ownerLinkOpen, setOwnerLinkOpen] = useState(false);
   const [doc, setDoc] = useState<null | { title: string; body: string }>(null);
   const [history, setHistory] = useState<null | { tenant: Tenant; rows: any[] }>(null);
+  /* (v87) الأمانات: تأمين + حصص عداد مشترك — null مغلقة، tenantId لفتحها على وحدة */
+  const [trustFor, setTrustFor] = useState<null | { tenantId: string | null }>(null);
   const [schedule, setSchedule] = useState<Tenant | null>(null);
   const [renewing, setRenewing] = useState<Tenant | null>(null);
   const [enforcing, setEnforcing] = useState<Tenant | null>(null);
@@ -2155,7 +2159,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
               v={collectedThisMonth === null ? "…" : sar(Math.round(collectedThisMonth))}
               sub={<>ما قُبض في {mLabel} حتى اليوم</>} />
             {/* «دخل العمارة» كان يُكتب لفيلا ومعرض ومستودع — الاسم من نوع العقار (30 سبتمبر 2026) */}
-            <Cell t={`دخل ${({ residential: "العمارة", showroom: "المعرض", office: "المبنى", warehouse: "المستودع", villa: "الفيلا", land: "الأرض" } as Record<string, string>)[p.property_type || "residential"] || "العقار"} السنوي`} tone="text-deep" v={sar(Math.round(rr.annual))}
+            <Cell t={`دخل ${({ residential: "العمارة", mixed: "العمارة", showroom: "المعرض", office: "المبنى", warehouse: "المستودع", villa: "الفيلا", land: "الأرض" } as Record<string, string>)[p.property_type || "residential"] || "العقار"} السنوي`} tone="text-deep" v={sar(Math.round(rr.annual))}
               sub={<>إيجار سنة لـ{rr.occupied} {units(rr.occupied)} بعقد سارٍ
                 {rr.vacant ? <> · <span className="text-[#9A4B00]">شاغرة {rr.vacant}</span></> : null}
                 {rr.expired ? <> · <span className="text-late">{rr.expired === 1 ? "عقد انتهى ولم يُجدَّد" : `${rr.expired} عقود انتهت ولم تُجدَّد`} ({sar(Math.round(rr.expiredAnnual))} خارج المجموع)</span></> : null}</>} />
@@ -2270,6 +2274,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                 { sep: "متابعة المال" },
                 { label: "كشف التحصيل", run: () => setCollOpen(true) },
                 ...(may("manage_expenses") ? [{ label: "المصروفات", run: () => setExpensesOpen(true) }] : []),
+                { label: "🛡️ الأمانات — تأمين وفواتير مشتركة", run: () => setTrustFor({ tenantId: null }) },
                 { label: `الديون المرحَّلة${carriedTotal > 0 ? ` (${sar(carriedTotal)})` : ""}`, run: () => setDebtOpen(true) },
               ]} />}
 
@@ -2277,6 +2282,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                 ...(may("edit_tenants") ? [demo ? { label: "رفع من Excel", run: demoJoin } : { label: "رفع من Excel", href: "/dashboard/property/import" }] : []),
                 { label: "تصدير CSV", run: exportCSV },
                 ...(may("view_activity") ? [{ label: "سجل الحركات المالية", run: () => setLogOpen(true) }] : []),
+                ...(!may("view_financials") && canTrust ? [{ label: "🛡️ الأمانات — تأمين وفواتير مشتركة", run: () => setTrustFor({ tenantId: null }) }] : []),
               ]} />
 
               {lateCount > 0 && may("send_reminders") && (
@@ -2488,6 +2494,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                                   { label: "جدول الدفعات", run: () => setSchedule(t) },
                                   { label: "سجل المدفوعات", run: () => openHistory(t) },
                                   ...(!isVacant(t) && !t.covered_by ? [{ label: "🧾 سند قبض آخر دفعة", run: () => { void openReceipt(t); } }] : []),
+                                  ...(canTrust && !t.covered_by ? [{ label: "🛡️ التأمين والفواتير المشتركة", run: () => setTrustFor({ tenantId: t.id }) }] : []),
                                   ...(isVacant(t) ? [{ label: "مخالصة الإخلاء", run: () => openSettlement(t) }] : []),
 
                                   { sep: "✉️ مراسلة" } as any,
@@ -2698,6 +2705,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                       { label: "جدول الدفعات", run: () => setSchedule(t) },
                       { label: "سجل المدفوعات", run: () => openHistory(t) },
                       ...(!isVacant(t) && !t.covered_by ? [{ label: "🧾 سند قبض آخر دفعة", run: () => { void openReceipt(t); } }] : []),
+                      ...(canTrust && !t.covered_by ? [{ label: "🛡️ التأمين والفواتير المشتركة", run: () => setTrustFor({ tenantId: t.id }) }] : []),
                       ...(isVacant(t) ? [{ label: "مخالصة الإخلاء", run: () => openSettlement(t) }] : []),
 
                       { sep: "✉️ مراسلة" } as any,
@@ -2848,6 +2856,13 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
           issuer={issuer} propertyType={active.property_type} ownerName={active.owner_name}
           payeeHints={[...(active.tenants || []).filter((x) => !isVacant(x) && x.name).map((x) => String(x.name)), ...(active.owner_name ? [String(active.owner_name)] : [])]}
           onClose={() => { setExpensesOpen(false); setExpKey((k) => k + 1); }} />
+      )}
+      {trustFor && active && (
+        <TrustLedgerModal propertyId={active.id} propertyName={active.name} propertyType={active.property_type}
+          tenants={(active.tenants || []).filter((x) => !x.covered_by).map((x) => ({ id: x.id, name: x.name, unit: x.unit, unit_type: (x as any).unit_type, deposit_amount: x.deposit_amount, vacant: isVacant(x) }))}
+          meters={active.meters} issuer={issuer} db={db} focusTenantId={trustFor.tenantId}
+          canIn={may("record_payments")} canOut={may("manage_expenses")} canDelete={may("undo_actions")}
+          onClose={() => setTrustFor(null)} />
       )}
       {ownerLinkOpen && active && (
         <OwnerLinkModal propertyId={active.id} propertyName={active.name} ownerName={active.owner_name} db={db} demo={demo}
@@ -3362,6 +3377,10 @@ function HistoryModal({ data, unitWord, onClose, canEdit = true, onChanged, db, 
   const [editing, setEditing] = useState<string | null>(null);
   const [eDate, setEDate] = useState("");
   const [eRef, setERef] = useState("");
+  const [eNote, setENote] = useState("");
+  /* (v87) نقل دفعة إلى الأمانات: معرّف الدفعة المفتوح عليها اختيار النوع */
+  const [moving, setMoving] = useState<string | null>(null);
+  const [info, setInfo] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -3411,13 +3430,59 @@ function HistoryModal({ data, unitWord, onClose, canEdit = true, onChanged, db, 
       + `تقارير أُرسلت للمالك سابقًا لا تتغيّر — قد يختلف رقمها عن الكشف الجديد.\n\nمتابعة؟`)) return;
     setBusy(true);
     const { data: up, error } = await supabase.from("payments")
-      .update({ paid_on: eDate || null, reference: eRef.trim() || null })
-      .eq("id", id).select("id, paid_on, reference");
+      .update({ paid_on: eDate || null, reference: eRef.trim() || null, note: eNote.trim().slice(0, 500) || null })
+      .eq("id", id).select("id, paid_on, reference, note");
     setBusy(false);
     if (error) { setErr(error.message); return; }
     if (!up?.length) { setErr("هذا التعديل يحتاج صلاحية أعلى."); return; }
-    setRows((cur) => cur.map((r) => (r.id === id ? { ...r, paid_on: up[0].paid_on, reference: up[0].reference } : r)));
+    setRows((cur) => cur.map((r) => (r.id === id ? { ...r, paid_on: up[0].paid_on, reference: up[0].reference, note: up[0].note } : r)));
     setEditing(null);
+  }
+
+  /** إعادة قراءة السجل من القاعدة بعد عملية تُنشئ صفوفًا (نقل/تصحيح) */
+  async function reload() {
+    const { data } = await supabase.from("payments").select("*").eq("tenant_id", tenant.id).order("paid_on", { ascending: false }).limit(200);
+    if (data) setRows(data);
+  }
+  function rpcErr(e: any, v: string) {
+    const m = String(e?.message || e);
+    return /does not exist|function|schema cache/i.test(m) && /watheq_(payment_to_trust|correct_payment)/.test(m)
+      ? `هذه الميزة تحتاج تحديث قاعدة البيانات (${v}) — تواصل معنا على واتساب 0550165210.` : /not authorized/i.test(m) ? "هذا الإجراء يحتاج صلاحية «التراجع والحذف»." : m;
+  }
+
+  /**
+   * (v87 — طلب مكتب «الأولى») دفعة سُجّلت إيجارًا وهي تأمين أو حصة فاتورة عداد مشترك:
+   * تُعكس من الإيجار (يعود القسط مستحقًّا) ويُنشأ قيد أمانة بالمبلغ والتاريخ نفسيهما وسند TR جديد.
+   */
+  async function moveToTrust(r: any, kind: "deposit_in" | "utility_in") {
+    const what = kind === "deposit_in" ? "تأمين" : "حصة فاتورة عداد مشترك";
+    if (!confirm(`نقل ${sar(Number(r.amount))} ريال (${arDate(r.paid_on)}) من الإيجار إلى الأمانات كـ«${what}»؟\n\n`
+      + `• تُعكس الدفعة من الإيجار ويعود مبلغها مستحقًّا على المستأجر.\n• يُسجَّل قيد أمانة بالمبلغ والتاريخ نفسيهما ويصدر له سند قبض أمانة جديد.\n`
+      + `• لا يدخل المبلغ بعدها المحصَّل ولا تقرير المالك ولا الأتعاب.`)) return;
+    setBusy(true); setErr(null); setInfo(null);
+    const { error } = await supabase.rpc("watheq_payment_to_trust", { p_payment: r.id, p_kind: kind });
+    setBusy(false); setMoving(null);
+    if (error) { setErr(rpcErr(error, "schema-v87")); return; }
+    await reload();
+    setInfo(`نُقلت إلى الأمانات كـ«${what}» — تجدها في «🛡️ التأمين والفواتير المشتركة» من قائمة الوحدة.`);
+    onChanged?.();
+  }
+
+  /** (v87) تصحيح مبلغ دفعة: عكس الخاطئة + تسجيل الصحيح بنفس التاريخ والطريقة والمرجع، بخطوة واحدة */
+  async function correctAmount(r: any) {
+    const raw = prompt(`المبلغ الصحيح لهذه الدفعة (المسجَّل ${sar(Number(r.amount))} ريال بتاريخ ${arDate(r.paid_on)}):`, String(r.amount));
+    if (raw == null) return;
+    const v = Number(String(raw).replace(/[٠-٩]/g, (c) => String("٠١٢٣٤٥٦٧٨٩".indexOf(c))).replace(/[^\d.]/g, ""));
+    if (!(v > 0)) { setErr("اكتب مبلغًا أكبر من صفر."); return; }
+    if (Math.abs(v - Number(r.amount)) < 0.005) return;
+    if (!confirm(`تصحيح الدفعة من ${sar(Number(r.amount))} إلى ${sar(v)} ريال؟\n\nتُعكس الدفعة الأصلية (تبقى في السجل بختم «معكوسة») وتُسجَّل دفعة بالمبلغ الصحيح بنفس التاريخ والطريقة والمرجع، ويصدر لها سند قبض جديد.`)) return;
+    setBusy(true); setErr(null); setInfo(null);
+    const { error } = await supabase.rpc("watheq_correct_payment", { p_payment: r.id, p_amount: Math.round(v * 100) / 100 });
+    setBusy(false);
+    if (error) { setErr(rpcErr(error, "schema-v87")); return; }
+    await reload();
+    setInfo(`صُحّحت الدفعة إلى ${sar(v)} ريال — اطبع السند الجديد من عمود «السند».`);
+    onChanged?.();
   }
 
   const total = rows.reduce((s, r) => s + (Number(r.amount) || 0), 0);
@@ -3430,6 +3495,10 @@ function HistoryModal({ data, unitWord, onClose, canEdit = true, onChanged, db, 
       <h3 className="font-display font-bold text-deep text-lg mb-1">سجل المدفوعات — {tenant.name}</h3>
       <p className="text-sm text-muted mb-4">{unitWord} {tenant.unit || "—"} · {rows.length} عملية · الإجمالي {sar(total)} ريال</p>
       {err && <div className="bg-[#FBE9E7] border border-[#F5C6C2] text-[#a5322c] rounded-xl p-2.5 text-xs mb-3">{err}</div>}
+      {info && <div className="bg-[#E6F4EC] border border-[#B7DFC7] text-[#137a50] rounded-xl p-2.5 text-xs mb-3">{info}</div>}
+      {canEdit && rows.some((r) => Number(r.amount) > 0) && (
+        <p className="text-[11px] text-muted mb-2">للتعديل: «✎ تعديل» (التاريخ والمرجع والملاحظة) · «تصحيح المبلغ» · «⇄ أمانة» لدفعة هي تأمين أو حصة فاتورة لا إيجار. على الجوال اسحب الجدول يمينًا ويسارًا لترى الأزرار.</p>
+      )}
 
       {!rows.length ? (
         <div className="text-center text-muted py-10 text-sm">
@@ -3437,8 +3506,8 @@ function HistoryModal({ data, unitWord, onClose, canEdit = true, onChanged, db, 
           <div className="text-xs mt-2">الدفعات التي تُسجّلها من الآن ستُحفظ هنا بتاريخها وطريقتها.</div>
         </div>
       ) : (
-        <div className="border border-line rounded-xl overflow-hidden max-h-[50vh] overflow-y-auto">
-          <table className="w-full text-sm">
+        <div className="border border-line rounded-xl overflow-auto max-h-[55vh]">
+          <table className="w-full text-sm min-w-[820px]">
             <thead className="bg-paper2 sticky top-0"><tr>
               <th className="p-2 text-right font-semibold">التاريخ</th>
               <th className="p-2 text-right font-semibold">المبلغ</th>
@@ -3485,7 +3554,9 @@ function HistoryModal({ data, unitWord, onClose, canEdit = true, onChanged, db, 
                     ) : <span className="text-muted text-xs">—</span>}
                   </td>
                   {/* العكس يبقى ظاهرًا هنا (سجلّ تدقيق للمكتب) — بلا المعرّف الخام */}
-                  <td className="p-2 text-muted text-xs">{r.note ? String(r.note).replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, "").replace(/\s*—\s*$/, "") : "—"}</td>
+                  <td className="p-2 text-muted text-xs">{editing === r.id
+                    ? <input className="fld !py-0.5 !text-xs !w-36" value={eNote} maxLength={500} onChange={(e) => setENote(e.target.value)} placeholder="ملاحظة" />
+                    : r.note ? String(r.note).replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, "").replace(/\s*—\s*$/, "") : "—"}</td>
                   {canEdit && (
                     <td className="p-2 whitespace-nowrap">
                       {editing === r.id ? (
@@ -3499,13 +3570,29 @@ function HistoryModal({ data, unitWord, onClose, canEdit = true, onChanged, db, 
                         <span className="text-[10px] text-muted">يتبع الأصل</span>
                       ) : (
                         <button className="btn btn-ghost text-[10px] px-2 py-0.5"
-                          onClick={() => { setEditing(r.id); setEDate(String(r.paid_on || "").slice(0, 10)); setERef(r.reference || ""); }}
-                          title="تصحيح تاريخ وصول الحوالة أو مرجعها — المبلغ لا يُعدَّل، وعكسها إن وُجد يتبعها">✎ تاريخ/مرجع</button>
+                          onClick={() => { setEditing(r.id); setEDate(String(r.paid_on || "").slice(0, 10)); setERef(r.reference || ""); setENote(r.note || ""); }}
+                          title="تصحيح تاريخ وصول الحوالة أو مرجعها أو الملاحظة — المبلغ له زر «تصحيح المبلغ»">✎ تعديل</button>
                       )}
                       {canEdit && editing !== r.id && Number(r.amount) > 0 && !reversedIds.has(String(r.id)) && (
                         <button className="btn btn-ghost text-[10px] px-2 py-0.5 ms-1 text-late" disabled={busy}
                           onClick={() => reverseOne(r)}
                           title="يُعيد مبلغ هذه الدفعة مستحقًّا — للدفعة المسجّلة بمبلغ خاطئ">↩︎ اعكسها</button>
+                      )}
+                      {canEdit && editing !== r.id && Number(r.amount) > 0 && !reversedIds.has(String(r.id)) && !r.past_tenancy_id && (!r.applies_to || r.applies_to === "rent") && (
+                        <>
+                          <button className="btn btn-ghost text-[10px] px-2 py-0.5 ms-1" disabled={busy} onClick={() => correctAmount(r)}
+                            title="عكس هذه الدفعة وتسجيل المبلغ الصحيح بنفس التاريخ — بخطوة واحدة">تصحيح المبلغ</button>
+                          {moving === r.id ? (
+                            <span className="inline-flex gap-1 ms-1 align-middle">
+                              <button className="btn btn-gold text-[10px] px-2 py-0.5" disabled={busy} onClick={() => moveToTrust(r, "deposit_in")}>تأمين</button>
+                              <button className="btn btn-gold text-[10px] px-2 py-0.5" disabled={busy} onClick={() => moveToTrust(r, "utility_in")}>حصة فاتورة</button>
+                              <button className="btn btn-ghost text-[10px] px-1.5 py-0.5" onClick={() => setMoving(null)}>✕</button>
+                            </span>
+                          ) : (
+                            <button className="btn btn-ghost text-[10px] px-2 py-0.5 ms-1" disabled={busy} onClick={() => setMoving(r.id)}
+                              title="الدفعة ليست إيجارًا بل تأمين أو حصة من فاتورة عداد مشترك — تُنقل إلى الأمانات">⇄ أمانة</button>
+                          )}
+                        </>
                       )}
                     </td>
                   )}
@@ -3855,7 +3942,7 @@ function PropertyModal({ open, initial, orgName, ownerNames = [], officeSoon = 1
             المكتب يكتب فيه اسم المالك مرتين (أو هنا لا في «المالك» فلا يُجمَّع كشفه).
             يبقى محفوظًا كما هو (اسم المكتب افتراضيًّا عند الحفظ). */}
         {/* الاستخدام (عوائل/عزّاب) للعمارة والفيلا فقط — لا معنى له لمعرض أو مستودع */}
-        {(["residential", "villa"].includes(d.property_type || "residential") || d.usage) && (
+        {(["residential", "mixed", "villa"].includes(d.property_type || "residential") || d.usage) && (
           <Field label="استخدام العقار" hint="يظهر في المستندات والإعلانات">
             <select className="fld" value={d.usage || ""} onChange={(e) => setD({ ...d, usage: e.target.value })}>
               <option value="">— غير محدد —</option>
