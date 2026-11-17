@@ -3526,6 +3526,19 @@ const receiptStatement = (pay: ReceiptPayment, ul: string, unit: string, freq?: 
 };
 
 /** جوهر السند (صفوف «r») — يُستعمل في مستند المكتب وصفحة المستأجر */
+/**
+ * ملاحظة الدفعة كما تُطبع في السند (17 نوفمبر 2026 — طلب مكتب «الأولى»: «يحتاج ملاحظات في سند القبض»).
+ * بلا المعرّفات الداخلية التي تضيفها القاعدة لصفوف العكس/النقل، وبلا مسافات زائدة.
+ */
+export function receiptNoteText(note?: string | null): string {
+  return String(note || "")
+    .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, "")
+    .replace(/\s*[—-]\s*$/, "")
+    .replace(/[ \t]+/g, " ")
+    .trim()
+    .slice(0, 500);
+}
+
 export function receiptRowsHTML(pay: ReceiptPayment, t: ReceiptTenant, p: ReceiptProperty, who: string): string {
   const ul = unitWordFor(t.unit_type, p.property_type);
   const unit = String(pay.unit_label || t.unit || "—");
@@ -3541,6 +3554,7 @@ export function receiptRowsHTML(pay: ReceiptPayment, t: ReceiptTenant, p: Receip
   <div class="r"><span>طريقة الدفع</span><span>${methodAr(pay.method)}</span></div>
   ${pay.reference ? `<div class="r"><span>المرجع</span><span dir="ltr">${pay.reference}</span></div>` : ""}
   <div class="r"><span>البيان</span><span>${receiptStatement(pay, ul, unit, t.payment_frequency)}</span></div>
+  ${receiptNoteText(pay.note) ? `<div class="r"><span>ملاحظة</span><span style="overflow-wrap:anywhere;white-space:pre-line">${receiptNoteText(pay.note)}</span></div>` : ""}
   <div class="r"><span>المستلِم</span><span>${who}</span></div>`;
 }
 

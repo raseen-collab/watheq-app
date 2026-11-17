@@ -189,6 +189,38 @@ export function sandboxClient(store: SandboxStore) {
          ناقص المبلغ ثم يوزَّع. كانت التجربة تُرجع «نجاحًا» صامتًا فيظهر سطر
          سالب والعدّاد لم يتغيّر. */
       if (fn === "watheq_reverse_payment") return reversePay(args.p_payment);
+      /* (v88) تعديل دفعة من المدير — المعادلة نفسها في القاعدة: المدفوع الكلي ± الفرق ثم التوزيع */
+      if (fn === "watheq_edit_payment") {
+        const pay = store.payments.find((x) => x.id === args.p_payment);
+        if (!pay) return { data: null, error: { message: "الدفعة غير موجودة" } };
+        if (Number(pay.amount) <= 0 || pay.reverses) return { data: null, error: { message: "هذا صفّ عكس ولا يُعدَّل" } };
+        if (store.payments.some((r) => r.reverses === pay.id)) return { data: null, error: { message: "هذه الدفعة معكوسة — لا تُعدَّل" } };
+        const amt = r2(Number(args.p_amount) || 0);
+        if (amt <= 0) return { data: null, error: { message: "المبلغ يجب أن يكون أكبر من صفر" } };
+        const delta = r2(amt - Number(pay.amount));
+        if (Math.abs(delta) >= 0.005) {
+          if (pay.past_tenancy_id) return { data: null, error: { message: "دفعة مستأجر سابق — مبلغها لا يُعدَّل؛ اعكسها وسجّل الصحيح" } };
+          const t = store.tenants.find((x) => x.id === pay.tenant_id);
+          if (!t) return { data: null, error: { message: "الوحدة غير موجودة" } };
+          if (pay.applies_to === "carried") {
+            const c = r2((Number(t.carried_debt) || 0) - delta);
+            if (c < 0) return { data: null, error: { message: "المبلغ الجديد أكبر من الدين المرحّل المتبقي" } };
+            t.carried_debt = c;
+          } else {
+            const rent = Number(t.rent_amount) || 0;
+            if (rent <= 0) return { data: null, error: { message: "قيمة الدفعة غير محدّدة لهذا العقد" } };
+            const credit = Math.max(0, r2((Number(t.paid_periods) || 0) * rent + (Number(t.partial_amount) || 0) + delta));
+            const paid = Math.floor(credit / rent + 1e-9);
+            pay.periods_covered = Math.max(0, (Number(pay.periods_covered) || 0) + (paid - (Number(t.paid_periods) || 0)));
+            t.paid_periods = paid; t.partial_amount = r2(credit - paid * rent);
+          }
+          const prop = store.properties.find((p) => p.id === pay.property_id);
+          if (prop) prop.collected = r2((Number(prop.collected) || 0) + delta);
+        }
+        Object.assign(pay, { amount: amt, method: args.p_method || pay.method, paid_on: args.p_paid_on || pay.paid_on,
+          reference: args.p_reference ?? null, note: args.p_note ?? null });
+        return { data: { changed: true, payment_id: pay.id, amount: amt, delta }, error: null };
+      }
       if (fn === "watheq_relet_unit") {
         const t = store.tenants.find((x) => x.id === args.p_tenant);
         if (!t) return { data: null, error: { message: "الوحدة غير موجودة" } };

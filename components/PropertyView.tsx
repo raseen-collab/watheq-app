@@ -531,7 +531,8 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       + `راجع «سجل المدفوعات» قبل المتابعة.\n\nتسجيلها على أي حال؟`
     )) return;
 
-    const amt = Math.max(0, Number(amount) || 0);
+    /* (17 نوفمبر — اختبار ٥٠٠ سيناريو) هللتان كحدّ: 2083.335 كان يُحفظ خامًا والرصيد مقرّبًا */
+    const amt = Math.max(0, Math.round((Number(amount) || 0) * 100) / 100);
     if (!amt || !active) return;
     return once(`pay:${t.id}`, async () => {
     const { data, error } = await supabase.rpc("watheq_record_payment", {
@@ -3378,6 +3379,25 @@ function HistoryModal({ data, unitWord, onClose, canEdit = true, onChanged, db, 
   const [eDate, setEDate] = useState("");
   const [eRef, setERef] = useState("");
   const [eNote, setENote] = useState("");
+  /* (v88 — طلب مكتب «الأولى» 17 نوفمبر) المدير يعدّل المبلغ والطريقة أيضًا */
+  const [eAmount, setEAmount] = useState("");
+  const [eMethod, setEMethod] = useState("transfer");
+  /* سجل التعديلات (payment_edits): «معدّلة» بجانب الدفعة مع القيم السابقة */
+  const [edits, setEdits] = useState<Record<string, any[]>>({});
+  useEffect(() => {
+    const ids = rows.filter((r) => Number(r.amount) > 0).map((r) => r.id).filter((x) => /^[0-9a-f-]{36}$/i.test(String(x)));
+    if (!ids.length) return;
+    let off = false;
+    (async () => {
+      const { data, error } = await supabase.from("payment_edits").select("payment_id, edited_at, before, after").in("payment_id", ids).order("edited_at", { ascending: false });
+      if (off || error || !data) return;     // قبل v88: لا جدول — لا شيء يُعرض
+      const m: Record<string, any[]> = {};
+      (data as any[]).forEach((e) => { (m[e.payment_id] ||= []).push(e); });
+      setEdits(m);
+    })();
+    return () => { off = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows.map((r) => `${r.id}:${r.amount}:${r.method}:${r.paid_on}:${r.note || ""}`).join("|")]);
   /* (v87) نقل دفعة إلى الأمانات: معرّف الدفعة المفتوح عليها اختيار النوع */
   const [moving, setMoving] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
@@ -3428,15 +3448,35 @@ function HistoryModal({ data, unitWord, onClose, canEdit = true, onChanged, db, 
     if (od && od.slice(0, 7) !== nd.slice(0, 7) && !confirm(
       `نقل الدفعة من ${arDate(od)} إلى ${arDate(nd)} ينقل مبلغها من محصَّل شهر إلى شهر آخر في التقارير وكشف المالك.\n\n`
       + `تقارير أُرسلت للمالك سابقًا لا تتغيّر — قد يختلف رقمها عن الكشف الجديد.\n\nمتابعة؟`)) return;
+    const amt = Math.round(Number(String(eAmount).replace(/[٠-٩]/g, (c) => String("٠١٢٣٤٥٦٧٨٩".indexOf(c))).replace(/[^\d.]/g, "")) * 100) / 100;
+    if (!(amt > 0)) { setErr("اكتب مبلغًا أكبر من صفر."); return; }
+    const oldAmt = Number(orig?.amount) || 0;
+    if (Math.abs(amt - oldAmt) >= 0.005 && !confirm(
+      `تعديل مبلغ الدفعة من ${sar(oldAmt)} إلى ${sar(amt)} ريال؟\n\n`
+      + `• يبقى رقم السند ${orig?.receipt_no || ""} نفسه ويُطبع بالمبلغ الجديد.\n`
+      + `• يُعاد حساب الأقساط المسدّدة والمتبقي على المستأجر والمحصَّل تلقائيًّا.\n`
+      + `• يُسجَّل التعديل (القيمة السابقة، من عدّل، متى) ويظهر بجانب الدفعة.\n\n`
+      + `سند أُرسل للمستأجر سابقًا يحمل المبلغ القديم — أرسل له السند من جديد.`)) return;
     setBusy(true);
-    const { data: up, error } = await supabase.from("payments")
-      .update({ paid_on: eDate || null, reference: eRef.trim() || null, note: eNote.trim().slice(0, 500) || null })
-      .eq("id", id).select("id, paid_on, reference, note");
+    const { data: res, error } = await supabase.rpc("watheq_edit_payment", {
+      p_payment: id, p_amount: amt, p_method: eMethod, p_paid_on: nd,
+      p_reference: eRef.trim() || null, p_note: eNote.trim().slice(0, 500) || null });
     setBusy(false);
-    if (error) { setErr(error.message); return; }
-    if (!up?.length) { setErr("هذا التعديل يحتاج صلاحية أعلى."); return; }
-    setRows((cur) => cur.map((r) => (r.id === id ? { ...r, paid_on: up[0].paid_on, reference: up[0].reference, note: up[0].note } : r)));
+    if (error) {
+      const m = String(error.message || "");
+      setErr(/watheq_edit_payment/.test(m) && /does not exist|schema cache|function/i.test(m)
+        ? "تعديل المبلغ والطريقة يحتاج تحديث قاعدة البيانات (schema-v88) — تواصل معنا على واتساب 0550165210."
+        : /not authorized/i.test(m) ? "تعديل الدفعة يحتاج صلاحية «التراجع والحذف» (المالك أو المدير)." : m);
+      return;
+    }
+    await reload();
     setEditing(null);
+    if ((res as any)?.changed) {
+      setInfo(Math.abs(amt - oldAmt) >= 0.005
+        ? `عُدّل المبلغ إلى ${sar(amt)} ريال وأُعيد حساب المتبقي — اطبع السند أو أرسله للمستأجر من جديد.`
+        : "حُفظ التعديل.");
+      onChanged?.();
+    }
   }
 
   /** إعادة قراءة السجل من القاعدة بعد عملية تُنشئ صفوفًا (نقل/تصحيح) */
@@ -3448,6 +3488,12 @@ function HistoryModal({ data, unitWord, onClose, canEdit = true, onChanged, db, 
     const m = String(e?.message || e);
     return /does not exist|function|schema cache/i.test(m) && /watheq_(payment_to_trust|correct_payment)/.test(m)
       ? `هذه الميزة تحتاج تحديث قاعدة البيانات (${v}) — تواصل معنا على واتساب 0550165210.` : /not authorized/i.test(m) ? "هذا الإجراء يحتاج صلاحية «التراجع والحذف»." : m;
+  }
+  /** بدء تعديل صفّ: كل حقوله في وضع التحرير */
+  function startEdit(r: any) {
+    setEditing(r.id); setErr(null); setInfo(null);
+    setEDate(String(r.paid_on || "").slice(0, 10)); setERef(r.reference || ""); setENote(r.note || "");
+    setEAmount(String(r.amount ?? "")); setEMethod(r.method || "transfer");
   }
 
   /**
@@ -3468,22 +3514,6 @@ function HistoryModal({ data, unitWord, onClose, canEdit = true, onChanged, db, 
     onChanged?.();
   }
 
-  /** (v87) تصحيح مبلغ دفعة: عكس الخاطئة + تسجيل الصحيح بنفس التاريخ والطريقة والمرجع، بخطوة واحدة */
-  async function correctAmount(r: any) {
-    const raw = prompt(`المبلغ الصحيح لهذه الدفعة (المسجَّل ${sar(Number(r.amount))} ريال بتاريخ ${arDate(r.paid_on)}):`, String(r.amount));
-    if (raw == null) return;
-    const v = Number(String(raw).replace(/[٠-٩]/g, (c) => String("٠١٢٣٤٥٦٧٨٩".indexOf(c))).replace(/[^\d.]/g, ""));
-    if (!(v > 0)) { setErr("اكتب مبلغًا أكبر من صفر."); return; }
-    if (Math.abs(v - Number(r.amount)) < 0.005) return;
-    if (!confirm(`تصحيح الدفعة من ${sar(Number(r.amount))} إلى ${sar(v)} ريال؟\n\nتُعكس الدفعة الأصلية (تبقى في السجل بختم «معكوسة») وتُسجَّل دفعة بالمبلغ الصحيح بنفس التاريخ والطريقة والمرجع، ويصدر لها سند قبض جديد.`)) return;
-    setBusy(true); setErr(null); setInfo(null);
-    const { error } = await supabase.rpc("watheq_correct_payment", { p_payment: r.id, p_amount: Math.round(v * 100) / 100 });
-    setBusy(false);
-    if (error) { setErr(rpcErr(error, "schema-v87")); return; }
-    await reload();
-    setInfo(`صُحّحت الدفعة إلى ${sar(v)} ريال — اطبع السند الجديد من عمود «السند».`);
-    onChanged?.();
-  }
 
   const total = rows.reduce((s, r) => s + (Number(r.amount) || 0), 0);
   /* (11 أكتوبر 2026 — مكتب التميز) الدفعة المعكوسة تبقى في السجل للتدقيق، وكان
@@ -3497,7 +3527,7 @@ function HistoryModal({ data, unitWord, onClose, canEdit = true, onChanged, db, 
       {err && <div className="bg-[#FBE9E7] border border-[#F5C6C2] text-[#a5322c] rounded-xl p-2.5 text-xs mb-3">{err}</div>}
       {info && <div className="bg-[#E6F4EC] border border-[#B7DFC7] text-[#137a50] rounded-xl p-2.5 text-xs mb-3">{info}</div>}
       {canEdit && rows.some((r) => Number(r.amount) > 0) && (
-        <p className="text-[11px] text-muted mb-2">للتعديل: «✎ تعديل» (التاريخ والمرجع والملاحظة) · «تصحيح المبلغ» · «⇄ أمانة» لدفعة هي تأمين أو حصة فاتورة لا إيجار. على الجوال اسحب الجدول يمينًا ويسارًا لترى الأزرار.</p>
+        <p className="text-[11px] text-muted mb-2">«✎ تعديل»: المبلغ والطريقة والتاريخ والمرجع والملاحظة — رقم السند يبقى ويُعاد حساب المتبقي، وكل تعديل يُسجَّل. «⇄ أمانة» لدفعة هي تأمين أو حصة فاتورة لا إيجار. على الجوال اسحب الجدول يمينًا ويسارًا لترى الأزرار.</p>
       )}
 
       {!rows.length ? (
@@ -3516,7 +3546,7 @@ function HistoryModal({ data, unitWord, onClose, canEdit = true, onChanged, db, 
               <th className="p-2 text-right font-semibold">اكتملت</th>
               <th className="p-2 text-right font-semibold">السند</th>
               <th className="p-2 text-right font-semibold">ملاحظة</th>
-              {canEdit && <th className="p-2"></th>}
+              {canEdit && <th className="p-2 sticky left-0 bg-paper2"></th>}
             </tr></thead>
             <tbody>
               {rows.map((r) => (
@@ -3530,11 +3560,22 @@ function HistoryModal({ data, unitWord, onClose, canEdit = true, onChanged, db, 
                     )}
                   </td>
                   <td className="p-2 tabular-nums font-semibold">
-                    {reversedIds.has(String(r.id))
+                    {editing === r.id
+                      ? <input className="fld !py-0.5 !text-xs !w-24" inputMode="decimal" dir="ltr" value={eAmount} onChange={(e) => setEAmount(e.target.value)} aria-label="المبلغ" />
+                      : reversedIds.has(String(r.id))
                       ? <><span className="line-through text-muted">{sar(r.amount)}</span><div className="text-[10px] font-normal text-late">معكوسة — لا تُحتسب</div></>
                       : sar(r.amount)}
+                    {editing !== r.id && edits[r.id]?.length ? (
+                      <div className="text-[10px] font-normal text-[#8a5a11]" title={edits[r.id].map((e) => `${arDate(String(e.edited_at).slice(0, 10))}: ${sar(Number(e.before?.amount))} ${methodLabel(e.before?.method)} ← ${sar(Number(e.after?.amount))} ${methodLabel(e.after?.method)}`).join("\n")}>
+                        معدّلة{Math.abs(Number(edits[r.id][edits[r.id].length - 1].before?.amount) - Number(r.amount)) >= 0.005 ? ` (كانت ${sar(Number(edits[r.id][edits[r.id].length - 1].before?.amount))})` : ""}
+                      </div>
+                    ) : null}
                   </td>
-                  <td className="p-2">{methodLabel(r.method)}</td>
+                  <td className="p-2">{editing === r.id
+                    ? <select className="fld !py-0.5 !text-xs !w-28" value={eMethod} onChange={(e) => setEMethod(e.target.value)} aria-label="الطريقة">
+                        {METHODS.map((m) => <option key={m.v} value={m.v}>{m.l}</option>)}
+                      </select>
+                    : methodLabel(r.method)}</td>
                   {/* المرجع ووقت التسجيل: مطابقة كشف البنك تحتاج الاثنين —
                       تاريخ وصول المال أعلاه، ولحظة إدخاله هنا للتدقيق. */}
                   <td className="p-2 tabular-nums text-xs" dir="ltr">
@@ -3558,7 +3599,8 @@ function HistoryModal({ data, unitWord, onClose, canEdit = true, onChanged, db, 
                     ? <input className="fld !py-0.5 !text-xs !w-36" value={eNote} maxLength={500} onChange={(e) => setENote(e.target.value)} placeholder="ملاحظة" />
                     : r.note ? String(r.note).replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, "").replace(/\s*—\s*$/, "") : "—"}</td>
                   {canEdit && (
-                    <td className="p-2 whitespace-nowrap">
+                    /* عمود الأزرار مثبّت يسارًا: في نافذة ضيقة كان «حفظ» يقع خارج الشاشة (17 نوفمبر) */
+                    <td className="p-2 whitespace-nowrap sticky left-0 bg-white border-r border-line">
                       {editing === r.id ? (
                         <span className="flex gap-1">
                           <button className="btn btn-primary text-[10px] px-2 py-0.5" disabled={busy} onClick={() => saveEdit(r.id)}>حفظ</button>
@@ -3569,9 +3611,9 @@ function HistoryModal({ data, unitWord, onClose, canEdit = true, onChanged, db, 
                            يفصله عن شهر الدفعة التي عكسها، والقاعدة ترفضه */
                         <span className="text-[10px] text-muted">يتبع الأصل</span>
                       ) : (
-                        <button className="btn btn-ghost text-[10px] px-2 py-0.5"
-                          onClick={() => { setEditing(r.id); setEDate(String(r.paid_on || "").slice(0, 10)); setERef(r.reference || ""); setENote(r.note || ""); }}
-                          title="تصحيح تاريخ وصول الحوالة أو مرجعها أو الملاحظة — المبلغ له زر «تصحيح المبلغ»">✎ تعديل</button>
+                        reversedIds.has(String(r.id)) ? <span className="text-[10px] text-muted">معكوسة</span> :
+                        <button className="btn btn-ghost text-[10px] px-2 py-0.5" onClick={() => startEdit(r)}
+                          title="تعديل المبلغ والطريقة والتاريخ والمرجع والملاحظة — رقم السند يبقى">✎ تعديل</button>
                       )}
                       {canEdit && editing !== r.id && Number(r.amount) > 0 && !reversedIds.has(String(r.id)) && (
                         <button className="btn btn-ghost text-[10px] px-2 py-0.5 ms-1 text-late" disabled={busy}
@@ -3580,8 +3622,6 @@ function HistoryModal({ data, unitWord, onClose, canEdit = true, onChanged, db, 
                       )}
                       {canEdit && editing !== r.id && Number(r.amount) > 0 && !reversedIds.has(String(r.id)) && !r.past_tenancy_id && (!r.applies_to || r.applies_to === "rent") && (
                         <>
-                          <button className="btn btn-ghost text-[10px] px-2 py-0.5 ms-1" disabled={busy} onClick={() => correctAmount(r)}
-                            title="عكس هذه الدفعة وتسجيل المبلغ الصحيح بنفس التاريخ — بخطوة واحدة">تصحيح المبلغ</button>
                           {moving === r.id ? (
                             <span className="inline-flex gap-1 ms-1 align-middle">
                               <button className="btn btn-gold text-[10px] px-2 py-0.5" disabled={busy} onClick={() => moveToTrust(r, "deposit_in")}>تأمين</button>

@@ -223,7 +223,9 @@ export function renderTenantPage(d: TenantPortalData, opts: { nonce: string; bas
 /** سند قبض دفعة إيجار من صفحة المستأجر (schema-v80) — /r/t/{token}/p/{payment} */
 export type TenantReceiptData = {
   payment: { id: string; paid_on: string; amount: number; method: string | null; reference: string | null; periods_covered: number | null;
-    applies_to: string | null; receipt_no: string | null; created_at: string; payer_name: string | null; unit_label: string | null; reversed_on: string | null };
+    applies_to: string | null; receipt_no: string | null; created_at: string; payer_name: string | null; unit_label: string | null; reversed_on: string | null;
+    /** (v88) ملاحظة المكتب على الدفعة — تُطبع في السند */
+    note?: string | null };
   tenant: { name: string; unit: string | null; unit_type: string | null; contract_no: string | null; payment_frequency: string | null; vat_mode: string | null };
   property: { name: string; city: string | null; property_type: string | null; vat_enabled: boolean | null; vat_rate: number | null; vat_inclusive: boolean | null };
   office: Record<string, any> | null;
@@ -240,6 +242,7 @@ export function renderTenantReceiptPage(d: TenantReceiptData, opts: { nonce: str
     : x.applies_to === "past_debt" ? "سداد متأخرات مستأجر سابق"
     : `أجرة ${ul} رقم (${unit})${n > 0 ? ` — ${n === 1 ? "دفعة واحدة" : n === 2 ? "دفعتان" : `${n} دفعات`} (${freqLabel(t.payment_frequency)})` : " — دفعة جزئية"}`;
   const hij = hDate(x.paid_on);
+  const note = String(x.note || "").replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, "").replace(/\s*[—-]\s*$/, "").trim().slice(0, 500);
   const body = `
 <p class="noprint" style="margin:0 0 4px"><a href="${opts.base}">→ العودة إلى صفحتك</a></p>
 <section class="card" style="padding:20px;position:relative">
@@ -258,6 +261,7 @@ export function renderTenantReceiptPage(d: TenantReceiptData, opts: { nonce: str
   <div class="row"><span>طريقة الدفع</span><b>${methodAr(x.method)}</b></div>
   ${x.reference ? `<div class="row"><span>المرجع</span><b dir="ltr">${esc(x.reference)}</b></div>` : ""}
   <div class="row"><span>البيان</span><b style="text-align:left">${esc(statement)}</b></div>
+  ${note ? `<div class="row"><span>ملاحظة</span><b style="text-align:left;font-weight:600;overflow-wrap:anywhere;white-space:pre-line">${esc(note)}</b></div>` : ""}
   <div class="row"><span>المستلِم</span><b style="text-align:left;overflow-wrap:anywhere">${esc(org || "إدارة الأملاك")}</b></div>
   <div class="note">سند إلكتروني مستخرج من سجل دفعات المكتب كما سجّلها، ولا يُعدّ إبراءً عمّا سواه من مستحقات.</div>
 </section>
