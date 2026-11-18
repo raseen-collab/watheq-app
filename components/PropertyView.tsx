@@ -15,7 +15,8 @@ import type { ComplianceItem } from "@/lib/compliance";
 import { fetchAllRows } from "@/lib/fetch-all";
 import { hijriShort, hijriText, parseHijriInput } from "@/lib/hijri";
 import { sar, waLink, today, WATHEQ_WA, openExternal, daysAr, countAr, normalizeSearch, csvCell } from "@/lib/utils";
-import { endNoticeText, meterNoticeText, noticeTermsOf, acDripNoticeText } from "@/lib/tenant-messages";
+import { endNoticeText, endNoticeTextEn, meterNoticeText, noticeTermsOf, acDripNoticeText } from "@/lib/tenant-messages";
+import { unitWordEn } from "@/lib/docEn";
 import { contractState, expectedNext12, buildSchedule, FREQUENCIES, freqLabel, freqShort, derivedEndDate, renewContract, needsRenewal, applyPayment, splitVat, isCommercial, isVacant, settleDeposit, unitVatApplies,
   vacancyDays, TURNOVER_CHECKLIST, defaultTermPeriods, parseDate, dueWithVat, rentWithVat, withVat, unitVat, firstDueGap, type Frequency } from "@/lib/contracts";
 import { PROPERTY_TYPES, typeLabel, unitLabel, typeIcon, unitWordFor } from "@/lib/domain";
@@ -1739,17 +1740,18 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
   }
 
   /** واتساب: إشعار بانتهاء العقد (أو قربه) مع حالة المستحقات صريحة — lib/tenant-messages */
-  function endNoticeLink(t: Tenant) {
+  function endNoticeLink(t: Tenant, en = false) {
     if (!active) return "#";
     const st = contractState(t, { graceDays: Number(active?.grace_days) || 0, ...windowsOf(active) });
     const who = (issuer as any)?.billing_name || orgName || active.manager || "إدارة الأملاك";
     const v = { enabled: !!active.vat_enabled, rate: Number(active.vat_rate) || 15, inclusive: active.vat_inclusive !== false };
     const vUnit = unitVatApplies(t, active) ? v : { ...v, enabled: false };
     const one = splitVat(Number(t.rent_amount) || 0, vUnit);
-    return waLink(t.phone, endNoticeText({
+    return waLink(t.phone, (en ? endNoticeTextEn : endNoticeText)({
       mode: "end",
       tenantName: t.name || "",
       unitText: `${unitWordFor(t.unit_type, active.property_type)} (${t.unit || "—"})`,
+      unitTextEn: `${unitWordEn(t.unit_type, active.property_type)} (${t.unit || "—"})`,
       propertyName: active.name,
       endDate: st.endDate, daysToEnd: st.daysToEnd,
       hijri: t.calendar === "hijri",
@@ -2499,7 +2501,8 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                                   ...(isVacant(t) ? [{ label: "مخالصة الإخلاء", run: () => openSettlement(t) }] : []),
 
                                   { sep: "✉️ مراسلة" } as any,
-                                  ...(endNoticeDue(t, st) ? [{ label: "📅 إشعار انتهاء العقد (واتساب)", run: () => openExternal(endNoticeLink(t)) }] : []),
+                                  ...(endNoticeDue(t, st) ? [{ label: "📅 إشعار انتهاء العقد (واتساب)", run: () => openExternal(endNoticeLink(t)) },
+                                    { label: "📅 إشعار الانتهاء بالإنجليزية (English)", run: () => openExternal(endNoticeLink(t, true)) }] : []),
                                   ...(meterNoticeDue(t) ? [{ label: "⚡ إشعار تسجيل عداد الكهرباء (واتساب)", run: () => { void sendMeterNotice(t); } }] : []),
                                   ...(!isVacant(t) && t.phone && may("send_reminders") ? [{ label: "❄️ تنبيه تنقيط المكيفات (واتساب)", run: () => openExternal(acDripLink(t)) }] : []),
                                   ...(!isVacant(t) && !String(t.elec_account || "").trim() && may("edit_tenants") ? [{ label: "⚡ أضف رقم عداد الكهرباء", run: () => setModal({ kind: "tenant", id: t.id }) }] : []),

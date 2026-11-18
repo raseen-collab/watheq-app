@@ -12,6 +12,7 @@ import { moneySigned } from "./hoaMoney";
 import { metersCountLine, METER_TYPE_AR, type PropertyMeter } from "./meters";
 import { riyalsInWords } from "./tafqit";
 import { trustDocTitle, isTrustIn, isDepositKind, type TrustRow } from "./trust";
+import { enDate, methodEn, freqEn, unitWordEn, propertyTypeEn, usageEn, periodLabelEn, riyalsInWordsEn, receiptStatementEn, instalmentsEn } from "./docEn";
 
 const sar = (n: number) => {
   const v = Number(n) || 0;
@@ -310,14 +311,20 @@ export const docCsp = (nonce: string) =>
   `default-src 'none'; script-src 'nonce-${nonce}'; style-src 'unsafe-inline' https://fonts.googleapis.com; ` +
   `img-src data: blob:; font-src data: https://fonts.gstatic.com; form-action 'self'; base-uri 'none'`;
 
-const SHELL = (title: string, inner: string, mark: Mark = "none") => {
+/**
+ * (18 نوفمبر 2026 — طلب مكتب «الأولى») نسخة إنجليزية داخل المستند نفسه: زرّ «English» في
+ * شريط الطباعة يبدّل بين النسختين، والمطبوع هو الظاهر فقط. تُبنى النسختان من البيانات
+ * نفسها لحظة الإصدار، فلا تختلف أرقامهما. ‎#en في الرابط يفتح الإنجليزية مباشرة.
+ */
+export type EnDoc = { title: string; inner: string };
+const SHELL = (title: string, inner: string, mark: Mark = "none", en?: EnDoc | null) => {
   const nonce = newNonce();
   /* السكربتات الثابتة تحمل nonce="__WQ_NONCE__" ويُستبدل هنا. نصّ المستخدم لا
      يستطيع إنتاج هذه السمة: علامة " فيه مُهرَّبة دائمًا. */
-  return SHELL_RAW(title, inner, mark).split(`nonce="${NONCE_MARK}"`).join(`nonce="${nonce}"`)
+  return SHELL_RAW(title, inner, mark, en).split(`nonce="${NONCE_MARK}"`).join(`nonce="${nonce}"`)
     .replace(`content="${NONCE_MARK}"`, `content="${docCsp(nonce)}"`);
 };
-const SHELL_RAW = (title: string, inner: string, mark: Mark = "none") => `<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8">
+const SHELL_RAW = (title: string, inner: string, mark: Mark = "none", en?: EnDoc | null) => `<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8">
 <meta http-equiv="Content-Security-Policy" content="${NONCE_MARK}">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&display=swap">
@@ -408,11 +415,24 @@ const SHELL_RAW = (title: string, inner: string, mark: Mark = "none") => `<!DOCT
       padding:16px 46px;border-radius:18px;white-space:nowrap}
   .trialbar{background:#FBE9E7;border:1px solid #F5C6C2;color:#8f2b26;border-radius:10px;
       padding:11px 15px;margin:14px 0 0;font-size:.82rem;font-weight:600;line-height:1.75}
+  /* ── النسخة الإنجليزية: الاتجاه من اليسار، والمحاذاة الثابتة (right/left) تنقلب ── */
+  #wq-en{font-family:"Segoe UI",Roboto,Helvetica,Arial,"IBM Plex Sans Arabic",sans-serif;line-height:1.6}
+  #wq-en .hd .lg,#wq-en .box .r span:first-child,#wq-en th,#wq-en .due .l{text-align:left}
+  #wq-en .hd .meta,#wq-en .box .r span:last-child,#wq-en .due .v{text-align:right}
+  @media screen and (max-width:480px){#wq-en .hd .meta,#wq-en .due,#wq-en .due .l,#wq-en .due .v{text-align:left}}
+  [hidden]{display:none!important}
 </style></head><body>
-<div class="noprint"><button class="a" id="wq-print" type="button">🖨️ طباعة / حفظ PDF</button><button class="b" id="wq-close" type="button">إغلاق</button></div>
-<script nonce="${NONCE_MARK}">(function(){var p=document.getElementById("wq-print"),c=document.getElementById("wq-close");if(p)p.addEventListener("click",function(){window.print()});if(c)c.addEventListener("click",function(){window.close()});})();</script>
-${mark === "wm" ? `<div class="wm"><span>نسخة تجريبية — غير معتمدة</span></div>` : ""}
-${inner}
+<div class="noprint"><button class="a" id="wq-print" type="button">🖨️ طباعة / حفظ PDF</button>${en ? `<button class="b" id="wq-lang" type="button" data-ar-title="${title}" data-en-title="${en.title}">English</button>` : ""}<button class="b" id="wq-close" type="button">إغلاق</button></div>
+<script nonce="${NONCE_MARK}">(function(){var p=document.getElementById("wq-print"),c=document.getElementById("wq-close");if(p)p.addEventListener("click",function(){window.print()});if(c)c.addEventListener("click",function(){window.close()});
+var l=document.getElementById("wq-lang");if(!l)return;
+function show(en){var a=document.getElementById("wq-ar"),e=document.getElementById("wq-en");if(!a||!e)return;a.hidden=en;e.hidden=!en;
+document.documentElement.setAttribute("lang",en?"en":"ar");document.documentElement.setAttribute("dir",en?"ltr":"rtl");
+document.title=l.getAttribute(en?"data-en-title":"data-ar-title")||document.title;l.textContent=en?"العربية":"English";
+p.textContent=en?"🖨️ Print / Save PDF":"🖨️ طباعة / حفظ PDF";if(c)c.textContent=en?"Close":"إغلاق";}
+l.addEventListener("click",function(){var e=document.getElementById("wq-en");show(!!(e&&e.hidden));});
+document.addEventListener("DOMContentLoaded",function(){if(/^#en$/i.test(location.hash))show(true);});})();</script>
+${mark === "wm" ? `<div class="wm"><span>نسخة تجريبية — غير معتمدة${en ? " · Trial copy — not valid" : ""}</span></div>` : ""}
+${en ? `<div id="wq-ar">${inner}</div><div id="wq-en" lang="en" dir="ltr" hidden>${en.inner}</div>` : inner}
 ${mark === "brand" ? `<div class="madeby">أُنشئ عبر <b>وثيق</b> · watheqapp.com</div>` : ""}
 ${mark === "wm" ? `<div class="trialbar">
   انتهت فترة التجربة المجانية ولم يُفعَّل اشتراك، لذا تخرج المستندات بعلامة «نسخة تجريبية».
@@ -451,7 +471,7 @@ function zatcaTlvBase64(sellerName: string, vatNo: string, isoDateTime: string, 
  * الطباعة؛ وإن تعذّرت الشبكة يبقى نص Base64 ظاهرًا — وهو المحتوى
  * النظامي نفسه، فالفاتورة لا تفقد صلاحيتها بغياب الرسم.
  */
-function zatcaQrBlock(sellerName: string, vatNo: string, total: number, vat: number, at?: string | null): string {
+function zatcaQrBlock(sellerName: string, vatNo: string, total: number, vat: number, at?: string | null, sfx = ""): string {
   /* (مراجعة 29 سبتمبر 2026)
      • الاسم يدخل الرمز كما سُجّل لا مُهرَّبًا: «شركة أ & ب» كان يُرمَّز
        «شركة أ &amp; ب» فلا يطابق الاسم لدى الهيئة.
@@ -467,22 +487,22 @@ function zatcaQrBlock(sellerName: string, vatNo: string, total: number, vat: num
   return `
 <div style="display:flex;justify-content:flex-end;margin-top:14px">
   <div style="text-align:center">
-    <div id="zatca-qr" style="width:120px;height:120px;margin-inline-start:auto"></div>
-    <div style="font-size:8px;color:#8A8477;max-width:200px;word-break:break-all;margin-top:4px" id="zatca-tlv" title="محتوى رمز الاستجابة السريعة (TLV/Base64) — يُرسم رمزًا عند توفر الاتصال">${tlv}</div>
+    <div id="zatca-qr${sfx}" style="width:120px;height:120px;margin-inline-start:auto"></div>
+    <div style="font-size:8px;color:#8A8477;max-width:200px;word-break:break-all;margin-top:4px" id="zatca-tlv${sfx}" title="محتوى رمز الاستجابة السريعة (TLV/Base64) — يُرسم رمزًا عند توفر الاتصال">${tlv}</div>
   </div>
 </div>
-<script nonce="${NONCE_MARK}" src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"><\/script>
+${sfx ? "" : `<script nonce="${NONCE_MARK}" src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"><\/script>`}
 <script nonce="${NONCE_MARK}">(function(){
   /* حمولة زاتكا تبقى مخفية دائمًا: كانت تظهر نصًّا خامًا طويلًا لو تعذّر
      تحميل مكتبة الرمز (شبكة ضعيفة أو حجب CDN)، فتخرج الفاتورة مشوّهة أمام
      المستأجر. الآن إمّا رمز سليم أو سطر يشرح، ولا شيء بينهما. */
-  var tlv=document.getElementById("zatca-tlv");
+  var tlv=document.getElementById("zatca-tlv${sfx}");
   if(tlv) tlv.style.display="none";
   try{
-    new QRCode(document.getElementById("zatca-qr"),{text:tlv.textContent,width:120,height:120,correctLevel:QRCode.CorrectLevel.M});
+    new QRCode(document.getElementById("zatca-qr${sfx}"),{text:tlv.textContent,width:120,height:120,correctLevel:QRCode.CorrectLevel.M});
   }catch(e){
-    var box=document.getElementById("zatca-qr");
-    if(box) box.innerHTML='<span style="font-size:.62rem;color:#8A8477">رمز الاستجابة السريعة يظهر عند فتح المستند متصلًا بالإنترنت</span>';
+    var box=document.getElementById("zatca-qr${sfx}");
+    if(box) box.innerHTML='<span style="font-size:.62rem;color:#8A8477">${sfx ? "The QR code appears when the document is opened online" : "رمز الاستجابة السريعة يظهر عند فتح المستند متصلًا بالإنترنت"}</span>';
   }
 })();<\/script>`;
 }
@@ -707,6 +727,29 @@ const footer = (issuer?: Issuer | null) => {
 </div>`;
 };
 
+/** ترويسة النسخة الإنجليزية — هوية المكتب كما سجّلها (الاسم لا يُترجم) */
+const headerEn = (docTitle: string, docNo: string, issuer?: Issuer | null, date?: string | null) => {
+  const name = issuerName(issuer);
+  const seal = name ? (name.replace(/^(مكتب|شركة|مؤسسة|وكالة)\s+/, "").trim()[0] || name[0]) : "W";
+  return `
+<div class="hd">
+  <div class="lg"><div class="seal">${escH(seal)}</div><div><div class="t">${escH(name || "Watheq")}</div></div></div>
+  <div class="meta">${docTitle}<b dir="auto">${docNo}</b>Date: ${enDate(date || today())}</div>
+</div>`;
+};
+const footerEn = (issuer?: Issuer | null) => {
+  const name = issuerName(issuer);
+  const phone = String((issuer as any)?.billing_phone || "").trim();
+  const cr = String((issuer as any)?.cr_number || "").trim();
+  const line = [name ? escH(name) : "", phone ? `<span dir="ltr">${escH(phone)}</span>` : "", cr ? `CR ${escH(cr)}` : ""].filter(Boolean).join(" · ");
+  return `
+<div class="ft">
+  ${line ? `<b>${line}</b><br>` : ""}
+  Administrative document issued by ${name ? escH(name) : "the issuer"} for use between the parties; the issuer is responsible for it.<br>
+  Prepared with Watheq — an organisational tool that provides no legal or accounting services and does not receive or transfer any funds.
+</div>`;
+};
+
 /** كشف حساب مستأجر — كامل الدفعات والأرصدة */
 /**
  * كشف حساب المستأجر بنمطين:
@@ -891,7 +934,147 @@ ${shownPays.length ? `
   <div>المستأجر: ${t.name}<br><br>التوقيع: ________________</div>
 </div>
 ${footer(issuer)}`;
-  return SHELL(`كشف حساب — ${t.name}`, body, markOf(issuer));
+  /* ── النسخة الإنجليزية: القيم نفسها المحسوبة أعلاه ── */
+  const ulE = unitWordEn((t as any).unit_type, p.property_type);
+  const whoE = issuer.billing_name || issuer.org_name || p.manager || "Property management";
+  const unitDescE = `${ulE} no. (<bdi>${t.unit || "—"}</bdi>)${[
+    Number((t as any).rooms) > 0 ? `${(t as any).rooms} ${Number((t as any).rooms) === 1 ? "room" : "rooms"}` : "",
+    Number((t as any).baths) > 0 ? `${(t as any).baths} ${Number((t as any).baths) === 1 ? "bathroom" : "bathrooms"}` : "",
+    Number((t as any).acs) > 0 ? `${(t as any).acs} ${Number((t as any).acs) === 1 ? "A/C" : "A/Cs"}` : ""].filter(Boolean).map((x, i) => (i ? " · " : " — ") + x).join("")}`;
+  const vatE = v.enabled ? " (incl. VAT)" : "";
+  const titleE = mode === "full" ? "Full account statement" : "Brief account statement";
+  const upcomingE = st.upcomingDate ? enDate(st.upcomingDate)
+    : st.upcomingDate === null
+      ? (st.endDate && (st.daysToEnd ?? -1) >= 0 ? `With contract renewal (ends ${enDate(st.endDate)})` : "No further instalments in the contract")
+    : enDate(st.nextDueDate);
+  const statusE = (r: { n: number; status: string }) => rowStatus(r) === "paid" ? '<span class="pill p">Paid</span>'
+    : rowStatus(r) === "partial" ? '<span class="pill u">Partly paid</span>'
+    : rowStatus(r) === "late" ? '<span class="pill l">Overdue</span>'
+    : rowStatus(r) === "grace" ? `<span class="pill u">${st.inGrace ? "Due — grace period" : "Due — not yet late"}</span>`
+    : '<span class="pill u">Upcoming</span>';
+  const enInner = `
+${headerEn(titleE, `${t.name}`, issuer)}
+<h1>Account statement — ${ulE} no. (<span dir="auto">${t.unit || "—"}</span>)</h1>
+<div class="sub"><span dir="auto">${p.name}${p.address ? ` — ${p.address}` : ""}${p.city ? `, ${p.city}` : ""}</span> · ${propertyTypeEn(p.property_type)}</div>
+
+<div class="grid">
+  <div class="box">
+    <h3>Lessor</h3>
+    <div class="r"><span>Name</span><span dir="auto">${whoE}</span></div>
+    ${issuer.cr_number ? `<div class="r"><span>CR no.</span><span dir="ltr">${issuer.cr_number}</span></div>` : ""}
+    ${issuer.vat_number ? `<div class="r"><span>VAT no.</span><span dir="ltr">${issuer.vat_number}</span></div>` : ""}
+    ${issuer.billing_phone ? `<div class="r"><span>Contact</span><span dir="ltr">${issuer.billing_phone}</span></div>` : ""}
+  </div>
+  <div class="box">
+    <h3>Tenant</h3>
+    <div class="r"><span>Name</span><span dir="auto">${t.name}</span></div>
+    ${t.national_id ? `<div class="r"><span>ID / CR</span><span dir="ltr">${t.national_id}</span></div>` : ""}
+    ${t.phone ? `<div class="r"><span>Mobile</span><span dir="ltr">${t.phone}</span></div>` : ""}
+    <div class="r"><span>${ulE}</span><span dir="auto">${t.unit || "—"}</span></div>
+  </div>
+</div>
+
+<div class="grid">
+  <div class="box">
+    <h3>Contract</h3>
+    ${t.contract_no ? `<div class="r"><span>Contract no.</span><span dir="ltr"><b>${t.contract_no}</b></span></div>` : ""}
+    <div class="r"><span>Unit</span><span>${unitDescE}</span></div>
+    ${p.usage ? `<div class="r"><span>Property use</span><span>${usageEn(p.usage)}</span></div>` : ""}
+    ${t.first_due ? `<div class="r"><span>First due date</span><span>${enDate(t.first_due)}</span></div>` : ""}
+    <div class="r"><span>Contract start</span><span>${enDate(t.contract_start)}</span></div>
+    <div class="r"><span>Contract end</span><span>${enDate(st.endDate)}</span></div>
+    <div class="r"><span>Payment cycle</span><span>${freqEn(t.payment_frequency)}</span></div>
+    <div class="r"><span>Instalment amount${vatE}</span><span>SAR ${sar(unit.total)}</span></div>
+    ${v.enabled ? `<div class="r"><span>of which base rent</span><span>SAR ${sar(unit.base)}</span></div>
+    <div class="r"><span>VAT (${v.rate}%)</span><span>SAR ${sar(unit.vat)}</span></div>` : ""}
+  </div>
+  <div class="box">
+    <h3>Financial summary</h3>
+    <div class="r"><span>Total contract value</span><span>SAR ${sar(totalContract)}</span></div>
+    <div class="r"><span>Paid${vatE}</span><span>SAR ${sar(totalPaid)}</span></div>
+    <div class="r"><span>Overdue${vatE}</span><span>SAR ${sar(v.enabled ? dueSplit.total : st.amountDue)}</span></div>
+    ${v.enabled && st.amountDue > 0 ? `<div class="r"><span>of which VAT</span><span>SAR ${sar(dueSplit.vat)}</span></div>` : ""}
+    ${st.hasPartial ? `<div class="r"><span>of which partial payment${vatE}</span><span>SAR ${sar(partialIncl)}</span></div>` : ""}
+    ${carried > 0 ? `<div class="r"><span>Balance carried from a previous term</span><span>SAR ${sar(carried)}</span></div>` : ""}
+    ${st.amountDue > 0 && st.nextDueDate && (st.daysToNextDue ?? 0) < 0 ? `<div class="r"><span>Overdue since</span><span>${enDate(st.nextDueDate)}</span></div>` : ""}
+    <div class="r"><span>Next instalment</span><span>${upcomingE}</span></div>
+  </div>
+</div>
+
+<div class="tot">
+  <div><div class="v">${rows.length}</div><div class="l">Total instalments</div></div>
+  <div><div class="v g">${st.paid}</div><div class="l">Paid</div></div>
+  <div><div class="v r">${st.unpaid}</div><div class="l">Overdue</div></div>
+  <div><div class="v">${Math.max(0, rows.length - Math.max(st.paid, st.due))}</div><div class="l">Upcoming</div></div>
+</div>
+
+${balance > 0 ? `<div class="due"><span class="l">Balance due to date${vatE}</span><span class="v">SAR ${sar(balance)}</span></div>` : ""}
+
+${mode === "full" ? `
+<h1 style="font-size:1rem">Unit details</h1>
+<div class="grid">
+  <div class="box">
+    <div class="r"><span>Unit</span><span>${unitDescE}</span></div>
+    ${(t as any).elec_account ? `<div class="r"><span>Electricity account</span><span dir="ltr">${(t as any).elec_account}</span></div>` : ""}
+    ${(t as any).water_account ? `<div class="r"><span>Water account</span><span dir="ltr">${(t as any).water_account}</span></div>` : ""}
+    ${(t as any).meter_elec_in ? `<div class="r"><span>Electricity reading at handover</span><span dir="ltr">${(t as any).meter_elec_in}</span></div>` : ""}
+    ${(t as any).meter_water_in ? `<div class="r"><span>Water reading at handover</span><span dir="ltr">${(t as any).meter_water_in}</span></div>` : ""}
+    ${(t as any).deposit_amount ? `<div class="r"><span>Security deposit</span><span>SAR ${sar(Number((t as any).deposit_amount) || 0)}</span></div>` : ""}
+  </div>
+  <div class="box">
+    <div class="r"><span>Property</span><span dir="auto">${p.name}${p.city ? ` — ${p.city}` : ""}</span></div>
+    ${p.address ? `<div class="r"><span>Address</span><span dir="auto">${p.address}</span></div>` : ""}
+    ${(p as any).owner_name ? `<div class="r"><span>Owner</span><span dir="auto">${(p as any).owner_name}</span></div>` : ""}
+    ${p.usage ? `<div class="r"><span>Use</span><span>${usageEn(p.usage)}</span></div>` : ""}
+    <div class="r"><span>Instalment calendar</span><span>${(t as any).calendar === "hijri" ? "Hijri (Umm al-Qura)" : "Gregorian"}</span></div>
+  </div>
+</div>
+
+<h1 style="font-size:1rem">Instalment schedule</h1>
+<table>
+  <thead><tr><th>#</th><th>Due date</th>${v.enabled ? "<th>Base</th><th>VAT</th>" : ""}<th>Total (SAR)</th><th>Status</th></tr></thead>
+  <tbody>
+    ${rows.map((r) => { const x = splitVat(r.amount, v); return `<tr>
+      <td>${r.n}</td><td>${enDate(r.date)}</td>
+      ${v.enabled ? `<td>${sar(x.base)}</td><td>${sar(x.vat)}</td>` : ""}
+      <td>${sar(x.total)}</td>
+      <td>${statusE(r)}</td>
+    </tr>`; }).join("")}
+  </tbody>
+</table>` : ""}
+
+${shownPays.length ? `
+<h1 style="font-size:1rem">Payments received</h1>
+<table>
+  <thead><tr><th>#</th><th>Date received</th><th>Amount (SAR)${v.enabled && !v.inclusive ? " incl. VAT" : ""}</th><th>Method</th><th>Note</th></tr></thead>
+  <tbody>
+    ${shownPays.map((r: any, i: number) => `<tr>
+      <td>${i + 1}</td>
+      <td>${r.paid_on ? enDate(r.paid_on) : "—"}</td>
+      <td>${sar(grossPay(r))}</td>
+      <td>${Number(r.amount) < 0 ? "Correction" : methodEn(r.method)}</td>
+      <td>${[r.receipt_no ? `<span dir="ltr" style="font-family:monospace">Receipt ${escH(r.receipt_no)}</span>` : "", r._adjust ? "Correction to a previously recorded payment" : r.note ? `<span dir="auto">${escH(r.note)}</span>` : ""].filter(Boolean).join(" · ") || "—"}</td>
+    </tr>`).join("")}
+    <tr style="background:#F3EEE2;font-weight:700">
+      <td colspan="2">Total received</td>
+      <td>${sar(payments.reduce((a, r) => a + grossPay(r), 0))}</td>
+      <td colspan="2">${shownPays.length} ${shownPays.length === 1 ? "transaction" : "transactions"}</td>
+    </tr>
+  </tbody>
+</table>
+<div class="note" style="border-inline-start-color:#1E9E6A;background:#E6F4EC;color:#137a50">
+  This table is taken from the payment log recorded on the platform, with dates and methods, and can be reconciled with your records.
+</div>` : `
+<div class="note">No payments are recorded on the platform for this contract to date. The balances above are derived from the contract cycle and the number of instalments recorded.</div>`}
+
+<div class="note">Indicative statement generated from the recorded contract data. Please reconcile it with your records and let us know of any difference.</div>
+
+<div class="sign">
+  <div>Lessor / agent: <span dir="auto">${whoE}</span><br><br>Signature: ________________</div>
+  <div>Tenant: <span dir="auto">${t.name}</span><br><br>Signature: ________________</div>
+</div>
+${footerEn(issuer)}`;
+  return SHELL(`كشف حساب — ${t.name}`, body, markOf(issuer), { title: `Account statement — ${t.name}`, inner: enInner });
 }
 
 /** فاتورة دفعة واحدة */
@@ -998,7 +1181,75 @@ ${isTax && !voided ? `<div class="note">
   <div>تاريخ الإصدار: ${arDate(issueDay)}${issueTime ? ` — الساعة <span dir="ltr">${issueTime}</span>` : ""}<br><br>رقم الفاتورة: ${inv.invoice_no}</div>
 </div>
 ${footer(issuer)}`;
-  return SHELL(`${voided ? "فاتورة ملغاة" : "فاتورة"} ${inv.invoice_no} — ${t.name}`, body, markOf(issuer));
+  /* النسخة الإنجليزية من القيم نفسها (isTax/voided/x) — لا تُعاد الحسابات */
+  const whoEn = issuer.billing_name || issuer.org_name || p.manager || "Property management";
+  const ulEn = unitWordEn((t as any).unit_type, p.property_type);
+  const titleEn = voided ? "Void invoice" : isTax ? "Simplified tax invoice" : "Invoice";
+  const enInner = `
+${headerEn(titleEn, inv.invoice_no, issuer, issueDay)}
+${voided ? `<div style="border:3px solid #a5322c;color:#a5322c;text-align:center;font-weight:800;font-size:1.4rem;padding:10px;margin:10px 0;border-radius:10px;letter-spacing:.5px">VOID — not valid and not payable</div>` : ""}
+<h1>${isTax || snapOnNoVatNo ? "Simplified tax invoice — rent" : "Rent invoice"}</h1>
+<div class="sub">${periodLabelEn(inv.period_label)} · ${freqEn(t.payment_frequency)}</div>
+
+<div class="grid">
+  <div class="box">
+    <h3>Issuer</h3>
+    <div class="r"><span>Name</span><span dir="auto">${whoEn}</span></div>
+    ${issuer.cr_number ? `<div class="r"><span>CR no.</span><span dir="ltr">${issuer.cr_number}</span></div>` : ""}
+    ${issuer.vat_number ? `<div class="r"><span>VAT no.</span><span dir="ltr">${issuer.vat_number}</span></div>` : ""}
+    ${issuer.billing_phone ? `<div class="r"><span>Contact</span><span dir="ltr">${issuer.billing_phone}</span></div>` : ""}
+  </div>
+  <div class="box">
+    <h3>Bill to</h3>
+    <div class="r"><span>Name</span><span dir="auto">${t.name}</span></div>
+    ${t.national_id ? `<div class="r"><span>ID / CR</span><span dir="ltr">${t.national_id}</span></div>` : ""}
+    <div class="r"><span>${ulEn}</span><span dir="auto">${t.unit || "—"}</span></div>
+    <div class="r"><span>Property</span><span dir="auto">${p.name}</span></div>
+  </div>
+</div>
+
+<table>
+  <thead><tr><th>Description</th><th>Period</th><th>Due date</th><th>Amount${v.enabled ? " before VAT" : ""} (SAR)</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>Rent for ${ulEn} no. (<span dir="auto">${t.unit || "—"}</span>) — <span dir="auto">${p.name}</span></td>
+      <td>${periodLabelEn(inv.period_label)}</td>
+      <td>${inv.due_date ? enDate(inv.due_date) : "—"}</td>
+      <td>${sar(x.base)}</td>
+    </tr>
+  </tbody>
+</table>
+
+${v.enabled ? `<table style="max-width:340px;margin-inline-start:auto">
+  <tbody>
+    <tr><td>Total before VAT</td><td style="text-align:right;font-weight:600">${sar(x.base)}</td></tr>
+    <tr><td>VAT (${v.rate}%)</td><td style="text-align:right;font-weight:600">${sar(x.vat)}</td></tr>
+    <tr><td style="font-weight:700">Total including VAT</td><td style="text-align:right;font-weight:700">${sar(x.total)}</td></tr>
+  </tbody>
+</table>` : ""}
+
+<div class="due"><span class="l">Total due${v.enabled ? " (incl. VAT)" : ""}</span><span class="v">SAR ${sar(x.total)}</span></div>
+
+${isTax && !voided ? zatcaQrBlock(who, issuer.vat_number!, x.total, x.vat, inv.created_at, "-en") : ""}
+${isTax && !voided ? `<div class="note">Tax invoices in Saudi Arabia must be issued in Arabic: the Arabic version of this invoice (same number) is the binding one; this English copy is for reference.</div>` : ""}
+
+${snapOnNoVatNo && !voided ? `<div class="note"><b>Copy of an invoice issued as a tax invoice:</b> the VAT number is not currently set in the office settings, so the QR code is not redrawn on this copy.</div>` : ""}
+${v.enabled && !issuer.vat_number && !snapOnNoVatNo && !voided ? `<div class="note" style="border-inline-start-color:#D0453F;background:#FBE9E7;color:#a5322c">
+  <b>Note:</b> VAT is enabled but the issuer's VAT number is not registered, so this document is titled "Invoice", not "Tax invoice".
+</div>` : ""}
+
+<div class="note">
+  Administrative invoice issued by the lessor as a record between the parties. Payment is made directly to the lessor by the agreed method —
+  the Watheq platform does not receive or transfer any funds.
+</div>
+
+<div class="sign">
+  <div>Issuer: <span dir="auto">${whoEn}</span><br><br>Signature: ________________</div>
+  <div>Issue date: ${enDate(issueDay)}${issueTime ? ` at <span dir="ltr">${issueTime}</span>` : ""}<br><br>Invoice no.: <span dir="ltr">${inv.invoice_no}</span></div>
+</div>
+${footerEn(issuer)}`;
+  return SHELL(`${voided ? "فاتورة ملغاة" : "فاتورة"} ${inv.invoice_no} — ${t.name}`, body, markOf(issuer),
+    { title: `${titleEn} ${inv.invoice_no} — ${t.name}`, inner: enInner });
 }
 
 /* ═══════════════════ عرض سعر تأجير وحدة ═══════════════════ */
@@ -3578,7 +3829,49 @@ ${reversed ? `<div style="border:3px solid #a5322c;color:#a5322c;text-align:cent
   <div>تاريخ التسجيل: ${arDate(pay.created_at ? String(pay.created_at).slice(0, 10) : pay.paid_on)}${issueTime ? ` — الساعة <span dir="ltr">${issueTime}</span>` : ""}<br><br>رقم السند: <span dir="ltr">${pay.receipt_no || "—"}</span></div>
 </div>
 ${footer(issuer)}`;
-  return SHELL(`${reversed ? "سند معكوس" : "سند قبض"} ${pay.receipt_no || ""} — ${pay.payer_name || t.name}`, body, markOf(issuer));
+  return SHELL(`${reversed ? "سند معكوس" : "سند قبض"} ${pay.receipt_no || ""} — ${pay.payer_name || t.name}`, body, markOf(issuer),
+    receiptEnDoc(pay, t, p, issuer));
+}
+
+/** سند القبض بالإنجليزية — المدخلات معقَّمة سلفًا في receiptHTML */
+function receiptEnDoc(pay: ReceiptPayment, t: ReceiptTenant, p: ReceiptProperty, issuer: Issuer): EnDoc {
+  const who = issuerName(issuer) || "Property management";
+  const reversed = !!pay.reversed_on;
+  const ul = unitWordEn(t.unit_type, p.property_type);
+  const unit = String(pay.unit_label || t.unit || "—");
+  const amount = Number(pay.amount) || 0;
+  const issueTime = pay.created_at ? riyadhTime(pay.created_at) : "";
+  const note = receiptNoteText(pay.note);
+  const title = reversed ? "Reversed receipt" : "Receipt voucher";
+  const inner = `
+${headerEn(title, pay.receipt_no || "—", issuer, pay.paid_on)}
+${reversed ? `<div style="border:3px solid #a5322c;color:#a5322c;text-align:center;font-weight:800;font-size:1.25rem;padding:10px;margin:10px 0;border-radius:10px">REVERSED — this payment was cancelled${pay.reversed_on ? ` on ${enDate(String(pay.reversed_on).slice(0, 10))}` : ""}; this receipt is void</div>` : ""}
+<h1>Receipt voucher</h1>
+<div class="sub"><span dir="auto">${p.name}</span>${t.unit ? ` · ${ul} <span dir="auto">${t.unit}</span>` : ""}</div>
+
+<div class="box" style="margin-top:10px">
+  <div class="r"><span>Receipt no.</span><span dir="ltr" style="font-family:monospace;font-weight:700">${pay.receipt_no || "—"}</span></div>
+  <div class="r"><span>Date</span><span>${enDate(pay.paid_on)}</span></div>
+  <div class="r"><span>Received from</span><span dir="auto" style="font-weight:700">${pay.payer_name || t.name}</span></div>
+  <div class="r"><span>${ul}</span><span dir="auto">${unit} — ${p.name}</span></div>
+  ${t.contract_no ? `<div class="r"><span>Contract no.</span><span dir="ltr">${t.contract_no}</span></div>` : ""}
+  <div class="r"><span>Amount</span><span style="font-weight:700;font-size:1.1em">SAR ${sar(amount)}</span></div>
+  <div class="r"><span>Amount in words</span><span>${riyalsInWordsEn(amount)}</span></div>
+  <div class="r"><span>Payment method</span><span>${methodEn(pay.method)}</span></div>
+  ${pay.reference ? `<div class="r"><span>Reference</span><span dir="ltr">${pay.reference}</span></div>` : ""}
+  <div class="r"><span>Description</span><span>${receiptStatementEn(pay, ul, unit, t.payment_frequency)}</span></div>
+  ${note ? `<div class="r"><span>Note</span><span dir="auto" style="overflow-wrap:anywhere;white-space:pre-line">${note}</span></div>` : ""}
+  <div class="r"><span>Received by</span><span dir="auto">${who}</span></div>
+</div>
+
+<div class="note">Receipt of payment issued by <span dir="auto">${who}</span> as a record between the parties; it is not a release from any other dues. The Watheq platform does not receive or transfer any funds.</div>
+
+<div class="sign">
+  <div>For <span dir="auto">${who}</span><br><br>Signature &amp; stamp: ________________</div>
+  <div>Recorded on: ${enDate(pay.created_at ? String(pay.created_at).slice(0, 10) : pay.paid_on)}${issueTime ? ` at <span dir="ltr">${issueTime}</span>` : ""}<br><br>Receipt no.: <span dir="ltr">${pay.receipt_no || "—"}</span></div>
+</div>
+${footerEn(issuer)}`;
+  return { title: `${title} ${pay.receipt_no || ""} — ${pay.payer_name || t.name}`, inner };
 }
 
 /**

@@ -15,6 +15,7 @@
 import { sar } from "@/lib/utils";
 import { arDate } from "@/lib/documents";
 import { hijriText } from "@/lib/hijri";
+import { enDate } from "@/lib/docEn";
 
 export type EndNoticeInput = {
   /** "end" إشعار بانتهاء العقد مع سؤال التجديد أو الإخلاء · "nonrenewal" إشعار بعدم التجديد */
@@ -41,6 +42,8 @@ export type EndNoticeInput = {
   terms?: EndNoticeTerms;
   /** الإيجار السنوي الحالي — يُذكر مع «عند التجديد» إن فعّل المكتب ذكره */
   annualRent?: number | null;
+  /** (18 نوفمبر 2026) للنسخة الإنجليزية: «Apartment (103)» — بدونه يُستعمل unitText */
+  unitTextEn?: string;
 };
 
 /**
@@ -139,6 +142,78 @@ export function endNoticeText(i: EndNoticeInput): string {
   }
 
   L.push("", "شاكرين لكم حسن تعاونكم،", i.signer);
+  return L.join("\n");
+}
+
+const daysEn = (d: number) => `${d} ${d === 1 ? "day" : "days"}`;
+
+/**
+ * إشعار انتهاء العقد بالإنجليزية (18 نوفمبر 2026 — طلب مكتب «الأولى»): مرآة endNoticeText
+ * سطرًا بسطر — الحالات نفسها، والمستحقات نفسها، وبنود المكتب نفسها. التاريخ ميلادي.
+ */
+export function endNoticeTextEn(i: EndNoticeInput): string {
+  const date = i.endDate ? enDate(i.endDate) : "";
+  const ended = i.daysToEnd !== null && i.daysToEnd < 0;
+  const where = `${i.unitTextEn || i.unitText}, ${i.propertyName}`;
+  const L: string[] = [`Dear ${i.tenantName || "tenant"},`, ""];
+
+  if (i.mode === "nonrenewal") {
+    L.push(date
+      ? `We would like to inform you that we do not wish to renew the lease for ${where}, which ${ended ? "ended" : "ends"} on ${date}.`
+      : `We would like to inform you that we do not wish to renew the lease for ${where}.`);
+  } else if (!date) {
+    L.push(`We would like to inform you that the lease for ${where} is ending soon.`);
+  } else if (ended) {
+    L.push(`We would like to inform you that the lease for ${where} ended on ${date}.`);
+  } else if (i.daysToEnd === 0) {
+    L.push(`We would like to inform you that the lease for ${where} ends today, ${date}.`);
+  } else {
+    L.push(`We would like to inform you that the lease for ${where} ends on ${date}${i.daysToEnd !== null ? ` — in ${daysEn(i.daysToEnd)}` : ""}.`);
+  }
+
+  const overdue = Math.max(0, Number(i.overdue) || 0);
+  const carried = Math.max(0, Number(i.carried) || 0);
+  const total = round2(overdue + carried);
+  L.push("");
+  if (total > 0) {
+    L.push("Outstanding amounts to date:");
+    if (overdue > 0) L.push(`• ${i.unpaid > 1 ? `Overdue instalments (${i.unpaid})` : "Overdue instalment"}: SAR ${sar(overdue)}${i.overdueVat ? " (incl. VAT)" : ""}`);
+    if (carried > 0) L.push(`• Balance carried from a previous term: SAR ${sar(carried)}`);
+    if (overdue > 0 && carried > 0) L.push(`• Total due: SAR ${sar(total)}`);
+  } else {
+    L.push("You have no overdue amounts to date — thank you for your timely payments.");
+  }
+  const up = i.upcomingDate && !ended && (Number(i.upcomingAmount) || 0) > 0
+    && (!i.endDate || i.upcomingDate <= i.endDate) ? i.upcomingDate : null;
+  if (up) L.push(`One more instalment of SAR ${sar(Number(i.upcomingAmount))} is due on ${enDate(up)}, before the end of the lease.`);
+
+  L.push("");
+  if (i.mode === "nonrenewal") {
+    L.push(total > 0
+      ? `Please settle the amounts above and arrange to vacate and hand over the unit ${ended ? "as soon as possible" : "before that date"}.`
+      : `Please arrange to vacate and hand over the unit ${ended ? "as soon as possible" : "before that date"}.`);
+  } else if (ended) {
+    L.push("Please contact us as soon as possible to arrange one of the following:");
+    L.push("• Renewing the lease, or");
+    L.push("• Vacating and handing over the unit.");
+  } else {
+    L.push("Please let us know your decision before the lease end date:");
+    L.push("• Renewing the lease, or");
+    L.push("• Not renewing, vacating and handing over the unit.");
+  }
+  if (total > 0 && i.mode === "end") L.push("Please note that outstanding amounts must be settled before renewal or handover.");
+
+  const tm = i.terms || {};
+  const renew: string[] = [];
+  if (i.mode === "end" && tm.showRent && (Number(i.annualRent) || 0) > 0) renew.push(`the annual rent will be SAR ${sar(Number(i.annualRent))}`);
+  if (i.mode === "end" && (Number(tm.adminFee) || 0) > 0) renew.push(`${renew.length ? "plus an" : "an"} administrative fee of SAR ${sar(Number(tm.adminFee))}${renew.length ? "" : " applies"}`);
+  if (renew.length) L.push(`If you wish to renew, ${renew.join(" ")}.`);
+  if (i.mode === "end" && tm.noRenewWithArrears && total > 0) L.push("Please note that the lease cannot be renewed while arrears remain.");
+  if ((Number(tm.dailyRent) || 0) > 0) {
+    const art = tm.dailyArticle ? ` under Article (${tm.dailyArticle}) of the lease` : " as per the lease";
+    L.push(`If you do not ${i.mode === "end" ? "renew or " : ""}vacate ${ended ? "immediately" : "before the lease ends"}, a charge of SAR ${sar(Number(tm.dailyRent))} per day of delay applies${art} until the unit is vacated and the keys are handed over.`);
+  }
+  L.push("", "Kind regards,", i.signer);
   return L.join("\n");
 }
 
