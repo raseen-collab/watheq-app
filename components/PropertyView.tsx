@@ -1883,6 +1883,17 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
 
 
 
+  /* (v89) موظف مقيَّد بعقارات محددة ولم يُختر له شيء — لا شاشة «أضف أول عقار» */
+  if (!items.length && !may("all_properties")) {
+    return (
+      <div className="max-w-lg mx-auto bg-white border border-line rounded-2xl shadow-sm p-8 mt-8 text-center">
+        <div className="text-4xl mb-3">🔒</div>
+        <h2 className="font-display text-xl font-bold text-deep mb-2">لا عقارات محددة لك بعد</h2>
+        <p className="text-muted text-sm leading-relaxed">صاحب المكتب يحدد العقارات التي تعمل عليها من «الإعدادات» ← «الموظفون». راجعه ليضيفك إليها، ثم حدّث الصفحة.</p>
+      </div>
+    );
+  }
+
   if (!items.length) {
     return (
       <div className="max-w-lg mx-auto bg-white border border-line rounded-2xl shadow-sm p-8 mt-8 text-center">
@@ -2123,7 +2134,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
             نفتح دعوة التسجيل بدلها كبقية الأفعال المحجوبة في التجربة (30 سبتمبر 2026) */}
         {items.length > 1 && <Link href="/dashboard/property/overview" className="btn btn-ghost text-sm" title="كل العقارات في صفحة واحدة"
           onClick={(e) => { if (demo) { e.preventDefault(); demoJoin(); } }}>🗂️ نظرة عامة</Link>}
-        {isManager && <button className="btn btn-ghost text-sm" onClick={openNewProperty}>+ عقار</button>}
+        {isManager && may("all_properties") && <button className="btn btn-ghost text-sm" onClick={openNewProperty}>+ عقار</button>}
       </div>
 
       {expiringSoon && (
@@ -2273,7 +2284,8 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                 { sep: "تُرسل للمالك" },
                 { label: "تقرير المالك", run: () => setReporting(true) },
                 { label: "كشف مالك مجمّع", run: () => setOwnerStmtOpen(true) },
-                { label: "رابط المالك", run: () => setOwnerLinkOpen(true) },
+                /* (v89) رابط المالك قد يشمل عقارات أخرى للمالك — لصاحب «كل العقارات» */
+                ...(may("all_properties") ? [{ label: "رابط المالك", run: () => setOwnerLinkOpen(true) }] : []),
                 { sep: "متابعة المال" },
                 { label: "كشف التحصيل", run: () => setCollOpen(true) },
                 ...(may("manage_expenses") ? [{ label: "المصروفات", run: () => setExpensesOpen(true) }] : []),

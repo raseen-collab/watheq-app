@@ -9,6 +9,7 @@ import type { SubState } from "@/lib/subscription";
 import OfficeChat from "@/components/OfficeChat";
 import BackupReminder from "@/components/BackupReminder";
 import { daysAr } from "@/lib/utils";
+import { getOffice, allProperties } from "@/lib/office";
 
 /* أزرار التجديد والاشتراك تفتح صفحة /subscribe (v71) بدل واتساب */
 
@@ -44,6 +45,11 @@ export default function DashboardShell({
   const offLimits = marketer && !marketerAllowed(pathname);
   useEffect(() => { if (offLimits) router.replace("/dashboard/property/listings"); }, [offLimits, router]);
 
+  /* (v89) موظف مقيَّد بعقارات محددة: تُخفى صفحات المكتب كله (القاعدة تحجب بياناتها أصلًا) */
+  const [allProps, setAllProps] = useState(true);
+  useEffect(() => { getOffice(createClient()).then((o) => setAllProps(allProperties(o))).catch(() => {}); }, []);
+  const OFFICE_WIDE = ["/dashboard/property/ledger", "/dashboard/property/import"];
+
   /* عدّاد طلبات الصيانة المفتوحة بجوار رابطها (v79) — فشل القراءة يُخفي العدّاد فقط */
   const [maintOpen, setMaintOpen] = useState(0);
   useEffect(() => {
@@ -64,7 +70,7 @@ export default function DashboardShell({
   const nav = marketer
     ? [{ href: "/dashboard/property/listings", label: "📋 المعروضات والطلبات" }]
     : onProperty
-    ? [
+    ? ([
         { href: "/dashboard/property", label: "🏢 عقاراتي" },
         { href: "/dashboard/property/overview", label: "🗂️ نظرة عامة" },
         { href: "/dashboard/property/maintenance", label: "🛠 الصيانة" },
@@ -73,7 +79,7 @@ export default function DashboardShell({
         { href: "/dashboard/property/listings", label: "📋 المعروضات" },
         { href: "/dashboard/property/import", label: "📥 رفع Excel" },
         { href: "/dashboard/property/advisor", label: "🧠 المستشار" },
-      ]
+      ] as { href: string; label: string }[]).filter((n) => allProps || !OFFICE_WIDE.includes(n.href))
     : [
         { href: "/dashboard/association", label: "🏘️ جمعيتي" },
         { href: "/dashboard/association/advisor", label: "🧠 المستشار" },
@@ -95,7 +101,7 @@ export default function DashboardShell({
 
           <div className="flex items-center gap-2 flex-wrap min-w-0 order-3 w-full sm:order-none sm:w-auto">
             {/* مبدّل اللوحتين — للحساب المزدوج فقط */}
-            {showSwitcher && (
+            {showSwitcher && allProps && (
               <div className="flex flex-wrap gap-1 bg-white/10 border border-white/15 rounded-xl p-1 max-w-full" role="tablist" aria-label="تبديل اللوحة">
                 <Link href="/dashboard/property" role="tab" aria-selected={onProperty}
                   className={`px-3.5 py-1.5 rounded-lg text-sm font-semibold transition ${

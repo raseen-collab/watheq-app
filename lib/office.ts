@@ -31,7 +31,13 @@ export type Office = {
 export const PERM_KEYS = ["record_payments", "issue_invoices", "send_reminders", "add_notes",
   "edit_tenants", "renew_contracts", "move_out", "manage_expenses", "manage_listings",
   "manage_compliance", "view_financials", "owner_links", "export_data", "view_activity", "undo_actions"] as const;
-export const OWNER_PERMS: Record<string, boolean> = Object.fromEntries(PERM_KEYS.map((k) => [k, true]));
+export const OWNER_PERMS: Record<string, boolean> = { ...Object.fromEntries(PERM_KEYS.map((k) => [k, true])), all_properties: true };
+/**
+ * (v89) all_properties: false = الموظف مقيَّد بعقارات محددة (team_members.property_ids).
+ * القاعدة تحجب ما سواها؛ الواجهة تُخفي فقط ما يخصّ المكتب كله (إضافة عقار، حسابات
+ * المكتب، روابط الملّاك، الجمعيات، رفع Excel). غيابه (قبل v89) = كل العقارات.
+ */
+export const allProperties = (o: Office | null) => !o || o.isOwner || o.perms.all_properties !== false;
 export const can = (o: Office | null, k: string) => (o ? !!o.perms[k] : true);
 
 /** ذاكرة للجلسة الواحدة: سؤال «أين أعمل؟» لا يتغير أثناء التصفح */

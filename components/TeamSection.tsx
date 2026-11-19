@@ -14,7 +14,10 @@ import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase-client";
 import { getOffice, makeInviteCode, ROLE_LABEL } from "@/lib/office";
 
-type Member = { owner_id: string; member_id: string; role: string; member_name: string | null; created_at: string; perms?: Record<string, boolean> | null };
+type Member = { owner_id: string; member_id: string; role: string; member_name: string | null; created_at: string; perms?: Record<string, boolean> | null;
+  /** (v89) null = كل العقارات · مصفوفة = هذه فقط */
+  property_ids?: string[] | null };
+type Prop = { id: string; name: string | null };
 
 /**
  * الصلاحيات الدقيقة: الدور يحدد الافتراضي، وهذه استثناءات صريحة لكل موظف.
@@ -64,18 +67,21 @@ export default function TeamSection() {
   const [msg, setMsg] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
   const [isOwner, setIsOwner] = useState(true);
+  const [props, setProps] = useState<Prop[]>([]);
 
   async function load() {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
     const office = await getOffice(supabase);
     if (office && !office.isOwner) { setIsOwner(false); return; }
-    const [m, i] = await Promise.all([
+    const [m, i, p] = await Promise.all([
       supabase.from("team_members").select("*").eq("owner_id", user.id).order("created_at"),
       supabase.from("team_invites").select("id, code, role, expires_at, used_at")
         .eq("owner_id", user.id).is("used_at", null).gt("expires_at", new Date().toISOString())
         .order("created_at", { ascending: false }),
+      supabase.from("properties").select("id, name").eq("user_id", user.id).order("name").limit(2000),
     ]);
+    setProps((p.data as Prop[]) || []);
     setMembers((m.data as Member[]) || []);
     setInvites((i.data as Invite[]) || []);
   }
@@ -124,6 +130,27 @@ export default function TeamSection() {
     if (error) return alert(error.message);
     if (!data?.length) return alert("هذا الإجراء يحتاج صلاحية صاحب المكتب.");
     setMembers((cur) => cur.map((x) => x.member_id === m.member_id ? { ...x, perms: next } : x));
+  }
+
+  /** (v89) نطاق العقارات: null = كل العقارات. يسري فورًا وتحرسه القاعدة (سياسات zz_scope) */
+  async function saveScope(m: Member, ids: string[] | null) {
+    const { data, error } = await supabase.from("team_members").update({ property_ids: ids })
+      .eq("owner_id", m.owner_id).eq("member_id", m.member_id).select("member_id, property_ids");
+    if (error) {
+      return alert(/property_ids/.test(error.message) ? "شغّل ملف schema-v89 في Supabase أولًا." : error.message);
+    }
+    if (!data?.length) return alert("هذا الإجراء يحتاج صلاحية صاحب المكتب.");
+    const saved = ((data[0] as any).property_ids ?? null) as string[] | null;
+    setMembers((cur) => cur.map((x) => x.member_id === m.member_id ? { ...x, property_ids: saved } : x));
+  }
+  function setScopeMode(m: Member, all: boolean) {
+    if (all) return saveScope(m, null);
+    // التحويل إلى «محددة» يبدأ بكل العقارات الحالية — فلا يفقد الموظف شيئًا قبل أن تختار
+    return saveScope(m, props.map((p) => p.id));
+  }
+  function toggleProp(m: Member, id: string) {
+    const cur = m.property_ids || [];
+    return saveScope(m, cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]);
   }
 
   async function removeMember(m: Member) {
@@ -237,6 +264,45 @@ export default function TeamSection() {
                   ))}
                 </div>
                 <p className="text-[11px] text-muted mt-1">بلا تخصيص تتبع صلاحياتُه دورَه. أي تغيير هنا يسري فورًا، وتحرسه قاعدة البيانات لا الواجهة.</p>
+              </details>
+              {/* (v89) العقارات التي يطّلع عليها — للمدير أيضًا */}
+              <details className="w-full">
+                <summary className="cursor-pointer text-xs text-muted">
+                  العقارات المسموحة: {m.property_ids == null
+                    ? <span className="text-deep font-semibold">كل العقارات</span>
+                    : <span className="text-gold font-semibold">{props.filter((p) => m.property_ids!.includes(p.id)).length} من {props.length}</span>}
+                </summary>
+                <div className="mt-2 bg-paper border border-line rounded-lg p-2 space-y-2">
+                  <div className="flex flex-wrap gap-4 text-sm">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input type="radio" name={`scope-${m.member_id}`} checked={m.property_ids == null} onChange={() => setScopeMode(m, true)} />
+                      كل العقارات <span className="text-[11px] text-muted">(ومنها ما تضيفه لاحقًا)</span>
+                    </label>
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input type="radio" name={`scope-${m.member_id}`} checked={m.property_ids != null} onChange={() => setScopeMode(m, false)} />
+                      عقارات محددة
+                    </label>
+                  </div>
+                  {m.property_ids != null && (
+                    <>
+                      {props.length === 0 ? <p className="text-xs text-muted">لا عقارات بعد.</p> : (
+                        <div className="grid sm:grid-cols-2 gap-1.5 max-h-64 overflow-y-auto">
+                          {props.map((p) => (
+                            <label key={p.id} className="flex items-center gap-2 text-sm cursor-pointer">
+                              <input type="checkbox" className="w-4 h-4" checked={m.property_ids!.includes(p.id)} onChange={() => toggleProp(m, p.id)} />
+                              {p.name || "عقار بلا اسم"}
+                            </label>
+                          ))}
+                        </div>
+                      )}
+                      {m.property_ids.length === 0 && <p className="text-xs text-late">لم تختر أي عقار — الموظف لن يرى شيئًا.</p>}
+                      <p className="text-[11px] text-muted leading-relaxed">
+                        يرى ويسجّل في هذه العقارات فقط: وحداتها ودفعاتها ومصروفاتها وسنداتها وتقاريرها — ولا يصل لغيرها حتى من رابط مباشر.
+                        العقار الذي تضيفه لاحقًا لا يظهر له حتى تختاره هنا. ولا يرى حسابات المكتب ولا روابط الملّاك ولا جمعيات الملاك ولا يضيف عقارًا جديدًا.
+                      </p>
+                    </>
+                  )}
+                </div>
               </details>
             </div>
           ))}
