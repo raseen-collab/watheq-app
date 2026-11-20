@@ -50,7 +50,9 @@ const permOn = (m: Member, k: string) => {
   if (typeof ex === "boolean") return ex;
   return PERMS.find((p) => p.k === k)?.def[m.role] ?? false;
 };
-type Invite = { id: string; code: string; role: string; expires_at: string; used_at: string | null };
+type Invite = { id: string; code: string; role: string; expires_at: string; used_at: string | null;
+  /** (v90) إعداد مسبق ينتقل للموظف لحظة إدخال الرمز */
+  member_name?: string | null; perms?: Record<string, boolean> | null; property_ids?: string[] | null };
 
 const ROLE_HELP: Record<string, string> = {
   manager: "كل شيء عدا الاشتراك والفوترة وإدارة الموظفين",
@@ -68,6 +70,18 @@ export default function TeamSection() {
   const [copied, setCopied] = useState<string | null>(null);
   const [isOwner, setIsOwner] = useState(true);
   const [props, setProps] = useState<Prop[]>([]);
+  /* (v90) تجهيز الموظف قبل الإضافة: الاسم والصلاحيات والعقارات تُحفظ في الدعوة */
+  const [invName, setInvName] = useState("");
+  const [invPerms, setInvPerms] = useState<Record<string, boolean>>({});
+  const [invScope, setInvScope] = useState<string[] | null>(null);
+  const invPermOn = (k: string) => (typeof invPerms[k] === "boolean" ? invPerms[k] : PERMS.find((p) => p.k === k)?.def[role] ?? false);
+  function toggleInvPerm(k: string) {
+    const meta = PERMS.find((p) => p.k === k);
+    if (meta?.locked) return;
+    const next = { ...invPerms, [k]: !invPermOn(k) };
+    if (next[k] === meta?.def[role]) delete next[k];
+    setInvPerms(next);
+  }
 
   async function load() {
     const { data: { user } } = await supabase.auth.getUser();
@@ -76,7 +90,7 @@ export default function TeamSection() {
     if (office && !office.isOwner) { setIsOwner(false); return; }
     const [m, i, p] = await Promise.all([
       supabase.from("team_members").select("*").eq("owner_id", user.id).order("created_at"),
-      supabase.from("team_invites").select("id, code, role, expires_at, used_at")
+      supabase.from("team_invites").select("*")
         .eq("owner_id", user.id).is("used_at", null).gt("expires_at", new Date().toISOString())
         .order("created_at", { ascending: false }),
       supabase.from("properties").select("id, name").eq("user_id", user.id).order("name").limit(2000),
@@ -91,10 +105,18 @@ export default function TeamSection() {
     setBusy(true); setMsg(null);
     const { data: { user } } = await supabase.auth.getUser();
     const code = makeInviteCode();
-    const { error } = await supabase.from("team_invites")
-      .insert({ owner_id: user!.id, code, role });
+    const preset = invName.trim() || Object.keys(invPerms).length || invScope !== null;
+    const row: Record<string, unknown> = { owner_id: user!.id, code, role };
+    if (preset) Object.assign(row, { member_name: invName.trim() || null, perms: invPerms, property_ids: invScope });
+    const { error } = await supabase.from("team_invites").insert(row);
     setBusy(false);
-    if (error) { setMsg("تعذّر إنشاء الدعوة — شغّل schema-v9 وv9b أولًا إن لم تفعل."); return; }
+    if (error) {
+      setMsg(preset && /member_name|perms|property_ids/.test(error.message)
+        ? "تجهيز الصلاحيات قبل الإضافة يحتاج تشغيل schema-v89 ثم schema-v90 في Supabase."
+        : "تعذّر إنشاء الدعوة — شغّل schema-v9 وv9b أولًا إن لم تفعل.");
+      return;
+    }
+    setInvName(""); setInvPerms({}); setInvScope(null);
     await load();
   }
 
@@ -153,6 +175,18 @@ export default function TeamSection() {
     return saveScope(m, cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]);
   }
 
+  /** (v90) اسم الموظف كما يظهر هنا وفي «سجل العمليات» — يُملأ تلقائيًّا من اسم تسجيله */
+  async function renameMember(m: Member) {
+    const v = prompt("اسم الموظف كما يظهر في القائمة وسجل العمليات:", m.member_name || "");
+    if (v == null) return;
+    const name = v.trim().slice(0, 60) || null;
+    const { data, error } = await supabase.from("team_members").update({ member_name: name })
+      .eq("owner_id", m.owner_id).eq("member_id", m.member_id).select("member_id");
+    if (error) return alert(/member_name|permission/.test(error.message) ? "شغّل ملف schema-v90 في Supabase أولًا." : error.message);
+    if (!data?.length) return alert("هذا الإجراء يحتاج صلاحية صاحب المكتب.");
+    setMembers((cur) => cur.map((x) => x.member_id === m.member_id ? { ...x, member_name: name } : x));
+  }
+
   async function removeMember(m: Member) {
     if (!confirm(`إزالة «${m.member_name || "الموظف"}» من المكتب؟ يفقد الوصول فورًا، وكل ما سجّله يبقى محفوظًا باسمه.`)) return;
     // حذف رفضته السياسات يرجع بلا خطأ وبصفر صفوف — لا نوهم صاحب المكتب بالنجاح
@@ -191,7 +225,63 @@ export default function TeamSection() {
           {busy ? "..." : "+ رمز دعوة"}
         </button>
       </div>
-      <p className="text-[11px] text-muted mb-4">{ROLE_HELP[role]}</p>
+      <p className="text-[11px] text-muted mb-2">{ROLE_HELP[role]}</p>
+      {/* (v90) جهّز الموظف قبل إرسال الرمز — ينضم بهذه الصلاحيات والعقارات مباشرة */}
+      <details className="mb-4 bg-paper border border-line rounded-xl p-3">
+        <summary className="cursor-pointer text-sm font-semibold text-deep">
+          ⚙️ الاسم والصلاحيات والعقارات قبل الإرسال <span className="text-[11px] text-muted font-normal">(اختياري)</span>
+          {(invName.trim() || Object.keys(invPerms).length > 0 || invScope !== null) && <span className="text-gold text-xs ms-2">● مخصّص</span>}
+        </summary>
+        <div className="mt-3 space-y-3">
+          <div>
+            <label className="block text-xs font-semibold mb-1">اسم الموظف</label>
+            <input className="fld" maxLength={60} value={invName} onChange={(e) => setInvName(e.target.value)} placeholder="مثلًا: فهد — محصّل عمائر الشمال" />
+          </div>
+          <div>
+            <div className="text-xs font-semibold mb-1">الصلاحيات <span className="font-normal text-muted">(تبدأ من افتراضي الدور)</span></div>
+            {GROUPS.map((g) => (
+              <div key={g} className="mb-1.5">
+                <div className="text-[11px] font-bold text-muted mb-1">{g}</div>
+                <div className="grid sm:grid-cols-2 gap-1">
+                  {PERMS.filter((x) => x.group === g).map((perm) => (
+                    <label key={perm.k} className={`flex items-center gap-2 text-sm ${perm.locked ? "opacity-60" : "cursor-pointer"}`}>
+                      <input type="checkbox" className="w-4 h-4" disabled={perm.locked}
+                        checked={perm.locked ? role === "manager" : invPermOn(perm.k)} onChange={() => toggleInvPerm(perm.k)} />
+                      {perm.label}
+                    </label>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+          <div>
+            <div className="text-xs font-semibold mb-1">العقارات المسموحة</div>
+            <div className="flex flex-wrap gap-4 text-sm mb-1.5">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input type="radio" name="inv-scope" checked={invScope === null} onChange={() => setInvScope(null)} /> كل العقارات
+              </label>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input type="radio" name="inv-scope" checked={invScope !== null} onChange={() => setInvScope([])} /> عقارات محددة
+              </label>
+            </div>
+            {invScope !== null && (
+              props.length === 0 ? <p className="text-xs text-muted">لا عقارات بعد.</p> : (
+                <div className="grid sm:grid-cols-2 gap-1.5 max-h-56 overflow-y-auto">
+                  {props.map((p) => (
+                    <label key={p.id} className="flex items-center gap-2 text-sm cursor-pointer">
+                      <input type="checkbox" className="w-4 h-4" checked={invScope.includes(p.id)}
+                        onChange={() => setInvScope(invScope.includes(p.id) ? invScope.filter((x) => x !== p.id) : [...invScope, p.id])} />
+                      {p.name || "عقار بلا اسم"}
+                    </label>
+                  ))}
+                </div>
+              )
+            )}
+            {invScope !== null && invScope.length === 0 && <p className="text-xs text-late mt-1">لم تختر أي عقار — الموظف لن يرى شيئًا.</p>}
+          </div>
+          <p className="text-[11px] text-muted leading-relaxed">تُحفظ مع رمز الدعوة، وتنطبق على الموظف لحظة إدخاله الرمز. وتقدر تعدّلها بعد انضمامه من تحت اسمه.</p>
+        </div>
+      </details>
       {msg && <p className="text-sm text-late mb-3">{msg}</p>}
 
       {/* دعوات سارية */}
@@ -202,6 +292,14 @@ export default function TeamSection() {
             {invites.map((i) => (
               <div key={i.id} className="flex flex-wrap items-center gap-2 bg-paper2 border border-line rounded-xl px-3 py-2">
                 <code className="font-mono font-bold tracking-widest text-deep" dir="ltr">{i.code}</code>
+                {i.member_name && <span className="text-sm text-deep">{i.member_name}</span>}
+                {(Object.keys(i.perms || {}).length > 0 || i.property_ids != null) && (
+                  <span className="text-[11px] text-gold">
+                    {Object.keys(i.perms || {}).length > 0 ? `${Object.keys(i.perms || {}).length} صلاحية مخصّصة` : ""}
+                    {Object.keys(i.perms || {}).length > 0 && i.property_ids != null ? " · " : ""}
+                    {i.property_ids != null ? `${i.property_ids.length} عقار` : ""}
+                  </span>
+                )}
                 <span className="text-xs text-muted">{ROLE_LABEL[i.role]}</span>
                 <span className="text-[11px] text-muted">تنتهي {new Date(i.expires_at).toLocaleDateString("ar-SA-u-ca-gregory-nu-latn", { timeZone: "Asia/Riyadh" })}</span>
                 <span className="ms-auto flex gap-1.5">
@@ -225,6 +323,7 @@ export default function TeamSection() {
           {members.map((m) => (
             <div key={m.member_id} className="flex flex-wrap items-center gap-2 border border-line rounded-xl px-3 py-2">
               <b className="text-deep">{m.member_name || "موظف"}</b>
+              <button className="btn btn-ghost text-xs !px-2" onClick={() => renameMember(m)} title="تعديل اسم الموظف كما يظهر في القائمة وسجل العمليات">✏️ الاسم</button>
               <select className="fld !w-auto !py-1 text-sm" value={m.role}
                 onChange={(e) => changeRole(m, e.target.value)}
                 title={ROLE_HELP[m.role]}>
