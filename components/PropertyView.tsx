@@ -16,7 +16,7 @@ import type { ComplianceItem } from "@/lib/compliance";
 import { fetchAllRows } from "@/lib/fetch-all";
 import { hijriShort, hijriText, parseHijriInput } from "@/lib/hijri";
 import { sar, waLink, today, WATHEQ_WA, openExternal, daysAr, countAr, normalizeSearch, csvCell } from "@/lib/utils";
-import { endNoticeText, endNoticeTextEn, meterNoticeText, noticeTermsOf, acDripNoticeText } from "@/lib/tenant-messages";
+import { endNoticeText, endNoticeTextEn, meterNoticeText, noticeTermsOf, acDripNoticeText, ownerAlertText } from "@/lib/tenant-messages";
 import { unitWordEn } from "@/lib/docEn";
 import { contractState, expectedNext12, buildSchedule, FREQUENCIES, freqLabel, freqShort, derivedEndDate, renewContract, needsRenewal, applyPayment, splitVat, isCommercial, isVacant, settleDeposit, unitVatApplies,
   vacancyDays, TURNOVER_CHECKLIST, defaultTermPeriods, parseDate, dueWithVat, rentWithVat, withVat, unitVat, firstDueGap, type Frequency } from "@/lib/contracts";
@@ -40,7 +40,7 @@ import DateField from "@/components/DateField";
 
 /** تحويل كل دورة إلى مكافئ شهري لحساب الدخل التقريبي */
 const PERIODS_PER_MONTH: Record<Frequency, number> = {
-  daily: 30, weekly: 4.33, monthly: 1, quarterly: 1 / 3, trimester: 1 / 4, semiannual: 1 / 6, annual: 1 / 12,
+  daily: 30, weekly: 4.33, monthly: 1, bimonthly: 1 / 2, quarterly: 1 / 3, trimester: 1 / 4, semiannual: 1 / 6, annual: 1 / 12,
 };
 
 type Tenant = {
@@ -92,6 +92,8 @@ type Property = {
   mgmt_fee_mode?: "pct" | "fixed" | string | null; mgmt_fee_amount?: number | null;
   mgmt_fee_period?: "month" | "half" | "year" | "once" | string | null; mgmt_fee_on?: string | null;
   owner_name?: string | null;
+  /** (v98) جوال المالك — لإبلاغه من صف الوحدة حين لا يتجاوب المستأجر */
+  owner_phone?: string | null;
   /** (v95) من المؤجّر في الفاتورة: المكتب (العقد باسمه) أو المالك (وكيل معلَن) */
   rent_seller?: "office" | "owner" | string | null; owner_vat_number?: string | null; owner_address?: string | null;
   /** عدادات العقار الرئيسية (schema-v68) — المصعد، الخدمات، الماء… */
@@ -923,6 +925,8 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       mgmt_fee_on: d.mgmt_fee_mode === "fixed" && d.mgmt_fee_period && d.mgmt_fee_period !== "month" && /^\d{4}-\d{2}-\d{2}$/.test(String(d.mgmt_fee_on || "")) ? d.mgmt_fee_on : null,
       // اسم المالك يجمع عقاراته في كشف واحد (schema-v10) — يُقصّ حتى لا تتشتت الأسماء بمسافات
       owner_name: (d.owner_name || "").trim() || null,
+      /* (v98) جوال المالك — يُحفظ كما كُتب (يُطبَّع عند الإرسال) */
+      owner_phone: String(d.owner_phone || "").trim().slice(0, 20) || null,
       /* (v95) الفاتورة باسم من؟ المالك = وكيل معلَن: اسم المالك ورقمه الضريبي وعنوانه */
       rent_seller: d.rent_seller === "owner" ? "owner" : "office",
       owner_vat_number: cleanVatNo(d.owner_vat_number) || null,
@@ -1127,7 +1131,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
        */
       if (prev && (prev.paid_periods || 0) > 0 && (d.payment_frequency || "monthly") !== (prev.payment_frequency || "monthly")
           && Number(d.paid_periods) === Number(init.paid_periods) && !(d as any)._paidPicked) {
-        const MO: Record<string, number> = { monthly: 1, quarterly: 3, trimester: 4, semiannual: 6, annual: 12 };
+        const MO: Record<string, number> = { monthly: 1, bimonthly: 2, quarterly: 3, trimester: 4, semiannual: 6, annual: 12 };
         const oldM = MO[prev.payment_frequency || "monthly"], newM = MO[d.payment_frequency || "monthly"];
         const months = (prev.paid_periods || 0) * (oldM || 0);
         const eq = oldM && newM ? months / newM : null;
@@ -1795,6 +1799,32 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       terms: noticeTermsOf(issuer),
       annualRent: (Number(t.rent_amount) || 0) * defaultTermPeriods((t.payment_frequency || "monthly") as Frequency),
     }));
+  }
+
+  /** (v98) «إبلاغ المالك»: عقد منتهٍ أو متأخرات، والمستأجر لا يتجاوب — للمكتب صلاحية التذكير */
+  function ownerAlertDue(t: Tenant, st: ReturnType<typeof contractState>) {
+    return !!active && !isVacant(t) && !t.covered_by && may("send_reminders")
+      && ((!!st.endDate && st.daysToEnd !== null && st.daysToEnd < 0) || st.unpaid > 0 || (Number((t as any).carried_debt) || 0) > 0);
+  }
+  /** واتساب للمالك: ينتهي/انتهى العقد، المتأخرات، وطلب التوجيه — lib/tenant-messages */
+  function ownerAlert(t: Tenant) {
+    if (!active) return;
+    if (!String(active.owner_phone || "").trim()) {
+      notify("err", "أضف جوال المالك أولًا: ⚙️ إعدادات العقار ← «جوال المالك»");
+      if (isManager) setModal({ kind: "editProp" });
+      return;
+    }
+    const st = contractState(t, { graceDays: Number(active.grace_days) || 0, ...windowsOf(active) });
+    const who = (issuer as any)?.billing_name || orgName || active.manager || "إدارة الأملاك";
+    const v = { enabled: !!active.vat_enabled, rate: Number(active.vat_rate) || 15, inclusive: active.vat_inclusive !== false };
+    const vUnit = unitVatApplies(t, active) ? v : { ...v, enabled: false };
+    openExternal(waLink(active.owner_phone, ownerAlertText({
+      ownerName: active.owner_name, tenantName: t.name || "",
+      unitText: `${unitWordFor(t.unit_type, active.property_type)} (${t.unit || "—"})`,
+      propertyName: active.name, endDate: st.endDate, daysToEnd: st.daysToEnd, hijri: t.calendar === "hijri",
+      overdue: vUnit.enabled ? splitVat(st.amountDue, vUnit).total : st.amountDue, unpaid: st.unpaid,
+      carried: Math.max(0, Number((t as any).carried_debt) || 0), signer: who,
+    })));
   }
 
   /** ⚡ إشعار تسجيل عداد الكهرباء باسم المستأجر (v74) — للوحدة المؤجّرة ولها رقم حساب وجوال */
@@ -2594,6 +2624,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                                   { sep: "✉️ مراسلة" } as any,
                                   ...(endNoticeDue(t, st) ? [{ label: "📅 إشعار انتهاء العقد (واتساب)", run: () => openExternal(endNoticeLink(t)) },
                                     { label: "📅 إشعار الانتهاء بالإنجليزية (English)", run: () => openExternal(endNoticeLink(t, true)) }] : []),
+                                  ...(ownerAlertDue(t, st) ? [{ label: "📞 إبلاغ المالك — المستأجر لا يتجاوب (واتساب)", run: () => ownerAlert(t) }] : []),
                                   ...(meterNoticeDue(t) ? [{ label: "⚡ إشعار تسجيل عداد الكهرباء (واتساب)", run: () => { void sendMeterNotice(t); } }] : []),
                                   ...(!isVacant(t) && t.phone && may("send_reminders") ? [{ label: "❄️ تنبيه تنقيط المكيفات (واتساب)", run: () => openExternal(acDripLink(t)) }] : []),
                                   ...(!isVacant(t) && !String(t.elec_account || "").trim() && may("edit_tenants") ? [{ label: "⚡ أضف رقم عداد الكهرباء", run: () => setModal({ kind: "tenant", id: t.id }) }] : []),
@@ -2805,6 +2836,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
 
                       { sep: "✉️ مراسلة" } as any,
                       ...(endNoticeDue(t, st) ? [{ label: "📅 إشعار انتهاء العقد (واتساب)", run: () => openExternal(endNoticeLink(t)) }] : []),
+                      ...(ownerAlertDue(t, st) ? [{ label: "📞 إبلاغ المالك — المستأجر لا يتجاوب (واتساب)", run: () => ownerAlert(t) }] : []),
                       ...(meterNoticeDue(t) ? [{ label: "⚡ إشعار تسجيل عداد الكهرباء (واتساب)", run: () => { void sendMeterNotice(t); } }] : []),
                       ...(!isVacant(t) && t.phone && may("send_reminders") ? [{ label: "❄️ تنبيه تنقيط المكيفات (واتساب)", run: () => openExternal(acDripLink(t)) }] : []),
                       ...(!isVacant(t) && !String(t.elec_account || "").trim() && may("edit_tenants") ? [{ label: "⚡ أضف رقم عداد الكهرباء", run: () => setModal({ kind: "tenant", id: t.id }) }] : []),
@@ -4071,6 +4103,9 @@ function PropertyModal({ open, initial, orgName, ownerNames = [], officeSoon = 1
           <input className="fld" list="watheq-owner-names" value={d.owner_name || ""} onChange={(e) => setD({ ...d, owner_name: e.target.value })} placeholder="مثال: عبدالله بن سعد" />
           <datalist id="watheq-owner-names">{ownerNames.map((n) => <option key={n} value={n} />)}</datalist>
         </Field>
+        <Field label="جوال المالك" hint="اختياري — يظهر زر «إبلاغ المالك» في صف الوحدة حين ينتهي عقدها أو تتأخر ولا يتجاوب المستأجر">
+          <input className="fld" dir="ltr" inputMode="tel" maxLength={20} value={d.owner_phone || ""} onChange={(e) => setD({ ...d, owner_phone: e.target.value })} placeholder="05xxxxxxxx" />
+        </Field>
         {/* «اسم المالك أو المكتب» أزيل: هو في الكود «مدير العقار» ولا يظهر في مستند إلا
             إن فرغ اسم المُصدِر في الإعدادات، وقيمته اسم المكتب أصلًا — لكن تسميته جعلت
             المكتب يكتب فيه اسم المالك مرتين (أو هنا لا في «المالك» فلا يُجمَّع كشفه).
@@ -4393,11 +4428,11 @@ function TenantModal({ open, initial, unitWord, error, saving, onClose, onSubmit
   ].filter(Boolean).length;
   /* تغيير الدورة بالمدة نفسها — كزرّ الدورة في النموذج (لا يُبقي «12 دفعة» لعقد صار سنويًّا) */
   const withFreq = (f: string) => {
-    const MO: Record<string, number> = { monthly: 1, quarterly: 3, trimester: 4, semiannual: 6, annual: 12 };
+    const MO: Record<string, number> = { monthly: 1, bimonthly: 2, quarterly: 3, trimester: 4, semiannual: 6, annual: 12 };
     const oldM = (Number(d.contract_periods) || 0) * (MO[freqNow] || 0);
     return { ...d, payment_frequency: f, ...(oldM && MO[f] && oldM % MO[f] === 0 ? { contract_periods: oldM / MO[f] } : {}) };
   };
-  const FREQ_AR: Record<string, string> = { monthly: "شهري", quarterly: "كل 3 أشهر", trimester: "كل 4 أشهر", semiannual: "نصف سنوي", annual: "سنوي" };
+  const FREQ_AR: Record<string, string> = { monthly: "شهري", bimonthly: "كل شهرين", quarterly: "كل 3 أشهر", trimester: "كل 4 أشهر", semiannual: "نصف سنوي", annual: "سنوي" };
   /* جدول الأقساط بالبيانات الحالية — لقائمة «مسدَّد حتى» والمعاينة */
   const sched: { n: number; date: string; status: string }[] = d.contract_start && Number(d.rent_amount) > 0
     ? buildSchedule({ ...d, paid_periods: Number(d.paid_periods) || 0 } as any) : [];
@@ -4457,7 +4492,7 @@ function TenantModal({ open, initial, unitWord, error, saving, onClose, onSubmit
         </div>
         <div className="grid grid-cols-2 gap-3">
           <Field label={isNew && String(d.status) !== "vacated" ? "قيمة الدفعة (ريال) *" : "قيمة الدفعة (ريال)"} hint={(() => {
-            const st = ({ monthly: 1, quarterly: 3, trimester: 4, semiannual: 6, annual: 12 } as any)[d.payment_frequency || "monthly"];
+            const st = ({ monthly: 1, bimonthly: 2, quarterly: 3, trimester: 4, semiannual: 6, annual: 12 } as any)[d.payment_frequency || "monthly"];
             const r = Number(d.rent_amount) || 0;
             return r > 0 && st ? `= ${sar(Math.round(r * 12 / st))} سنويًّا` : undefined;
           })()}><input className="fld" type="number" value={d.rent_amount || ""} onChange={(e) => setD({ ...d, rent_amount: e.target.value })} placeholder="2500" /></Field>
@@ -4467,7 +4502,7 @@ function TenantModal({ open, initial, unitWord, error, saving, onClose, onSubmit
           <div className="grid grid-cols-3 gap-2">
             {FREQUENCIES.map((f) => (
               <button key={f.value} type="button" onClick={() => {
-                const MO: Record<string, number> = { monthly: 1, quarterly: 3, trimester: 4, semiannual: 6, annual: 12 };
+                const MO: Record<string, number> = { monthly: 1, bimonthly: 2, quarterly: 3, trimester: 4, semiannual: 6, annual: 12 };
                 const oldM = (Number(d.contract_periods) || 0) * (MO[d.payment_frequency || "monthly"] || 0);
                 setD({ ...d, payment_frequency: f.value,
                   ...(oldM && MO[f.value] && oldM % MO[f.value] === 0 ? { contract_periods: oldM / MO[f.value] } : {}) });
@@ -4538,7 +4573,7 @@ function TenantModal({ open, initial, unitWord, error, saving, onClose, onSubmit
           {/* «مدة العقد» لا «عدد الدفعات»: المكتب يعرف المدة من العقد، والعدد يُحسب منها —
               عقد سنة بدفع نصف سنوي = دفعتان حتمًا. «أخرى» للمدد غير المعتادة. */}
           {(() => {
-            const MO: Record<string, number> = { monthly: 1, quarterly: 3, trimester: 4, semiannual: 6, annual: 12 };
+            const MO: Record<string, number> = { monthly: 1, bimonthly: 2, quarterly: 3, trimester: 4, semiannual: 6, annual: 12 };
             const f = (d.payment_frequency || "monthly") as Frequency; const st = MO[f] || 0;
             const n = Number(d.contract_periods) || 0;
             if (!st) return (   /* يومي/أسبوعي: المدة بالأشهر لا تنطبق — العدد مباشرة */
@@ -4551,7 +4586,7 @@ function TenantModal({ open, initial, unitWord, error, saving, onClose, onSubmit
               : m < 12 ? plural(m, "شهر واحد", "شهران", "أشهر", "شهرًا")
               : `${plural(Math.floor(m / 12), "سنة", "سنتان", "سنوات", "سنة")} و${plural(m % 12, "شهر", "شهران", "أشهر", "شهرًا")}`;
             const cnt = n || defPeriods;
-            const FW: Record<string, string> = { monthly: "شهرية", quarterly: "ربع سنوية", trimester: "كل 4 أشهر", semiannual: "نصف سنوية", annual: "سنوية" };
+            const FW: Record<string, string> = { monthly: "شهرية", bimonthly: "كل شهرين", quarterly: "ربع سنوية", trimester: "كل 4 أشهر", semiannual: "نصف سنوية", annual: "سنوية" };
             const end = d.contract_start ? derivedEndDate(d.contract_start, f, cnt, null, d.calendar === "hijri" ? "hijri" : "gregorian") : null;
             return (
               <Field label="مدة العقد" hint={`= ${plural(cnt, "دفعة واحدة", "دفعتان", "دفعات", "دفعة")} ${FW[f]}${end ? ` · ينتهي ${arDate(end)} (${end < startISO ? "⚠️ " : ""}${dateDistanceAr(startISO, end)})` : ""}`}>
@@ -5051,7 +5086,7 @@ function QuoteModal({ property, unitWord, issuer, onClose }: {
               /* المكتب يفكّر بالمدة («سنتان»)، لا بعدد الدفعات («4»). تحويلها
                  بيده مصدر خطأ: عقد سنتين نصف سنوي = 4 دفعات لا 2. نأخذ المدة
                  ونحسب العدد، ونعرض النتيجة ليراها قبل الحفظ. */
-              const perYear = { daily: 365, weekly: 52, monthly: 12, quarterly: 4, trimester: 3, semiannual: 2, annual: 1 }[
+              const perYear = { daily: 365, weekly: 52, monthly: 12, bimonthly: 6, quarterly: 4, trimester: 3, semiannual: 2, annual: 1 }[
                 (d.payment_frequency || "monthly") as Frequency] || 12;
               const months = Math.round((Number(d.contract_periods) || 0) * (12 / perYear));
               const setMonths = (m: number) => {
@@ -5095,7 +5130,7 @@ function QuoteModal({ property, unitWord, issuer, onClose }: {
                 /* المدة محفوظة كعدد دفعات، فتغيير الدورة وحده كان يغيّر المدة بصمت:
                    «سنة» ثم «كل 6 أشهر» = دفعة واحدة = عرض بنصف القيمة. نثبّت المدة
                    بالأشهر ونعيد حساب العدد — كنموذج الوحدة. */
-                const PY: Record<string, number> = { daily: 365, weekly: 52, monthly: 12, quarterly: 4, trimester: 3, semiannual: 2, annual: 1 };
+                const PY: Record<string, number> = { daily: 365, weekly: 52, monthly: 12, bimonthly: 6, quarterly: 4, trimester: 3, semiannual: 2, annual: 1 };
                 const oldPY = PY[d.payment_frequency || "monthly"] || 12, newPY = PY[f.value] || 12;
                 const months = (Number(d.contract_periods) || 1) * 12 / oldPY;
                 setD({ ...d, payment_frequency: f.value, contract_periods: Math.max(1, Math.round(months * newPY / 12)) });
@@ -5281,7 +5316,7 @@ function Advisory({ answer, sig, title, children, fixLabel, onFix, ackLabel = "�
 
 /** قيمة دفعة لا تتسق مع دورتها: أشيع خطأ صامت في الإدخال الأول (إيجار السنة في خانة الشهر أو العكس) */
 function rentOddity(rent: number, freq: string): null | { kind: "high" | "low"; perMonth: number; perYear: number } {
-  const MO: Record<string, number> = { monthly: 1, quarterly: 3, trimester: 4, semiannual: 6, annual: 12 };
+  const MO: Record<string, number> = { monthly: 1, bimonthly: 2, quarterly: 3, trimester: 4, semiannual: 6, annual: 12 };
   const st = MO[freq];
   if (!st || !(rent > 0)) return null;           // يومي/أسبوعي: لا معيار شهري موثوق
   const perMonth = rent / st, perYear = perMonth * 12;
@@ -5309,7 +5344,7 @@ function RenewModal({ tenant, unitWord, onClose, onRenew }: {
   const [periods, setPeriods] = useState<string>(String(tenant.contract_periods || defaultTermPeriods(curFreq)));
   const [durCustom, setDurCustom] = useState(false);   // «مدة أخرى…» اختيار يُحفظ، لا يُستنتج من المدة
   /* تغيير الدورة يحفظ المدة لا العدد: شهري ×12 ← سنوي كان يبقى 12 = اثنتا عشرة سنة */
-  const MONTHS_PER: Record<string, number> = { monthly: 1, quarterly: 3, trimester: 4, semiannual: 6, annual: 12 };
+  const MONTHS_PER: Record<string, number> = { monthly: 1, bimonthly: 2, quarterly: 3, trimester: 4, semiannual: 6, annual: 12 };
   function changeFreq(f: Frequency) {
     const oldM = (Number(periods) || defaultTermPeriods(freq)) * (MONTHS_PER[freq] || 0);
     if (oldM && MONTHS_PER[f]) setPeriods(String(Math.max(1, Math.round(oldM / MONTHS_PER[f]))));

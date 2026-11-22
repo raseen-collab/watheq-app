@@ -32,7 +32,7 @@ const TERMS = [
   { months: 12, label: "سنة" }, { months: 18, label: "سنة ونصف" },
   { months: 24, label: "سنتان" }, { months: 36, label: "٣ سنوات" },
 ];
-const PER_YEAR: Record<string, number> = { monthly: 12, quarterly: 4, trimester: 3, semiannual: 2, annual: 1 };
+const PER_YEAR: Record<string, number> = { monthly: 12, bimonthly: 6, quarterly: 4, trimester: 3, semiannual: 2, annual: 1 };
 
 export default function HijriScheduleTool() {
   const [cal, setCal] = useState<"h" | "g">("h");
