@@ -1,6 +1,7 @@
 {
   "crons": [
     { "path": "/api/cron/digest", "schedule": "0 3 * * *" },
-    { "path": "/api/admin/pulse", "schedule": "0 2 * * *" }
+    { "path": "/api/admin/pulse", "schedule": "0 2 * * *" },
+    { "path": "/api/cron/backup", "schedule": "0 0 * * *" }
   ]
 }
