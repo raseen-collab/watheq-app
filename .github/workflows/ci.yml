@@ -1,0 +1,40 @@
+# وثيق — فحص تلقائي لكل رفع وكل Pull Request (22 نوفمبر 2026)
+# tsc ← next build ← كل الاختبارات المالية والوحدات ← فحص دخان على 390px.
+# أي خطوة تفشل = علامة ✗ حمراء على الـcommit/PR قبل أن يصل الخلل للعملاء.
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      # قيم وهمية للبناء فقط — لا أسرار حقيقية في CI
+      NEXT_PUBLIC_SUPABASE_URL: https://ci-placeholder.supabase.co
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: ci-placeholder
+      SUPABASE_SERVICE_ROLE_KEY: ci-placeholder
+      NEXT_TELEMETRY_DISABLED: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: TypeScript
+        run: npx tsc --noEmit
+      - name: Build
+        run: npx next build
+      - name: Unit + money tests
+        run: bash scripts/test-all.sh
+      - name: Smoke test (390px)
+        run: |
+          npm i --no-save playwright@1.48.2
+          npx playwright install --with-deps chromium
+          (npx next start -p 3000 &) && npx --yes wait-on@8.0.1 -t 60000 http://localhost:3000/login
+          node tests/smoke.cjs
