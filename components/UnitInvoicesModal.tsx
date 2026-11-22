@@ -21,6 +21,11 @@ import { sar } from "@/lib/utils";
 type Invoice = {
   id: string; invoice_no: string; issue_date: string | null; due_date: string | null;
   period_label: string | null; amount: number | null; status: string | null; notes: string | null;
+  created_at?: string | null; vat_enabled?: boolean | null; vat_rate?: number | null; vat_inclusive?: boolean | null;
+  /** (v95) الإشعار الدائن ولقطة البائع والمشتري */
+  doc_type?: string | null; ref_invoice_id?: string | null; reason?: string | null;
+  seller_mode?: string | null; seller_name?: string | null; seller_vat?: string | null; seller_cr?: string | null; seller_address?: string | null;
+  buyer_name?: string | null; buyer_id?: string | null; unit_label?: string | null; property_name?: string | null;
 };
 
 const STATUS: Record<string, { label: string; cls: string }> = {
@@ -40,6 +45,9 @@ export default function UnitInvoicesModal({ tenant, property, issuer, onClose, d
   const [rows, setRows] = useState<Invoice[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  /* (v95) الإلغاء بإشعار دائن: سبب مكتوب إلزامي قبل الإصدار */
+  const [voiding, setVoiding] = useState<Invoice | null>(null);
+  const [reason, setReason] = useState("");
 
   async function load() {
     setErr(null);
@@ -54,41 +62,59 @@ export default function UnitInvoicesModal({ tenant, property, issuer, onClose, d
   }
   useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [tenant.id]);
 
-  function reprint(v: Invoice) {
+  const byId = new Map((rows || []).map((r) => [r.id, r]));
+  /* الإشعار الدائن لكل فاتورة ملغاة (واحد لكل فاتورة — فهرس فريد في v95) */
+  const cnOf = new Map((rows || []).filter((r) => r.doc_type === "credit_note" && r.ref_invoice_id).map((r) => [r.ref_invoice_id!, r]));
+
+  /** يفتح الفاتورة أو الإشعار بإعدادات الضريبة ولقطة البائع المحفوظة يوم الإصدار */
+  function printRow(v: Invoice, ref?: Invoice | null) {
     /* (مراجعة 30 سبتمبر 2026) بإعدادات الضريبة المحفوظة يوم الإصدار إن وُجدت —
        كان تغيير نسبة العقار أو وضعه لاحقًا يغيّر مبلغ فاتورة صدرت وسُلّمت.
        الفواتير الأقدم من schema-v56 بلا إعدادات محفوظة فتُطبع كما كانت. */
-    const x = v as any;
-    const snap = x.vat_enabled === true || x.vat_enabled === false;
-    const pAt = snap ? { ...(property as any), vat_enabled: x.vat_enabled, vat_rate: x.vat_rate ?? (property as any)?.vat_rate, vat_inclusive: x.vat_inclusive } : property;
-    const tAt = snap ? { ...(tenant as any), vat_mode: x.vat_enabled ? "on" : "off" } : tenant;
+    const snap = v.vat_enabled === true || v.vat_enabled === false;
+    const pAt = snap ? { ...(property as any), vat_enabled: v.vat_enabled, vat_rate: v.vat_rate ?? (property as any)?.vat_rate, vat_inclusive: v.vat_inclusive } : property;
+    const tAt = snap ? { ...(tenant as any), vat_mode: v.vat_enabled ? "on" : "off" } : tenant;
     openDoc(invoiceHTML(tAt as any, pAt as any, {
-      invoice_no: v.invoice_no,
+      ...v,
       amount: Number(v.amount) || 0,
-      due_date: v.due_date || v.issue_date || "",
+      due_date: v.due_date || (v.doc_type === "credit_note" ? "" : v.issue_date || ""),
       period_label: v.period_label || "",
       /* بتاريخها ووقتها وحالتها الأصلية — لا بتاريخ اليوم */
       issue_date: v.issue_date || null,
       status: v.status || null,
-      created_at: (v as any).created_at || null,
-      /* (30 سبتمبر 2026) صدرت بضريبة أم بلا ضريبة — لا يتغيّر عنوانها ولا رمزها بتغيّر
-         إعدادات المكتب لاحقًا. الرقم الضريبي واسم البائع غير محفوظَين في الفاتورة
-         (لا أعمدة لهما) فيُطبعان بقيم المكتب الحالية. */
-      vat_snapshot: snap ? !!x.vat_enabled : null,
+      created_at: v.created_at || null,
+      vat_snapshot: snap ? !!v.vat_enabled : null,
+      ref_invoice_no: ref?.invoice_no || null,
+      ref_issue_date: ref?.issue_date || null,
+      credit_note_no: cnOf.get(v.id)?.invoice_no || null,
     }, issuer || {}));
   }
+  const reprint = (v: Invoice) => printRow(v, v.ref_invoice_id ? byId.get(v.ref_invoice_id) : null);
 
-  /* الفاتورة الضريبية لا تُحذف — تُلغى ويبقى رقمها في التسلسل. الحذف يترك
-     فجوة في الترقيم يصعب تفسيرها لأي مراجعة. */
-  async function voidInvoice(v: Invoice) {
+  /* الفاتورة الضريبية لا تُحذف ولا تُعدَّل — تُلغى بإشعار دائن يرجع إليها بسبب مكتوب،
+     من نفس تسلسل الأرقام (الدليل التفصيلي للفوترة الإلكترونية §5.6 و§4.3). */
+  async function confirmVoid() {
+    const v = voiding; if (!v) return;
+    const why = reason.trim();
+    if (why.length < 3) { setErr("اكتب سبب الإلغاء — يُطبع في الإشعار الدائن."); return; }
     setBusy(v.id); setErr(null);
-    const { error } = await supabase.from("invoices").update({ status: "void" }).eq("id", v.id);
+    const { data, error } = await supabase.rpc("watheq_void_invoice", { p_invoice: v.id, p_reason: why });
     setBusy(null);
     if (error) { setErr(`تعذّر الإلغاء: ${error.message}`); return; }
+    setVoiding(null); setReason("");
     await load();
+    /* يُفتح الإشعار الدائن ليُسلَّم للمستأجر — من صفّه المحفوظ (لقطة القاعدة) */
+    const cnId = (data as any)?.id;
+    if (cnId) {
+      const { data: cn } = await supabase.from("invoices").select("*").eq("id", cnId).limit(1);
+      const row = (cn || [])[0] as Invoice | undefined;
+      if (row) printRow(row, v);
+    }
   }
 
-  const live = (rows || []).filter((v) => v.status !== "void");
+  const invs = (rows || []).filter((v) => v.doc_type !== "credit_note");
+  const live = invs.filter((v) => v.status !== "void");
+  const cns = (rows || []).length - invs.length;
   const total = live.reduce((a, v) => a + (Number(v.amount) || 0), 0);
 
   return (
@@ -118,8 +144,10 @@ export default function UnitInvoicesModal({ tenant, property, issuer, onClose, d
               <span className="text-muted">{live.length === 1 ? "فاتورة واحدة سارية" : `${live.length} فواتير سارية`}</span>
               <span className="text-muted">·</span>
               <span className="text-muted">إجماليها <b className="text-deep tabular-nums">{sar(total)}</b> ريال</span>
-              {rows.length !== live.length && <><span className="text-muted">·</span>
-                <span className="text-muted">{rows.length - live.length} ملغاة</span></>}
+              {invs.length !== live.length && <><span className="text-muted">·</span>
+                <span className="text-muted">{invs.length - live.length} ملغاة</span></>}
+              {cns > 0 && <><span className="text-muted">·</span>
+                <span className="text-muted">{cns === 1 ? "إشعار دائن واحد" : `${cns} إشعارات دائنة`}</span></>}
             </div>
 
             <div className="overflow-x-auto border border-line rounded-xl">
@@ -136,8 +164,9 @@ export default function UnitInvoicesModal({ tenant, property, issuer, onClose, d
                 </thead>
                 <tbody>
                   {rows.map((v) => {
-                    const s = STATUS[String(v.status || "issued")] || STATUS.issued;
-                    const voided = v.status === "void";
+                    const isCN = v.doc_type === "credit_note";
+                    const s = isCN ? { label: "إشعار دائن", cls: "bg-[#FBF1DF] text-[#8a5a11] border-[#EAD9A8]" } : STATUS[String(v.status || "issued")] || STATUS.issued;
+                    const voided = !isCN && v.status === "void";
                     return (
                       <tr key={v.id} className={`border-t border-line ${voided ? "opacity-55" : ""}`}>
                         <td className="px-3 py-2 font-semibold text-deep whitespace-nowrap" dir="ltr">{v.invoice_no}</td>
@@ -145,8 +174,12 @@ export default function UnitInvoicesModal({ tenant, property, issuer, onClose, d
                           {v.issue_date ? arDate(v.issue_date) : "—"}
                           {v.issue_date && <div className="text-[11px] text-muted">{hijriShort(v.issue_date)}</div>}
                         </td>
-                        <td className="px-3 py-2 text-muted">{v.period_label || "—"}</td>
-                        <td className="px-3 py-2 tabular-nums whitespace-nowrap"><b>{sar(Number(v.amount) || 0)}</b></td>
+                        <td className="px-3 py-2 text-muted">
+                          {v.period_label || "—"}
+                          {isCN && <div className="text-[11px]">عن <span dir="ltr" className="whitespace-nowrap">{v.ref_invoice_id ? byId.get(v.ref_invoice_id)?.invoice_no || "—" : "—"}</span>{v.reason ? ` · ${v.reason}` : ""}</div>}
+                          {voided && cnOf.get(v.id) && <div className="text-[11px]">أُلغيت بـ <span dir="ltr" className="whitespace-nowrap">{cnOf.get(v.id)!.invoice_no}</span></div>}
+                        </td>
+                        <td className="px-3 py-2 tabular-nums whitespace-nowrap"><b>{isCN ? "−" : ""}{sar(Number(v.amount) || 0)}</b></td>
                         <td className="px-3 py-2">
                           <span className={`inline-block text-[11px] font-semibold px-2 py-0.5 rounded-full border ${s.cls}`}>{s.label}</span>
                         </td>
@@ -155,8 +188,8 @@ export default function UnitInvoicesModal({ tenant, property, issuer, onClose, d
                             <button onClick={() => reprint(v)} className="btn btn-ghost text-xs px-2.5 py-1">
                               🖨️ {voided ? "عرض" : "طباعة"}
                             </button>
-                            {!voided && canIssue && (
-                              <button onClick={() => voidInvoice(v)} disabled={busy === v.id}
+                            {!voided && !isCN && canIssue && (
+                              <button onClick={() => { setVoiding(v); setReason(""); setErr(null); }} disabled={busy === v.id}
                                 className="btn btn-ghost text-xs px-2.5 py-1 text-late">
                                 {busy === v.id ? "…" : "إلغاء"}
                               </button>
@@ -170,9 +203,27 @@ export default function UnitInvoicesModal({ tenant, property, issuer, onClose, d
               </table>
             </div>
 
+            {voiding && (
+              <div className="mt-3 border border-[#F5C6C2] bg-[#FFF5F4] rounded-xl p-3">
+                <div className="text-sm font-semibold text-[#a5322c] mb-1">إلغاء الفاتورة <span dir="ltr">{voiding.invoice_no}</span> بإشعار دائن</div>
+                <p className="text-xs text-[#7a3b36] mb-2 leading-relaxed">
+                  يصدر إشعار دائن برقم جديد يرجع لهذه الفاتورة ويلغيها بكامل قيمتها، ويُطبع لتسلّمه للمستأجر.
+                  الفاتورة لا تُحذف ولا تُعدَّل — لتصحيح المبلغ أصدر فاتورة جديدة بعد الإلغاء.
+                </p>
+                <input className="fld text-sm" value={reason} maxLength={300} autoFocus
+                  onChange={(e) => setReason(e.target.value)} placeholder="سبب الإلغاء — مثال: خطأ في المبلغ، صدرت مرتين" />
+                <div className="flex gap-2 mt-2">
+                  <button className="btn btn-gold text-sm" disabled={busy === voiding.id} onClick={() => void confirmVoid()}>
+                    {busy === voiding.id ? "…" : "إصدار الإشعار الدائن"}
+                  </button>
+                  <button className="btn btn-ghost text-sm" onClick={() => { setVoiding(null); setReason(""); }}>تراجع</button>
+                </div>
+              </div>
+            )}
+
             <p className="text-[11px] text-muted mt-3 leading-relaxed">
-              إعادة الطباعة تُخرج الفاتورة بأرقامها كما صدرت — لا تتغيّر إن تغيّر إيجار الوحدة لاحقًا.
-              والفاتورة الملغاة يبقى رقمها في التسلسل ولا يُعاد استخدامه.
+              إعادة الطباعة تُخرج الفاتورة بأرقامها وبيانات مُصدِرها كما صدرت — لا تتغيّر إن تغيّر الإيجار أو الإعدادات لاحقًا.
+              الفاتورة لا تُحذف ولا تُعدَّل: تُلغى بإشعار دائن من نفس تسلسل الأرقام.
             </p>
           </>)}
         </div>

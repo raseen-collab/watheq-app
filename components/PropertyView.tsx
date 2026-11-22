@@ -9,6 +9,7 @@ import { createClient } from "@/lib/supabase-client";
 import { cleanMeters, metersCountLine, METER_TYPE_AR, MAX_METERS, type PropertyMeter } from "@/lib/meters";
 import { officeId, getOffice, ROLE_LABEL, OWNER_PERMS } from "@/lib/office";
 import { arDate, termRentPaidOf, pastVatOf } from "@/lib/documents";
+import { sellerOf, taxInvoiceGaps, isValidVatNo, cleanVatNo } from "@/lib/einvoice";
 import { annualRentRoll } from "@/lib/income";
 import { unitStatus, unitStatusLabel, arrearsOf, firstDueOutOfRange, dateDistanceAr, contractRemaining, excessOverRemaining, nearDuplicatePayment, renewalTooEarly, gregorianAr, recentCovers, vatInclusiveSlip, renewalDue } from "@/lib/contract-state";
 import type { ComplianceItem } from "@/lib/compliance";
@@ -91,6 +92,8 @@ type Property = {
   mgmt_fee_mode?: "pct" | "fixed" | string | null; mgmt_fee_amount?: number | null;
   mgmt_fee_period?: "month" | "half" | "year" | "once" | string | null; mgmt_fee_on?: string | null;
   owner_name?: string | null;
+  /** (v95) من المؤجّر في الفاتورة: المكتب (العقد باسمه) أو المالك (وكيل معلَن) */
+  rent_seller?: "office" | "owner" | string | null; owner_vat_number?: string | null; owner_address?: string | null;
   /** عدادات العقار الرئيسية (schema-v68) — المصعد، الخدمات، الماء… */
   meters?: PropertyMeter[] | null;
   tenants: Tenant[]; property_notes: Note[];
@@ -920,9 +923,15 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       mgmt_fee_on: d.mgmt_fee_mode === "fixed" && d.mgmt_fee_period && d.mgmt_fee_period !== "month" && /^\d{4}-\d{2}-\d{2}$/.test(String(d.mgmt_fee_on || "")) ? d.mgmt_fee_on : null,
       // اسم المالك يجمع عقاراته في كشف واحد (schema-v10) — يُقصّ حتى لا تتشتت الأسماء بمسافات
       owner_name: (d.owner_name || "").trim() || null,
+      /* (v95) الفاتورة باسم من؟ المالك = وكيل معلَن: اسم المالك ورقمه الضريبي وعنوانه */
+      rent_seller: d.rent_seller === "owner" ? "owner" : "office",
+      owner_vat_number: cleanVatNo(d.owner_vat_number) || null,
+      owner_address: String(d.owner_address || "").trim().slice(0, 200) || null,
       // عدادات العقار الرئيسية: الصف بلا رقم حساب يُسقط، والفارغ يُحفظ null
       meters: cleanMeters(d.meters),
     };
+    if (payload.owner_vat_number && !isValidVatNo(payload.owner_vat_number))
+      return notify("err", "الرقم الضريبي للمالك غير صحيح — ١٥ رقمًا يبدأ بـ3 وينتهي بـ3، أو اتركه فارغًا.");
     if (id) {
       const { data: _u1, error } = await supabase.from("properties").update(payload).eq("id", id).select("id");
       if (error) { console.error("Watheq save error:", error); return notify("err", friendlyError(error)); }
@@ -1650,17 +1659,26 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
     const invoiceNo = data;
 
     /* سجلّ الفاتورة قبل طباعتها: فاتورة ضريبية صدرت بلا سجلّ لا تظهر في التصدير */
-    const { error: insErr } = await supabase.from("invoices").insert({
+    const { data: saved, error: insErr } = await supabase.from("invoices").insert({
       user_id: await officeId(supabase),
       tenant_id: t.id, property_id: active.id,
       invoice_no: invoiceNo, due_date: dueDate, period_label: period, amount,
       issue_date: today(), status: "issued",
       /* إعدادات الضريبة يوم الإصدار — لتُطبع النسخة المعادة كما صدرت (schema-v56) */
       ...(() => { const v = unitVat(t, active); return { vat_enabled: !!v.enabled, vat_rate: Number(v.rate) || 15, vat_inclusive: v.inclusive !== false }; })(),
-    });
+    }).select("*").single();
     if (insErr) return notify("err", `تعذّر حفظ الفاتورة ${invoiceNo} — لم تُصدر (${insErr.message})`);
 
-    openDoc(invoiceHTML(t as any, active as any, { invoice_no: invoiceNo, amount, due_date: dueDate, period_label: period }, issuer || {}));
+    /* (v95) تُطبع من الصف المحفوظ: لقطة البائع والمشتري تحسبها القاعدة لحظة الإصدار */
+    const row: any = saved || {};
+    openDoc(invoiceHTML(t as any, active as any, {
+      ...row, invoice_no: invoiceNo, amount, due_date: dueDate, period_label: period,
+      created_at: row.created_at || null, vat_snapshot: typeof row.vat_enabled === "boolean" ? row.vat_enabled : null,
+      issue_date: null,
+    }, issuer || {}));
+    /* الضريبة مفعّلة والفاتورة خرجت غير ضريبية: نقول ما الناقص بدل أن يكتشفه المستأجر */
+    const gaps = taxInvoiceGaps(sellerOf(row, issuer as any, active as any), unitVatApplies(t, active));
+    if (gaps.length) notify("err", `صدرت ${invoiceNo} — لتكون فاتورة ضريبية مبسطة كاملة ينقص: ${gaps.join("، ")}.`);
   }
 
   /** تذكير ودّي — يوضّح تفاصيل المطالبة وتاريخ استحقاقها */
@@ -4130,8 +4148,40 @@ function PropertyModal({ open, initial, orgName, ownerNames = [], officeSoon = 1
           </label>
           <p className="text-xs text-muted mt-1.5 leading-relaxed">
             تُفصل قيمة الإيجار الأساسي عن الضريبة في كشوف الحساب والفواتير.
-            {isCommercial(d.property_type) ? " موصى بها للعقارات التجارية." : ""}
+            {isCommercial(d.property_type) ? " الإيجار التجاري خاضع للضريبة إن كان المؤجّر مسجّلًا فيها؛ والسكني معفى." : ""}
           </p>
+          {d.vat_enabled && (
+            <div className="mt-3 border-t border-line pt-3">
+              <span className="block text-sm font-semibold mb-1">الفاتورة الضريبية باسم من؟</span>
+              <div className="flex gap-2 flex-wrap">
+                {([["office", "المكتب — عقد الإيجار باسم المكتب"], ["owner", "المالك — المكتب وكيل عنه"]] as const).map(([k, l]) => (
+                  <button key={k} type="button" onClick={() => setD({ ...d, rent_seller: k })}
+                    className={`border-2 rounded-lg px-3 py-2 text-xs font-semibold transition ${
+                      (d.rent_seller === "owner" ? "owner" : "office") === k ? "border-gold bg-[#FBF1DF]" : "border-line hover:border-goldSoft"}`}>{l}</button>
+                ))}
+              </div>
+              {d.rent_seller === "owner" ? (
+                <div className="grid sm:grid-cols-2 gap-3 mt-3">
+                  <Field label="الرقم الضريبي للمالك" hint={d.owner_vat_number && !isValidVatNo(d.owner_vat_number) ? "غير صحيح — ١٥ رقمًا يبدأ وينتهي بـ3" : "بدونه تصدر «فاتورة» لا «فاتورة ضريبية»"}>
+                    <input className="fld" dir="ltr" inputMode="numeric" maxLength={20} value={d.owner_vat_number || ""} placeholder="3xxxxxxxxxxxxx3"
+                      onChange={(e) => setD({ ...d, owner_vat_number: e.target.value })} />
+                  </Field>
+                  <Field label="عنوان المالك" hint="فارغ = عنوان العقار">
+                    <input className="fld" maxLength={200} value={d.owner_address || ""} onChange={(e) => setD({ ...d, owner_address: e.target.value })} />
+                  </Field>
+                  <p className="sm:col-span-2 text-[11px] text-muted leading-relaxed">
+                    تصدر الفاتورة باسم المالك («{(d.owner_name || "").trim() || "اسم المالك أعلاه"}») ورقمه الضريبي، مكتوبًا عليها «صدرت نيابةً عن المورّد»، بلا بيانات المكتب.
+                    إصدار المكتب فواتير نيابةً عن المالك يتطلب موافقة هيئة الزكاة والضريبة والجمارك وإشعارها باتفاقكما (دليل الوكلاء، البند 11.1.1) — أو يصدرها المالك بنفسه.
+                  </p>
+                </div>
+              ) : (
+                <p className="text-[11px] text-muted mt-2 leading-relaxed">
+                  تصدر باسم المكتب ورقمه الضريبي من الإعدادات. يصحّ هذا حين يوقّع المكتب عقد الإيجار باسمه مؤجّرًا؛
+                  أما إن كان العقد باسم المالك فاختر «المالك».
+                </p>
+              )}
+            </div>
+          )}
           {d.vat_enabled && (
             <div className="grid grid-cols-2 gap-3 mt-3">
               <Field label="نسبة الضريبة %">

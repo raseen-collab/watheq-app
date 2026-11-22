@@ -1,5 +1,6 @@
 "use client";
 import { useState } from "react";
+import { cleanVatNo, isValidVatNo } from "@/lib/einvoice";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase-client";
 import TeamSection from "@/components/TeamSection";
@@ -57,7 +58,9 @@ export default function SettingsView({ profile }: { profile: any }) {
       billing_name: p.billing_name || null,
       billing_phone: p.billing_phone || null,
       cr_number: p.cr_number || null,
-      vat_number: p.vat_number || null,
+      /* (v95) الرقم الضريبي بلا مسافات وبأرقام لاتينية — يُرفض الخطأ قبل الحفظ أدناه */
+      vat_number: cleanVatNo(p.vat_number) || null,
+      billing_address: String(p.billing_address || "").trim().slice(0, 200) || null,
       notify_enabled: p.notify_enabled ?? true,
       notify_days_before: Number(p.notify_days_before) || 5,
       default_calendar: p.default_calendar === "hijri" ? "hijri" : "gregorian",
@@ -80,6 +83,12 @@ export default function SettingsView({ profile }: { profile: any }) {
      * الفوترة معه. الآن: إن اشتكت القاعدة من عمود بعينه، نُسقطه ونعيد
      * المحاولة بالباقي، ثم نخبر المستخدم أي إعداد لم يُحفظ.
      */
+    /* رقم ضريبي غير صحيح كان يُطبع في فواتير «ضريبية» (وُجد رقمان كذلك في الإنتاج) */
+    if (patch.vat_number && !isValidVatNo(patch.vat_number)) {
+      setSaving(false);
+      setMsg({ t: "err", m: "الرقم الضريبي غير صحيح — ١٥ رقمًا يبدأ بـ3 وينتهي بـ3. صحّحه أو اتركه فارغًا." });
+      return;
+    }
     const skipped: string[] = [];
     let error: any = null;
     for (let attempt = 0; attempt < 4; attempt++) {
@@ -90,7 +99,7 @@ export default function SettingsView({ profile }: { profile: any }) {
     }
     setSaving(false);
     if (error) { setMsg({ t: "err", m: error.message }); return; }
-    const AR: Record<string, string> = { default_calendar: "التقويم الافتراضي" };
+    const AR: Record<string, string> = { default_calendar: "التقويم الافتراضي", billing_address: "عنوان المنشأة" };
     setMsg(skipped.length
       ? { t: "ok", m: `تم الحفظ — عدا ${skipped.map((c) => AR[c] || c).join("، ")}: يحتاج تحديثًا في قاعدة البيانات، أخبر الدعم.` }
       : { t: "ok", m: "تم الحفظ." });
@@ -335,9 +344,21 @@ export default function SettingsView({ profile }: { profile: any }) {
             </label>
             <label className="block">
               <span className="block text-sm font-semibold mb-1">الرقم الضريبي <span className="text-muted font-normal text-xs">اختياري</span></span>
-              <input className="fld" value={p.vat_number || ""} onChange={(e) => setP({ ...p, vat_number: e.target.value })} />
+              <input className="fld" dir="ltr" inputMode="numeric" maxLength={20} value={p.vat_number || ""} placeholder="3xxxxxxxxxxxxx3"
+                onChange={(e) => setP({ ...p, vat_number: e.target.value })} />
+              {p.vat_number && !isValidVatNo(p.vat_number) && (
+                <span className="block text-xs text-late mt-1">الرقم الضريبي ١٥ رقمًا يبدأ بـ3 وينتهي بـ3 — بهذا الرقم لا تصدر فواتير ضريبية.</span>
+              )}
             </label>
           </div>
+          <label className="block">
+            <span className="block text-sm font-semibold mb-1">عنوان المنشأة <span className="text-muted font-normal text-xs">إلزامي في الفاتورة الضريبية</span></span>
+            <input className="fld" value={p.billing_address || ""} maxLength={200} placeholder="المدينة، الحي، الشارع"
+              onChange={(e) => setP({ ...p, billing_address: e.target.value })} />
+            {p.vat_number && isValidVatNo(p.vat_number) && !String(p.billing_address || "").trim() && (
+              <span className="block text-xs text-late mt-1">أضف العنوان — يُطبع في كل فاتورة ضريبية مبسطة.</span>
+            )}
+          </label>
           <label className="block">
             <span className="block text-sm font-semibold mb-1">جوال التواصل</span>
             <input className="fld" value={p.billing_phone || ""} placeholder="05xxxxxxxx"
