@@ -1,5 +1,6 @@
 "use client";
 import { today } from "@/lib/utils";
+import { customMonths } from "@/lib/contracts";
 import { feeLabel, catLabel as expCatLabel } from "@/lib/expenses";
 import { typeLabel } from "@/lib/domain";
 import { ledgerCatLabel } from "@/lib/office-ledger";
@@ -25,10 +26,12 @@ import { HEADERS, templateRow, tenantTemplateCells } from "@/lib/importParse";
 
 const UNIT_AR: Record<string, string> = { apartment: "شقة", annex: "شقة ملحق", studio: "استديو", room: "غرفة", shop: "محل", showroom: "معرض", office: "مكتب", warehouse: "مستودع", land: "أرض", villa: "فيلا", other: "أخرى" };
 
-const FREQ_AR: Record<string, string> = {
+const FREQ_AR_STD: Record<string, string> = {
   daily: "يومي", weekly: "اسبوعي", monthly: "شهري", bimonthly: "كل شهرين", quarterly: "كل 3 اشهر", trimester: "كل 4 اشهر",
   semiannual: "نصف سنوي", annual: "سنوي", yearly: "سنوي",
 };
+/* المخصصة «كل 5 اشهر» — بالصيغة التي يقرؤها الرفع */
+const FREQ_AR = new Proxy(FREQ_AR_STD, { get: (o, k: string) => o[k] ?? (customMonths(k) ? `كل ${customMonths(k)} اشهر` : undefined) }) as Record<string, string>;
 const METHOD_AR: Record<string, string> = { cash: "نقدًا", transfer: "تحويل بنكي", ejar: "منصة إيجار", card: "بطاقة", pos: "شبكة", cheque: "شيك", other: "أخرى" };
 /* مسمّيات عربية للحقول المضافة — الملف يُقرأ بيد الإنسان لا بالكود */
 const PAID_BY_AR: Record<string, string> = {

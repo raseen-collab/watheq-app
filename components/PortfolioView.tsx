@@ -13,7 +13,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { fetchAllRows } from "@/lib/fetch-all";
 import { createClient } from "@/lib/supabase-client";
-import { contractState, isVacant, splitVat, unitVatApplies, dueWithVat, defaultTermPeriods, type Frequency } from "@/lib/contracts";
+import { contractState, isVacant, splitVat, unitVatApplies, dueWithVat, defaultTermPeriods, freqMonths, type Frequency } from "@/lib/contracts";
 import { annualRentRoll } from "@/lib/income";
 import { isPartialOnly, renewalDue } from "@/lib/contract-state";
 import { sar, waLink, today, daysAr, normalizeSearch } from "@/lib/utils";
@@ -26,7 +26,7 @@ import { hijriShort } from "@/lib/hijri";
 import ExpensesOverview from "@/components/ExpensesOverview";
 
 type Tenant = any; type Property = any;
-const PER_MONTH: Record<string, number> = { daily: 30, weekly: 4.33, monthly: 1, bimonthly: 1 / 2, quarterly: 1 / 3, trimester: 1 / 4, semiannual: 1 / 6, annual: 1 / 12 };
+const PER_MONTH = new Proxy({} as Record<string, number>, { get: (_o, f: string) => f === "daily" ? 30 : f === "weekly" ? 4.33 : 1 / (freqMonths(f) || 1) });
 const UNIT_AR: Record<string, string> = { residential: "شقة", commercial: "محل", office: "مكتب", warehouse: "مستودع", land: "أرض", villa: "فيلا" };
 
 export default function PortfolioView({ properties, windows, compliance, orgName = "", issuer = {} }: {

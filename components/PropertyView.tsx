@@ -18,7 +18,7 @@ import { hijriShort, hijriText, parseHijriInput } from "@/lib/hijri";
 import { sar, waLink, today, WATHEQ_WA, openExternal, daysAr, countAr, normalizeSearch, csvCell } from "@/lib/utils";
 import { endNoticeText, endNoticeTextEn, meterNoticeText, noticeTermsOf, acDripNoticeText, ownerAlertText } from "@/lib/tenant-messages";
 import { unitWordEn } from "@/lib/docEn";
-import { contractState, expectedNext12, buildSchedule, FREQUENCIES, freqLabel, freqShort, derivedEndDate, renewContract, needsRenewal, applyPayment, splitVat, isCommercial, isVacant, settleDeposit, unitVatApplies,
+import { contractState, expectedNext12, buildSchedule, FREQUENCIES, freqLabel, freqShort, freqMonths, periodsPerYear, customMonths, normalizeFreq, derivedEndDate, renewContract, needsRenewal, applyPayment, splitVat, isCommercial, isVacant, settleDeposit, unitVatApplies,
   vacancyDays, TURNOVER_CHECKLIST, defaultTermPeriods, parseDate, dueWithVat, rentWithVat, withVat, unitVat, firstDueGap, type Frequency } from "@/lib/contracts";
 import { PROPERTY_TYPES, typeLabel, unitLabel, typeIcon, unitWordFor } from "@/lib/domain";
 import { statementHTML, invoiceHTML, propertyStatementHTML, moveOutSettlementHTML, quotationHTML, ownerReportHTML, receiptHTML, DEFAULT_CHARGES, openDoc, type ChargeRow, type OwnerReportPayment } from "@/lib/documents";
@@ -39,9 +39,9 @@ import { FEE_PERIODS, type ExpenseRow } from "@/lib/expenses";
 import DateField from "@/components/DateField";
 
 /** تحويل كل دورة إلى مكافئ شهري لحساب الدخل التقريبي */
-const PERIODS_PER_MONTH: Record<Frequency, number> = {
-  daily: 30, weekly: 4.33, monthly: 1, bimonthly: 1 / 2, quarterly: 1 / 3, trimester: 1 / 4, semiannual: 1 / 6, annual: 1 / 12,
-};
+const PERIODS_PER_MONTH = new Proxy({} as Record<Frequency, number>, {
+  get: (_o, f: string) => f === "daily" ? 30 : f === "weekly" ? 4.33 : 1 / (freqMonths(f) || 1),
+});
 
 type Tenant = {
   id: string; name: string; unit: string | null; phone: string | null; national_id: string | null;
@@ -1131,8 +1131,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
        */
       if (prev && (prev.paid_periods || 0) > 0 && (d.payment_frequency || "monthly") !== (prev.payment_frequency || "monthly")
           && Number(d.paid_periods) === Number(init.paid_periods) && !(d as any)._paidPicked) {
-        const MO: Record<string, number> = { monthly: 1, bimonthly: 2, quarterly: 3, trimester: 4, semiannual: 6, annual: 12 };
-        const oldM = MO[prev.payment_frequency || "monthly"], newM = MO[d.payment_frequency || "monthly"];
+        const oldM = freqMonths(prev.payment_frequency || "monthly"), newM = freqMonths(d.payment_frequency || "monthly");
         const months = (prev.paid_periods || 0) * (oldM || 0);
         const eq = oldM && newM ? months / newM : null;
         fail(`غيّرت دورة السداد لعقد عليه ${prev.paid_periods} دفعة مسجَّلة بالدورة القديمة`
@@ -3969,6 +3968,28 @@ function AddNote({ onAdd, unitWord }: {
   );
 }
 
+/**
+ * (22 نوفمبر 2026 — طلب مكتب الأولى) دورة سداد مخصصة «كل N أشهر» (1–24) بجانب الدورات الثابتة.
+ * تُحفظ بالصيغة m<N>؛ وما وافق دورة ثابتة (3 أشهر) يُطبَّع إليها (normalizeFreq).
+ */
+function CustomFreqButton({ value, onPick }: { value?: string | null; onPick: (f: Frequency) => void }) {
+  const cur = customMonths(value);
+  const [open, setOpen] = useState(!!cur);
+  const [n, setN] = useState(String(cur || ""));
+  const active = !!cur;
+  return (
+    <div className={`border-2 rounded-lg py-1.5 px-2 text-xs font-semibold transition flex items-center justify-center gap-1 ${active ? "border-gold bg-[#FBF1DF]" : "border-line hover:border-goldSoft"}`}
+         onClick={() => { if (!open) setOpen(true); }} role="button" title="دورة بعدد أشهر تحدده بنفسك — مثل كل 5 أو 7 أشهر">
+      {open ? (<>
+        <span>كل</span>
+        <input className="fld !py-0.5 !px-0 w-9 text-center [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none" type="number" min={1} max={24} inputMode="numeric" value={n} autoFocus={!cur}
+               onChange={(e) => { const v = e.target.value.replace(/[^0-9]/g, "").slice(0, 2); setN(v); const k = Number(v); if (k >= 1 && k <= 24) onPick(normalizeFreq(`m${k}`)); }} />
+        <span>{Number(n) === 1 ? "شهر" : Number(n) === 2 ? "شهرين" : Number(n) >= 11 ? "شهرًا" : "أشهر"}</span>
+      </>) : <span>أخرى…</span>}
+    </div>
+  );
+}
+
 function Field({ label, hint, children }: { label: React.ReactNode; hint?: string; children: React.ReactNode }) {
   return (
     /* <label> يلفّ أزرارًا أحيانًا (دورة السداد، التقويم) — حارس النقرة في app/layout.tsx (LABEL_GUARD) */
@@ -4428,11 +4449,10 @@ function TenantModal({ open, initial, unitWord, error, saving, onClose, onSubmit
   ].filter(Boolean).length;
   /* تغيير الدورة بالمدة نفسها — كزرّ الدورة في النموذج (لا يُبقي «12 دفعة» لعقد صار سنويًّا) */
   const withFreq = (f: string) => {
-    const MO: Record<string, number> = { monthly: 1, bimonthly: 2, quarterly: 3, trimester: 4, semiannual: 6, annual: 12 };
-    const oldM = (Number(d.contract_periods) || 0) * (MO[freqNow] || 0);
-    return { ...d, payment_frequency: f, ...(oldM && MO[f] && oldM % MO[f] === 0 ? { contract_periods: oldM / MO[f] } : {}) };
+    const mf = freqMonths(f), oldM = (Number(d.contract_periods) || 0) * (freqMonths(freqNow) || 0);
+    return { ...d, payment_frequency: f, ...(oldM && mf && oldM % mf === 0 ? { contract_periods: oldM / mf } : {}) };
   };
-  const FREQ_AR: Record<string, string> = { monthly: "شهري", bimonthly: "كل شهرين", quarterly: "كل 3 أشهر", trimester: "كل 4 أشهر", semiannual: "نصف سنوي", annual: "سنوي" };
+  const FREQ_AR = new Proxy({} as Record<string, string>, { get: (_o, f: string) => freqLabel(f) });
   /* جدول الأقساط بالبيانات الحالية — لقائمة «مسدَّد حتى» والمعاينة */
   const sched: { n: number; date: string; status: string }[] = d.contract_start && Number(d.rent_amount) > 0
     ? buildSchedule({ ...d, paid_periods: Number(d.paid_periods) || 0 } as any) : [];
@@ -4492,7 +4512,7 @@ function TenantModal({ open, initial, unitWord, error, saving, onClose, onSubmit
         </div>
         <div className="grid grid-cols-2 gap-3">
           <Field label={isNew && String(d.status) !== "vacated" ? "قيمة الدفعة (ريال) *" : "قيمة الدفعة (ريال)"} hint={(() => {
-            const st = ({ monthly: 1, bimonthly: 2, quarterly: 3, trimester: 4, semiannual: 6, annual: 12 } as any)[d.payment_frequency || "monthly"];
+            const st = freqMonths(d.payment_frequency || "monthly");
             const r = Number(d.rent_amount) || 0;
             return r > 0 && st ? `= ${sar(Math.round(r * 12 / st))} سنويًّا` : undefined;
           })()}><input className="fld" type="number" value={d.rent_amount || ""} onChange={(e) => setD({ ...d, rent_amount: e.target.value })} placeholder="2500" /></Field>
@@ -4502,16 +4522,19 @@ function TenantModal({ open, initial, unitWord, error, saving, onClose, onSubmit
           <div className="grid grid-cols-3 gap-2">
             {FREQUENCIES.map((f) => (
               <button key={f.value} type="button" onClick={() => {
-                const MO: Record<string, number> = { monthly: 1, bimonthly: 2, quarterly: 3, trimester: 4, semiannual: 6, annual: 12 };
-                const oldM = (Number(d.contract_periods) || 0) * (MO[d.payment_frequency || "monthly"] || 0);
+                const mf = freqMonths(f.value), oldM = (Number(d.contract_periods) || 0) * (freqMonths(d.payment_frequency || "monthly") || 0);
                 setD({ ...d, payment_frequency: f.value,
-                  ...(oldM && MO[f.value] && oldM % MO[f.value] === 0 ? { contract_periods: oldM / MO[f.value] } : {}) });
+                  ...(oldM && mf && oldM % mf === 0 ? { contract_periods: oldM / mf } : {}) });
               }}
                 className={`border-2 rounded-lg py-2 text-xs font-semibold transition ${
                   d.payment_frequency === f.value ? "border-gold bg-[#FBF1DF]" : "border-line hover:border-goldSoft"}`}>
                 {f.label}
               </button>
             ))}
+            <CustomFreqButton value={d.payment_frequency} onPick={(v) => {
+              const mf = freqMonths(v), oldM = (Number(d.contract_periods) || 0) * (freqMonths(d.payment_frequency || "monthly") || 0);
+              setD({ ...d, payment_frequency: v, ...(oldM && mf && oldM % mf === 0 ? { contract_periods: oldM / mf } : {}) });
+            }} />
           </div>
           {(rentOdd || fixedNow("rent", rentSig)) && (() => {
             const r = Number(d.rent_amount) || 0;
@@ -4573,8 +4596,7 @@ function TenantModal({ open, initial, unitWord, error, saving, onClose, onSubmit
           {/* «مدة العقد» لا «عدد الدفعات»: المكتب يعرف المدة من العقد، والعدد يُحسب منها —
               عقد سنة بدفع نصف سنوي = دفعتان حتمًا. «أخرى» للمدد غير المعتادة. */}
           {(() => {
-            const MO: Record<string, number> = { monthly: 1, bimonthly: 2, quarterly: 3, trimester: 4, semiannual: 6, annual: 12 };
-            const f = (d.payment_frequency || "monthly") as Frequency; const st = MO[f] || 0;
+            const f = (d.payment_frequency || "monthly") as Frequency; const st = freqMonths(f) || 0;
             const n = Number(d.contract_periods) || 0;
             if (!st) return (   /* يومي/أسبوعي: المدة بالأشهر لا تنطبق — العدد مباشرة */
               <Field label="عدد الدفعات"><input className="fld" type="number" min={1} value={d.contract_periods || ""}
@@ -4586,7 +4608,7 @@ function TenantModal({ open, initial, unitWord, error, saving, onClose, onSubmit
               : m < 12 ? plural(m, "شهر واحد", "شهران", "أشهر", "شهرًا")
               : `${plural(Math.floor(m / 12), "سنة", "سنتان", "سنوات", "سنة")} و${plural(m % 12, "شهر", "شهران", "أشهر", "شهرًا")}`;
             const cnt = n || defPeriods;
-            const FW: Record<string, string> = { monthly: "شهرية", bimonthly: "كل شهرين", quarterly: "ربع سنوية", trimester: "كل 4 أشهر", semiannual: "نصف سنوية", annual: "سنوية" };
+            const FW = new Proxy({} as Record<string, string>, { get: (_o, k: string) => ({ monthly: "شهرية", bimonthly: "كل شهرين", quarterly: "ربع سنوية", trimester: "كل 4 أشهر", semiannual: "نصف سنوية", annual: "سنوية" } as Record<string, string>)[k] || freqLabel(k) });
             const end = d.contract_start ? derivedEndDate(d.contract_start, f, cnt, null, d.calendar === "hijri" ? "hijri" : "gregorian") : null;
             return (
               <Field label="مدة العقد" hint={`= ${plural(cnt, "دفعة واحدة", "دفعتان", "دفعات", "دفعة")} ${FW[f]}${end ? ` · ينتهي ${arDate(end)} (${end < startISO ? "⚠️ " : ""}${dateDistanceAr(startISO, end)})` : ""}`}>
@@ -5086,8 +5108,7 @@ function QuoteModal({ property, unitWord, issuer, onClose }: {
               /* المكتب يفكّر بالمدة («سنتان»)، لا بعدد الدفعات («4»). تحويلها
                  بيده مصدر خطأ: عقد سنتين نصف سنوي = 4 دفعات لا 2. نأخذ المدة
                  ونحسب العدد، ونعرض النتيجة ليراها قبل الحفظ. */
-              const perYear = { daily: 365, weekly: 52, monthly: 12, bimonthly: 6, quarterly: 4, trimester: 3, semiannual: 2, annual: 1 }[
-                (d.payment_frequency || "monthly") as Frequency] || 12;
+              const perYear = periodsPerYear(d.payment_frequency || "monthly");
               const months = Math.round((Number(d.contract_periods) || 0) * (12 / perYear));
               const setMonths = (m: number) => {
                 const per = Math.max(1, Math.round(m * perYear / 12));
@@ -5130,8 +5151,7 @@ function QuoteModal({ property, unitWord, issuer, onClose }: {
                 /* المدة محفوظة كعدد دفعات، فتغيير الدورة وحده كان يغيّر المدة بصمت:
                    «سنة» ثم «كل 6 أشهر» = دفعة واحدة = عرض بنصف القيمة. نثبّت المدة
                    بالأشهر ونعيد حساب العدد — كنموذج الوحدة. */
-                const PY: Record<string, number> = { daily: 365, weekly: 52, monthly: 12, bimonthly: 6, quarterly: 4, trimester: 3, semiannual: 2, annual: 1 };
-                const oldPY = PY[d.payment_frequency || "monthly"] || 12, newPY = PY[f.value] || 12;
+                const oldPY = periodsPerYear(d.payment_frequency || "monthly"), newPY = periodsPerYear(f.value);
                 const months = (Number(d.contract_periods) || 1) * 12 / oldPY;
                 setD({ ...d, payment_frequency: f.value, contract_periods: Math.max(1, Math.round(months * newPY / 12)) });
               }}
@@ -5140,6 +5160,11 @@ function QuoteModal({ property, unitWord, issuer, onClose }: {
                 {f.label}
               </button>
             ))}
+            <CustomFreqButton value={d.payment_frequency} onPick={(v) => {
+              const oldPY = periodsPerYear(d.payment_frequency || "monthly"), newPY = periodsPerYear(v);
+              const months = (Number(d.contract_periods) || 1) * 12 / oldPY;
+              setD({ ...d, payment_frequency: v, contract_periods: Math.max(1, Math.round(months * newPY / 12)) });
+            }} />
           </div>
         </Field>
 
@@ -5316,8 +5341,7 @@ function Advisory({ answer, sig, title, children, fixLabel, onFix, ackLabel = "�
 
 /** قيمة دفعة لا تتسق مع دورتها: أشيع خطأ صامت في الإدخال الأول (إيجار السنة في خانة الشهر أو العكس) */
 function rentOddity(rent: number, freq: string): null | { kind: "high" | "low"; perMonth: number; perYear: number } {
-  const MO: Record<string, number> = { monthly: 1, bimonthly: 2, quarterly: 3, trimester: 4, semiannual: 6, annual: 12 };
-  const st = MO[freq];
+  const st = freqMonths(freq);
   if (!st || !(rent > 0)) return null;           // يومي/أسبوعي: لا معيار شهري موثوق
   const perMonth = rent / st, perYear = perMonth * 12;
   if (freq !== "annual" && perMonth >= 20000) return { kind: "high", perMonth, perYear };
@@ -5344,10 +5368,9 @@ function RenewModal({ tenant, unitWord, onClose, onRenew }: {
   const [periods, setPeriods] = useState<string>(String(tenant.contract_periods || defaultTermPeriods(curFreq)));
   const [durCustom, setDurCustom] = useState(false);   // «مدة أخرى…» اختيار يُحفظ، لا يُستنتج من المدة
   /* تغيير الدورة يحفظ المدة لا العدد: شهري ×12 ← سنوي كان يبقى 12 = اثنتا عشرة سنة */
-  const MONTHS_PER: Record<string, number> = { monthly: 1, bimonthly: 2, quarterly: 3, trimester: 4, semiannual: 6, annual: 12 };
   function changeFreq(f: Frequency) {
-    const oldM = (Number(periods) || defaultTermPeriods(freq)) * (MONTHS_PER[freq] || 0);
-    if (oldM && MONTHS_PER[f]) setPeriods(String(Math.max(1, Math.round(oldM / MONTHS_PER[f]))));
+    const mf = freqMonths(f), oldM = (Number(periods) || defaultTermPeriods(freq)) * (freqMonths(freq) || 0);
+    if (oldM && mf) setPeriods(String(Math.max(1, Math.round(oldM / mf))));
     setFreq(f);
   }
   const [amount, setAmount] = useState<string>(String(tenant.rent_amount || ""));
@@ -5397,13 +5420,14 @@ function RenewModal({ tenant, unitWord, onClose, onRenew }: {
                 {f.label}
               </button>
             ))}
+            <CustomFreqButton value={freq} onPick={(v) => changeFreq(v)} />
           </div>
         </Field>
         <div className="grid grid-cols-2 gap-3">
           {/* «مدة العقد الجديد» لا «عدد الدفعات» — كنموذج الوحدة: المكتب يعرف المدة،
               والعدد يُحسب منها. «مدة أخرى» للمدد غير المعتادة. */}
           {(() => {
-            const st = MONTHS_PER[freq] || 0;
+            const st = freqMonths(freq) || 0;
             const n = Number(periods) || defaultTermPeriods(freq);
             if (!st) return <Field label="عدد الدفعات"><input className="fld" type="number" value={periods} onChange={(e) => setPeriods(e.target.value)} /></Field>;
             const months = n * st;
