@@ -1,6 +1,6 @@
 "use client";
 import { useState } from "react";
-import { cleanVatNo, isValidVatNo } from "@/lib/einvoice";
+import { cleanVatNo, isValidVatNo, PAYMENT_MEANS } from "@/lib/einvoice";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase-client";
 import TeamSection from "@/components/TeamSection";
@@ -61,6 +61,8 @@ export default function SettingsView({ profile }: { profile: any }) {
       /* (v95) الرقم الضريبي بلا مسافات وبأرقام لاتينية — يُرفض الخطأ قبل الحفظ أدناه */
       vat_number: cleanVatNo(p.vat_number) || null,
       billing_address: String(p.billing_address || "").trim().slice(0, 200) || null,
+      /* (v96) وسيلة الدفع — حقل إلزامي في الفاتورة الضريبية القياسية */
+      payment_means: PAYMENT_MEANS[String(p.payment_means || "")] ? p.payment_means : null,
       notify_enabled: p.notify_enabled ?? true,
       notify_days_before: Number(p.notify_days_before) || 5,
       default_calendar: p.default_calendar === "hijri" ? "hijri" : "gregorian",
@@ -99,7 +101,7 @@ export default function SettingsView({ profile }: { profile: any }) {
     }
     setSaving(false);
     if (error) { setMsg({ t: "err", m: error.message }); return; }
-    const AR: Record<string, string> = { default_calendar: "التقويم الافتراضي", billing_address: "عنوان المنشأة" };
+    const AR: Record<string, string> = { default_calendar: "التقويم الافتراضي", billing_address: "عنوان المنشأة", payment_means: "وسيلة الدفع" };
     setMsg(skipped.length
       ? { t: "ok", m: `تم الحفظ — عدا ${skipped.map((c) => AR[c] || c).join("، ")}: يحتاج تحديثًا في قاعدة البيانات، أخبر الدعم.` }
       : { t: "ok", m: "تم الحفظ." });
@@ -358,6 +360,13 @@ export default function SettingsView({ profile }: { profile: any }) {
             {p.vat_number && isValidVatNo(p.vat_number) && !String(p.billing_address || "").trim() && (
               <span className="block text-xs text-late mt-1">أضف العنوان — يُطبع في كل فاتورة ضريبية مبسطة.</span>
             )}
+          </label>
+          <label className="block">
+            <span className="block text-sm font-semibold mb-1">وسيلة الدفع في الفواتير <span className="text-muted font-normal text-xs">إلزامية في الفاتورة الضريبية للشركات</span></span>
+            <select className="fld" value={p.payment_means || ""} onChange={(e) => setP({ ...p, payment_means: e.target.value || null })}>
+              <option value="">— لا تُطبع —</option>
+              {Object.entries(PAYMENT_MEANS).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+            </select>
           </label>
           <label className="block">
             <span className="block text-sm font-semibold mb-1">جوال التواصل</span>

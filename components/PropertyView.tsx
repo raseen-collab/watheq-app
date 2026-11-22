@@ -830,7 +830,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
        ويُفتح النموذج بلا سؤال السكن فيُسجَّل الساكن منذ سنة عقدًا يبدأ اليوم. */
     if (isVacant(t) && !t.contract_start && !(Number(t.paid_periods) > 0) && !(Number((t as any).carried_debt) > 0)) {
       setModal({ kind: "tenant", id: t.id, preset: {
-        _fill: true, name: "", phone: "", national_id: "", status: "active", move_out_date: null,
+        _fill: true, name: "", phone: "", national_id: "", vat_number: null, billing_address: null, status: "active", move_out_date: null,
         contract_start: today(), paid_periods: 0, partial_amount: 0,
       } } as any);
       return;
@@ -870,7 +870,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       _relet: true, _reletDebt: keepDebt, _reletFate: fate, _prevName: t.name,
       _prevMoveOut: (t as any).move_out_date || null,
       /* ما يخصّ المستأجر: فارغ */
-      name: "", phone: "", national_id: "", contract_no: "", contract_start: today(), contract_end: null,
+      name: "", phone: "", national_id: "", vat_number: null, billing_address: null, contract_no: "", contract_start: today(), contract_end: null,
       first_due: null, paid_periods: 0, partial_amount: 0, carried_debt: 0, carried_debt_note: null,
       status: "active", move_out_date: null,
       /* قراءة التسليم للجديد = قراءة الخروج للسابق */
@@ -1040,6 +1040,10 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       fail("أدخل تاريخ بداية العقد — بدونه لا يستطيع النظام حساب الاستحقاقات لهذه الوحدة.");
       return;
     }
+    if (d.vat_number && !isValidVatNo(d.vat_number)) {
+      fail("الرقم الضريبي للمستأجر غير صحيح — ١٥ رقمًا يبدأ بـ3 وينتهي بـ3، أو اتركه فارغًا.");
+      return;
+    }
     const freq = (d.payment_frequency || "monthly") as Frequency;
     const periods = d.contract_periods ? Number(d.contract_periods) : null;
     const payload = {
@@ -1055,6 +1059,9 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       property_id: active.id, name: d.name, unit: d.unit || null, phone: d.phone || null,
       phone2: String(d.phone2 || "").trim() || null,
       national_id: d.national_id || null, rent_amount: Number(d.rent_amount) || 0,
+      /* (v96) المستأجر المسجَّل في الضريبة: تصدر له «فاتورة ضريبية» قياسية برقمه وعنوانه */
+      vat_number: cleanVatNo(d.vat_number) || null,
+      billing_address: String(d.billing_address || "").trim().slice(0, 200) || null,
       contract_start: d.contract_start || null,
       payment_frequency: freq,
       contract_periods: periods,
@@ -1678,7 +1685,9 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
     }, issuer || {}));
     /* الضريبة مفعّلة والفاتورة خرجت غير ضريبية: نقول ما الناقص بدل أن يكتشفه المستأجر */
     const gaps = taxInvoiceGaps(sellerOf(row, issuer as any, active as any), unitVatApplies(t, active));
-    if (gaps.length) notify("err", `صدرت ${invoiceNo} — لتكون فاتورة ضريبية مبسطة كاملة ينقص: ${gaps.join("، ")}.`);
+    /* (v96) قياسية: ينقصها رقم/عنوان المستأجر أو وسيلة الدفع؟ (العنوان يُكمَل بعنوان الوحدة) */
+    if (!gaps.length && row.invoice_kind === "standard" && !row.payment_means) gaps.push("وسيلة الدفع (الإعدادات ← بيانات الفوترة)");
+    if (gaps.length) notify("err", `صدرت ${invoiceNo} — لتكون فاتورة ضريبية${row.invoice_kind === "standard" ? "" : " مبسطة"} كاملة ينقص: ${gaps.join("، ")}.`);
   }
 
   /** تذكير ودّي — يوضّح تفاصيل المطالبة وتاريخ استحقاقها */
@@ -4676,6 +4685,17 @@ function TenantModal({ open, initial, unitWord, error, saving, onClose, onSubmit
           <div className="space-y-3 mt-3">
           <Field label="رقم العقد" hint="رقمه لديكم أو في «إيجار» — يظهر في كشوف الحساب والخطابات"><input className="fld" dir="ltr" value={d.contract_no || ""} onChange={(e) => setD({ ...d, contract_no: e.target.value })} /></Field>
           <Field label="رقم الهوية / السجل" hint="اختياري — أدخله فقط إن احتجته في الخطابات"><input className="fld" value={d.national_id || ""} onChange={(e) => setD({ ...d, national_id: e.target.value })} /></Field>
+          {(vatEnabled || d.vat_number) && (
+            <div className="grid sm:grid-cols-2 gap-3">
+              <Field label="الرقم الضريبي للمستأجر" hint={d.vat_number && !isValidVatNo(d.vat_number) ? "غير صحيح — ١٥ رقمًا يبدأ وينتهي بـ3" : "للمستأجر المسجَّل في الضريبة (شركة/مؤسسة) — تصدر له «فاتورة ضريبية» قياسية بدل المبسطة"}>
+                <input className="fld" dir="ltr" inputMode="numeric" maxLength={20} value={d.vat_number || ""} placeholder="3xxxxxxxxxxxxx3"
+                  onChange={(e) => setD({ ...d, vat_number: e.target.value })} />
+              </Field>
+              <Field label="عنوان المستأجر" hint="يُطبع في الفاتورة القياسية — فارغ = عنوان الوحدة">
+                <input className="fld" maxLength={200} value={d.billing_address || ""} onChange={(e) => setD({ ...d, billing_address: e.target.value })} />
+              </Field>
+            </div>
+          )}
           <Field label="جوال إضافي" hint="اختياري — رقم ثانٍ للمستأجر (الأول يبقى الأساسي للتذكير)"><input className="fld" value={d.phone2 || ""} onChange={(e) => setD({ ...d, phone2: e.target.value })} placeholder="05xxxxxxxx" /></Field>
           <Field label="دين مرحَّل (ريال)" hint="متأخرات من عقد سابق أو مستأجر سابق — تظهر في الكشوف ولا تدخل في دفعات العقد الجاري">
             <input className="fld" type="number" min={0} value={d.carried_debt ?? ""} onChange={(e) => setD({ ...d, carried_debt: e.target.value })} placeholder="0" />
