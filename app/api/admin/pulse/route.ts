@@ -161,6 +161,20 @@ async function handle(req: Request) {
     Sentry.captureException(e, { tags: { job: "pulse-subs" } });
   }
 
+  /* (22 نوفمبر 2026) آخر نسخة احتياطية — مهمة توقفت لا تُرسل «فشلت»، فالسطر هنا
+     يكشف الصمت نفسه: إن لم تكن نسخة اليوم موجودة يقول ذلك صراحة. */
+  try {
+    const { data: files, error: berr } = await db.storage.from("backups").list("daily", { limit: 1000 });
+    if (berr) throw berr;
+    const days = (files || []).map((f: any) => String(f.name).replace(/\.wqbk$/, "")).filter((n: string) => /^\d{4}-\d{2}-\d{2}$/.test(n)).sort();
+    const last = days[days.length - 1];
+    const today = riyadhDay(0);
+    L.push("", last === today ? `🗄 النسخة الاحتياطية: ✅ نسخة اليوم موجودة (${days.length} نسخة يومية محفوظة)`
+      : `🗄 النسخة الاحتياطية: ⚠️ لا نسخة لليوم — آخر نسخة: ${last || "لا شيء"}`);
+  } catch {
+    L.push("", "🗄 النسخة الاحتياطية: ⚠️ تعذّر فحص المخزن (هل شُغّل schema-v91؟)");
+  }
+
   /* 30 سبتمبر 2026: فشل الإرسال كان يُبتلع — يُرسَل لـSentry (داخل tgSend) ويظهر في JSON */
   const res = await tgSend(chatId, L.join("\n"));
   const failed = res.ok ? 0 : 1;
