@@ -57,3 +57,10 @@ npx esbuild lib/backup.ts --bundle --format=cjs --platform=node --alias:@=. --ex
 node tests/backup.js         # التشفير، التلاعب، المفتاح الخاطئ، قائمة الجداول، الاحتفاظ 30 يومًا
 node tests/backup-build.js   # صفحات >1000 بلا فقد ولا تكرار، جدول فاشل يُبلَّغ، المستخدمون بلا كلمات مرور
 ```
+
+## فواتير للمحاسب (22 نوفمبر 2026)
+
+```bash
+npx esbuild lib/accounting-export.ts --bundle --format=cjs --platform=node --alias:@=. --outfile=/tmp/b/acctExport.js
+node tests/accounting-export.js   # شاملة/مضافة/كسور/سكني/لقطة الإصدار/القديمة/الفترة/الملغاة/المستأجر السابق/CSV
+```
