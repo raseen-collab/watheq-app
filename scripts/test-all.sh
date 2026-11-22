@@ -29,6 +29,7 @@ npx esbuild lib/documents.ts --bundle --format=cjs --platform=node --alias:@=. -
 npx esbuild lib/documents.ts --bundle --format=cjs --platform=node --alias:@=. --outfile=/tmp/docs.js
 npx esbuild lib/domain.ts --bundle --format=cjs --platform=node --alias:@=. --outfile=/tmp/b/domain.js
 npx esbuild lib/einvoice.ts --bundle --format=cjs --platform=node --alias:@=. --outfile=/tmp/b/einvoice.js
+npx esbuild lib/fee-invoice.ts --bundle --format=cjs --platform=node --alias:@=. --outfile=/tmp/b/fee-invoice.js
 npx esbuild lib/entitlements.ts --bundle --format=cjs --platform=node --alias:@=. --outfile=/tmp/b/ent.js
 npx esbuild lib/expenses.ts   --bundle --format=cjs --platform=node --outfile=/tmp/exp.js  --alias:@=.
 npx esbuild lib/expenses.ts --bundle --format=cjs --platform=node --alias:@=. --outfile=/tmp/b/expenses.js
