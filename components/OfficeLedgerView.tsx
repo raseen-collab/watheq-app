@@ -20,6 +20,7 @@ import { catLabel } from "@/lib/expenses";
 import { INCOME_CATS, EXPENSE_CATS_OFFICE, ledgerSummary, periodBounds, validateEntry, ledgerCatIcon, ledgerCSV, prefillFromQuery,
   type LedgerEntry, type LedgerKind, type LedgerSummary } from "@/lib/office-ledger";
 import DateField from "@/components/DateField";
+import { exportLines, monthlySummary, EXPORT_HEAD, lineCells } from "@/lib/accounting-export";
 
 type Prop = { id: string; name: string; is_demo?: boolean | null };
 
@@ -108,6 +109,59 @@ export default function OfficeLedgerView({ orgName, issuer }: { orgName: string;
   }
   useEffect(() => { load(); }, [period]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  /* (22 نوفمبر 2026) «فواتير للمحاسب»: فواتير الإيجار الصادرة في الفترة بملف Excel جاهز
+     للاستيراد في البرنامج المحاسبي المربوط بالزكاة (المرحلة الثانية من الفوترة الإلكترونية).
+     المبالغ من الفاتورة كما صدرت — lib/accounting-export.ts — مع ملخّص شهري للإقرار. */
+  const [acctBusy, setAcctBusy] = useState(false);
+  async function exportForAccountant() {
+    if (!bounds) return;
+    setAcctBusy(true); setErr(null);
+    try {
+      const o = office || await getOffice(supabase);
+      const uid = o?.officeId;
+      if (!uid) throw new Error("انتهت الجلسة — سجّل الدخول مجددًا");
+      const { data: pr, error: pe } = await supabase.from("properties").select("*").eq("user_id", uid);
+      if (pe) throw pe;
+      const real = (pr || []).filter((p: any) => !p.is_demo);
+      const ids = real.map((p: any) => p.id);
+      const invoices = ids.length ? await fetchAllRows(supabase, "invoices", "*", (q: any) => q.eq("user_id", uid).in("property_id", ids)) : [];
+      const tenants = ids.length ? await fetchAllRows(supabase, "tenants", "id,name,unit,unit_type,vat_mode,property_id", (q: any) => q.in("property_id", ids)) : [];
+      const pastQ = ids.length ? await supabase.from("past_tenancies").select("id,unit_row_id,archived_at,name,unit").in("property_id", ids).limit(5000) : { data: [] as any[] };
+      const past = ((pastQ as any).error ? [] : (pastQ as any).data || []) as any[];
+      /* فاتورة صدرت قبل أرشفة مستأجرٍ من الوحدة هي فاتورته هو — نفس قاعدة التصدير الكامل */
+      const holderOf = (inv: any) => past
+        .filter((a) => a.unit_row_id && a.unit_row_id === inv.tenant_id && String(a.archived_at || "") > String(inv.created_at || ""))
+        .sort((a, b) => String(a.archived_at).localeCompare(String(b.archived_at)))[0] || null;
+      const lines = exportLines({ invoices: invoices as any[], tenants: tenants as any[], props: real, holderOf,
+        issuer: { org_name: orgName, vat_number: issuer?.vat_number || null }, from: bounds.from, to: bounds.to });
+      if (!lines.length) { setErr(`لا فواتير صادرة في ${bounds.label}.`); return; }
+      const XLSX = await import("xlsx");
+      const wb = XLSX.utils.book_new();
+      wb.Workbook = { Views: [{ RTL: true }] };
+      const ws = XLSX.utils.aoa_to_sheet([[...EXPORT_HEAD], ...lines.map(lineCells)]);
+      ws["!cols"] = [16, 12, 12, 12, 24, 22, 16, 8, 40, 14, 10, 12, 12, 10, 22, 18].map((w) => ({ wch: w }));
+      XLSX.utils.book_append_sheet(wb, ws, "الفواتير");
+      const sum = monthlySummary(lines);
+      const ws2 = XLSX.utils.aoa_to_sheet([["الشهر", "عدد الفواتير", "المبلغ قبل الضريبة", "منه خاضع للضريبة", "مبلغ الضريبة", "الإجمالي"],
+        ...sum.map((m) => [m.month, m.count, m.base, m.taxableBase, m.vat, m.total])]);
+      ws2["!cols"] = [10, 12, 18, 18, 14, 14].map((w) => ({ wch: w }));
+      XLSX.utils.book_append_sheet(wb, ws2, "ملخص شهري");
+      const ws3 = XLSX.utils.aoa_to_sheet([
+        ["اقرأني"],
+        ["هذا الملف من وثيق: فواتير الإيجار الصادرة في " + bounds.label + "، صف لكل فاتورة."],
+        ["استورده في برنامجك المحاسبي المربوط بهيئة الزكاة (قسم فواتير المبيعات ← استيراد) لتُصدر منه الفاتورة الإلكترونية المعتمدة."],
+        ["المبالغ كما صدرت الفاتورة في وثيق. الملغاة مذكورة بحالتها وخارج «الملخص الشهري»."],
+        ["«ضريبية» = فيها ضريبة 15% وعلى المكتب رقم ضريبي. الإيجار السكني معفى."],
+        ["الرقم الضريبي للمستأجر التجاري وعنوانه يُكمَلان في البرنامج المحاسبي إن طلبهما."],
+      ]);
+      ws3["!cols"] = [{ wch: 110 }];
+      XLSX.utils.book_append_sheet(wb, ws3, "اقرأني");
+      XLSX.writeFile(wb, `فواتير-للمحاسب-${period}.xlsx`);
+    } catch (e: any) {
+      setErr(String(e?.message || e));
+    } finally { setAcctBusy(false); }
+  }
+
   async function save(d: Partial<LedgerEntry>) {
     const bad = validateEntry(d);
     if (bad) return flash("err", bad);
@@ -179,6 +233,8 @@ export default function OfficeLedgerView({ orgName, issuer }: { orgName: string;
           {canWrite && <button className="btn btn-gold text-sm" onClick={() => { setDraft(null); setAdding(adding === "income" ? null : "income"); }}>+ دخل</button>}
           {canWrite && <button className="btn btn-ghost text-sm" onClick={() => { setDraft(null); setAdding(adding === "expense" ? null : "expense"); }}>+ مصروف مكتب</button>}
           {can(office, "export_data") && <button className="btn btn-ghost text-sm" onClick={exportCSV} disabled={!sum} title="تصدير CSV (Excel)">⬇ CSV</button>}
+          {can(office, "export_data") && can(office, "view_financials") && <button className="btn btn-ghost text-sm" onClick={() => void exportForAccountant()} disabled={acctBusy}
+            title="فواتير الإيجار الصادرة في الفترة — ملف Excel جاهز لاستيراده في برنامجك المحاسبي المربوط بالزكاة">{acctBusy ? "…" : "🧾 فواتير للمحاسب"}</button>}
           <button className="btn btn-ghost text-sm" onClick={() => window.print()} title="طباعة الدفتر">🖨️</button>
         </div>
       </div>
