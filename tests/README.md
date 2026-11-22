@@ -42,3 +42,12 @@ for f in roles:roles entitlements:ent pricing:pricing listings:listings requests
   npx esbuild lib/${f%%:*}.ts --bundle --format=cjs --platform=node --alias:@=. --outfile=/tmp/b/${f##*:}.js; done
 node tests/marketer.js   # الأدوار، 399 سنوي، السعي والتفويض، المتابعة، الإعلان بلا ترخيص، صفحة الزبون
 ```
+
+## النسخة الاحتياطية اليومية (22 نوفمبر 2026)
+
+```bash
+npx esbuild lib/backup-crypto.ts --bundle --format=cjs --platform=node --alias:@=. --outfile=/tmp/b/backupCrypto.js
+npx esbuild lib/backup.ts --bundle --format=cjs --platform=node --alias:@=. --external:@supabase/supabase-js --outfile=/tmp/b/backup.js
+node tests/backup.js         # التشفير، التلاعب، المفتاح الخاطئ، قائمة الجداول، الاحتفاظ 30 يومًا
+node tests/backup-build.js   # صفحات >1000 بلا فقد ولا تكرار، جدول فاشل يُبلَّغ، المستخدمون بلا كلمات مرور
+```
