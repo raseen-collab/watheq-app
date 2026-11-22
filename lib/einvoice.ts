@@ -126,3 +126,30 @@ export const qrTimestamp = (at?: string | null): string => {
   const d = at && !isNaN(Date.parse(at)) ? new Date(at) : new Date();
   return d.toISOString().replace(/\.\d{3}Z$/, "Z");
 };
+
+/* ── الفاتورة القياسية (schema-v96) ───────────────────────── */
+
+/** وسيلة الدفع — حقل إلزامي في الفاتورة الضريبية القياسية (ملحق قرار الضوابط) */
+export const PAYMENT_MEANS: Record<string, string> = {
+  transfer: "تحويل بنكي", cash: "نقدًا", cheque: "شيك", card: "بطاقة (مدى/ائتمانية)", sadad: "سداد", other: "أخرى",
+};
+export const PAYMENT_MEANS_EN: Record<string, string> = {
+  transfer: "Bank transfer", cash: "Cash", cheque: "Cheque", card: "Card", sadad: "SADAD", other: "Other",
+};
+
+/**
+ * قياسية أم مبسطة؟ — المستأجر المسجَّل في الضريبة (له رقم ضريبي صحيح) تصدر له
+ * «فاتورة ضريبية» قياسية: الدليل التفصيلي §4.2.1(ب) يقصر المبسطة بين منشأتين
+ * على ما دون 1,000 ريال. الفواتير الأقدم من v96 صدرت مبسطة وتبقى كذلك.
+ */
+export const isStandardKind = (kind?: string | null) => kind === "standard";
+
+/** ما ينقص الفاتورة القياسية — اسم المشتري وعنوانه ورقمه، ووسيلة الدفع */
+export function standardGaps(d: { buyer_name?: string | null; buyer_vat?: string | null; buyer_address?: string | null; payment_means?: string | null }): string[] {
+  const g: string[] = [];
+  if (!String(d.buyer_name || "").trim()) g.push("اسم المستأجر");
+  if (!isValidVatNo(d.buyer_vat)) g.push("الرقم الضريبي للمستأجر");
+  if (!String(d.buyer_address || "").trim()) g.push("عنوان المستأجر");
+  if (!d.payment_means || !PAYMENT_MEANS[d.payment_means]) g.push("وسيلة الدفع (الإعدادات ← بيانات الفوترة)");
+  return g;
+}

@@ -22,6 +22,8 @@ export type InvRow = {
   /** (v95) الإشعار الدائن ولقطة البائع لحظة الإصدار */
   doc_type?: string | null; ref_invoice_id?: string | null; reason?: string | null;
   seller_name?: string | null; seller_vat?: string | null; buyer_name?: string | null; unit_label?: string | null; property_name?: string | null;
+  /** (v96) قياسية/مبسطة ورقم المشتري الضريبي */
+  invoice_kind?: string | null; buyer_vat?: string | null;
 };
 export type ExportTenant = { id: string; name?: string | null; unit?: string | null; unit_type?: string | null; vat_mode?: string | null };
 export type ExportProp = { id: string; name?: string | null; owner_name?: string | null; property_type?: string | null;
@@ -33,6 +35,8 @@ export type ExportLine = {
   customer: string; property: string; owner: string; unit: string; description: string;
   base: number; vat_rate: number; vat: number; total: number; status: string; voided: boolean;
   seller: string; seller_vat: string;
+  /** (v96) «قياسية» للمستأجر المسجَّل، «مبسطة» لغيره، فارغ لغير الضريبية */
+  tax_type: string; buyer_vat: string;
   /** (v95) إشعار دائن: مبالغه سالبة، ويُحتسب في شهر إصداره */
   credit?: boolean;
   /** (v95) فاتورة ملغاة بإشعار دائن: تبقى في شهرها والإشعار يطرحها في شهره */
@@ -92,6 +96,8 @@ export function exportLines(input: {
       base: r2(sign * x.base), vat_rate: x.enabled ? x.rate : 0, vat: r2(sign * x.vat), total: r2(sign * x.total),
       status: cn ? "صادر" : STATUS_AR[inv.status || ""] || inv.status || "", voided: !cn && inv.status === "void",
       seller: sName, seller_vat: sVat,
+      tax_type: isTax ? (inv.invoice_kind === "standard" ? "قياسية" : "مبسطة") : "",
+      buyer_vat: inv.invoice_kind === "standard" ? (inv.buyer_vat || "") : "",
       credit: cn, cancelledByNote: !cn && noted.has(inv.id),
     });
   }
@@ -118,10 +124,11 @@ export function monthlySummary(lines: ExportLine[]) {
 }
 
 export const EXPORT_HEAD = ["رقم الفاتورة", "تاريخ الإصدار", "تاريخ الاستحقاق", "نوع الفاتورة", "العميل (المستأجر)", "العقار", "المالك", "الوحدة", "البيان",
-  "المبلغ قبل الضريبة", "نسبة الضريبة %", "مبلغ الضريبة", "الإجمالي", "الحالة", "البائع", "الرقم الضريبي للبائع"] as const;
+  "المبلغ قبل الضريبة", "نسبة الضريبة %", "مبلغ الضريبة", "الإجمالي", "الحالة", "البائع", "الرقم الضريبي للبائع",
+  "قياسية / مبسطة", "الرقم الضريبي للعميل"] as const;
 
 export const lineCells = (l: ExportLine) => [l.invoice_no, l.issue_date, l.due_date, l.kind, l.customer, l.property, l.owner, l.unit, l.description,
-  l.base, l.vat_rate, l.vat, l.total, l.status, l.seller, l.seller_vat];
+  l.base, l.vat_rate, l.vat, l.total, l.status, l.seller, l.seller_vat, l.tax_type, l.buyer_vat];
 
 /** CSV بترميز UTF-8 مع BOM — يفتحه Excel عربيًّا ويقبله أغلب البرامج المحاسبية في الاستيراد */
 export function exportCSV(lines: ExportLine[]): string {

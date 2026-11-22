@@ -12,7 +12,7 @@ import { moneySigned } from "./hoaMoney";
 import { metersCountLine, METER_TYPE_AR, type PropertyMeter } from "./meters";
 import { riyalsInWords } from "./tafqit";
 import { trustDocTitle, isTrustIn, isDepositKind, type TrustRow } from "./trust";
-import { sellerOf, isTaxInvoice, isValidVatNo, zatcaTlvBase64, qrTimestamp, type Seller, type InvoiceSnap } from "./einvoice";
+import { sellerOf, isTaxInvoice, isValidVatNo, zatcaTlvBase64, qrTimestamp, isStandardKind, PAYMENT_MEANS, PAYMENT_MEANS_EN, type Seller, type InvoiceSnap } from "./einvoice";
 import { enDate, methodEn, freqEn, unitWordEn, propertyTypeEn, usageEn, periodLabelEn, riyalsInWordsEn, receiptStatementEn, instalmentsEn } from "./docEn";
 
 const sar = (n: number) => {
@@ -1067,6 +1067,8 @@ export type InvoiceDoc = {
   /** (v95) الفاتورة الملغاة: رقم الإشعار الدائن الذي ألغاها */
   credit_note_no?: string | null;
   buyer_name?: string | null; buyer_id?: string | null; unit_label?: string | null; property_name?: string | null;
+  /** (v96) قياسية للمستأجر المسجَّل في الضريبة: رقمه وعنوانه ووسيلة الدفع */
+  invoice_kind?: string | null; buyer_vat?: string | null; buyer_address?: string | null; payment_means?: string | null;
 } & InvoiceSnap;
 
 /** فاتورة دفعة واحدة — أو إشعارها الدائن (doc_type = credit_note) */
@@ -1108,11 +1110,18 @@ export function invoiceHTML(t: Tenant, p: Property, inv: InvoiceDoc, issuer: Iss
   const snapOnNoVatNo = !hasSnap && reprint && inv.vat_snapshot === true && v.enabled && !vatNoOk;
   /* (v95) ضريبية = ضريبة مفعّلة + رقم ضريبي صحيح (١٥ رقمًا يبدأ وينتهي بـ3) */
   const isTax = isTaxInvoice(S, v.enabled) && !snapOff;
+  /* (v96) قياسية: المستأجر مسجَّل في الضريبة — «فاتورة ضريبية» بنسبة الضريبة ومبلغها لكل بند،
+     ورقم المشتري وعنوانه ووسيلة الدفع (ملحق قرار الضوابط). المبسطة لا تتغيّر. */
+  const std = isTax && isStandardKind(inv.invoice_kind);
+  const buyerVat = std ? inv.buyer_vat || null : null;
+  const buyerAddr = std ? inv.buyer_address || [unitNo ? `${ul} ${unitNo}` : "", propName, p.address, p.city].filter((x) => String(x || "").trim()).join("، ") : null;
+  const pm = inv.payment_means && PAYMENT_MEANS[inv.payment_means] ? inv.payment_means : null;
   const issueDay = inv.issue_date || today();
   /* وقت الإصدار: من created_at المحفوظ، أو لحظة الإصدار الأولى (بلا issue_date) */
   const issueTime = inv.created_at ? riyadhTime(inv.created_at) : !reprint ? riyadhTime() : "";
-  const kindAr = isCN ? (isTax ? "إشعار دائن لفاتورة ضريبية مبسطة" : "إشعار دائن") : voided ? "فاتورة ملغاة" : isTax ? "فاتورة ضريبية مبسطة" : "فاتورة";
-  const h1Ar = isCN ? kindAr : isTax || snapOnNoVatNo ? "فاتورة ضريبية مبسطة — أجرة" : "فاتورة أجرة";
+  const taxWord = std ? "فاتورة ضريبية" : "فاتورة ضريبية مبسطة";
+  const kindAr = isCN ? (isTax ? `إشعار دائن ل${taxWord}` : "إشعار دائن") : voided ? "فاتورة ملغاة" : isTax ? taxWord : "فاتورة";
+  const h1Ar = isCN ? kindAr : isTax || snapOnNoVatNo ? `${isTax ? taxWord : "فاتورة ضريبية مبسطة"} — أجرة` : "فاتورة أجرة";
   const vatNoWarn = v.enabled && !vatNoOk && !snapOnNoVatNo && !voided && !snapOff;
   const body = `
 ${header(kindAr, inv.invoice_no, iss, issueDay)}
@@ -1138,13 +1147,29 @@ ${isCN ? `<div class="note" style="border-inline-start-color:#B8791F">
   <div class="box">
     <h3>إلى</h3>
     <div class="r"><span>الاسم</span><span>${buyer}</span></div>
+    ${buyerAddr ? `<div class="r"><span>العنوان</span><span>${buyerAddr}</span></div>` : ""}
+    ${buyerVat ? `<div class="r"><span>الرقم الضريبي</span><span>${buyerVat}</span></div>` : ""}
     ${buyerId ? `<div class="r"><span>الهوية / السجل</span><span>${buyerId}</span></div>` : ""}
     <div class="r"><span>${ul}</span><span>${unitNo || "—"}</span></div>
     <div class="r"><span>العقار</span><span>${propName}</span></div>
   </div>
 </div>
 
-<table>
+${std ? `<table>
+  <thead><tr><th>البيان</th><th>الفترة</th><th>الكمية</th><th>سعر الوحدة</th><th>المبلغ قبل الضريبة</th><th>نسبة الضريبة</th><th>مبلغ الضريبة</th><th>الإجمالي شامل الضريبة</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>${isCN ? "إلغاء " : ""}أجرة ${ul} رقم (${unitNo || "—"}) بعقار ${propName}</td>
+      <td>${inv.period_label}${!isCN && inv.due_date ? `<div style="font-size:.75rem;color:#5C6B67">الاستحقاق ${arDate(inv.due_date)}</div>` : ""}</td>
+      <td>1</td>
+      <td>${sar(x.base)}</td>
+      <td>${sar(x.base)}</td>
+      <td>${v.rate}%</td>
+      <td>${sar(x.vat)}</td>
+      <td>${sar(x.total)}</td>
+    </tr>
+  </tbody>
+</table>` : `<table>
   <thead><tr><th>البيان</th><th>الفترة</th><th>الكمية</th><th>سعر الوحدة${v.enabled ? " قبل الضريبة" : ""}</th>${isCN ? "" : "<th>تاريخ الاستحقاق</th>"}<th>المبلغ${v.enabled ? " قبل الضريبة" : ""} (ريال)</th></tr></thead>
   <tbody>
     <tr>
@@ -1156,7 +1181,7 @@ ${isCN ? `<div class="note" style="border-inline-start-color:#B8791F">
       <td>${sar(x.base)}</td>
     </tr>
   </tbody>
-</table>
+</table>`}
 
 ${v.enabled ? `<table style="max-width:340px;margin-inline-start:auto">
   <tbody>
@@ -1167,6 +1192,7 @@ ${v.enabled ? `<table style="max-width:340px;margin-inline-start:auto">
 </table>` : ""}
 
 <div class="due"><span class="l">${isCN ? "إجمالي الإشعار الدائن" : "الإجمالي المستحق"}${v.enabled ? " (شامل الضريبة)" : ""}</span><span class="v">${sar(x.total)} ريال</span></div>
+${pm && !isCN ? `<div class="sub" style="margin-top:6px">وسيلة الدفع: <b>${PAYMENT_MEANS[pm]}</b></div>` : ""}
 
 ${isTax && !voided ? zatcaQrBlock(who, S.vat!, x.total, x.vat, inv.created_at) : ""}
 
@@ -1183,7 +1209,7 @@ ${isCN ? "" : `<div class="note">
   منصة وثيق لا تستلم ولا تحوّل أي مبالغ.
 </div>`}
 ${isTax && !voided ? `<div class="note">
-  <b>عن الفوترة الإلكترونية:</b> ${isCN ? "إشعار دائن" : "فاتورة ضريبية مبسطة"} برمز الاستجابة السريعة وفق متطلبات المرحلة الأولى (الإصدار) من الفوترة الإلكترونية.
+  <b>عن الفوترة الإلكترونية:</b> ${isCN ? "إشعار دائن" : taxWord} برمز الاستجابة السريعة وفق متطلبات المرحلة الأولى (الإصدار) من الفوترة الإلكترونية.
   الربط والتكامل مع منصة «فاتورة» (المرحلة الثانية) لا يتم عبر وثيق — إن كانت المنشأة مشمولة به فتُصدر فواتيرها الضريبية من حلّ مرتبط.
 </div>` : ""}
 
@@ -1194,11 +1220,12 @@ ${isTax && !voided ? `<div class="note">
 ${footer(iss)}`;
   /* النسخة الإنجليزية من القيم نفسها — لا تُعاد الحسابات */
   const ulEn = unitWordEn((t as any).unit_type, p.property_type);
-  const titleEn = isCN ? (isTax ? "Credit note — simplified tax invoice" : "Credit note") : voided ? "Void invoice" : isTax ? "Simplified tax invoice" : "Invoice";
+  const taxWordEn = std ? "Tax invoice" : "Simplified tax invoice";
+  const titleEn = isCN ? (isTax ? `Credit note — ${taxWordEn.toLowerCase()}` : "Credit note") : voided ? "Void invoice" : isTax ? taxWordEn : "Invoice";
   const enInner = `
 ${headerEn(titleEn, inv.invoice_no, iss, issueDay)}
 ${voided ? `<div style="border:3px solid #a5322c;color:#a5322c;text-align:center;font-weight:800;font-size:1.4rem;padding:10px;margin:10px 0;border-radius:10px;letter-spacing:.5px">VOID — not valid and not payable${inv.credit_note_no ? `<div style="font-size:.85rem;font-weight:600;margin-top:4px">Cancelled by credit note <span dir="ltr">${inv.credit_note_no}</span></div>` : ""}</div>` : ""}
-<h1>${isCN ? titleEn : isTax || snapOnNoVatNo ? "Simplified tax invoice — rent" : "Rent invoice"}</h1>
+<h1>${isCN ? titleEn : isTax || snapOnNoVatNo ? `${isTax ? taxWordEn : "Simplified tax invoice"} — rent` : "Rent invoice"}</h1>
 <div class="sub">${periodLabelEn(inv.period_label)} · ${freqEn(t.payment_frequency)}</div>
 ${isCN ? `<div class="note" style="border-inline-start-color:#B8791F">
   <div><b>Original invoice:</b> <span dir="ltr">${inv.ref_invoice_no || "—"}</span>${inv.ref_issue_date ? ` — ${enDate(inv.ref_issue_date)}` : ""}</div>
@@ -1219,13 +1246,29 @@ ${isCN ? `<div class="note" style="border-inline-start-color:#B8791F">
   <div class="box">
     <h3>Bill to</h3>
     <div class="r"><span>Name</span><span dir="auto">${buyer}</span></div>
+    ${buyerAddr ? `<div class="r"><span>Address</span><span dir="auto">${buyerAddr}</span></div>` : ""}
+    ${buyerVat ? `<div class="r"><span>VAT no.</span><span dir="ltr">${buyerVat}</span></div>` : ""}
     ${buyerId ? `<div class="r"><span>ID / CR</span><span dir="ltr">${buyerId}</span></div>` : ""}
     <div class="r"><span>${ulEn}</span><span dir="auto">${unitNo || "—"}</span></div>
     <div class="r"><span>Property</span><span dir="auto">${propName}</span></div>
   </div>
 </div>
 
-<table>
+${std ? `<table>
+  <thead><tr><th>Description</th><th>Period</th><th>Qty</th><th>Unit price</th><th>Taxable amount</th><th>VAT rate</th><th>VAT</th><th>Total incl. VAT</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>${isCN ? "Cancellation of rent" : "Rent"} for ${ulEn} no. (<span dir="auto">${unitNo || "—"}</span>) — <span dir="auto">${propName}</span></td>
+      <td>${periodLabelEn(inv.period_label)}${!isCN && inv.due_date ? `<div style="font-size:.75rem;color:#5C6B67">Due ${enDate(inv.due_date)}</div>` : ""}</td>
+      <td>1</td>
+      <td>${sar(x.base)}</td>
+      <td>${sar(x.base)}</td>
+      <td>${v.rate}%</td>
+      <td>${sar(x.vat)}</td>
+      <td>${sar(x.total)}</td>
+    </tr>
+  </tbody>
+</table>` : `<table>
   <thead><tr><th>Description</th><th>Period</th><th>Qty</th><th>Unit price${v.enabled ? " before VAT" : ""}</th>${isCN ? "" : "<th>Due date</th>"}<th>Amount${v.enabled ? " before VAT" : ""} (SAR)</th></tr></thead>
   <tbody>
     <tr>
@@ -1237,7 +1280,7 @@ ${isCN ? `<div class="note" style="border-inline-start-color:#B8791F">
       <td>${sar(x.base)}</td>
     </tr>
   </tbody>
-</table>
+</table>`}
 
 ${v.enabled ? `<table style="max-width:340px;margin-inline-start:auto">
   <tbody>
@@ -1248,6 +1291,7 @@ ${v.enabled ? `<table style="max-width:340px;margin-inline-start:auto">
 </table>` : ""}
 
 <div class="due"><span class="l">${isCN ? "Credit note total" : "Total due"}${v.enabled ? " (incl. VAT)" : ""}</span><span class="v">SAR ${sar(x.total)}</span></div>
+${pm && !isCN ? `<div class="sub" style="margin-top:6px">Payment means: <b>${PAYMENT_MEANS_EN[pm]}</b></div>` : ""}
 
 ${isTax && !voided ? zatcaQrBlock(who, S.vat!, x.total, x.vat, inv.created_at, "-en") : ""}
 ${isTax && !voided ? `<div class="note">Tax invoices in Saudi Arabia must be issued in Arabic: the Arabic version of this document (same number) is the binding one; this English copy is for reference.</div>` : ""}
