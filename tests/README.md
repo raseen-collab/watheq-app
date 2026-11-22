@@ -1,4 +1,10 @@
-# اختبارات وثيق المالية
+# اختبارات وثيق
+
+**كلها بأمر واحد:** `bash scripts/test-all.sh` — يبني الحزم ويشغّل كل `tests/*.js` بتوقيت الرياض، ويخرج بخطأ عند أي فشل.
+**فحص الدخان (390px):** بعد `npx next build && npx next start -p 3000` ← `node tests/smoke.cjs`.
+**CI:** `.github/workflows/ci.yml` يشغّل tsc ← next build ← الاختبارات ← فحص الدخان على كل رفع وكل Pull Request.
+
+## الاختبارات المالية
 
 شغّلها قبل أي رفع يمسّ الحسابات:
 
