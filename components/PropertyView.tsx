@@ -380,6 +380,9 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
   // ---------- أدوات العرض: بحث / تصفية / فرز / إشعار ----------
   const [q, setQ] = useState("");
   const [filter, setFilter] = useState<"all" | RowKey>("all");
+  /* (22 نوفمبر 2026) «أرقام العقار والعدادات» مطويّة افتراضيًّا — ويُتذكّر اختيار المستخدم */
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  useEffect(() => { try { if (localStorage.getItem("wq_prop_details") === "1") setDetailsOpen(true); } catch { /* */ } }, []);
   useEffect(() => { setTPage(0); }, [filter, q, tSort, activeId]);
   useEffect(() => { setCardsShown(60); }, [filter, q, activeId]);
   const [sort, setSort] = useState<"urgent" | "due" | "amount" | "name">("urgent");
@@ -2137,16 +2140,86 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
         {isManager && may("all_properties") && <button className="btn btn-ghost text-sm" onClick={openNewProperty}>+ عقار</button>}
       </div>
 
-      {expiringSoon && (
-        <div className={`flex flex-wrap items-center gap-3 rounded-xl p-3.5 mb-4 border text-sm ${
-          (expiringSoon.st.daysToEnd || 0) <= 30 ? "bg-[#FBE9E7] border-[#F5C6C2] text-[#8f2b26]" : "bg-[#FBF1DF] border-[#EBD9AA] text-[#8a5a11]"}`}>
-          <span>عقد {expiringSoon.t.name} ({ul} {expiringSoon.t.unit || "—"}) {(expiringSoon.st.daysToEnd ?? 0) < 0
-            ? <>انتهى منذ <b>{plural(-(expiringSoon.st.daysToEnd ?? 0), "يوم واحد", "يومين", "أيام", "يومًا")}</b> (<span className="whitespace-nowrap">{arDate(expiringSoon.st.endDate)}</span>) ولم يُجدَّد. جدّده أو سجّل الإخلاء.</>
-            : <>ينتهي خلال <b>{plural(expiringSoon.st.daysToEnd ?? 0, "يوم واحد", "يومين", "أيام", "يومًا")}</b> (<span className="whitespace-nowrap">{arDate(expiringSoon.st.endDate)}</span>). جهّز التجديد أو الإخلاء.</>}</span>
-          <button className="btn btn-ghost text-xs mr-auto" onClick={() => askRenew(expiringSoon.t)}>تجديد الآن</button>
-        </div>
-      )}
-
+      {/* (22 نوفمبر 2026) «اليوم» — كل ما يحتاج إجراءً في هذا العقار في مكان واحد أعلى الصفحة:
+          المتأخر (مع التذكير)، ما يستحق قريبًا، العقود المنتهية، ومهام السجل المستحقة.
+          كانت موزّعة على شريط وشرائح وأسفل الصفحة — والمتأخر يُعرض ثلاث مرات. */}
+      {(() => {
+        const t0 = today();
+        const dueTasks = notes.filter((n) => !n.done_at && n.due_date && n.due_date <= t0);
+        const lateTasks = dueTasks.filter((n) => (n.due_date || "") < t0).length;
+        const soonN = (counts.due || 0) + (counts.soon || 0);
+        const expN = counts.expiring || 0;
+        const any = overdue > 0 || lateCount > 0 || arrears.litigation > 0 || arrears.carried > 0 || vacantArrears > 0 || soonN > 0 || expN > 0 || !!expiringSoon || dueTasks.length > 0;
+        if (!tenants.length && !dueTasks.length) return null;
+        const goList = (f: any) => { setFilter(f); setTimeout(() => document.getElementById("units-list")?.scrollIntoView({ behavior: "smooth", block: "start" }), 30); };
+        const Row = ({ tone, icon, children, actions }: { tone: "red" | "amber" | "plain" | "slate"; icon: string; children: React.ReactNode; actions?: React.ReactNode }) => (
+          <div className={`flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl px-3 py-2.5 border text-sm ${
+            tone === "red" ? "bg-[#FBE9E7] border-[#F5C6C2] text-[#8f2b26]" : tone === "amber" ? "bg-[#FBF1DF] border-[#EBD9AA] text-[#8a5a11]"
+            : tone === "slate" ? "bg-[#EEF2F6] border-[#CBD5E1] text-[#475569]" : "bg-paper border-line text-ink"}`}>
+            <span className="shrink-0" aria-hidden>{icon}</span>
+            <span className="flex-1 min-w-[12rem] leading-relaxed">{children}</span>
+            {actions && <span className="flex flex-wrap gap-2 ms-auto">{actions}</span>}
+          </div>
+        );
+        const act = "btn btn-ghost text-xs bg-white min-h-[36px]";
+        return (
+          <section className="bg-white border border-line rounded-2xl shadow-sm p-4 mb-4" aria-labelledby="today-h">
+            <h2 id="today-h" className="font-display font-bold text-deep text-base mb-3">⚡ اليوم في {p.name}</h2>
+            {!any ? (
+              <p className="text-sm text-[#137a50] font-semibold">لا متأخرات ولا استحقاقات قريبة ولا مهام اليوم ✓</p>
+            ) : (
+              <div className="flex flex-col gap-2">
+                {(lateCount > 0 || overdue > 0) && (
+                  <Row tone="red" icon="🔴" actions={<>
+                    <button type="button" className={act} onClick={() => goList("late")}>عرضهم</button>
+                    {lateCount > 0 && may("send_reminders") && <button type="button" className="btn btn-wa text-xs min-h-[36px]" onClick={() => setRemindAll(true)}>💬 ذكّرهم</button>}
+                  </>}>
+                    متأخر <b className="tabular-nums">{sar(overdue)}</b> ريال على {plural(lateCount, "وحدة واحدة", "وحدتين", "وحدات", "وحدة")}
+                  </Row>
+                )}
+                {expiringSoon && (
+                  <Row tone={(expiringSoon.st.daysToEnd || 0) <= 30 ? "red" : "amber"} icon="📅" actions={<>
+                    <button type="button" className={act} onClick={() => askRenew(expiringSoon.t)}>تجديد الآن</button>
+                    {expN > 1 && <button type="button" className={act} onClick={() => goList("expiring")}>كل العقود ({expN})</button>}
+                  </>}>
+                    عقد {expiringSoon.t.name} ({ul} {expiringSoon.t.unit || "—"}) {(expiringSoon.st.daysToEnd ?? 0) < 0
+                      ? <>انتهى منذ <b>{plural(-(expiringSoon.st.daysToEnd ?? 0), "يوم واحد", "يومين", "أيام", "يومًا")}</b> (<span className="whitespace-nowrap">{arDate(expiringSoon.st.endDate)}</span>) ولم يُجدَّد. جدّده أو سجّل الإخلاء.</>
+                      : <>ينتهي خلال <b>{plural(expiringSoon.st.daysToEnd ?? 0, "يوم واحد", "يومين", "أيام", "يومًا")}</b> (<span className="whitespace-nowrap">{arDate(expiringSoon.st.endDate)}</span>). جهّز التجديد أو الإخلاء.</>}
+                  </Row>
+                )}
+                {soonN > 0 && (
+                  <Row tone="plain" icon="🗓" actions={<button type="button" className={act} onClick={() => goList("soon")}>عرضها</button>}>
+                    تستحق خلال {plural(windowsOf(active).soonDays, "يوم واحد", "يومين", "أيام", "يومًا")}: <b>{plural(soonN, "دفعة واحدة", "دفعتان", "دفعات", "دفعة")}</b>
+                  </Row>
+                )}
+                {dueTasks.length > 0 && (
+                  <Row tone={lateTasks ? "amber" : "plain"} icon="📝" actions={<button type="button" className={act}
+                    onClick={() => document.getElementById("prop-log")?.scrollIntoView({ behavior: "smooth", block: "start" })}>افتح السجل</button>}>
+                    مهام مستحقة اليوم: <b>{dueTasks.length}</b>{lateTasks ? <> · منها <b>{lateTasks}</b> متأخرة</> : null}
+                    <span className="block text-xs opacity-80 truncate">{dueTasks.slice(0, 2).map((n) => n.text).join(" · ")}</span>
+                  </Row>
+                )}
+                {(arrears.litigation > 0 || arrears.carried > 0 || vacantArrears > 0) && (
+                  <div className="flex flex-wrap gap-2 pt-1">
+                    {arrears.litigation > 0 && (
+                      <button type="button" onClick={() => goList("litigation")} className="text-xs px-3 py-2 rounded-full border bg-white border-line text-[#475569]">
+                        تحت التنفيذ <b className="tabular-nums">{sar(arrears.litigation)}</b> · {plural(arrears.litigationCount, "وحدة واحدة", "وحدتان", "وحدات", "وحدة")}</button>
+                    )}
+                    {arrears.carried > 0 && (
+                      <button type="button" onClick={() => setDebtOpen(true)} className="text-xs px-3 py-2 rounded-full border bg-white border-line text-[#9A4B00]">
+                        دين مُرحَّل <b className="tabular-nums">{sar(arrears.carried)}</b> · {plural(arrears.carriedCount, "وحدة واحدة", "وحدتان", "وحدات", "وحدة")}</button>
+                    )}
+                    {vacantArrears > 0 && (
+                      <button type="button" onClick={() => goList("vacant")} className="text-xs px-3 py-2 rounded-full border bg-white border-line text-[#9A4B00]">
+                        على مستأجرين سابقين <b className="tabular-nums">{sar(vacantArrears)}</b></button>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+          </section>
+        );
+      })()}
       {/**
         * ثلاث خلايا لثلاثة أسئلة لا يكرر أحدها الآخر (طلب مكتب).
         *
@@ -2156,6 +2229,17 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
         * متناقضة. ومن يدفع سنويًّا يدفع مرة واحدة، فيبدو المحصَّل أضعاف
         * «المتوقع» الشهري. الآن: كم استلمنا · كم تُدخل · كم صرفنا.
         */}
+      {/* (22 نوفمبر 2026 — طلب مكاتب: الصفحة طويلة ومكررة) أرقام العقار والعدادات
+          تُطوى تحت سطر واحد؛ ما يحتاج إجراءً صار في بطاقة «اليوم» فوقها. الاختيار يُحفظ للمتصفح. */}
+      {(tenants.length > 0 || (active && (active.meters || []).length > 0)) && (
+      <details className="mb-5 bg-white border border-line rounded-2xl shadow-sm group" open={detailsOpen}
+        onToggle={(e) => { const o = (e.currentTarget as HTMLDetailsElement).open; setDetailsOpen(o); try { localStorage.setItem("wq_prop_details", o ? "1" : "0"); } catch { /* */ } }}>
+        <summary className="cursor-pointer select-none list-none px-4 py-3 flex items-center justify-between gap-2 text-sm font-semibold text-deep min-h-[44px]">
+          <span>📊 أرقام العقار{active && (active.meters || []).length > 0 ? " والعدادات" : ""}
+            <span className="text-xs font-normal text-muted"> — المحصَّل هذا الشهر · الدخل السنوي · المصروفات{active && (active.meters || []).length > 0 ? " · أرقام العدادات" : ""}</span></span>
+          <span className="text-muted text-xs group-open:rotate-180 transition-transform">▾</span>
+        </summary>
+        <div className="px-4 pb-4">
       {tenants.length > 0 && (() => {
         const rr = annualRentRoll(tenants as any[]);
         const mLabel = arDate(`${today().slice(0, 7)}-01`).replace(/^\S+\s+/, "");
@@ -2184,42 +2268,6 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
         );
       })()}
 
-      {/* ما يحتاج إجراءً اليوم — أزرار تصفية لا أرقام دخل */}
-      {(overdue > 0 || arrears.litigation > 0 || arrears.carried > 0 || vacantArrears > 0 || ((counts.due || 0) + (counts.soon || 0)) > 0 || (counts.expiring || 0) > 0) && (
-        <div className="flex flex-wrap gap-2 mb-5">
-          {(lateCount > 0 || overdue > 0) && (
-            <button type="button" onClick={() => setFilter("late")}
-              className={`text-xs px-3 py-2 rounded-full border ${filter === "late" ? "bg-[#FBE9E7] border-[#F5C6C2]" : "bg-white border-line"} text-late`}>
-              متأخر <b className="tabular-nums">{sar(overdue)}</b> · {plural(lateCount, "وحدة واحدة", "وحدتان", "وحدات", "وحدة")}</button>
-          )}
-          {arrears.litigation > 0 && (
-            <button type="button" onClick={() => setFilter("litigation")}
-              className={`text-xs px-3 py-2 rounded-full border ${filter === "litigation" ? "bg-[#EEF2F6] border-[#CBD5E1]" : "bg-white border-line"} text-[#475569]`}>
-              تحت التنفيذ <b className="tabular-nums">{sar(arrears.litigation)}</b> · {plural(arrears.litigationCount, "وحدة واحدة", "وحدتان", "وحدات", "وحدة")}</button>
-          )}
-          {arrears.carried > 0 && (
-            <button type="button" onClick={() => setDebtOpen(true)}
-              className="text-xs px-3 py-2 rounded-full border bg-white border-line text-[#9A4B00]">
-              دين مُرحَّل <b className="tabular-nums">{sar(arrears.carried)}</b> · {plural(arrears.carriedCount, "وحدة واحدة", "وحدتان", "وحدات", "وحدة")}</button>
-          )}
-          {vacantArrears > 0 && (
-            <button type="button" onClick={() => setFilter("vacant")}
-              className={`text-xs px-3 py-2 rounded-full border ${filter === "vacant" ? "bg-[#FFF6E5] border-[#F2D49B]" : "bg-white border-line"} text-[#9A4B00]`}>
-              على مستأجرين سابقين <b className="tabular-nums">{sar(vacantArrears)}</b></button>
-          )}
-          {((counts.due || 0) + (counts.soon || 0)) > 0 && (
-            <button type="button" onClick={() => setFilter("soon")}
-              className={`text-xs px-3 py-2 rounded-full border ${filter === "soon" ? "bg-paper2 border-line" : "bg-white border-line"} text-ink`}>
-              تستحق خلال {plural(windowsOf(active).soonDays, "يوم واحد", "يومين", "أيام", "يومًا")}: <b>{(counts.due || 0) + (counts.soon || 0)}</b></button>
-          )}
-          {(counts.expiring || 0) > 0 && (
-            <button type="button" onClick={() => setFilter("expiring")}
-              className={`text-xs px-3 py-2 rounded-full border ${filter === "expiring" ? "bg-paper2 border-line" : "bg-white border-line"} text-ink`}>
-              عقود للتجديد أو الإخلاء: <b>{counts.expiring}</b></button>
-          )}
-        </div>
-      )}
-
       {/* الوحدات تأخذ العرض كاملًا: مكتب بمئات الوحدات يحتاج كل بكسل للجدول،
           وسجل العقار (ملاحظات نصية) ينتقل أسفلها — يُقرأ حين يُطلب لا دائمًا. */}
       {/* التحصيل شهرًا بشهر والدخل المتوقع انتقلا إلى «نظرة عامة».
@@ -2230,7 +2278,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
           المحصّل أو الموظف يحتاج رقم حساب عداد المصعد أو الخزان وهو يتابع العمارة،
           لا أن يفتح الإعدادات كل مرة. لا يظهر شيء لعقار بلا عدادات. */}
       {active && (active.meters || []).length > 0 && (
-        <div className="bg-white border border-line rounded-2xl shadow-sm px-4 py-3 mb-4">
+        <div className="border border-line rounded-xl px-4 py-3 mt-1 bg-paper">
           <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
             <div className="text-sm font-semibold text-deep">
               ⚡ عدادات العقار الرئيسية <span className="text-xs text-muted font-normal">— {metersCountLine(active.meters)}</span>
@@ -2248,8 +2296,12 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
         </div>
       )}
 
+        </div>
+      </details>
+      )}
+
       <div className="grid grid-cols-1 gap-5 items-start">
-        <div className="bg-white border border-line rounded-2xl shadow-sm">
+        <div id="units-list" className="bg-white border border-line rounded-2xl shadow-sm scroll-mt-4">
           <div className="flex items-center justify-between border-b border-line px-5 py-4 gap-2 flex-wrap">
             {/* كان مخفيًّا تحت 1024px: من حفظ «جدول» مرة يبقى حبيسه بلا مخرج،
                 والجدول على 400px يحتاج تمريرًا أفقيًّا بثلاثة أضعاف العرض. */}
@@ -2762,7 +2814,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
           </div>
         </div>
 
-        <div className="bg-white border border-line rounded-2xl shadow-sm">
+        <div id="prop-log" className="bg-white border border-line rounded-2xl shadow-sm scroll-mt-4">
           <div className="border-b border-line px-5 py-4"><h2 className="font-semibold">📝 سجل العقار <span className="text-xs font-normal text-muted">— ملاحظات الصيانة والتجديد والإخلاء</span></h2></div>
           <div className="p-4">
             <AddNote onAdd={addNote} unitWord={ul} />
