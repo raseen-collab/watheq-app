@@ -4947,6 +4947,8 @@ function OwnerReportModal({ property, unitWord, issuer, onClose, db, canFee = tr
   const [voidFor, setVoidFor] = useState<{ id: string; no: string } | null>(null);
   const [voidWhy, setVoidWhy] = useState("");
 
+  const hasFee = (property as any).mgmt_fee_mode === "fixed" ? Number((property as any).mgmt_fee_amount) > 0 : Number((property as any).mgmt_fee_pct) > 0;
+
   async function loadFeeList() {
     const { data } = await supabase.from("invoices").select("*").eq("property_id", property.id).eq("subject", "mgmt_fee").order("created_at", { ascending: false }).limit(60);
     setFeeList(data || []);
@@ -5110,7 +5112,8 @@ function OwnerReportModal({ property, unitWord, issuer, onClose, db, canFee = tr
           الدفعات المستلمة خلال <b className="text-deep">{label}</b> بإجماليها · والمتأخرات القائمة وقت الإصدار.
           الأرقام تعكس ما وثّقه المكتب في النظام.
         </div>
-        {canFee && (
+        {/* يظهر فقط لعقار عليه أتعاب إدارة (أو سبقت له فاتورة أتعاب) — المالك الذي يدير عقاره بنفسه لا يراه */}
+        {canFee && (hasFee || (feeList?.length ?? 0) > 0) && (
           <div className="border border-line rounded-xl p-3 bg-white">
             <div className="flex items-center justify-between gap-2 flex-wrap">
               <div>
@@ -5140,7 +5143,7 @@ function OwnerReportModal({ property, unitWord, issuer, onClose, db, canFee = tr
                     <button type="button" className="btn btn-gold text-sm" onClick={issueFee} disabled={feeBusy}>{feeBusy ? "…" : "إصدار فاتورة الأتعاب"}</button>
                   </div>
                 )}
-                <p className="text-[11px] text-muted">المشتري: {(property as any).owner_name || "— (أضف اسم المالك في إعدادات العقار)"}{(property as any).owner_vat_number ? " · فاتورة ضريبية قياسية (المالك مسجَّل في الضريبة)" : " · فاتورة ضريبية مبسطة"}. بعد الإصدار لا تُعدَّل؛ الإلغاء بإشعار دائن.</p>
+                <p className="text-[11px] text-muted">المشتري: {(property as any).owner_name || "— (أضف اسم المالك في إعدادات العقار)"}{!fee.calc.vatEnabled ? " · فاتورة أتعاب بلا ضريبة (مكتبك غير مسجَّل في الضريبة)" : isValidVatNo((property as any).owner_vat_number) ? " · فاتورة ضريبية قياسية (المالك مسجَّل في الضريبة)" : " · فاتورة ضريبية مبسطة"}. بعد الإصدار لا تُعدَّل؛ الإلغاء بإشعار دائن.</p>
               </div>
             )}
             {feeList && feeList.length > 0 && (
