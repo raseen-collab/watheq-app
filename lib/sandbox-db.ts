@@ -297,6 +297,22 @@ export function sandboxClient(store: SandboxStore) {
       /* بصيغة القاعدة نفسها — رقمٌ خام كان يُسقط الواجهة إلى رقم افتراضي */
       if (fn === "next_invoice_no")                    // التالي بعد ما صدر في التجربة
         return { data: `INV-${new Date().getFullYear()}-${String((store.invoices || []).length + 1).padStart(4, "0")}`, error: null };
+      /* (v95) الإلغاء بإشعار دائن — نفس قواعد القاعدة: سبب إلزامي، لا إلغاء مرتين، نفس التسلسل */
+      if (fn === "watheq_void_invoice") {
+        const list = store.invoices || [];
+        const v: any = list.find((x: any) => x.id === args.p_invoice);
+        const why = String(args.p_reason || "").trim();
+        if (!v) return { data: null, error: { message: "الفاتورة غير موجودة." } };
+        if (v.doc_type === "credit_note") return { data: null, error: { message: "الإشعار الدائن لا يُلغى." } };
+        if (v.status === "void") return { data: null, error: { message: "الفاتورة ملغاة من قبل." } };
+        if (why.length < 3) return { data: null, error: { message: "اكتب سبب الإلغاء (٣ أحرف على الأقل)." } };
+        const no = `CN-${new Date().getFullYear()}-${String(list.length + 1).padStart(4, "0")}`;
+        const cn = { ...v, id: `sb_invoices_${Math.random().toString(36).slice(2, 10)}`, invoice_no: no, doc_type: "credit_note",
+          ref_invoice_id: v.id, reason: why, status: "issued", issue_date: new Date().toISOString().slice(0, 10), due_date: null, created_at: new Date().toISOString() };
+        v.status = "void"; v.voided_at = new Date().toISOString();
+        store.invoices = [cn, ...list];
+        return { data: { id: cn.id, invoice_no: no }, error: null };
+      }
       if (fn === "watheq_log_meter_notice") {
         const t = store.tenants.find((x) => x.id === args.p_tenant);
         if (!t) return { data: null, error: { message: "الوحدة غير موجودة" } };

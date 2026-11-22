@@ -12,6 +12,7 @@ import { moneySigned } from "./hoaMoney";
 import { metersCountLine, METER_TYPE_AR, type PropertyMeter } from "./meters";
 import { riyalsInWords } from "./tafqit";
 import { trustDocTitle, isTrustIn, isDepositKind, type TrustRow } from "./trust";
+import { sellerOf, isTaxInvoice, isValidVatNo, zatcaTlvBase64, qrTimestamp, type Seller, type InvoiceSnap } from "./einvoice";
 import { enDate, methodEn, freqEn, unitWordEn, propertyTypeEn, usageEn, periodLabelEn, riyalsInWordsEn, receiptStatementEn, instalmentsEn } from "./docEn";
 
 const sar = (n: number) => {
@@ -270,6 +271,8 @@ const payMethod = (x: { method?: string | null; amount?: number | null }) =>
   Number(x.amount) < 0 ? "تصحيح" : methodAr(x.method);
 
 type Issuer = { billing_name?: string | null; org_name?: string | null; vat_number?: string | null; cr_number?: string | null; billing_phone?: string | null;
+  /** (v95) عنوان المنشأة — حقل إلزامي في الفاتورة الضريبية المبسطة */
+  billing_address?: string | null;
   /** true لأي حساب بلا باقة مدفوعة — يُضاف سطر «أُنشئ عبر وثيق» في التذييل فقط.
    *  المستند صالح للاستعمال كاملًا، بلا علامة مائية ولا تقييد. */
   trial?: boolean | null;
@@ -441,30 +444,7 @@ ${mark === "wm" ? `<div class="trialbar">
 </body></html>`;
 
 /** إعدادات الضريبة الخاصة بالعقار */
-/**
- * رمز QR للفاتورة الضريبية المبسطة — «فاتورة» المرحلة الأولى (إصدار).
- * TLV بخمس خانات: اسم البائع، الرقم الضريبي، وقت الإصدار ISO،
- * الإجمالي شامل الضريبة، مبلغ الضريبة — ثم Base64.
- * بلا btoa: نبني Base64 يدويًّا حتى يعمل في المتصفح وخارجه سواء.
- */
-function zatcaTlvBase64(sellerName: string, vatNo: string, isoDateTime: string, total: number, vat: number): string {
-  const enc = new TextEncoder();
-  const fields = [sellerName, vatNo, isoDateTime, total.toFixed(2), vat.toFixed(2)];
-  const parts: number[] = [];
-  fields.forEach((val, i) => {
-    const b = Array.from(enc.encode(val));
-    parts.push(i + 1, b.length, ...b);
-  });
-  const B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-  let out = "";
-  for (let i = 0; i < parts.length; i += 3) {
-    const a = parts[i], b = parts[i + 1], c = parts[i + 2];
-    out += B64[a >> 2] + B64[((a & 3) << 4) | ((b ?? 0) >> 4)]
-        + (b === undefined ? "=" : B64[((b & 15) << 2) | ((c ?? 0) >> 6)])
-        + (c === undefined ? "=" : B64[c & 63]);
-  }
-  return out;
-}
+/* رمز QR (TLV بخمس خانات) — lib/einvoice.ts: zatcaTlvBase64 · decodeZatcaTlv للاختبار */
 
 /**
  * صندوق QR داخل الفاتورة. الرسم عبر مكتبة qrcodejs من CDN داخل نافذة
@@ -479,11 +459,7 @@ function zatcaQrBlock(sellerName: string, vatNo: string, total: number, vat: num
        يُفسد الرمز كله — يُقصّ على حدّ حرفٍ كامل.
      • الوقت: وقت إصدار الفاتورة الأصلي عند إعادة الطباعة (at)، لا لحظة
        الطباعة؛ وبلا أجزاء الثانية كأمثلة الهيئة. */
-  let name = unesc(sellerName);
-  const enc = new TextEncoder();
-  while (enc.encode(name).length > 255) name = Array.from(name).slice(0, -1).join("");
-  const when = at && !isNaN(Date.parse(at)) ? new Date(at) : new Date();
-  const tlv = zatcaTlvBase64(name, vatNo, when.toISOString().replace(/\.\d{3}Z$/, "Z"), total, vat);
+  const tlv = zatcaTlvBase64(unesc(sellerName), vatNo, qrTimestamp(at), total, vat);
   return `
 <div style="display:flex;justify-content:flex-end;margin-top:14px">
   <div style="text-align:center">
@@ -1077,70 +1053,106 @@ ${footerEn(issuer)}`;
   return SHELL(`كشف حساب — ${t.name}`, body, markOf(issuer), { title: `Account statement — ${t.name}`, inner: enInner });
 }
 
-/** فاتورة دفعة واحدة */
-export function invoiceHTML(
-  t: Tenant, p: Property,
-  inv: { invoice_no: string; amount: number; due_date: string; period_label: string;
-         /** عند إعادة الطباعة: تُطبع الفاتورة بتاريخها وحالتها ووقت إصدارها الأصلي */
-         issue_date?: string | null; status?: string | null; created_at?: string | null;
-         /** إعادة الطباعة: هل صدرت الفاتورة بضريبة؟ (invoices.vat_enabled المحفوظ) — null للأقدم */
-         vat_snapshot?: boolean | null },
-  issuer: Issuer = {}
-) {
+/** صف الفاتورة المحفوظ كما يُمرَّر للطباعة (schema-v95: لقطة البائع والمشتري + الإشعار الدائن) */
+export type InvoiceDoc = {
+  invoice_no: string; amount: number; due_date: string; period_label: string;
+  /** عند إعادة الطباعة: تُطبع الفاتورة بتاريخها وحالتها ووقت إصدارها الأصلي */
+  issue_date?: string | null; status?: string | null; created_at?: string | null;
+  /** إعادة الطباعة: هل صدرت الفاتورة بضريبة؟ (invoices.vat_enabled المحفوظ) — null للأقدم */
+  vat_snapshot?: boolean | null;
+  /** (v95) 'invoice' | 'credit_note' */
+  doc_type?: string | null;
+  /** (v95) الإشعار الدائن: رقم الفاتورة الأصلية وتاريخها وسبب الإصدار */
+  ref_invoice_no?: string | null; ref_issue_date?: string | null; reason?: string | null;
+  /** (v95) الفاتورة الملغاة: رقم الإشعار الدائن الذي ألغاها */
+  credit_note_no?: string | null;
+  buyer_name?: string | null; buyer_id?: string | null; unit_label?: string | null; property_name?: string | null;
+} & InvoiceSnap;
+
+/** فاتورة دفعة واحدة — أو إشعارها الدائن (doc_type = credit_note) */
+export function invoiceHTML(t: Tenant, p: Property, inv: InvoiceDoc, issuer: Issuer = {}) {
   // تعقيم المدخلات (انظر scrub أعلاه)
   t = scrub(t);
   p = scrub(p);
   inv = scrub(inv);
   issuer = scrub(issuer);
   const ul = unitWordFor((t as any).unit_type, p.property_type);
-  const who = issuer.billing_name || issuer.org_name || p.manager || "إدارة الأملاك";
+  const isCN = inv.doc_type === "credit_note";
+  /* البائع: لقطة الفاتورة لحظة إصدارها (v95) — وإلا بيانات المكتب الحالية للفواتير الأقدم.
+     المؤجّر المالك (وكيل معلَن): الفاتورة باسمه ورقمه الضريبي، ولا تظهر بيانات المكتب
+     (دليل الوكلاء §5.1 و§11.1.1). */
+  const S: Seller = sellerOf(inv, issuer, p as any);
+  const ownerMode = S.mode === "owner";
+  const who = S.name;
+  /* ما يُمرَّر للترويسة والتذييل: هوية البائع لا المكتب حين يكون البائع المالك */
+  const iss: Issuer = ownerMode
+    ? { billing_name: S.name, trial: issuer.trial, expired: issuer.expired }
+    : { ...issuer, billing_name: S.name, vat_number: S.vat, cr_number: S.cr };
+  const buyer = inv.buyer_name || t.name;
+  const buyerId = inv.buyer_id ?? t.national_id;
+  const unitNo = inv.unit_label ?? t.unit;
+  const propName = inv.property_name || p.name;
   const v = vatOf(p, t);
   const x = splitVat(Number(inv.amount) || 0, v);
-  /* الفاتورة الملغاة تُعرض للأرشيف لا للتداول (مراجعة 29 سبتمبر 2026): كان زرّ
-     «عرض» على الملغاة يطبعها فاتورةً ضريبية سليمة برمز QR وبلا أي إشارة. */
-  const voided = inv.status === "void";
-  /* (30 سبتمبر 2026) إعادة طباعة فاتورة صدرت بلا ضريبة لا تصير «ضريبية» برمز QR
-     لأن المكتب سجّل رقمه الضريبي لاحقًا. والعكس: فاتورة صدرت ضريبية والرقم
-     الضريبي حُذف من الإعدادات بعدها — لا نطبع تنبيه «الرقم غير مسجَّل» كأنها
-     صدرت خطأً، بل نوضّح أنها نسخة لا يُعاد رسم رمزها. (لا لقطة للرقم الضريبي
-     ولا لاسم البائع في جدول الفواتير — يُطبعان بقيم المكتب الحالية.) */
+  /* الفاتورة الملغاة تُعرض للأرشيف لا للتداول (مراجعة 29 سبتمبر 2026) */
+  const voided = !isCN && inv.status === "void";
+  /* (30 سبتمبر 2026) إعادة طباعة فاتورة صدرت بلا ضريبة لا تصير «ضريبية» لأن المكتب
+     سجّل رقمه الضريبي لاحقًا. والعكس: صدرت ضريبية ثم حُذف الرقم — نسخة بلا رمز. */
   const snapOff = inv.vat_snapshot === false;
-  const snapOnNoVatNo = inv.vat_snapshot === true && v.enabled && !issuer.vat_number;
-  const isTax = v.enabled && !!issuer.vat_number && !snapOff;
+  const vatNoOk = isValidVatNo(S.vat);
   const reprint = !!inv.issue_date;
+  /* «نسخة من فاتورة صدرت ضريبية» للفواتير الأقدم من v95 فقط (بلا لقطة بائع): حُذف الرقم بعد
+     إصدارها. أما ما بعد v95 فلقطة البائع تقول بالضبط هل صدرت ضريبية — وفاتورة جديدة بلا رقم
+     ضريبي ليست «نسخة»، بل «فاتورة» مع تنبيه. */
+  const hasSnap = inv.seller_mode === "office" || inv.seller_mode === "owner";
+  const snapOnNoVatNo = !hasSnap && reprint && inv.vat_snapshot === true && v.enabled && !vatNoOk;
+  /* (v95) ضريبية = ضريبة مفعّلة + رقم ضريبي صحيح (١٥ رقمًا يبدأ وينتهي بـ3) */
+  const isTax = isTaxInvoice(S, v.enabled) && !snapOff;
   const issueDay = inv.issue_date || today();
   /* وقت الإصدار: من created_at المحفوظ، أو لحظة الإصدار الأولى (بلا issue_date) */
   const issueTime = inv.created_at ? riyadhTime(inv.created_at) : !reprint ? riyadhTime() : "";
+  const kindAr = isCN ? (isTax ? "إشعار دائن لفاتورة ضريبية مبسطة" : "إشعار دائن") : voided ? "فاتورة ملغاة" : isTax ? "فاتورة ضريبية مبسطة" : "فاتورة";
+  const h1Ar = isCN ? kindAr : isTax || snapOnNoVatNo ? "فاتورة ضريبية مبسطة — أجرة" : "فاتورة أجرة";
+  const vatNoWarn = v.enabled && !vatNoOk && !snapOnNoVatNo && !voided && !snapOff;
   const body = `
-${header(voided ? "فاتورة ملغاة" : isTax ? "فاتورة ضريبية مبسطة" : "فاتورة", inv.invoice_no, issuer, issueDay)}
-${voided ? `<div style="border:3px solid #a5322c;color:#a5322c;text-align:center;font-weight:800;font-size:1.4rem;padding:10px;margin:10px 0;border-radius:10px;letter-spacing:.5px">ملغاة — لا يُعتدّ بها ولا تُحصَّل</div>` : ""}
-<h1>${isTax || snapOnNoVatNo ? "فاتورة ضريبية مبسطة — أجرة" : "فاتورة أجرة"}</h1>
+${header(kindAr, inv.invoice_no, iss, issueDay)}
+${voided ? `<div style="border:3px solid #a5322c;color:#a5322c;text-align:center;font-weight:800;font-size:1.4rem;padding:10px;margin:10px 0;border-radius:10px;letter-spacing:.5px">ملغاة — لا يُعتدّ بها ولا تُحصَّل${inv.credit_note_no ? `<div style="font-size:.85rem;font-weight:600;margin-top:4px">أُلغيت بالإشعار الدائن رقم ${inv.credit_note_no}</div>` : ""}</div>` : ""}
+<h1>${h1Ar}</h1>
 <div class="sub">${inv.period_label} · ${freqLabel(t.payment_frequency)}</div>
+${isCN ? `<div class="note" style="border-inline-start-color:#B8791F">
+  <div class="r"><b>مرجع الفاتورة الأصلية:</b> ${inv.ref_invoice_no || "—"}${inv.ref_issue_date ? ` — بتاريخ ${arDate(inv.ref_issue_date)}` : ""}</div>
+  <div class="r"><b>سبب الإصدار:</b> ${inv.reason || "—"}</div>
+  <div>يُلغي هذا الإشعار الفاتورة المذكورة بكامل قيمتها.</div>
+</div>` : ""}
 
 <div class="grid">
   <div class="box">
-    <h3>المُصدِر</h3>
+    <h3>${ownerMode ? "المورّد (المؤجّر)" : "المُصدِر"}</h3>
     <div class="r"><span>الاسم</span><span>${who}</span></div>
-    ${issuer.cr_number ? `<div class="r"><span>السجل التجاري</span><span>${issuer.cr_number}</span></div>` : ""}
-    ${issuer.vat_number ? `<div class="r"><span>الرقم الضريبي</span><span>${issuer.vat_number}</span></div>` : ""}
-    ${issuer.billing_phone ? `<div class="r"><span>للتواصل</span><span>${issuer.billing_phone}</span></div>` : ""}
+    ${S.address ? `<div class="r"><span>العنوان</span><span>${S.address}</span></div>` : ""}
+    ${S.cr ? `<div class="r"><span>السجل التجاري</span><span>${S.cr}</span></div>` : ""}
+    ${S.vat ? `<div class="r"><span>الرقم الضريبي</span><span>${S.vat}</span></div>` : ""}
+    ${!ownerMode && issuer.billing_phone ? `<div class="r"><span>للتواصل</span><span>${issuer.billing_phone}</span></div>` : ""}
+    ${ownerMode ? `<div class="r" style="color:#5C6B67;font-size:.8rem"><span>صدرت هذه ${isCN ? "الوثيقة" : "الفاتورة"} نيابةً عن المورّد</span></div>` : ""}
   </div>
   <div class="box">
     <h3>إلى</h3>
-    <div class="r"><span>الاسم</span><span>${t.name}</span></div>
-    ${t.national_id ? `<div class="r"><span>الهوية / السجل</span><span>${t.national_id}</span></div>` : ""}
-    <div class="r"><span>${ul}</span><span>${t.unit || "—"}</span></div>
-    <div class="r"><span>العقار</span><span>${p.name}</span></div>
+    <div class="r"><span>الاسم</span><span>${buyer}</span></div>
+    ${buyerId ? `<div class="r"><span>الهوية / السجل</span><span>${buyerId}</span></div>` : ""}
+    <div class="r"><span>${ul}</span><span>${unitNo || "—"}</span></div>
+    <div class="r"><span>العقار</span><span>${propName}</span></div>
   </div>
 </div>
 
 <table>
-  <thead><tr><th>البيان</th><th>الفترة</th><th>تاريخ الاستحقاق</th><th>المبلغ${v.enabled ? " قبل الضريبة" : ""} (ريال)</th></tr></thead>
+  <thead><tr><th>البيان</th><th>الفترة</th><th>الكمية</th><th>سعر الوحدة${v.enabled ? " قبل الضريبة" : ""}</th>${isCN ? "" : "<th>تاريخ الاستحقاق</th>"}<th>المبلغ${v.enabled ? " قبل الضريبة" : ""} (ريال)</th></tr></thead>
   <tbody>
     <tr>
-      <td>أجرة ${ul} رقم (${t.unit || "—"}) بعقار ${p.name}</td>
+      <td>${isCN ? "إلغاء " : ""}أجرة ${ul} رقم (${unitNo || "—"}) بعقار ${propName}</td>
       <td>${inv.period_label}</td>
-      <td>${inv.due_date ? arDate(inv.due_date) : "—"}</td>
+      <td>1</td>
+      <td>${sar(x.base)}</td>
+      ${isCN ? "" : `<td>${inv.due_date ? arDate(inv.due_date) : "—"}</td>`}
       <td>${sar(x.base)}</td>
     </tr>
   </tbody>
@@ -1154,67 +1166,74 @@ ${v.enabled ? `<table style="max-width:340px;margin-inline-start:auto">
   </tbody>
 </table>` : ""}
 
-<div class="due"><span class="l">الإجمالي المستحق${v.enabled ? " (شامل الضريبة)" : ""}</span><span class="v">${sar(x.total)} ريال</span></div>
+<div class="due"><span class="l">${isCN ? "إجمالي الإشعار الدائن" : "الإجمالي المستحق"}${v.enabled ? " (شامل الضريبة)" : ""}</span><span class="v">${sar(x.total)} ريال</span></div>
 
-${isTax && !voided ? zatcaQrBlock(who, issuer.vat_number!, x.total, x.vat, inv.created_at) : ""}
+${isTax && !voided ? zatcaQrBlock(who, S.vat!, x.total, x.vat, inv.created_at) : ""}
 
 ${snapOnNoVatNo && !voided ? `<div class="note">
-  <b>نسخة من فاتورة صدرت ضريبية:</b> الرقم الضريبي غير مسجَّل في إعدادات المكتب حاليًّا، فلا يُعاد رسم رمز الاستجابة السريعة في هذه النسخة.
-  أضِف الرقم الضريبي في الإعدادات لإعادة طباعتها كاملة.
+  <b>نسخة من فاتورة صدرت ضريبية:</b> الرقم الضريبي ${S.vat ? "المحفوظ غير صحيح" : "غير محفوظ"}، فلا يُرسم رمز الاستجابة السريعة في هذه النسخة.
 </div>` : ""}
-${v.enabled && !issuer.vat_number && !snapOnNoVatNo && !voided ? `<div class="note" style="border-inline-start-color:#D0453F;background:#FBE9E7;color:#a5322c">
-  <b>تنبيه:</b> الضريبة مفعّلة لكن الرقم الضريبي للمُصدِر غير مسجَّل، لذا صدرت الوثيقة بعنوان «فاتورة» لا «فاتورة ضريبية».
-  أضِف الرقم الضريبي في الإعدادات لتصدر فاتورة ضريبية مبسطة برمز QR.
+${vatNoWarn ? `<div class="note" style="border-inline-start-color:#D0453F;background:#FBE9E7;color:#a5322c">
+  <b>تنبيه:</b> الضريبة مفعّلة لكن ${S.vat ? "الرقم الضريبي المسجَّل غير صحيح (الرقم الصحيح ١٥ رقمًا يبدأ وينتهي بـ3)" : `الرقم الضريبي ${ownerMode ? "للمالك" : "للمُصدِر"} غير مسجَّل`}، لذا صدرت الوثيقة بعنوان «${isCN ? "إشعار دائن" : "فاتورة"}» لا «ضريبية».
+  ${ownerMode ? "أضِف الرقم الضريبي للمالك في بيانات العقار." : "صحّح الرقم الضريبي في الإعدادات."}
 </div>` : ""}
 
-<div class="note">
-  فاتورة إدارية صادرة عن المؤجّر لغرض التوثيق بين الطرفين. السداد يتم مباشرةً للمؤجّر بالوسيلة المتفق عليها —
+${isCN ? "" : `<div class="note">
+  ${isTax ? "" : "فاتورة صادرة عن المؤجّر لغرض التوثيق بين الطرفين. "}السداد يتم مباشرةً للمؤجّر بالوسيلة المتفق عليها —
   منصة وثيق لا تستلم ولا تحوّل أي مبالغ.
-</div>
+</div>`}
 ${isTax && !voided ? `<div class="note">
-  <b>عن الفوترة الإلكترونية:</b> هذه فاتورة ضريبية مبسطة تتضمن رمز الاستجابة السريعة وفق متطلبات المرحلة الأولى (الإصدار) من نظام الفاتورة الإلكترونية.
-  إن كانت منشأتك مشمولة بالمرحلة الثانية (الربط والتكامل مع منصة «فاتورة»)، فوثيق لا يقوم بهذا الربط — أصدر فواتيرك الضريبية من حلّ فوترة مرتبط، واستخدم هذه للتوثيق الإداري.
+  <b>عن الفوترة الإلكترونية:</b> ${isCN ? "إشعار دائن" : "فاتورة ضريبية مبسطة"} برمز الاستجابة السريعة وفق متطلبات المرحلة الأولى (الإصدار) من الفوترة الإلكترونية.
+  الربط والتكامل مع منصة «فاتورة» (المرحلة الثانية) لا يتم عبر وثيق — إن كانت المنشأة مشمولة به فتُصدر فواتيرها الضريبية من حلّ مرتبط.
 </div>` : ""}
 
 <div class="sign">
-  <div>المُصدِر: ${who}<br><br>التوقيع: ________________</div>
-  <div>تاريخ الإصدار: ${arDate(issueDay)}${issueTime ? ` — الساعة <span dir="ltr">${issueTime}</span>` : ""}<br><br>رقم الفاتورة: ${inv.invoice_no}</div>
+  <div>${ownerMode ? "المورّد" : "المُصدِر"}: ${who}<br><br>التوقيع: ________________</div>
+  <div>تاريخ الإصدار: ${arDate(issueDay)}${issueTime ? ` — الساعة <span dir="ltr">${issueTime}</span>` : ""}<br><br>${isCN ? "رقم الإشعار" : "رقم الفاتورة"}: ${inv.invoice_no}</div>
 </div>
-${footer(issuer)}`;
-  /* النسخة الإنجليزية من القيم نفسها (isTax/voided/x) — لا تُعاد الحسابات */
-  const whoEn = issuer.billing_name || issuer.org_name || p.manager || "Property management";
+${footer(iss)}`;
+  /* النسخة الإنجليزية من القيم نفسها — لا تُعاد الحسابات */
   const ulEn = unitWordEn((t as any).unit_type, p.property_type);
-  const titleEn = voided ? "Void invoice" : isTax ? "Simplified tax invoice" : "Invoice";
+  const titleEn = isCN ? (isTax ? "Credit note — simplified tax invoice" : "Credit note") : voided ? "Void invoice" : isTax ? "Simplified tax invoice" : "Invoice";
   const enInner = `
-${headerEn(titleEn, inv.invoice_no, issuer, issueDay)}
-${voided ? `<div style="border:3px solid #a5322c;color:#a5322c;text-align:center;font-weight:800;font-size:1.4rem;padding:10px;margin:10px 0;border-radius:10px;letter-spacing:.5px">VOID — not valid and not payable</div>` : ""}
-<h1>${isTax || snapOnNoVatNo ? "Simplified tax invoice — rent" : "Rent invoice"}</h1>
+${headerEn(titleEn, inv.invoice_no, iss, issueDay)}
+${voided ? `<div style="border:3px solid #a5322c;color:#a5322c;text-align:center;font-weight:800;font-size:1.4rem;padding:10px;margin:10px 0;border-radius:10px;letter-spacing:.5px">VOID — not valid and not payable${inv.credit_note_no ? `<div style="font-size:.85rem;font-weight:600;margin-top:4px">Cancelled by credit note <span dir="ltr">${inv.credit_note_no}</span></div>` : ""}</div>` : ""}
+<h1>${isCN ? titleEn : isTax || snapOnNoVatNo ? "Simplified tax invoice — rent" : "Rent invoice"}</h1>
 <div class="sub">${periodLabelEn(inv.period_label)} · ${freqEn(t.payment_frequency)}</div>
+${isCN ? `<div class="note" style="border-inline-start-color:#B8791F">
+  <div><b>Original invoice:</b> <span dir="ltr">${inv.ref_invoice_no || "—"}</span>${inv.ref_issue_date ? ` — ${enDate(inv.ref_issue_date)}` : ""}</div>
+  <div><b>Reason:</b> <span dir="auto">${inv.reason || "—"}</span></div>
+  <div>This note cancels the invoice above in full.</div>
+</div>` : ""}
 
 <div class="grid">
   <div class="box">
-    <h3>Issuer</h3>
-    <div class="r"><span>Name</span><span dir="auto">${whoEn}</span></div>
-    ${issuer.cr_number ? `<div class="r"><span>CR no.</span><span dir="ltr">${issuer.cr_number}</span></div>` : ""}
-    ${issuer.vat_number ? `<div class="r"><span>VAT no.</span><span dir="ltr">${issuer.vat_number}</span></div>` : ""}
-    ${issuer.billing_phone ? `<div class="r"><span>Contact</span><span dir="ltr">${issuer.billing_phone}</span></div>` : ""}
+    <h3>${ownerMode ? "Supplier (lessor)" : "Issuer"}</h3>
+    <div class="r"><span>Name</span><span dir="auto">${who}</span></div>
+    ${S.address ? `<div class="r"><span>Address</span><span dir="auto">${S.address}</span></div>` : ""}
+    ${S.cr ? `<div class="r"><span>CR no.</span><span dir="ltr">${S.cr}</span></div>` : ""}
+    ${S.vat ? `<div class="r"><span>VAT no.</span><span dir="ltr">${S.vat}</span></div>` : ""}
+    ${!ownerMode && issuer.billing_phone ? `<div class="r"><span>Contact</span><span dir="ltr">${issuer.billing_phone}</span></div>` : ""}
+    ${ownerMode ? `<div class="r" style="color:#5C6B67;font-size:.8rem"><span>Issued on behalf of the supplier</span></div>` : ""}
   </div>
   <div class="box">
     <h3>Bill to</h3>
-    <div class="r"><span>Name</span><span dir="auto">${t.name}</span></div>
-    ${t.national_id ? `<div class="r"><span>ID / CR</span><span dir="ltr">${t.national_id}</span></div>` : ""}
-    <div class="r"><span>${ulEn}</span><span dir="auto">${t.unit || "—"}</span></div>
-    <div class="r"><span>Property</span><span dir="auto">${p.name}</span></div>
+    <div class="r"><span>Name</span><span dir="auto">${buyer}</span></div>
+    ${buyerId ? `<div class="r"><span>ID / CR</span><span dir="ltr">${buyerId}</span></div>` : ""}
+    <div class="r"><span>${ulEn}</span><span dir="auto">${unitNo || "—"}</span></div>
+    <div class="r"><span>Property</span><span dir="auto">${propName}</span></div>
   </div>
 </div>
 
 <table>
-  <thead><tr><th>Description</th><th>Period</th><th>Due date</th><th>Amount${v.enabled ? " before VAT" : ""} (SAR)</th></tr></thead>
+  <thead><tr><th>Description</th><th>Period</th><th>Qty</th><th>Unit price${v.enabled ? " before VAT" : ""}</th>${isCN ? "" : "<th>Due date</th>"}<th>Amount${v.enabled ? " before VAT" : ""} (SAR)</th></tr></thead>
   <tbody>
     <tr>
-      <td>Rent for ${ulEn} no. (<span dir="auto">${t.unit || "—"}</span>) — <span dir="auto">${p.name}</span></td>
+      <td>${isCN ? "Cancellation of rent" : "Rent"} for ${ulEn} no. (<span dir="auto">${unitNo || "—"}</span>) — <span dir="auto">${propName}</span></td>
       <td>${periodLabelEn(inv.period_label)}</td>
-      <td>${inv.due_date ? enDate(inv.due_date) : "—"}</td>
+      <td>1</td>
+      <td>${sar(x.base)}</td>
+      ${isCN ? "" : `<td>${inv.due_date ? enDate(inv.due_date) : "—"}</td>`}
       <td>${sar(x.base)}</td>
     </tr>
   </tbody>
@@ -1228,28 +1247,28 @@ ${v.enabled ? `<table style="max-width:340px;margin-inline-start:auto">
   </tbody>
 </table>` : ""}
 
-<div class="due"><span class="l">Total due${v.enabled ? " (incl. VAT)" : ""}</span><span class="v">SAR ${sar(x.total)}</span></div>
+<div class="due"><span class="l">${isCN ? "Credit note total" : "Total due"}${v.enabled ? " (incl. VAT)" : ""}</span><span class="v">SAR ${sar(x.total)}</span></div>
 
-${isTax && !voided ? zatcaQrBlock(who, issuer.vat_number!, x.total, x.vat, inv.created_at, "-en") : ""}
-${isTax && !voided ? `<div class="note">Tax invoices in Saudi Arabia must be issued in Arabic: the Arabic version of this invoice (same number) is the binding one; this English copy is for reference.</div>` : ""}
+${isTax && !voided ? zatcaQrBlock(who, S.vat!, x.total, x.vat, inv.created_at, "-en") : ""}
+${isTax && !voided ? `<div class="note">Tax invoices in Saudi Arabia must be issued in Arabic: the Arabic version of this document (same number) is the binding one; this English copy is for reference.</div>` : ""}
 
-${snapOnNoVatNo && !voided ? `<div class="note"><b>Copy of an invoice issued as a tax invoice:</b> the VAT number is not currently set in the office settings, so the QR code is not redrawn on this copy.</div>` : ""}
-${v.enabled && !issuer.vat_number && !snapOnNoVatNo && !voided ? `<div class="note" style="border-inline-start-color:#D0453F;background:#FBE9E7;color:#a5322c">
-  <b>Note:</b> VAT is enabled but the issuer's VAT number is not registered, so this document is titled "Invoice", not "Tax invoice".
+${snapOnNoVatNo && !voided ? `<div class="note"><b>Copy of a document issued as a tax invoice:</b> no valid VAT number is stored, so the QR code is not drawn on this copy.</div>` : ""}
+${vatNoWarn ? `<div class="note" style="border-inline-start-color:#D0453F;background:#FBE9E7;color:#a5322c">
+  <b>Note:</b> VAT is enabled but the ${ownerMode ? "owner's" : "issuer's"} VAT number is ${S.vat ? "invalid (must be 15 digits starting and ending with 3)" : "not registered"}, so this document is not titled as a tax document.
 </div>` : ""}
 
-<div class="note">
-  Administrative invoice issued by the lessor as a record between the parties. Payment is made directly to the lessor by the agreed method —
+${isCN ? "" : `<div class="note">
+  ${isTax ? "" : "Invoice issued by the lessor as a record between the parties. "}Payment is made directly to the lessor by the agreed method —
   the Watheq platform does not receive or transfer any funds.
-</div>
+</div>`}
 
 <div class="sign">
-  <div>Issuer: <span dir="auto">${whoEn}</span><br><br>Signature: ________________</div>
-  <div>Issue date: ${enDate(issueDay)}${issueTime ? ` at <span dir="ltr">${issueTime}</span>` : ""}<br><br>Invoice no.: <span dir="ltr">${inv.invoice_no}</span></div>
+  <div>${ownerMode ? "Supplier" : "Issuer"}: <span dir="auto">${who}</span><br><br>Signature: ________________</div>
+  <div>Issue date: ${enDate(issueDay)}${issueTime ? ` at <span dir="ltr">${issueTime}</span>` : ""}<br><br>${isCN ? "Note no." : "Invoice no."}: <span dir="ltr">${inv.invoice_no}</span></div>
 </div>
-${footerEn(issuer)}`;
-  return SHELL(`${voided ? "فاتورة ملغاة" : "فاتورة"} ${inv.invoice_no} — ${t.name}`, body, markOf(issuer),
-    { title: `${titleEn} ${inv.invoice_no} — ${t.name}`, inner: enInner });
+${footerEn(iss)}`;
+  return SHELL(`${kindAr} ${inv.invoice_no} — ${buyer}`, body, markOf(issuer),
+    { title: `${titleEn} ${inv.invoice_no} — ${buyer}`, inner: enInner });
 }
 
 /* ═══════════════════ عرض سعر تأجير وحدة ═══════════════════ */
