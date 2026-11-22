@@ -79,4 +79,35 @@ t("csv BOM", csv.charCodeAt(0) === 0xFEFF);
 t("csv quoted comma/quotes", csv.includes('"شركة ""أ""، ب, ج"'));
 t("csv header 16 cols", csv.slice(1).split("\r\n")[0].split(",").length === 16);
 t("invoiceVat snapshot rate", invoiceVat({ vat_enabled: true, vat_rate: 5, vat_inclusive: false }).rate === 5);
+/* 11) (v95) الإشعار الدائن: فاتورة أكتوبر 11,500 شاملة أُلغيت في نوفمبر.
+   أكتوبر: +10,000 / +1,500 (كما قُدِّم إقراره) · نوفمبر: −10,000 / −1,500 — صافي السنة صفر. */
+const ivA = { ...inv({ no: "INV-20", d: "2026-10-10", a: 11500, t: "T1", p: "P1", ve: true, vi: true, s: "void" }), id: "A" };
+const cnA = { ...inv({ no: "CN-21", d: "2026-11-02", a: 11500, t: "T1", p: "P1", ve: true, vi: true }), id: "CNA", doc_type: "credit_note", ref_invoice_id: "A", reason: "خطأ في المبلغ" };
+L = exportLines({ invoices: [ivA, cnA], tenants, props, issuer });
+const lc = L.find((x) => x.invoice_no === "CN-21"), li = L.find((x) => x.invoice_no === "INV-20");
+t("CN negative base -10000", lc.base === -10000);
+t("CN negative vat -1500", lc.vat === -1500 && lc.total === -11500);
+t("CN kind", lc.kind === "إشعار دائن");
+t("CN description refs invoice + reason", lc.description === "إشعار دائن يلغي INV-20 — خطأ في المبلغ");
+t("CN no due date", lc.due_date === "");
+t("voided invoice flagged cancelledByNote", li.voided && li.cancelledByNote);
+let S11 = monthlySummary(L);
+const oct = S11.find((m) => m.month === "2026-10"), nov = S11.find((m) => m.month === "2026-11");
+t("Oct keeps +1500 vat", oct && oct.vat === 1500 && oct.base === 10000);
+t("Nov -1500 vat", nov && nov.vat === -1500 && nov.base === -10000 && nov.taxableBase === -10000);
+/* فلتر نوفمبر وحده: الإشعار فقط، والفاتورة الأصلية خارج الفترة لكن معروفة الرقم */
+L = exportLines({ invoices: [ivA, cnA], tenants, props, issuer, from: "2026-11-01", to: "2026-11-30" });
+t("Nov filter: only CN", L.length === 1 && L[0].description.includes("INV-20"));
+/* ملغاة قديمة بلا إشعار: خارج الملخص كما كانت */
+S11 = monthlySummary(exportLines({ invoices: [{ ...ivA, id: "OLD" }], tenants, props, issuer }));
+t("legacy void w/o CN excluded", S11.length === 0);
+
+/* 12) (v95) لقطة البائع: المالك بائعًا برقمه — والرقم غير الصحيح لا يجعلها ضريبية */
+L = exportLines({ invoices: [{ ...inv({ no: "INV-30", d: "2026-11-09", a: 11500, t: "T1", p: "P1", ve: true, vi: true }), seller_name: "سعد", seller_vat: "311111111111113" }], tenants, props, issuer });
+t("seller from snapshot", L[0].seller === "سعد" && L[0].seller_vat === "311111111111113" && L[0].kind === "ضريبية");
+L = exportLines({ invoices: [{ ...inv({ no: "INV-31", d: "2026-11-09", a: 11500, t: "T1", p: "P1", ve: true, vi: true }), seller_name: "سعد", seller_vat: null }], tenants, props, issuer });
+t("owner w/o vat → not tax (office vat not borrowed)", L[0].kind === "غير ضريبية" && L[0].seller_vat === "");
+L = exportLines({ invoices: [inv({ no: "INV-32", d: "2026-11-09", a: 11500, t: "T1", p: "P1", ve: true, vi: true })], tenants, props, issuer: { billing_name: "م", vat_number: "3100000032" } });
+t("invalid office vat → not tax", L[0].kind === "غير ضريبية");
+
 console.log(`${ok} ✓ · ${bad} ✗`); process.exit(bad ? 1 : 0);
