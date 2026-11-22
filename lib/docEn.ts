@@ -26,7 +26,7 @@ const METHOD_EN: Record<string, string> = {
 export const methodEn = (m?: string | null) => METHOD_EN[String(m || "")] || "—";
 
 const FREQ_EN: Record<string, string> = {
-  daily: "Daily", weekly: "Weekly", monthly: "Monthly", quarterly: "Every 3 months",
+  daily: "Daily", weekly: "Weekly", monthly: "Monthly", bimonthly: "Every 2 months", quarterly: "Every 3 months",
   trimester: "Every 4 months", semiannual: "Every 6 months", annual: "Annual",
 };
 /** نفس الافتراضي العربي (freqLabel ⇒ «شهري») */

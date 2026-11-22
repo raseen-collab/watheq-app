@@ -274,3 +274,53 @@ export function acDripNoticeText(i: AcDripNoticeInput): string {
   ];
   return L.join("\n");
 }
+
+/* ============================================================
+ * إبلاغ مالك العقار (22 نوفمبر 2026 — طلب مكتب الأولى)
+ * عقد الوحدة انتهى (أو عليها متأخرات) والمستأجر لا يتجاوب للسداد أو الإخلاء؛
+ * المكتب يبلّغ المالك بواتساب برسالة جاهزة من صف الوحدة، بتوقيع المكتب.
+ * الأرقام من حالة العقد كما هي — لا تُحسب هنا.
+ * ============================================================ */
+export type OwnerAlertInput = {
+  ownerName?: string | null;
+  tenantName: string;
+  unitText: string;
+  propertyName: string;
+  /** تاريخ انتهاء العقد (ISO) — إن انتهى */
+  endDate?: string | null;
+  daysToEnd?: number | null;
+  hijri?: boolean;
+  /** المتأخر شامل الضريبة إن وُجد، وعدد الدفعات المتأخرة */
+  overdue: number;
+  unpaid: number;
+  carried?: number;
+  /** ما فعله المكتب: عدد التذكيرات/الإشعارات المرسلة إن أراد ذكره */
+  attempts?: string | null;
+  signer: string;
+};
+/** 1 دفعة واحدة · 2 دفعتان · 3–10 دفعات · 11+ دفعة */
+const payCount = (n: number) => n === 1 ? "دفعة واحدة" : n === 2 ? "دفعتان" : n >= 3 && n <= 10 ? `${n} دفعات` : `${n} دفعة`;
+export function ownerAlertText(i: OwnerAlertInput): string {
+  const ended = i.daysToEnd !== null && i.daysToEnd !== undefined && i.daysToEnd < 0 && !!i.endDate;
+  const date = i.endDate ? `${arDate(i.endDate)}${i.hijri ? ` (${hijriText(i.endDate)})` : ""}` : "";
+  const where = `${i.unitText} بعقار ${i.propertyName}`;
+  const owed = Math.max(0, Number(i.overdue) || 0);
+  const carried = Math.max(0, Number(i.carried) || 0);
+  const L: string[] = [];
+  L.push(`السلام عليكم ورحمة الله${i.ownerName ? `، ${i.ownerName}` : ""}`);
+  L.push("");
+  L.push(`نفيدكم بخصوص ${where}، المستأجر: ${i.tenantName || "—"}:`);
+  if (ended) L.push(`• انتهى عقد الإيجار بتاريخ ${date} ولم يُجدَّد.`);
+  else if (i.endDate && (i.daysToEnd ?? 0) >= 0) L.push(`• ينتهي عقد الإيجار بتاريخ ${date}.`);
+  if (owed > 0) L.push(`• عليه متأخرات ${sar(owed)} ريال (${payCount(i.unpaid)})${carried > 0 ? `، منها ${sar(carried)} ريال مرحَّلة من مدة سابقة` : ""}.`);
+  else if (carried > 0) L.push(`• عليه ${sar(carried)} ريال مرحَّلة من مدة سابقة.`);
+  L.push(`• تواصلنا معه${i.attempts ? ` (${i.attempts})` : " أكثر من مرة"} ولم يتجاوب للسداد${ended ? " أو الإخلاء" : ""}.`);
+  L.push("");
+  L.push(ended
+    ? "نرجو توجيهكم بالخطوة التالية: الإمهال، أو التجديد بشروط جديدة، أو البدء في إجراءات الإخلاء النظامية."
+    : "نرجو توجيهكم بالخطوة التالية: الإمهال، أو إشعاره رسميًّا، أو البدء في الإجراءات النظامية.");
+  L.push("");
+  L.push("ونبقى على تواصل،");
+  L.push(i.signer);
+  return L.join("\n");
+}

@@ -52,6 +52,9 @@ export type Row = {
 
 const FREQ_MAP: Record<string, Frequency> = {
   "يومي": "daily", "اسبوعي": "weekly", "شهري": "monthly",
+  /* (22 نوفمبر 2026) دورة كل شهرين — طلب مكتب الأولى */
+  "كل شهرين": "bimonthly", "كل 2 شهر": "bimonthly", "كل 2 اشهر": "bimonthly", "كل شهران": "bimonthly", "شهرين": "bimonthly",
+  "6 دفعات": "bimonthly", "ست دفعات": "bimonthly", "سته دفعات": "bimonthly", "ستة دفعات": "bimonthly", "كل ٢ شهر": "bimonthly", "كل ٢ اشهر": "bimonthly",
   "ربع سنوي": "quarterly", "كل 3 اشهر": "quarterly", "ربعي": "quarterly", "كل ثلاثة اشهر": "quarterly",
   /* الثلث السنوي: المكتب يكتبها بصيغ كثيرة — نقبلها كلها */
   "كل 4 اشهر": "trimester", "كل اربعة اشهر": "trimester", "ثلث سنوي": "trimester",
@@ -67,7 +70,7 @@ const FREQ_MAP: Record<string, Frequency> = {
   "دفعتين": "semiannual", "دفعتان": "semiannual", "2 دفعات": "semiannual", "دفعتين في السنه": "semiannual", "نصف سنويه": "semiannual",
   "سنويه": "annual", "دفعه واحده": "annual", "دفعه سنويه": "annual", "كل سنه": "annual", "مره في السنه": "annual", "1 دفعه": "annual",
   "semi-annual": "semiannual", "semi annual": "semiannual", "quarter": "quarterly",
-  daily: "daily", weekly: "weekly", monthly: "monthly",
+  daily: "daily", weekly: "weekly", monthly: "monthly", bimonthly: "bimonthly", "bi-monthly": "bimonthly",
   quarterly: "quarterly", trimester: "trimester", semiannual: "semiannual", annual: "annual", yearly: "annual",
 };
 
@@ -327,7 +330,7 @@ export function isExampleRow(r: string[]): boolean {
   return !r.some((c) => { const v = cleanCell(c); return v && !hasExampleMark([v]) && /[\u0600-\u06FFa-zA-Z]{2,}/.test(v) && !/^(شهري|سنوي|كل 3 اشهر|شقه|هجري|ميلادي)$/.test(arKey(v)); });
 }
 
-const PER_YEAR: Record<string, number> = { daily: 365, weekly: 52, monthly: 12, quarterly: 4, trimester: 3, semiannual: 2, annual: 1 };
+const PER_YEAR: Record<string, number> = { daily: 365, weekly: 52, monthly: 12, bimonthly: 6, quarterly: 4, trimester: 3, semiannual: 2, annual: 1 };
 
 /* ============================================================
    «طابق أعمدتك» (9 أكتوبر 2026)
@@ -818,7 +821,7 @@ export function templateRow(cells: Partial<Record<Field, string | number>>): (st
 }
 
 const EXPORT_FREQ_AR: Record<string, string> = {
-  daily: "يومي", weekly: "اسبوعي", monthly: "شهري", quarterly: "كل 3 اشهر", trimester: "كل 4 اشهر",
+  daily: "يومي", weekly: "اسبوعي", monthly: "شهري", bimonthly: "كل شهرين", quarterly: "كل 3 اشهر", trimester: "كل 4 اشهر",
   semiannual: "نصف سنوي", annual: "سنوي", yearly: "سنوي",
 };
 const EXPORT_UNIT_AR: Record<string, string> = { apartment: "شقة", annex: "شقة ملحق", studio: "استديو", room: "غرفة", shop: "محل", showroom: "معرض", office: "مكتب", warehouse: "مستودع", land: "أرض", villa: "فيلا", other: "أخرى" };
