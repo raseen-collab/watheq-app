@@ -8,6 +8,7 @@ import { isMarketer, marketerAllowed, type AccountType } from "@/lib/roles";
 import type { SubState } from "@/lib/subscription";
 import OfficeChat from "@/components/OfficeChat";
 import BackupReminder from "@/components/BackupReminder";
+import ReportProblem from "@/components/ReportProblem";
 import { daysAr } from "@/lib/utils";
 import { getOffice, allProperties } from "@/lib/office";
 
@@ -136,6 +137,8 @@ export default function DashboardShell({
 
           <div className="flex items-center gap-2 text-sm">
             {isOwner && <Link href="/settings" className="text-[#CFE0DB] hover:text-white text-sm">الإعدادات</Link>}
+            {/* (22 نوفمبر 2026) بلاغ مشكلة — الصفحة والجهاز يُرفقان تلقائيًّا */}
+            <ReportProblem className="text-[#CFE0DB] hover:text-white text-sm whitespace-nowrap" />
             <span className="text-[#9FB8B3] hidden sm:inline max-w-[130px] truncate">{userName}</span>
             <button onClick={signOut} className="btn text-sm bg-white/10 text-[#EAF1EE] hover:bg-white/20 border border-white/15">خروج</button>
           </div>
