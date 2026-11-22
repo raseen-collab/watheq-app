@@ -77,7 +77,7 @@ t("historical holder name", L[0].customer === "مستأجر سابق");
 const csv = exportCSV([{ ...L[0], customer: 'شركة "أ"، ب, ج' }]);
 t("csv BOM", csv.charCodeAt(0) === 0xFEFF);
 t("csv quoted comma/quotes", csv.includes('"شركة ""أ""، ب, ج"'));
-t("csv header 16 cols", csv.slice(1).split("\r\n")[0].split(",").length === 16);
+t("csv header 18 cols", csv.slice(1).split("\r\n")[0].split(",").length === 18);
 t("invoiceVat snapshot rate", invoiceVat({ vat_enabled: true, vat_rate: 5, vat_inclusive: false }).rate === 5);
 /* 11) (v95) الإشعار الدائن: فاتورة أكتوبر 11,500 شاملة أُلغيت في نوفمبر.
    أكتوبر: +10,000 / +1,500 (كما قُدِّم إقراره) · نوفمبر: −10,000 / −1,500 — صافي السنة صفر. */
@@ -109,5 +109,13 @@ L = exportLines({ invoices: [{ ...inv({ no: "INV-31", d: "2026-11-09", a: 11500,
 t("owner w/o vat → not tax (office vat not borrowed)", L[0].kind === "غير ضريبية" && L[0].seller_vat === "");
 L = exportLines({ invoices: [inv({ no: "INV-32", d: "2026-11-09", a: 11500, t: "T1", p: "P1", ve: true, vi: true })], tenants, props, issuer: { billing_name: "م", vat_number: "3100000032" } });
 t("invalid office vat → not tax", L[0].kind === "غير ضريبية");
+
+/* 13) (v96) قياسية: نوعها ورقم العميل في التصدير — والمبسطة بلا رقم عميل */
+L = exportLines({ invoices: [{ ...inv({ no: "INV-40", d: "2026-11-10", a: 11500, t: "T1", p: "P1", ve: true, vi: true }), invoice_kind: "standard", buyer_vat: "300000000000003" }], tenants, props, issuer });
+t("standard type + buyer vat", L[0].tax_type === "قياسية" && L[0].buyer_vat === "300000000000003");
+L = exportLines({ invoices: [inv({ no: "INV-41", d: "2026-11-10", a: 11500, t: "T1", p: "P1", ve: true, vi: true })], tenants, props, issuer });
+t("simplified type, no buyer vat", L[0].tax_type === "مبسطة" && L[0].buyer_vat === "");
+L = exportLines({ invoices: [inv({ no: "INV-42", d: "2026-11-10", a: 3000, t: "T2", p: "P2", ve: false })], tenants, props, issuer });
+t("non-tax: empty type", L[0].tax_type === "");
 
 console.log(`${ok} ✓ · ${bad} ✗`); process.exit(bad ? 1 : 0);

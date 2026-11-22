@@ -110,5 +110,29 @@ h = D.invoiceHTML({ ...T, unit_type: "apartment" }, { ...P, property_type: "resi
 t("residential: no QR", !h.includes("zatca-tlv"));
 t("residential: plain title", h.includes("<h1>فاتورة أجرة</h1>"));
 
+/* (v96) الفاتورة القياسية: العنوان، رقم المشتري وعنوانه، نسبة الضريبة ومبلغها في البند، وسيلة الدفع */
+const stdSnap = { seller_mode: "office", seller_name: "مكتب س", seller_vat: "300000000000003", seller_address: "الرياض",
+  invoice_kind: "standard", buyer_vat: "311111111111113", buyer_address: "جدة، التحلية", payment_means: "transfer" };
+h = D.invoiceHTML(T, P, { ...base, ...stdSnap }, {});
+t("std title 'فاتورة ضريبية' (not مبسطة)", h.includes("<h1>فاتورة ضريبية — أجرة</h1>") && !h.includes("فاتورة ضريبية مبسطة"));
+t("std buyer vat", h.includes("311111111111113"));
+t("std buyer address", h.includes("جدة، التحلية"));
+t("std per-line VAT rate + amount", h.includes("<th>نسبة الضريبة</th>") && h.includes("<td>15%</td>") && h.includes("<td>1,500</td>"));
+t("std line total incl VAT", h.includes("<td>11,500</td>"));
+t("std payment means", h.includes("وسيلة الدفع: <b>تحويل بنكي</b>"));
+t("std English title", h.includes("Tax invoice — rent") && h.includes("Bank transfer"));
+/* العنوان الفارغ يُكمَل بعنوان الوحدة والعقار */
+h = D.invoiceHTML(T, { ...P, address: "طريق الملك فهد", city: "الرياض" }, { ...base, ...stdSnap, buyer_address: null }, {});
+t("std buyer address fallback to unit", h.includes("معرض 2، معارض، طريق الملك فهد، الرياض"));
+/* إشعار دائن لقياسية */
+h = D.invoiceHTML(T, P, { ...base, ...stdSnap, invoice_no: "CN-2026-0010", doc_type: "credit_note", ref_invoice_no: "INV-2026-0009", reason: "خطأ" }, {});
+t("std CN title", h.includes("إشعار دائن لفاتورة ضريبية") && !h.includes("مبسطة"));
+/* قياسية لكن الضريبة غير مفعّلة (سكني): ليست ضريبية أصلًا */
+h = D.invoiceHTML({ ...T, unit_type: "apartment" }, { ...P, property_type: "residential", vat_enabled: false }, { ...base, ...stdSnap, vat_snapshot: false }, {});
+t("std kind but VAT off → plain", h.includes("<h1>فاتورة أجرة</h1>") && !h.includes("311111111111113"));
+/* الفجوات */
+t("standardGaps complete", E.standardGaps({ ...stdSnap, buyer_name: "س" }).length === 0 && E.standardGaps(stdSnap).join() === "اسم المستأجر");
+t("standardGaps missing pm + vat", E.standardGaps({ buyer_name: "س", buyer_address: "x" }).length === 2);
+
 console.log(`──────── einvoice: ${ok} ناجح · ${bad} فاشل`);
 process.exit(bad ? 1 : 0);
