@@ -15,8 +15,8 @@ t("cross year", E.monthsInPeriod("2026-11-01", "2027-02-28") === 4);
 t("bad input → 1", E.monthsInPeriod(null, "x") === 1 && E.monthsInPeriod("2026-12-01", "2026-11-01") === 1);
 
 // feeSpecOf / feeLabel
-t("pct spec", JSON.stringify(E.feeSpecOf({ mgmt_fee_pct: 5 }, 3)) === JSON.stringify({ pct: 5, fixed: null, times: 3 }));
-t("fixed spec", JSON.stringify(E.feeSpecOf({ mgmt_fee_pct: 5, mgmt_fee_mode: "fixed", mgmt_fee_amount: 1500 }, 2)) === JSON.stringify({ pct: null, fixed: 1500, times: 2 }));
+t("pct spec", JSON.stringify(E.feeSpecOf({ mgmt_fee_pct: 5 }, 3)) === JSON.stringify({ pct: 5, fixed: null, times: 3, inclusive: false }));
+t("fixed spec", JSON.stringify(E.feeSpecOf({ mgmt_fee_pct: 5, mgmt_fee_mode: "fixed", mgmt_fee_amount: 1500 }, 2)) === JSON.stringify({ pct: null, fixed: 1500, times: 2, inclusive: false }));
 t("fixed mode without amount → no fee", E.feeSpecOf({ mgmt_fee_mode: "fixed", mgmt_fee_amount: 0 }).fixed === null);
 t("labels", E.feeLabel({ mgmt_fee_pct: 7.5 }) === "7.5%" && E.feeLabel({ mgmt_fee_mode: "fixed", mgmt_fee_amount: 1500 }) === "1,500 ريال شهريًّا" && E.feeLabel({}) === null);
 
@@ -72,5 +72,19 @@ t("collection: no `to` → 1 time each", r1m.fin.fee === 1000 + 250 + 6000);
 const rNov = C.buildCollection({ periodPayments: pays, allTenantPayments: [], expenses: [], tenants, properties: props, from: "2026-11-01", to: "2026-11-30" });
 t("collection: Nov only → yearly not due", rNov.fin.fee === 1000 + 250);
 
+// (v99) «شاملة الضريبة» + الضريبة فقط للرقم الصحيح
+{
+  const n1 = E.ownerNet(50000, [], { pct: 10, inclusive: true }, 0, 15);
+  const ok1 = n1.feeBase === 4347.83 && n1.feeVat === 652.17 && n1.fee === 5000 && n1.net === 45000;
+  console.log(ok1 ? "✅" : "❌", "v99 شاملة: 5,000 = 4,347.83 + 652.17 → صافي 45,000", ok1 ? "" : JSON.stringify(n1));
+  const n2 = E.ownerNet(50000, [], { pct: 10, inclusive: true }, 0, 0);
+  const ok2 = n2.fee === 5000 && n2.feeVat === 0 && n2.feeBase === 5000;
+  console.log(ok2 ? "✅" : "❌", "v99 شاملة بلا تسجيل ضريبي: 5,000 بلا ضريبة", ok2 ? "" : JSON.stringify(n2));
+  const ok3 = E.feeVatRateOf({ vat_number: "300000000000003" }, { vat_rate: 15 }) === 15 && E.feeVatRateOf({ vat_number: "0" }, { vat_rate: 15 }) === 0 && E.feeVatRateOf({ vat_number: "3000000000003" }, {}) === 0 && E.feeVatRateOf(null, {}) === 0;
+  console.log(ok3 ? "✅" : "❌", "v99 feeVatRateOf: رقم صحيح فقط");
+  if (!(ok1 && ok2 && ok3)) bad++; else ok += 3;
+}
+
 console.log(`fixed-mgmt-fee: ${ok} ✅ ${bad ? bad + " ❌" : ""}`);
 process.exit(bad ? 1 : 0);
+

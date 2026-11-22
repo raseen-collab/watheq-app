@@ -9,8 +9,9 @@
 const R = require('/tmp/b/roles.js'), E = require('/tmp/b/ent.js'), P = require('/tmp/b/pricing.js');
 const L = require('/tmp/b/listings.js'), Q = require('/tmp/b/requests.js'), A = require('/tmp/b/ads.js'), PUB = require('/tmp/b/lpub.js');
 let fail = 0; const ok = (c, m) => { if (!c) { fail++; console.log('❌', m); } };
-const t = new Date().toISOString().slice(0, 10);
-const plus = (n) => { const d = new Date(); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10); };
+/* تاريخ اليوم بتوقيت الاختبار (Asia/Riyadh) لا UTC — كان يفشل بين 00:00 و03:00 بتوقيت الرياض */
+const t = (() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; })();
+const plus = (n) => { const d = new Date(); d.setDate(d.getDate() + n); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
 
 // الأدوار
 ok(R.canAccess('marketer', 'property') && !R.canAccess('marketer', 'association'), 'marketer: property only');
