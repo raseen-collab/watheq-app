@@ -169,3 +169,32 @@ export function expenseNote(r: MaintRequest): string {
 export const photoDir = (office: string, requestId: string) => `${office}/${requestId}`;
 export const PHOTO_BUCKET = "maintenance-photos";
 export const MAX_PHOTOS_PER_SIDE = 6;
+
+/* ============================================================
+ * (22 نوفمبر 2026) دليل الفنيين — schema-v94
+ * ============================================================ */
+export type Vendor = { id: string; name: string; phone: string | null; specialty: string; notes: string | null; active: boolean };
+export const VENDOR_SPECIALTY: Record<string, string> = {
+  plumbing: "سباكة", electric: "كهرباء", ac: "تكييف", elevator: "مصاعد", cleaning: "نظافة",
+  security: "أمن", painting: "دهان", carpentry: "نجارة", general: "صيانة عامة", other: "أخرى",
+};
+/** تخصص الفني المناسب لتصنيف الطلب */
+const CAT_TO_SPEC: Record<string, string> = { plumbing: "plumbing", electric: "electric", ac: "ac", elevator: "elevator", cleaning: "cleaning", security: "security" };
+/** الفنيون النشطون مرتّبين للطلب: صاحب التخصص أولًا، ثم «صيانة عامة»، ثم البقية — وبالاسم داخل كل مجموعة */
+export function vendorsFor(category: string | null | undefined, vendors: Vendor[]): Vendor[] {
+  const spec = CAT_TO_SPEC[category || ""] || null;
+  const rank = (v: Vendor) => (spec && v.specialty === spec ? 0 : v.specialty === "general" ? 1 : 2);
+  return vendors.filter((v) => v.active).slice().sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name, "ar"));
+}
+/** تنظيف إدخال فني قبل الحفظ — نفس قيود الجدول (schema-v94) */
+export function cleanVendor(v: { name?: string; phone?: string | null; specialty?: string; notes?: string | null }):
+  { ok: true; row: { name: string; phone: string | null; specialty: string; notes: string | null } } | { ok: false; error: string } {
+  const name = String(v.name || "").trim().replace(/\s+/g, " ");
+  if (name.length < 2 || name.length > 80) return { ok: false, error: "اكتب اسم الفني (حرفان على الأقل)." };
+  const raw = String(v.phone || "").replace(/[٠-٩]/g, (d) => String("٠١٢٣٤٥٦٧٨٩".indexOf(d))).trim();
+  const phone = raw ? raw.replace(/[^\d+ -]/g, "") : "";
+  if (phone && !/^[0-9+ -]{7,20}$/.test(phone)) return { ok: false, error: "رقم الجوال غير صحيح." };
+  const specialty = VENDOR_SPECIALTY[v.specialty || ""] ? String(v.specialty) : "other";
+  const notes = String(v.notes || "").trim().slice(0, 300) || null;
+  return { ok: true, row: { name, phone: phone || null, specialty, notes } };
+}
