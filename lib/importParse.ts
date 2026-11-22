@@ -4,7 +4,7 @@
 // فُصل عن ImportView (30 سبتمبر 2026) ليُختبر مباشرة، ولتقرأه ورقة «قالب الرفع»
 // في التصدير من المصدر نفسه — فلا يعود ترتيب الأعمدة يختلف بين الطرفين.
 // ============================================================
-import { firstDueGap, contractState, defaultTermPeriods, type Frequency } from "./contracts";
+import { firstDueGap, contractState, defaultTermPeriods, periodsPerYear, customMonths, normalizeFreq, type Frequency } from "./contracts";
 import { parseHijriInput } from "./hijri";
 
 // العمود التاسع «الدفعات المسدّدة» اختياري: بدونه يُعدّ العقد لم يُسدَّد منه شيء —
@@ -98,6 +98,17 @@ const UNIT_TYPE_KEY: Record<string, string> = Object.fromEntries(Object.entries(
   /* «أخرى» يصدّرها التصدير نفسه — كانت تضيع عند إعادة الرفع (30 سبتمبر 2026) */
   "أخرى": "other",
 }).map(([k, v]) => [arKey(k), v]));
+/**
+ * دورة مخصصة من النص: «كل 5 اشهر» / «كل 7 شهور» / «كل ٥ أشهر» → m5؛ «3 دفعات» تبقى كما في الخريطة.
+ * الأشهر 1–24. ما وافق دورة ثابتة يُطبَّع إليها (كل 3 اشهر → quarterly).
+ */
+export function customFreqFromText(v: string): Frequency | null {
+  const k = arKey(v).replace(/[٠-٩]/g, (d) => String("٠١٢٣٤٥٦٧٨٩".indexOf(d)));
+  const m = /^(?:كل|لكل)\s*(\d{1,2})\s*(?:اشهر|شهور|شهر|اشهور)$/.exec(k) || /^(\d{1,2})\s*(?:اشهر|شهور)$/.exec(k) || /^every\s*(\d{1,2})\s*months?$/.exec(k);
+  if (!m) return null;
+  const n = Number(m[1]);
+  return n >= 1 && n <= 24 ? normalizeFreq(`m${n}`) : null;
+}
 const FREQ_LOOKUP: Record<string, Frequency> = Object.fromEntries(
   Object.entries(FREQ_MAP).map(([k, v]) => [arKey(k), v]),
 ) as Record<string, Frequency>;
@@ -330,7 +341,7 @@ export function isExampleRow(r: string[]): boolean {
   return !r.some((c) => { const v = cleanCell(c); return v && !hasExampleMark([v]) && /[\u0600-\u06FFa-zA-Z]{2,}/.test(v) && !/^(شهري|سنوي|كل 3 اشهر|شقه|هجري|ميلادي)$/.test(arKey(v)); });
 }
 
-const PER_YEAR: Record<string, number> = { daily: 365, weekly: 52, monthly: 12, bimonthly: 6, quarterly: 4, trimester: 3, semiannual: 2, annual: 1 };
+const PER_YEAR = (f: string) => periodsPerYear(f);
 
 /* ============================================================
    «طابق أعمدتك» (9 أكتوبر 2026)
@@ -591,8 +602,8 @@ export function parseGrid(grid: string[][], properties: Prop[], todayIso: string
     const rentN0 = parseNum(rent);
     const rentN = isNaN(rentN0) ? 0 : rentN0;
     const fk = arKey(freq);
-    const frequency: Frequency = FREQ_LOOKUP[fk] || "monthly";
-    const freqUnknown = !!freq && !FREQ_LOOKUP[fk];
+    const frequency: Frequency = FREQ_LOOKUP[fk] || customFreqFromText(freq) || "monthly";
+    const freqUnknown = !!freq && !FREQ_LOOKUP[fk] && !customFreqFromText(freq);
     /* المكاتب السعودية تكتب العقود بالهجري. نجرّب الهجري أولًا (السنة
        1300–1600 تحسمه بلا لبس) ثم الميلادي — فيقبل الملف الصيغتين معًا. */
     const st = parseAnyDate(startDate);
@@ -606,7 +617,7 @@ export function parseGrid(grid: string[][], properties: Prop[], todayIso: string
     /* «مدة العقد بالأشهر» بديل مريح عن «عدد الدفعات»: عقد سنتين نصف سنوي
        = 4 دفعات، وحسابها بيد المكتب مصدر خطأ. العمود الصريح يتقدّم. */
     const monthsN = monthsTxt ? parseNum(monthsTxt) : 0;
-    const prFromMonths = monthsN > 0 ? Math.max(1, Math.round(monthsN * (PER_YEAR[frequency] || 12) / 12)) : null;
+    const prFromMonths = monthsN > 0 ? Math.max(1, Math.round(monthsN * (PER_YEAR(frequency) || 12) / 12)) : null;
     const prN = periods ? parseNum(periods) : NaN;
     const pr = (prN > 0 ? prN : null) || prFromMonths;
     /* (5 نوفمبر 2026) العمودان معًا ومتعارضان: «عدد الدفعات» يغلب — كان «مدة العقد» يُهمَل بصمت */
@@ -616,7 +627,7 @@ export function parseGrid(grid: string[][], properties: Prop[], todayIso: string
     const notes: string[] = [];
     let rentPay = rentN;
     if (rentN > 0 && rentBasis !== "payment" && FREQ_LOOKUP[fk]) {
-      const per = PER_YEAR[frequency] || 12;
+      const per = PER_YEAR(frequency) || 12;
       const exact = (rentBasis === "annual" ? rentN : rentN * 12) / per;
       rentPay = round2(exact);
       /* (29 أكتوبر 2026) أثر تقريب المكتب نفسه: «الشهري 666.67» لعقد سنوي 8,000
@@ -820,10 +831,12 @@ export function templateRow(cells: Partial<Record<Field, string | number>>): (st
   return FIELDS.map((f) => cells[f] ?? "");
 }
 
-const EXPORT_FREQ_AR: Record<string, string> = {
+const EXPORT_FREQ_AR_STD: Record<string, string> = {
   daily: "يومي", weekly: "اسبوعي", monthly: "شهري", bimonthly: "كل شهرين", quarterly: "كل 3 اشهر", trimester: "كل 4 اشهر",
   semiannual: "نصف سنوي", annual: "سنوي", yearly: "سنوي",
 };
+/** المخصصة تُصدَّر «كل 5 اشهر» (بلا همزة كبقية التصدير) — تُقرأ مجددًا بـcustomFreqFromText */
+const exportFreqAr = (f?: string | null) => EXPORT_FREQ_AR_STD[String(f || "")] ?? (customMonths(f) ? `كل ${customMonths(f)} اشهر` : "");
 const EXPORT_UNIT_AR: Record<string, string> = { apartment: "شقة", annex: "شقة ملحق", studio: "استديو", room: "غرفة", shop: "محل", showroom: "معرض", office: "مكتب", warehouse: "مستودع", land: "أرض", villa: "فيلا", other: "أخرى" };
 
 /**
@@ -833,7 +846,7 @@ const EXPORT_UNIT_AR: Record<string, string> = { apartment: "شقة", annex: "ش
 export function tenantTemplateCells(t: any, propName: string): Partial<Record<Field, string | number>> {
   return {
     name: t.name, unit: t.unit || "", rent: t.rent_amount,
-    freq: EXPORT_FREQ_AR[t.payment_frequency] || t.payment_frequency || "شهري",
+    freq: exportFreqAr(t.payment_frequency) || t.payment_frequency || "شهري",
     start: t.contract_start || "", periods: t.contract_periods || "",
     phone: t.phone || "", nid: t.national_id || "", phone2: t.phone2 || "",
     paid: t.paid_periods || 0, prop: propName,

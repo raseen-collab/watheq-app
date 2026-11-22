@@ -5,6 +5,7 @@
  * هذا الملف نقيّ (بلا React ولا Supabase) ليُختبر وحده. لا يترجم ما كتبه المكتب
  * (أسماء المستأجرين والعقارات والملاحظات تبقى كما كُتبت) — يترجم قوالب المستند فقط.
  */
+import { customMonths } from "./contracts";
 
 const MONTHS_EN = ["January", "February", "March", "April", "May", "June",
   "July", "August", "September", "October", "November", "December"];
@@ -30,7 +31,7 @@ const FREQ_EN: Record<string, string> = {
   trimester: "Every 4 months", semiannual: "Every 6 months", annual: "Annual",
 };
 /** نفس الافتراضي العربي (freqLabel ⇒ «شهري») */
-export const freqEn = (f?: string | null) => FREQ_EN[String(f || "")] || "Monthly";
+export const freqEn = (f?: string | null) => { const n = customMonths(f); return n ? (n === 1 ? "Monthly" : `Every ${n} months`) : FREQ_EN[String(f || "")] || "Monthly"; };
 
 const UNIT_TYPE_EN: Record<string, string> = {
   apartment: "Apartment", annex: "Annex apartment", studio: "Studio", room: "Room", shop: "Shop",

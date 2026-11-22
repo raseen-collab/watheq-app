@@ -10,7 +10,7 @@
 // دوال نقية بلا شبكة: تُستدعى من الصفحة وتُختبر مباشرة.
 // ============================================================
 
-import { contractState, isVacant, unitVatApplies, splitVat, firstDueGap, strictDate, type Frequency } from "./contracts";
+import { contractState, isVacant, unitVatApplies, splitVat, firstDueGap, strictDate, isValidFreq, type Frequency } from "./contracts";
 import { termRentPaidOf } from "./documents";
 import { contractRemaining } from "./contract-state";
 
@@ -160,8 +160,7 @@ export function auditOffice(properties: P[], payments: any[] = [], expenses: any
         push({ severity: "critical", title: "إيجار سالب", ...base,
           why: "يقلب كل الحسابات المبنية عليه.", fix: "صحّح قيمة الدفعة." });
       }
-      const FREQS = ["daily", "weekly", "monthly", "bimonthly", "quarterly", "trimester", "semiannual", "annual"];
-      if (t.payment_frequency && !FREQS.includes(String(t.payment_frequency))) {
+      if (t.payment_frequency && !isValidFreq(String(t.payment_frequency))) {
         push({ severity: "warn", title: `دورة سداد غير معروفة: ${t.payment_frequency}`, ...base,
           why: "يُستعمل «شهري» افتراضًا — وقد لا يطابق عقدك فتخرج الاستحقاقات خاطئة.",
           fix: "اختر دورة السداد الصحيحة من بطاقة الوحدة." });

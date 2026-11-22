@@ -23,7 +23,29 @@ function riyadhNow(): Date {
 /* «كل 4 أشهر» (ثلث سنوي) — 3 دفعات في السنة. دورة شائعة في العقود
    السعودية وكانت ناقصة: من عنده عقد بثلاث دفعات كان يضطر لاختيار
    «كل 3 أشهر» فينزاح جدوله شهرًا عن كل دفعة. */
-export type Frequency = "daily" | "weekly" | "monthly" | "bimonthly" | "quarterly" | "trimester" | "semiannual" | "annual";
+/** الدورات الثابتة، أو مخصصة «كل N أشهر» بالصيغة m<N> (m5 = كل 5 أشهر) — طلب مكتب الأولى 22 نوفمبر 2026 */
+export type Frequency = "daily" | "weekly" | "monthly" | "bimonthly" | "quarterly" | "trimester" | "semiannual" | "annual" | `m${number}`;
+
+/** أشهر الدورة المخصصة m<N> (1–24)، وإلا null */
+export function customMonths(f?: string | null): number | null {
+  const m = /^m(\d{1,2})$/.exec(String(f || ""));
+  const n = m ? Number(m[1]) : 0;
+  return n >= 1 && n <= 24 ? n : null;
+}
+const STD_MONTHS: Record<string, number> = { monthly: 1, bimonthly: 2, quarterly: 3, trimester: 4, semiannual: 6, annual: 12 };
+/** طول الدورة بالأشهر (null لليومي والأسبوعي) */
+export function freqMonths(f?: string | null): number | null {
+  if (f && STD_MONTHS[f]) return STD_MONTHS[f];
+  return customMonths(f);
+}
+/** الدورة المخصصة ذات الأشهر الموافقة لدورة ثابتة تُطبَّع إليها (m3 → quarterly) */
+export function normalizeFreq(f?: string | null): Frequency {
+  const n = customMonths(f);
+  if (n) { const std = Object.keys(STD_MONTHS).find((k) => STD_MONTHS[k] === n); return (std || f) as Frequency; }
+  return isValidFreq(f) ? (f as Frequency) : "monthly";
+}
+export const isValidFreq = (f?: string | null): boolean => f === "daily" || f === "weekly" || !!freqMonths(f);
+const arMonths = (n: number) => n === 1 ? "شهر" : n === 2 ? "شهرين" : n <= 10 ? `${n} أشهر` : `${n} شهرًا`;
 
 export const FREQUENCIES: { value: Frequency; label: string; short: string }[] = [
   { value: "daily",      label: "يومي",        short: "يوم" },
@@ -36,15 +58,22 @@ export const FREQUENCIES: { value: Frequency; label: string; short: string }[] =
   { value: "annual",     label: "سنوي",        short: "سنة" },
 ];
 
-export const freqLabel = (f?: string | null) =>
-  FREQUENCIES.find((x) => x.value === f)?.label ?? "شهري";
-export const freqShort = (f?: string | null) =>
-  FREQUENCIES.find((x) => x.value === f)?.short ?? "شهر";
-
-/** عدد الفترات في السنة — لحساب المدة الافتراضية للعقد */
-const PERIODS_PER_YEAR: Record<Frequency, number> = {
-  daily: 365, weekly: 52, monthly: 12, bimonthly: 6, quarterly: 4, trimester: 3, semiannual: 2, annual: 1,
+export const freqLabel = (f?: string | null) => {
+  const n = customMonths(f);
+  return n ? `كل ${arMonths(n)}` : FREQUENCIES.find((x) => x.value === f)?.label ?? "شهري";
 };
+export const freqShort = (f?: string | null) => {
+  const n = customMonths(f);
+  return n ? arMonths(n) : FREQUENCIES.find((x) => x.value === f)?.short ?? "شهر";
+};
+
+/** عدد الفترات في السنة — لحساب المدة الافتراضية للعقد. المخصصة: أقرب عدد صحيح (كل 5 أشهر ≈ 2 في السنة) */
+export function periodsPerYear(f?: string | null): number {
+  if (f === "daily") return 365;
+  if (f === "weekly") return 52;
+  const m = freqMonths(f) || 1;
+  return Math.max(1, Math.round(12 / m));
+}
 
 const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
 
@@ -173,7 +202,7 @@ function addHijriMonths(date: Date, months: number, anchorDay?: number | null): 
 export function addPeriods(date: Date, freq: Frequency, n: number, anchorDay?: number | null, cal?: ContractCalendar | null): Date {
   const d = new Date(date.getTime());
   if (cal === "hijri" && freq !== "daily" && freq !== "weekly") {
-    const months = freq === "monthly" ? 1 : freq === "bimonthly" ? 2 : freq === "quarterly" ? 3 : freq === "trimester" ? 4 : freq === "semiannual" ? 6 : 12;
+    const months = freqMonths(freq) || 1;
     /* يوم المرساة الميلادي (7 في 2025-09-07) لا معنى له في الهجري — اليوم الهجري
        للتاريخ نفسه (15 في 1447/03/15) هو المرساة. كان هذا يزحف الاستحقاق 8 أيام. */
     return n === 0 ? d : addHijriMonths(d, months * n, null);
@@ -182,7 +211,7 @@ export function addPeriods(date: Date, freq: Frequency, n: number, anchorDay?: n
     case "daily":  d.setDate(d.getDate() + n); break;
     case "weekly": d.setDate(d.getDate() + n * 7); break;
     default: {
-      const months = freq === "monthly" ? 1 : freq === "bimonthly" ? 2 : freq === "quarterly" ? 3 : freq === "trimester" ? 4 : freq === "semiannual" ? 6 : 12;
+      const months = freqMonths(freq) || 1;
       // المرساة تمنع «زحف التواريخ»: عقد يبدأ 31 يناير يُقصّ إلى 28 فبراير،
       // فلولا المرساة لبقي يوم السداد 28 في كل الفترات التالية وعند كل تجديد.
       const anchor = Number(anchorDay) || 0;
@@ -245,7 +274,7 @@ export function expectedNext12(t: {
 }
 
 /** المدة الافتراضية للعقد: سنة واحدة بعدد فترات الدورة */
-export const defaultTermPeriods = (freq: Frequency) => PERIODS_PER_YEAR[freq];
+export const defaultTermPeriods = (freq: Frequency) => periodsPerYear(freq);
 
 /** تاريخ نهاية العقد المستنتج (إن لم يُدخل يدويًّا) */
 export function derivedEndDate(
@@ -411,7 +440,7 @@ export function contractState(t: {
   const rentOk = Number(t.rent_amount) > 0;
   /* دورة سداد غير معروفة تكسر جدول الدفعات كله: الافتراضي «شهري» قد يخالف
      عقدًا نصف سنوي فتخرج كل التواريخ غلطًا — وهذا نقص لا افتراض آمن. */
-  const freqOk = !t.payment_frequency || FREQUENCIES.some((f) => f.value === t.payment_frequency);
+  const freqOk = !t.payment_frequency || isValidFreq(t.payment_frequency);
   /* الشاغرة بلا عقد ليست «ناقصة» بل شاغرة عمدًا: مكتب يُدخل عمارة جديدة
      نصفها فارغ يسجّل شواغره قبل أن يؤجّرها، ولا معنى لتاريخ بداية لها.
      أما الشاغرة التي كان لها عقد فتاريخها موجود ويبقى للسجل. */
