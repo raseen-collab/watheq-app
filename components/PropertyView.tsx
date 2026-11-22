@@ -21,7 +21,8 @@ import { unitWordEn } from "@/lib/docEn";
 import { contractState, expectedNext12, buildSchedule, FREQUENCIES, freqLabel, freqShort, freqMonths, periodsPerYear, customMonths, normalizeFreq, derivedEndDate, renewContract, needsRenewal, applyPayment, splitVat, isCommercial, isVacant, settleDeposit, unitVatApplies,
   vacancyDays, TURNOVER_CHECKLIST, defaultTermPeriods, parseDate, dueWithVat, rentWithVat, withVat, unitVat, firstDueGap, type Frequency } from "@/lib/contracts";
 import { PROPERTY_TYPES, typeLabel, unitLabel, typeIcon, unitWordFor } from "@/lib/domain";
-import { statementHTML, invoiceHTML, propertyStatementHTML, moveOutSettlementHTML, quotationHTML, ownerReportHTML, receiptHTML, DEFAULT_CHARGES, openDoc, type ChargeRow, type OwnerReportPayment } from "@/lib/documents";
+import { statementHTML, invoiceHTML, propertyStatementHTML, moveOutSettlementHTML, quotationHTML, ownerReportHTML, ownerReportFinance, feeInvoiceHTML, receiptHTML, DEFAULT_CHARGES, openDoc, type ChargeRow, type OwnerReportPayment } from "@/lib/documents";
+import { feeInvoiceCalc, feeInvoiceGaps, feeInvoiceExplain, feePeriodLabel } from "@/lib/fee-invoice";
 import OwnerStatementModal from "@/components/OwnerStatementModal";
 import ActivityLog from "@/components/ActivityLog";
 import StatusLegend from "@/components/StatusLegend";
@@ -94,6 +95,8 @@ type Property = {
   owner_name?: string | null;
   /** (v98) جوال المالك — لإبلاغه من صف الوحدة حين لا يتجاوب المستأجر */
   owner_phone?: string | null;
+  /** (v99) «أتعابي شاملة الضريبة» — فاتورة الأتعاب وتقرير المالك */
+  fee_vat_inclusive?: boolean | null;
   /** (v95) من المؤجّر في الفاتورة: المكتب (العقد باسمه) أو المالك (وكيل معلَن) */
   rent_seller?: "office" | "owner" | string | null; owner_vat_number?: string | null; owner_address?: string | null;
   /** عدادات العقار الرئيسية (schema-v68) — المصعد، الخدمات، الماء… */
@@ -923,6 +926,8 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       mgmt_fee_amount: d.mgmt_fee_mode === "fixed" && Number(d.mgmt_fee_amount) > 0 ? Math.round(Number(d.mgmt_fee_amount) * 100) / 100 : null,
       mgmt_fee_period: ["month", "half", "year", "once"].includes(String(d.mgmt_fee_period)) ? d.mgmt_fee_period : "month",
       mgmt_fee_on: d.mgmt_fee_mode === "fixed" && d.mgmt_fee_period && d.mgmt_fee_period !== "month" && /^\d{4}-\d{2}-\d{2}$/.test(String(d.mgmt_fee_on || "")) ? d.mgmt_fee_on : null,
+      /* (v99) الأتعاب شاملة الضريبة؟ — تُطبَّق في تقرير المالك وفاتورة الأتعاب */
+      fee_vat_inclusive: !!d.fee_vat_inclusive,
       // اسم المالك يجمع عقاراته في كشف واحد (schema-v10) — يُقصّ حتى لا تتشتت الأسماء بمسافات
       owner_name: (d.owner_name || "").trim() || null,
       /* (v98) جوال المالك — يُحفظ كما كُتب (يُطبَّع عند الإرسال) */
@@ -2975,7 +2980,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       {stmtOpen && active && <PropertyStatementModal propertyName={active.name} onClose={() => setStmtOpen(false)} onIssue={openPropertyStatement} />}
 
       {reporting && active && (
-        <OwnerReportModal property={active} unitWord={ul} issuer={issuer || {}} db={db} onClose={() => setReporting(false)} />
+        <OwnerReportModal property={active} unitWord={ul} issuer={issuer || {}} db={db} canFee={may("issue_invoices")} onClose={() => setReporting(false)} />
       )}
       {expensesOpen && active && (
         <ExpensesModal propertyId={active.id} propertyName={active.name} unitWord={ul} db={db}
@@ -4203,6 +4208,13 @@ function PropertyModal({ open, initial, orgName, ownerNames = [], officeSoon = 1
                 value={d.mgmt_fee_pct ?? ""} onChange={(e) => setD({ ...d, mgmt_fee_pct: e.target.value })} />
             )}
           </div>
+          {(Number(d.mgmt_fee_pct) > 0 || (d.mgmt_fee_mode === "fixed" && Number(d.mgmt_fee_amount) > 0)) && (
+            <label className="flex items-start gap-2 mt-2 cursor-pointer text-xs">
+              <input type="checkbox" className="w-4 h-4 accent-[#B8791F] mt-0.5" checked={!!d.fee_vat_inclusive} onChange={(e) => setD({ ...d, fee_vat_inclusive: e.target.checked })} />
+              <span><b>الأتعاب شاملة ضريبة القيمة المضافة</b> — افتراضيًّا الضريبة (15%) تُضاف فوق الأتعاب. فعّل هذا إن كان اتفاقك مع المالك «{d.mgmt_fee_mode === "fixed" ? "المبلغ" : "النسبة"} شامل الضريبة».
+                الضريبة على أتعاب الإدارة واجبة حتى للعقار السكني — وتُفرض فقط إن كان لمكتبك رقم ضريبي صحيح في الإعدادات.</span>
+            </label>
+          )}
         </Field>
 
         <div className="border border-line rounded-xl p-3 bg-paper">
@@ -4899,8 +4911,8 @@ function TenantModal({ open, initial, unitWord, error, saving, onClose, onSubmit
  */
 const AR_MONTHS = ["يناير","فبراير","مارس","أبريل","مايو","يونيو","يوليو","أغسطس","سبتمبر","أكتوبر","نوفمبر","ديسمبر"];
 
-function OwnerReportModal({ property, unitWord, issuer, onClose, db }: {
-  property: Property; unitWord: string; issuer: any; onClose: () => void; db?: any;
+function OwnerReportModal({ property, unitWord, issuer, onClose, db, canFee = true }: {
+  property: Property; unitWord: string; issuer: any; onClose: () => void; db?: any; canFee?: boolean;
 }) {
   const supabase: any = db || createClient();
   /* كان الشهر الواحد هو الخيار الوحيد. المالك يطلب الربع والسنة و«منذ
@@ -4927,6 +4939,87 @@ function OwnerReportModal({ property, unitWord, issuer, onClose, db }: {
     : preset === "month" ? `${AR_MONTHS[Number(from.slice(5, 7)) - 1]} ${from.slice(0, 4)}`
     : preset === "year" ? `سنة ${from.slice(0, 4)}`
     : `${arDate(from)} — ${arDate(to)}`;
+
+  /* (v99) فاتورة أتعاب الإدارة لهذه الفترة — بأرقام التقرير نفسها (ownerReportFinance) */
+  const [fee, setFee] = useState<null | { calc: ReturnType<typeof feeInvoiceCalc>; gaps: string[]; explain: string[]; basis: number; label: string; feeSpec: any }>(null);
+  const [feeBusy, setFeeBusy] = useState(false);
+  const [feeList, setFeeList] = useState<any[] | null>(null);
+  const [voidFor, setVoidFor] = useState<{ id: string; no: string } | null>(null);
+  const [voidWhy, setVoidWhy] = useState("");
+
+  async function loadFeeList() {
+    const { data } = await supabase.from("invoices").select("*").eq("property_id", property.id).eq("subject", "mgmt_fee").order("created_at", { ascending: false }).limit(60);
+    setFeeList(data || []);
+  }
+  useEffect(() => { void loadFeeList(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [property.id]);
+
+  async function fetchPeriod() {
+    const [data, expenses] = await Promise.all([
+      fetchAllRows(supabase as any, "payments", "*",
+        (q) => q.eq("property_id", property.id).gte("paid_on", from).lte("paid_on", to).order("paid_on", { ascending: true })),
+      fetchAllRows<ExpenseRow>(supabase as any, "expenses", "*",
+        (q) => q.eq("property_id", property.id).gte("spent_on", from).lte("spent_on", to).order("spent_on", { ascending: true })),
+    ]);
+    const pastQ = await supabase.from("past_tenancies").select("id, snapshot").eq("property_id", property.id).limit(1000);
+    const pastVat = pastQ.error ? undefined : pastVatOf(pastQ.data as any);
+    return { data, expenses, pastVat };
+  }
+
+  async function previewFee() {
+    if (!valid) return;
+    setFeeBusy(true); setErr(null);
+    try {
+      const { data, expenses, pastVat } = await fetchPeriod();
+      const RF = ownerReportFinance(property as any, { from, to }, data as any, issuer || {}, { expenses, fee_pct: (property as any).mgmt_fee_pct, pastVat });
+      const calc = feeInvoiceCalc({ basis: RF.basis, pct: RF.feeSpec.pct, fixed: RF.feeSpec.fixed, times: RF.feeSpec.times,
+                                    officeVatValid: RF.feeVatRate > 0, vatRate: RF.feeVatRate || (Number(property.vat_rate) || 15), inclusive: !!(property as any).fee_vat_inclusive });
+      const gaps = feeInvoiceGaps(calc, property as any, issuer || {});
+      const dup = (feeList || []).find((x) => x.doc_type === "invoice" && x.status !== "void" && x.period_from === from && x.period_to === to);
+      if (dup) gaps.unshift(`صدرت فاتورة أتعاب لهذه الفترة من قبل (${dup.invoice_no}) — ألغِها بإشعار دائن أولًا إن أردت إعادة الإصدار`);
+      setFee({ calc, gaps, explain: feeInvoiceExplain(calc), basis: RF.basis, label: feePeriodLabel(from, to), feeSpec: RF.feeSpec });
+    } catch (e: any) { setErr(e?.message || "تعذّر حساب الأتعاب"); }
+    setFeeBusy(false);
+  }
+
+  async function issueFee() {
+    if (!fee || fee.gaps.length) return;
+    setFeeBusy(true); setErr(null);
+    try {
+      const oid = await officeId(supabase);
+      const { data: no, error: noErr } = await supabase.rpc("next_invoice_no", { p_user: oid });
+      if (noErr || !no) throw new Error(noErr?.message || "تعذّر حجز رقم الفاتورة");
+      const { data: saved, error } = await supabase.from("invoices").insert({
+        user_id: oid, tenant_id: null, property_id: property.id, subject: "mgmt_fee",
+        invoice_no: no, issue_date: today(), due_date: null, period_label: fee.label, period_from: from, period_to: to,
+        amount: fee.calc.amount, fee_basis: fee.basis, fee_pct: fee.calc.pct, fee_fixed: fee.calc.fixed, fee_times: fee.calc.mode === "fixed" ? fee.calc.times : null,
+        /* القاعدة تعيد ضبط vat_enabled من رقم المكتب الضريبي؛ نمرّره للتجربة فقط */
+        status: "issued", vat_enabled: fee.calc.vatEnabled, vat_inclusive: fee.calc.inclusive, vat_rate: fee.calc.rate || (Number(property.vat_rate) || 15),
+      }).select("*").single();
+      if (error) throw error;
+      const row: any = saved;
+      openDoc(feeInvoiceHTML(property as any, { ...row, vat_snapshot: typeof row.vat_enabled === "boolean" ? row.vat_enabled : null }, issuer || {}));
+      setFee(null);
+      await loadFeeList();
+    } catch (e: any) { setErr(e?.message || "تعذّر إصدار الفاتورة"); }
+    setFeeBusy(false);
+  }
+
+  function reprintFee(row: any) {
+    const cn = row.doc_type === "credit_note" ? null : (feeList || []).find((x) => x.doc_type === "credit_note" && x.ref_invoice_id === row.id);
+    const ref = row.doc_type === "credit_note" ? (feeList || []).find((x) => x.id === row.ref_invoice_id) : null;
+    openDoc(feeInvoiceHTML(property as any, { ...row, vat_snapshot: typeof row.vat_enabled === "boolean" ? row.vat_enabled : null,
+      credit_note_no: cn?.invoice_no || null, ref_invoice_no: ref?.invoice_no || null, ref_issue_date: ref?.issue_date || null }, issuer || {}));
+  }
+
+  async function confirmVoidFee() {
+    if (!voidFor) return;
+    const why = voidWhy.trim();
+    if (why.length < 3) { setErr("اكتب سبب الإلغاء (٣ أحرف على الأقل)."); return; }
+    setFeeBusy(true); setErr(null);
+    const { error } = await supabase.rpc("watheq_void_invoice", { p_invoice: voidFor.id, p_reason: why });
+    if (error) setErr(error.message); else { setVoidFor(null); setVoidWhy(""); await loadFeeList(); }
+    setFeeBusy(false);
+  }
 
   async function issue() {
     if (!valid) return;
@@ -5017,6 +5110,67 @@ function OwnerReportModal({ property, unitWord, issuer, onClose, db }: {
           الدفعات المستلمة خلال <b className="text-deep">{label}</b> بإجماليها · والمتأخرات القائمة وقت الإصدار.
           الأرقام تعكس ما وثّقه المكتب في النظام.
         </div>
+        {canFee && (
+          <div className="border border-line rounded-xl p-3 bg-white">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <div>
+                <div className="text-sm font-semibold">🧾 فاتورة أتعاب الإدارة على المالك — عن <span className="text-deep">{valid ? feePeriodLabel(from, to) : "—"}</span></div>
+                <div className="text-[11px] text-muted mt-0.5">بأرقام هذا التقرير نفسها. الأتعاب خاضعة للضريبة 15% حتى للعقار السكني — وتُفرض فقط إن كان لمكتبك رقم ضريبي صحيح.</div>
+              </div>
+              <button type="button" className="btn btn-ghost text-xs" onClick={previewFee} disabled={!valid || feeBusy}>{feeBusy ? "…" : "معاينة الفاتورة"}</button>
+            </div>
+            {fee && (
+              <div className="mt-3 text-sm space-y-1.5">
+                <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs bg-paper rounded-lg p-2.5">
+                  <span className="text-muted">صافي المحصَّل في الفترة</span><b className="text-ink tabular-nums">{sar(fee.basis)} ريال</b>
+                  <span className="text-muted">الأتعاب{fee.calc.vatEnabled && !fee.calc.inclusive ? " قبل الضريبة" : fee.calc.inclusive ? " (شاملة الضريبة)" : ""}</span><b className="tabular-nums">{sar(fee.calc.amount)} ريال</b>
+                  {fee.calc.vatEnabled && <><span className="text-muted">ضريبة القيمة المضافة {fee.calc.rate}%</span><b className="tabular-nums">{sar(fee.calc.vat)} ريال</b></>}
+                  <span className="text-muted font-semibold">إجمالي الفاتورة</span><b className="text-deep tabular-nums">{sar(fee.calc.total)} ريال</b>
+                  <span className="text-muted">يتبقى للمالك من المحصَّل بعد الأتعاب</span><b className="tabular-nums">{sar(fee.calc.ownerAfter)} ريال</b>
+                </div>
+                <details className="text-xs text-muted"><summary className="cursor-pointer">كيف حُسبت؟</summary>
+                  <ul className="list-disc pr-4 mt-1 space-y-0.5">{fee.explain.map((l, i) => <li key={i}>{l}</li>)}</ul>
+                </details>
+                {fee.gaps.length > 0 ? (
+                  <div className="text-xs font-semibold text-[#8f2b26] bg-[#FBE9E7] border border-[#F5C6C2] rounded-lg p-2.5">
+                    لا يمكن الإصدار قبل: <ul className="list-disc pr-4 mt-1 font-normal">{fee.gaps.map((g, i) => <li key={i}>{g}</li>)}</ul>
+                  </div>
+                ) : (
+                  <div className="flex gap-2 justify-end">
+                    <button type="button" className="btn btn-gold text-sm" onClick={issueFee} disabled={feeBusy}>{feeBusy ? "…" : "إصدار فاتورة الأتعاب"}</button>
+                  </div>
+                )}
+                <p className="text-[11px] text-muted">المشتري: {(property as any).owner_name || "— (أضف اسم المالك في إعدادات العقار)"}{(property as any).owner_vat_number ? " · فاتورة ضريبية قياسية (المالك مسجَّل في الضريبة)" : " · فاتورة ضريبية مبسطة"}. بعد الإصدار لا تُعدَّل؛ الإلغاء بإشعار دائن.</p>
+              </div>
+            )}
+            {feeList && feeList.length > 0 && (
+              <div className="mt-3 border-t border-line pt-2">
+                <div className="text-xs font-semibold mb-1">فواتير الأتعاب السابقة لهذا العقار</div>
+                <div className="space-y-1 max-h-40 overflow-auto">
+                  {feeList.map((r) => (
+                    <div key={r.id} className="flex items-center justify-between gap-2 text-xs">
+                      <span className="truncate"><b className={r.status === "void" ? "line-through text-muted" : ""}>{r.invoice_no}</b> · {r.period_label} · {sar(Number(r.amount) * (r.vat_enabled && !r.vat_inclusive ? 1 + (Number(r.vat_rate) || 15) / 100 : 1))} ريال{r.doc_type === "credit_note" ? " · إشعار دائن" : r.status === "void" ? " · ملغاة" : ""}</span>
+                      <span className="flex gap-1 shrink-0">
+                        <button type="button" className="btn btn-ghost !py-0.5 !px-2 text-[11px]" onClick={() => reprintFee(r)}>🖨️</button>
+                        {r.doc_type === "invoice" && r.status !== "void" && <button type="button" className="btn btn-ghost !py-0.5 !px-2 text-[11px]" onClick={() => { setVoidFor({ id: r.id, no: r.invoice_no }); setVoidWhy(""); }}>إلغاء</button>}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+                {voidFor && (
+                  <div className="mt-2 bg-paper rounded-lg p-2.5 text-xs space-y-1.5">
+                    <div>إلغاء <b>{voidFor.no}</b> بإشعار دائن — اكتب السبب:</div>
+                    <input className="fld" value={voidWhy} onChange={(e) => setVoidWhy(e.target.value)} placeholder="مثال: خطأ في نسبة الأتعاب" maxLength={300} />
+                    <div className="flex gap-2 justify-end">
+                      <button type="button" className="btn btn-ghost text-xs" onClick={() => setVoidFor(null)}>تراجع</button>
+                      <button type="button" className="btn btn-gold text-xs" onClick={confirmVoidFee} disabled={feeBusy}>تأكيد الإلغاء</button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
         {err && <div className="text-xs font-semibold text-[#8f2b26] bg-[#FBE9E7] border border-[#F5C6C2] rounded-lg p-2.5">{err}</div>}
         <div className="flex gap-2 justify-end">
           <button className="btn btn-ghost text-sm" onClick={onClose} disabled={loading}>إلغاء</button>
