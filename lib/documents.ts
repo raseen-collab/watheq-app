@@ -1,7 +1,7 @@
 import { contractState, buildSchedule, freqLabel, splitVat, settleDeposit, vacancyDays, isVacant, unitVatApplies, expectedNext12 } from "./contracts";
 import { complianceState, brokerageEnd, expectedCommission, UI_LEGAL, LEGAL_DISCLAIMER, DEFAULT_COMMISSION_PCT, type ComplianceItem } from "./compliance";
 import { KIND_META as L_KIND, OFFER_LABEL, STATUS_META, freshness, pricePerMeter, shortDesc, sortListings, summarize, STALE_DAYS, type Listing } from "./listings";
-import { ownerNet, feeSpecOf, feeTimes, feeLabel, sumByCategory, catLabel, sumAllExpenses, sumDue, isBillable, PAID_BY, type ExpenseRow } from "./expenses";
+import { ownerNet, feeSpecOf, feeTimes, feeLabel, feeVatRateOf, type FeeSpec, sumByCategory, catLabel, sumAllExpenses, sumDue, isBillable, PAID_BY, type ExpenseRow } from "./expenses";
 import { unitLabel, typeLabel, unitWordFor } from "./domain";
 import { hijriText, hijriShort } from "@/lib/hijri";
 import { annualRentRoll } from "./income";
@@ -13,6 +13,7 @@ import { metersCountLine, METER_TYPE_AR, type PropertyMeter } from "./meters";
 import { riyalsInWords } from "./tafqit";
 import { trustDocTitle, isTrustIn, isDepositKind, type TrustRow } from "./trust";
 import { sellerOf, isTaxInvoice, isValidVatNo, zatcaTlvBase64, qrTimestamp, isStandardKind, PAYMENT_MEANS, PAYMENT_MEANS_EN, type Seller, type InvoiceSnap } from "./einvoice";
+import { feeInvoiceCalc, feeInvoiceExplain, feePeriodLabel, FEE_PAYMENT_MEANS, FEE_PAYMENT_MEANS_EN } from "./fee-invoice";
 import { enDate, methodEn, freqEn, unitWordEn, propertyTypeEn, usageEn, periodLabelEn, riyalsInWordsEn, receiptStatementEn, instalmentsEn } from "./docEn";
 
 const sar = (n: number) => {
@@ -1315,6 +1316,173 @@ ${footerEn(iss)}`;
     { title: `${titleEn} ${inv.invoice_no} — ${buyer}`, inner: enInner });
 }
 
+/* ═══════════════════ فاتورة أتعاب الإدارة — من المكتب على المالك (v99) ═══════════════════ */
+
+export type FeeInvoiceDoc = InvoiceDoc & {
+  subject?: string | null;
+  period_from?: string | null; period_to?: string | null;
+  fee_basis?: number | null; fee_pct?: number | null; fee_fixed?: number | null; fee_times?: number | null;
+};
+
+/**
+ * فاتورة أتعاب إدارة الأملاك: المورّد المكتب (باسمه ورقمه الضريبي)، والمشتري مالك العقار.
+ * الأتعاب خاضعة 15% حتى للسكني (دليل الوكلاء §5.2). تُطبع من الصف المحفوظ: لقطة البائع
+ * والمشتري من القاعدة، وأرقام الحساب (الأساس، النسبة/الثابت) كما حُسبت في تقرير المالك.
+ */
+export function feeInvoiceHTML(p: Property, inv: FeeInvoiceDoc, issuer: Issuer = {}) {
+  const r2 = (n: number) => Math.round((Number(n) || 0) * 100) / 100;
+  p = scrub(p); inv = scrub(inv); issuer = scrub(issuer);
+  const isCN = inv.doc_type === "credit_note";
+  const S: Seller = sellerOf(inv, issuer, p as any);
+  const who = S.name;
+  const iss: Issuer = { ...issuer, billing_name: S.name, vat_number: S.vat, cr_number: S.cr };
+  const buyer = inv.buyer_name || (p as any).owner_name || "المالك";
+  const propName = inv.property_name || p.name;
+  const voided = !isCN && inv.status === "void";
+  /* الضريبة كما صدرت بها الفاتورة (القاعدة تضبطها: مفعّلة فقط للرقم الصحيح) */
+  const vatOn = inv.vat_snapshot === true;
+  const rate = Number((inv as any).vat_rate) > 0 ? Number((inv as any).vat_rate) : 15;
+  const inclusive = (inv as any).vat_inclusive === true;
+  const c = feeInvoiceCalc({ basis: Number(inv.fee_basis) || 0, pct: inv.fee_pct, fixed: inv.fee_fixed, times: inv.fee_times,
+                             officeVatValid: vatOn, vatRate: rate, inclusive });
+  /* المبلغ المحفوظ هو الحجة: إن اختلف عن إعادة الحساب (تغيّر إعداد لاحقًا) نطبع المحفوظ */
+  const amount = Number(inv.amount) || 0;
+  const x = vatOn ? (inclusive ? { base: r2(amount / (1 + rate / 100)), vat: 0, total: amount } : { base: amount, vat: r2(amount * rate / 100), total: r2(amount * (1 + rate / 100)) }) : { base: amount, vat: 0, total: amount };
+  if (vatOn && inclusive) x.vat = r2(x.total - x.base);
+  const isTax = vatOn && isValidVatNo(S.vat);
+  const std = isTax && isStandardKind(inv.invoice_kind);
+  const buyerVat = std ? inv.buyer_vat || null : null;
+  const buyerAddr = inv.buyer_address || null;
+  const pm = inv.payment_means && FEE_PAYMENT_MEANS[inv.payment_means] ? inv.payment_means : null;
+  const issueDay = inv.issue_date || today();
+  const issueTime = inv.created_at ? riyadhTime(inv.created_at) : !inv.issue_date ? riyadhTime() : "";
+  const periodTxt = inv.period_from && inv.period_to ? feePeriodLabel(inv.period_from, inv.period_to) : inv.period_label || "";
+  const taxWord = std ? "فاتورة ضريبية" : "فاتورة ضريبية مبسطة";
+  const kindAr = isCN ? (isTax ? `إشعار دائن ل${taxWord}` : "إشعار دائن") : voided ? "فاتورة ملغاة" : isTax ? taxWord : "فاتورة";
+  const h1Ar = isCN ? kindAr : `${isTax ? taxWord : "فاتورة"} — أتعاب إدارة الأملاك`;
+  const basisTxt = c.mode === "pct"
+    ? `${inv.fee_pct}% من صافي المحصَّل في الفترة (${sar(Number(inv.fee_basis) || 0)} ريال)`
+    : `مبلغ ثابت ${sar(Number(inv.fee_fixed) || 0)} ريال × ${inv.fee_times || 1}`;
+  const explain = feeInvoiceExplain({ ...c, amount, base: x.base, vat: x.vat, total: x.total });
+  const body = `
+${header(kindAr, inv.invoice_no, iss, issueDay)}
+${voided ? `<div style="border:3px solid #a5322c;color:#a5322c;text-align:center;font-weight:800;font-size:1.4rem;padding:10px;margin:10px 0;border-radius:10px;letter-spacing:.5px">ملغاة — لا يُعتدّ بها</div>` : ""}
+<h1>${h1Ar}</h1>
+<div class="sub">${periodTxt} · عقار ${propName}</div>
+${isCN ? `<div class="note" style="border-inline-start-color:#B8791F">
+  <div class="r"><b>مرجع الفاتورة الأصلية:</b> ${inv.ref_invoice_no || "—"}${inv.ref_issue_date ? ` — بتاريخ ${arDate(inv.ref_issue_date)}` : ""}</div>
+  <div class="r"><b>سبب الإصدار:</b> ${inv.reason || "—"}</div>
+  <div>يُلغي هذا الإشعار الفاتورة المذكورة بكامل قيمتها.</div>
+</div>` : ""}
+
+<div class="grid">
+  <div class="box">
+    <h3>المورّد (مكتب إدارة الأملاك)</h3>
+    <div class="r"><span>الاسم</span><span>${who}</span></div>
+    ${S.address ? `<div class="r"><span>العنوان</span><span>${S.address}</span></div>` : ""}
+    ${S.cr ? `<div class="r"><span>السجل التجاري</span><span>${S.cr}</span></div>` : ""}
+    ${S.vat ? `<div class="r"><span>الرقم الضريبي</span><span>${S.vat}</span></div>` : ""}
+    ${issuer.billing_phone ? `<div class="r"><span>للتواصل</span><span>${issuer.billing_phone}</span></div>` : ""}
+  </div>
+  <div class="box">
+    <h3>إلى (المالك)</h3>
+    <div class="r"><span>الاسم</span><span>${buyer}</span></div>
+    ${buyerAddr ? `<div class="r"><span>العنوان</span><span>${buyerAddr}</span></div>` : ""}
+    ${buyerVat ? `<div class="r"><span>الرقم الضريبي</span><span>${buyerVat}</span></div>` : ""}
+    <div class="r"><span>العقار</span><span>${propName}</span></div>
+    <div class="r"><span>الفترة</span><span>${periodTxt}</span></div>
+  </div>
+</div>
+
+<table>
+  <thead><tr><th>البيان</th><th>الأساس</th><th>الكمية</th><th>المبلغ${vatOn ? " قبل الضريبة" : ""}</th>${vatOn ? `<th>نسبة الضريبة</th><th>مبلغ الضريبة</th><th>الإجمالي</th>` : ""}</tr></thead>
+  <tbody>
+    <tr>
+      <td>${isCN ? "إلغاء " : ""}أتعاب إدارة عقار ${propName} عن ${periodTxt}</td>
+      <td style="font-size:.85rem">${basisTxt}</td>
+      <td>1</td>
+      <td>${sar(x.base)}</td>
+      ${vatOn ? `<td>${rate}%</td><td>${sar(x.vat)}</td><td>${sar(x.total)}</td>` : ""}
+    </tr>
+  </tbody>
+</table>
+
+${vatOn ? `<table style="max-width:340px;margin-inline-start:auto">
+  <tbody>
+    <tr><td>الإجمالي قبل الضريبة</td><td style="text-align:left;font-weight:600">${sar(x.base)}</td></tr>
+    <tr><td>ضريبة القيمة المضافة (${rate}%)</td><td style="text-align:left;font-weight:600">${sar(x.vat)}</td></tr>
+    <tr><td style="font-weight:700">الإجمالي شامل الضريبة</td><td style="text-align:left;font-weight:700">${sar(x.total)}</td></tr>
+  </tbody>
+</table>` : ""}
+
+<div class="due"><span class="l">${isCN ? "إجمالي الإشعار الدائن" : "إجمالي الأتعاب"}${vatOn ? " (شامل الضريبة)" : ""}</span><span class="v">${sar(x.total)} ريال</span></div>
+${pm && !isCN ? `<div class="sub" style="margin-top:6px">وسيلة السداد: <b>${FEE_PAYMENT_MEANS[pm]}</b>${pm === "deduction" ? ` — تُخصم من المحصَّل قبل تحويل صافي المالك` : ""}</div>` : ""}
+
+${isTax && !voided ? zatcaQrBlock(who, S.vat!, x.total, x.vat, inv.created_at) : ""}
+
+<div class="note">
+  <b>كيف حُسبت:</b> ${explain.map((l) => `<div>• ${l}</div>`).join("")}
+</div>
+${isTax && !voided ? `<div class="note">
+  <b>عن الفوترة الإلكترونية:</b> ${isCN ? "إشعار دائن" : taxWord} برمز الاستجابة السريعة وفق متطلبات المرحلة الأولى (الإصدار) من الفوترة الإلكترونية.
+  الربط والتكامل مع منصة «فاتورة» (المرحلة الثانية) لا يتم عبر وثيق.
+</div>` : vatOn ? "" : `<div class="note">فاتورة صادرة عن المكتب لتوثيق أتعاب الإدارة بين الطرفين، بلا ضريبة قيمة مضافة لأن المكتب غير مسجَّل في الضريبة.</div>`}
+
+<div class="sign">
+  <div>المورّد: ${who}<br><br>التوقيع: ________________</div>
+  <div>تاريخ الإصدار: ${arDate(issueDay)}${issueTime ? ` — الساعة <span dir="ltr">${issueTime}</span>` : ""}<br><br>${isCN ? "رقم الإشعار" : "رقم الفاتورة"}: ${inv.invoice_no}</div>
+</div>
+${footer(iss)}`;
+
+  const taxWordEn = std ? "Tax invoice" : "Simplified tax invoice";
+  const titleEn = isCN ? (isTax ? `Credit note — ${taxWordEn.toLowerCase()}` : "Credit note") : voided ? "Void invoice" : isTax ? taxWordEn : "Invoice";
+  const basisEn = c.mode === "pct" ? `${inv.fee_pct}% of net collections for the period (SAR ${sar(Number(inv.fee_basis) || 0)})` : `Fixed fee SAR ${sar(Number(inv.fee_fixed) || 0)} × ${inv.fee_times || 1}`;
+  const enInner = `
+${headerEn(titleEn, inv.invoice_no, iss, issueDay)}
+${voided ? `<div style="border:3px solid #a5322c;color:#a5322c;text-align:center;font-weight:800;font-size:1.4rem;padding:10px;margin:10px 0;border-radius:10px;letter-spacing:.5px">VOID — not valid</div>` : ""}
+<h1>${isCN ? titleEn : `${isTax ? taxWordEn : "Invoice"} — property management fee`}</h1>
+<div class="sub"><span dir="auto">${periodTxt}</span> · <span dir="auto">${propName}</span></div>
+${isCN ? `<div class="note" style="border-inline-start-color:#B8791F">
+  <div><b>Original invoice:</b> <span dir="ltr">${inv.ref_invoice_no || "—"}</span>${inv.ref_issue_date ? ` — ${enDate(inv.ref_issue_date)}` : ""}</div>
+  <div><b>Reason:</b> <span dir="auto">${inv.reason || "—"}</span></div>
+  <div>This note cancels the invoice above in full.</div>
+</div>` : ""}
+<div class="grid">
+  <div class="box">
+    <h3>Supplier (property manager)</h3>
+    <div class="r"><span>Name</span><span dir="auto">${who}</span></div>
+    ${S.address ? `<div class="r"><span>Address</span><span dir="auto">${S.address}</span></div>` : ""}
+    ${S.cr ? `<div class="r"><span>CR</span><span dir="ltr">${S.cr}</span></div>` : ""}
+    ${S.vat ? `<div class="r"><span>VAT no.</span><span dir="ltr">${S.vat}</span></div>` : ""}
+  </div>
+  <div class="box">
+    <h3>To (owner)</h3>
+    <div class="r"><span>Name</span><span dir="auto">${buyer}</span></div>
+    ${buyerAddr ? `<div class="r"><span>Address</span><span dir="auto">${buyerAddr}</span></div>` : ""}
+    ${buyerVat ? `<div class="r"><span>VAT no.</span><span dir="ltr">${buyerVat}</span></div>` : ""}
+    <div class="r"><span>Property</span><span dir="auto">${propName}</span></div>
+  </div>
+</div>
+<table>
+  <thead><tr><th>Description</th><th>Basis</th><th>Qty</th><th>Amount${vatOn ? " before VAT" : ""}</th>${vatOn ? `<th>VAT rate</th><th>VAT</th><th>Total</th>` : ""}</tr></thead>
+  <tbody><tr>
+    <td>${isCN ? "Cancellation of management" : "Management"} fee — <span dir="auto">${propName}</span>, <span dir="auto">${periodTxt}</span></td>
+    <td style="font-size:.85rem">${basisEn}</td><td>1</td><td>${sar(x.base)}</td>
+    ${vatOn ? `<td>${rate}%</td><td>${sar(x.vat)}</td><td>${sar(x.total)}</td>` : ""}
+  </tr></tbody>
+</table>
+<div class="due"><span class="l">${isCN ? "Credit note total" : "Total"}${vatOn ? " (incl. VAT)" : ""}</span><span class="v">SAR ${sar(x.total)}</span></div>
+${pm && !isCN ? `<div class="sub" style="margin-top:6px">Payment means: <b>${FEE_PAYMENT_MEANS_EN[pm]}</b></div>` : ""}
+${isTax && !voided ? zatcaQrBlock(who, S.vat!, x.total, x.vat, inv.created_at, "-en") : ""}
+<div class="note">Management fees are a standard-rated supply (15%) even where the rent itself is VAT-exempt residential rent.</div>
+<div class="sign">
+  <div>Supplier: <span dir="auto">${who}</span><br><br>Signature: ________________</div>
+  <div>Issue date: ${enDate(issueDay)}${issueTime ? ` at <span dir="ltr">${issueTime}</span>` : ""}<br><br>${isCN ? "Note no." : "Invoice no."}: <span dir="ltr">${inv.invoice_no}</span></div>
+</div>
+${footerEn(iss)}`;
+  return SHELL(`${kindAr} ${inv.invoice_no} — ${buyer}`, body, markOf(issuer), { title: `${titleEn} ${inv.invoice_no} — ${buyer}`, inner: enInner });
+}
+
 /* ═══════════════════ عرض سعر تأجير وحدة ═══════════════════ */
 
 export type ChargeRow = { label: string; who: "owner" | "tenant" };
@@ -1528,7 +1696,7 @@ export function propertyStatementHTML(
   const periodExpRows = period ? expenses.filter((x) => inRange((x as any).spent_on)) : [];
   /* (v86) نسبة أو مبلغ ثابت × مرات الاستحقاق في الفترة (شهري/٦ أشهر/سنوي/مرة واحدة) */
   const pFin = ownerNet(periodCollected + pvt.onTop, periodExpRows, feeSpecOf(p as any, feeTimes(p as any, period?.from, period?.to)),
-    pvt.inside + pvt.onTop, issuer.vat_number ? (Number(p.vat_rate) || 15) : 0);
+    pvt.inside + pvt.onTop, feeVatRateOf(issuer, p));
   const periodVat = pvt.inside + pvt.onTop;
   const expiringCount = rows.filter((r) => renewalDue(r.t, r.st)).length;
 
@@ -2653,6 +2821,31 @@ ${footer()}`;
 
 export type OwnerReportPayment = PaymentRow & { tenant_name?: string | null; unit?: string | null };
 
+/**
+ * (v99) الأرقام المالية لتقرير المالك — مصدر واحد يستعمله التقرير وفاتورة الأتعاب:
+ * المحصَّل، ضريبة الإيجار المستبعدة، صافي الإيراد (أساس النسبة)، والأتعاب وضريبتها.
+ */
+export function ownerReportFinance(
+  p: Property & { tenants?: any[] }, period: { from: string; to: string },
+  payments: { amount: number; [k: string]: any }[], issuer: Issuer,
+  extra: { expenses?: ExpenseRow[]; fee_pct?: number | null; pastVat?: PastVat } = {},
+) {
+  const collected = payments.reduce((s, x) => s + (Number(x.amount) || 0), 0);
+  /* مصروفات المكتب الداخلية (billable:false) لا تُعرض للمالك */
+  const exp = (extra.expenses || []).filter(isBillable);
+  /* الضريبة داخل المقبوض تُستبعد: أمانة للهيئة لا إيراد للمالك — لكل دفعة بحسب وحدتها */
+  const vt = vatOfPayments(p, payments as any[], extra.pastVat);
+  const vatCollected = vt.inside + vt.onTop;
+  // أتعاب إدارة الأملاك خدمة خاضعة للضريبة إن كان المكتب مسجَّلًا ضريبيًّا (رقم صحيح)
+  const feeVatRate = feeVatRateOf(issuer, p);
+  /* (v86) الأتعاب من إعداد العقار (نسبة أو ثابت × مرات الاستحقاق)؛ extra.fee_pct احتياط للقديم؛ (v99) شاملة الضريبة؟ */
+  const feeSpec: FeeSpec = (p as any).mgmt_fee_mode === "fixed"
+    ? feeSpecOf(p as any, feeTimes(p as any, period.from, period.to))
+    : { pct: extra.fee_pct ?? (p as any).mgmt_fee_pct ?? null, fixed: null, times: 1, inclusive: !!(p as any).fee_vat_inclusive };
+  const fin = ownerNet(collected + vt.onTop, exp, feeSpec, vatCollected, feeVatRate);
+  return { collected, exp, vt, vatCollected, feeVatRate, feeSpec, fin, basis: fin.collected };
+}
+
 export function ownerReportHTML(
   p: Property & { tenants: (Tenant & { status?: string | null; move_out_date?: string | null })[] },
   period: { label: string; from: string; to: string },
@@ -2689,19 +2882,15 @@ export function ownerReportHTML(
      «المتأخر» بلا وحدات التنفيذ. بلا هذا التفصيل يرى المكتب رقمين
      مختلفين ولا يعرف أيهما الصحيح — فنُظهر الشقّين ومجموعهما. */
   const arr = arrearsOf(rows.map((r) => ({ ...r, p })) as any[]);
-  const collected = payments.reduce((s, x) => s + (Number(x.amount) || 0), 0);
+  /* (v99) الأرقام المالية من دالة واحدة تشاركها فاتورة الأتعاب — فلا تخالف الفاتورةُ التقريرَ */
+  const RF = ownerReportFinance(p, period, payments, issuer, extra);
+  const collected = RF.collected;
   /* المالك يرى ما استُلم فعلًا: العكس يُسقَط مع دفعته، والملاحظات الداخلية تُحذف */
   const shownPays = ownerVisiblePayments(payments as any[]);
   /* (30 سبتمبر 2026) مصروفات المكتب الداخلية (billable:false) لا تُعرض للمالك:
      كانت تظهر في جداول التقرير فيجمعها المالك (1,300) بينما «الحساب الختامي»
      يخصم القابل للخصم وحده (800) — ثلاثة مجاميع لمصروفات فترة واحدة. */
-  const exp = (extra.expenses || []).filter(isBillable);
-  /* الضريبة داخل المقبوض تُستبعد: أمانة للهيئة لا إيراد للمالك.
-     ونحسبها لكل دفعة بحسب وحدتها (العمارة المختلطة). */
-  const vt = vatOfPayments(p, payments as any[], extra.pastVat);
-  const vatCollected = vt.inside + vt.onTop;
-  // أتعاب إدارة الأملاك خدمة خاضعة للضريبة إن كان المكتب مسجَّلًا ضريبيًّا
-  const feeVatRate = issuer.vat_number ? (Number(p.vat_rate) || 15) : 0;
+  const exp = RF.exp, vt = RF.vt, vatCollected = RF.vatCollected, feeVatRate = RF.feeVatRate;
   /* المالك يجمع عمود «المتأخر» فيخرج رقمًا يخالف بطاقة «المتأخرات القائمة»:
      البطاقة تستبعد الشاغرة والجدول يعرضها. صف الإجمالي يفصلهما صراحةً. */
   const stRows = (p.tenants || []).map((t: any) => ({ t, cs: contractState(t, winOf(p, issuer)) }));
@@ -2710,9 +2899,7 @@ export function ownerReportHTML(
   const activeLate = stRows.filter((r) => !r.cs.vacant && r.cs.amountDue > 0).length;
   const vacantOwing = stRows.filter((r) => r.cs.vacant && r.cs.legacyArrears > 0).length;
   /* «غير شاملة»: المقبوض فعلًا = المسجَّل + الضريبة التي دُفعت فوقه */
-  /* (v86) الأتعاب من إعداد العقار نفسه (نسبة أو ثابت × مرات الاستحقاق في الفترة)؛ extra.fee_pct يبقى احتياطًا للقديم */
-  const feeSpec = (p as any).mgmt_fee_mode === "fixed" ? feeSpecOf(p as any, feeTimes(p as any, period.from, period.to)) : { pct: extra.fee_pct ?? (p as any).mgmt_fee_pct ?? null };
-  const fin = ownerNet(collected + vt.onTop, exp, feeSpec, vatCollected, feeVatRate);
+  const fin = RF.fin;
   /* «صافي المالك» صافي دخل العقار: يخصم كل مصروفاته — ومنها ما دفعه المالك
      بنفسه. فمن حوّل له «الصافي» خصم ذلك مرتين. (دراسة 685 احتمالًا: 53
      تقريرًا.) السطر الإضافي يقول المحوَّل صراحةً، ويظهر حين يلزم فقط. */
@@ -2853,7 +3040,7 @@ ${exp.length ? `<div class="scrollx"><table>
     <tr><td>(−) ضريبة القيمة المضافة المحصَّلة <span style="font-size:.72rem;color:#5C6B67">(تُورَّد للهيئة — ليست إيرادًا للمالك)</span></td><td style="text-align:left">${sar(fin.vatCollected || 0)}</td></tr>` : ""}
     <tr><td>${(fin.vatCollected || 0) > 0 ? "صافي إيراد المالك من الإيجار" : "المحصَّل خلال الفترة"}</td><td style="text-align:left"><b>${sar(fin.collected)}</b></td></tr>
     <tr><td>(−) مصروفات الفترة</td><td style="text-align:left">${sar(fin.expenses)}</td></tr>
-    ${fin.feePct !== null ? `<tr><td>(−) أتعاب الإدارة (${fin.feePct}% من صافي الإيجار)</td><td style="text-align:left">${sar(fin.feeBase ?? fin.fee)}</td></tr>${(fin.feeVat || 0) > 0 ? `<tr><td>(−) ضريبة على أتعاب الإدارة (${feeVatRate}%)</td><td style="text-align:left">${sar(fin.feeVat || 0)}</td></tr>` : ""}` : ""}
+    ${fin.feePct !== null ? `<tr><td>(−) أتعاب الإدارة (${fin.feePct}% من صافي الإيجار${(p as any).fee_vat_inclusive && (fin.feeVat || 0) > 0 ? " — شاملة الضريبة" : ""})</td><td style="text-align:left">${sar(fin.feeBase ?? fin.fee)}</td></tr>${(fin.feeVat || 0) > 0 ? `<tr><td>(−) ضريبة على أتعاب الإدارة (${feeVatRate}%)</td><td style="text-align:left">${sar(fin.feeVat || 0)}</td></tr>` : ""}` : ""}
     <tr><td><b>صافي المالك عن ${period.label}</b></td><td style="text-align:left"><b style="font-size:1.1rem">${sar(fin.net)} ريال</b></td></tr>
     ${ownerPaid > 0.005 ? `<tr><td>(+) مصروفات دفعها المالك بنفسه <span style="font-size:.72rem;color:#5C6B67">(خُصمت أعلاه لأنها من مصروفات العقار، ولم تمرّ بالمكتب)</span></td><td style="text-align:left">${sar(ownerPaid)}</td></tr>
     <tr style="background:#F3EEE2"><td><b>المستحق تحويله للمالك</b></td><td style="text-align:left"><b style="font-size:1.1rem">${sar(Math.round((fin.net + ownerPaid) * 100) / 100)} ريال</b></td></tr>` : ""}
@@ -2931,9 +3118,9 @@ export function ownerConsolidatedStatementHTML(
     /* الضريبة المحصَّلة تُستبعد قبل الأتعاب والصافي (أمانة للهيئة) */
     const vt = vatOfPayments(s.property, s.payments as any[], s.pastVat);
     const vatCollected = vt.inside + vt.onTop;
-    const feeVatRate = issuer.vat_number ? (Number(s.property.vat_rate) || 15) : 0;
+    const feeVatRate = feeVatRateOf(issuer, s.property);
     const fin = ownerNet(collected + vt.onTop, s.expenses,
-      (s.property as any).mgmt_fee_mode === "fixed" ? feeSpecOf(s.property as any, feeTimes(s.property as any, period.from, period.to)) : { pct: s.fee_pct ?? (s.property as any).mgmt_fee_pct ?? null },
+      (s.property as any).mgmt_fee_mode === "fixed" ? feeSpecOf(s.property as any, feeTimes(s.property as any, period.from, period.to)) : { pct: s.fee_pct ?? (s.property as any).mgmt_fee_pct ?? null, inclusive: !!(s.property as any).fee_vat_inclusive },
       vatCollected, feeVatRate);
     /* الدين المرحَّل (كل الوحدات) ودين المستأجرين السابقين — لسطر المتأخرات */
     const carried = ten.reduce((a, r) => a + (Number(r.st.carriedDebt) || 0), 0);

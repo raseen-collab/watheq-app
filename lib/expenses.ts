@@ -1,3 +1,4 @@
+import { isValidVatNo } from "./einvoice";
 // ============================================================
 // وثيق — المصروفات وحساب «صافي المالك»
 // المبدأ: تقرير يعرض التحصيل وحده نصف الحقيقة؛ سؤال المالك الفعلي
@@ -100,7 +101,7 @@ export function sumByCategory(rows: ExpenseRow[]): { category: string; label: st
  * استحقاق (الاستحقاق ثم كل ٦/١٢ شهرًا بعده؛ «مرة واحدة» = التاريخ نفسه فقط).
  * times = عدد مرات الخصم في الفترة.
  */
-export type FeeSpec = { pct?: number | null; fixed?: number | null; times?: number };
+export type FeeSpec = { pct?: number | null; fixed?: number | null; times?: number; /** (v99) «أتعابي شاملة الضريبة» */ inclusive?: boolean | null };
 export type FeePeriod = "month" | "half" | "year" | "once";
 export const FEE_PERIODS: { v: FeePeriod; label: string; adv: string }[] = [
   { v: "month", label: "شهري", adv: "شهريًّا" },
@@ -108,7 +109,16 @@ export const FEE_PERIODS: { v: FeePeriod; label: string; adv: string }[] = [
   { v: "year", label: "سنوي", adv: "سنويًّا" },
   { v: "once", label: "مرة واحدة", adv: "مرة واحدة" },
 ];
-type FeeProp = { mgmt_fee_pct?: number | null; mgmt_fee_mode?: string | null; mgmt_fee_amount?: number | null; mgmt_fee_period?: string | null; mgmt_fee_on?: string | null } | null | undefined;
+type FeeProp = { mgmt_fee_pct?: number | null; mgmt_fee_mode?: string | null; mgmt_fee_amount?: number | null; mgmt_fee_period?: string | null; mgmt_fee_on?: string | null; fee_vat_inclusive?: boolean | null } | null | undefined;
+
+/**
+ * (v99) نسبة الضريبة على أتعاب الإدارة: تُفرض فقط إن كان للمكتب رقم ضريبي *صحيح* — دليل الوكلاء §5.2
+ * (الأتعاب خاضعة حتى للسكني). كانت تُفرض بمجرد وجود أي نص في خانة الرقم، فمكتب برقم خاطئ
+ * كان يخصم ضريبة من المالك دون أن يكون مسجَّلًا.
+ */
+export function feeVatRateOf(issuer: { vat_number?: string | null } | null | undefined, p: { vat_rate?: number | null } | null | undefined): number {
+  return isValidVatNo(issuer?.vat_number) ? (Number(p?.vat_rate) || 15) : 0;
+}
 
 export function feePeriodOf(p: FeeProp): FeePeriod {
   const v = p?.mgmt_fee_period;
@@ -118,8 +128,8 @@ export function feePeriodOf(p: FeeProp): FeePeriod {
 /** مواصفة الأتعاب من صف العقار كما في القاعدة؛ times = مرات الخصم (افتراضيًّا 1) */
 export function feeSpecOf(p: FeeProp, times = 1): FeeSpec {
   if (!p) return { pct: null, fixed: null, times };
-  if (p.mgmt_fee_mode === "fixed") return { pct: null, fixed: Number(p.mgmt_fee_amount) > 0 ? Number(p.mgmt_fee_amount) : null, times };
-  return { pct: p.mgmt_fee_pct ?? null, fixed: null, times };
+  if (p.mgmt_fee_mode === "fixed") return { pct: null, fixed: Number(p.mgmt_fee_amount) > 0 ? Number(p.mgmt_fee_amount) : null, times, inclusive: !!p.fee_vat_inclusive };
+  return { pct: p.mgmt_fee_pct ?? null, fixed: null, times, inclusive: !!p.fee_vat_inclusive };
 }
 
 /** عدد الأشهر التقويمية التي تلمسها الفترة (1–15 نوفمبر = 1 · نوفمبر–ديسمبر = 2) */
@@ -216,8 +226,11 @@ export function ownerNet(
   const e = sumExpenses(expenses);
   const pct = Number(feePct);
   const validPct = !fixed && pct > 0 && pct <= 100 ? pct : null;
-  const feeBase = fixed ? r2(fixed * times) : validPct ? r2((c * validPct) / 100) : 0;
-  const feeVat = feeBase > 0 && feeVatRate > 0 ? r2((feeBase * feeVatRate) / 100) : 0;
+  /* (v99) «شاملة الضريبة»: المبلغ/النسبة التي حددها المكتب هي الإجمالي، وتُستخرج منها الضريبة */
+  const feeAmt = fixed ? r2(fixed * times) : validPct ? r2((c * validPct) / 100) : 0;
+  const incl = !!spec.inclusive && feeVatRate > 0;
+  const feeBase = incl ? r2(feeAmt / (1 + feeVatRate / 100)) : feeAmt;
+  const feeVat = feeAmt > 0 && feeVatRate > 0 ? (incl ? r2(feeAmt - feeBase) : r2((feeBase * feeVatRate) / 100)) : 0;
   const fee = r2(feeBase + feeVat);
   /**
    * الأتعاب تتجاوز المحصَّل؟ لا نُخفيها ولا نقصّها.

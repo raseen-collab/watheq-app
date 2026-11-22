@@ -10,7 +10,7 @@
 //    يسمّي أول دفعة فيه «القسط الأول» وهي السابعة.
 //  • دفعات الدين (مرحَّل/سابق) ودفعات مدة سابقة تُسمّى بما هي، لا أقساطًا.
 // ============================================================
-import { ownerNet, feeSpecOf, feeTimes } from "@/lib/expenses";
+import { feeVatRateOf, ownerNet, feeSpecOf, feeTimes } from "@/lib/expenses";
 import { vatOfPaymentsFor, type PastVat } from "@/lib/documents";
 
 export type CollectionRowX = {
@@ -111,7 +111,7 @@ export function buildCollection(input: {
     const vt = vatOfPaymentsFor({ ...p, tenants: (tenants || []).filter((t: any) => t.property_id === p.id) }, payU, pastVat);
     const exps = billable.filter((e: any) => e.property_id === p.id);
     const recorded = pays.reduce((a: number, x: any) => a + (Number(x.amount) || 0), 0);
-    const f = ownerNet(recorded + vt.onTop, exps, feeSpecOf(p, feeTimes(p, from, to)), vt.inside + vt.onTop, issuer?.vat_number ? (Number(p.vat_rate) || 15) : 0);
+    const f = ownerNet(recorded + vt.onTop, exps, feeSpecOf(p, feeTimes(p, from, to)), vt.inside + vt.onTop, feeVatRateOf(issuer, p));
     fin.gross += f.grossCollected ?? f.collected; fin.vat += f.vatCollected ?? 0; fin.collected += f.collected;
     fin.expenses += f.expenses; fin.fee += f.feeBase ?? f.fee; fin.feeVat += f.feeVat ?? 0; fin.net += f.net;
     fin.ownerPaid += exps.filter((e: any) => e.paid_by === "owner").reduce((a: number, e: any) => a + (Number(e.amount) || 0), 0);

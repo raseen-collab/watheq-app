@@ -92,7 +92,9 @@ export function exportLines(input: {
       customer: inv.buyer_name || holder?.name || t?.name || "", property: propName, owner: p?.owner_name || "", unit,
       description: cn
         ? `إشعار دائن يلغي ${ref?.invoice_no || "فاتورة"}${inv.reason ? ` — ${inv.reason}` : ""}`
-        : `إيجار${unit ? ` وحدة ${unit}` : ""}${propName ? ` — ${propName}` : ""}${inv.period_label ? ` عن ${inv.period_label}` : ""}`,
+        : (inv as any).subject === "mgmt_fee"
+          ? `أتعاب إدارة الأملاك على المالك${propName ? ` — ${propName}` : ""}${inv.period_label ? ` عن ${inv.period_label}` : ""}`
+          : `إيجار${unit ? ` وحدة ${unit}` : ""}${propName ? ` — ${propName}` : ""}${inv.period_label ? ` عن ${inv.period_label}` : ""}`,
       base: r2(sign * x.base), vat_rate: x.enabled ? x.rate : 0, vat: r2(sign * x.vat), total: r2(sign * x.total),
       status: cn ? "صادر" : STATUS_AR[inv.status || ""] || inv.status || "", voided: !cn && inv.status === "void",
       seller: sName, seller_vat: sVat,

@@ -75,6 +75,14 @@ function table(store: SandboxStore, name: keyof SandboxStore) {
             x.doc_no = `${pfx}${String(n).padStart(5, "0")}`;
             x.entry_on = x.entry_on || new Date().toISOString().slice(0, 10);
           }
+          /* (v99) فاتورة الأتعاب: القاعدة تلتقط البائع (المكتب) والمشتري (المالك) والضريبة — نحاكيها في التجربة */
+          if (name === "invoices") for (const x of added as any[]) if (x.subject === "mgmt_fee") {
+            const pp: any = (store.properties || []).find((q: any) => q.id === x.property_id) || {};
+            x.seller_mode = "office"; x.buyer_name = pp.owner_name || "المالك"; x.buyer_vat = pp.owner_vat_number || null;
+            x.buyer_address = pp.owner_address || [pp.address, pp.city].filter(Boolean).join("، ") || null; x.property_name = pp.name;
+            x.invoice_kind = /^3\d{13}3$/.test(String(pp.owner_vat_number || "")) ? "standard" : "simplified";
+            x.vat_enabled = x.vat_enabled === true; x.vat_inclusive = !!pp.fee_vat_inclusive; x.vat_rate = x.vat_rate || 15; x.payment_means = x.payment_means || "deduction";
+          }
           store[name] = [...added, ...rows];
           data = clone(added);
         } else if (pending?.op === "update") {
