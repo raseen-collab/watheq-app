@@ -54,6 +54,7 @@ npx esbuild lib/tenant-messages.ts --bundle --format=cjs --platform=node --alias
 npx esbuild lib/tenantPortal.ts --bundle --format=cjs --platform=node --alias:@=. --outfile=/tmp/b/tenantPortal.js
 npx esbuild lib/tenantPortal.ts --bundle --format=cjs --platform=node --alias:@=. --outfile=/tmp/b/tportal.js
 npx esbuild lib/trust.ts --bundle --format=cjs --platform=node --alias:@=. --outfile=/tmp/b/trust.js
+npx esbuild lib/accounting-export.ts --bundle --format=cjs --platform=node --alias:@=. --outfile=/tmp/b/acctExport.js
 BUILDS
 [ $build_fail -eq 0 ] || { echo "فشل بناء حزم الاختبار"; exit 1; }
 
