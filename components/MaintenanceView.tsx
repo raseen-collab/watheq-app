@@ -20,6 +20,7 @@ import {
   type MaintRequest, type MaintFilter, type MaintStatus, DEFAULT_FILTER, STATUS_META, catIcon, isOpen, isUrgent,
   isLate, ageDays, agePhrase, matchesFilter, sortRequests, counts, shortDate, tenantUpdateText, techText,
   expenseNote, photoDir, PHOTO_BUCKET, MAX_PHOTOS_PER_SIDE,
+  type Vendor, VENDOR_SPECIALTY, vendorsFor, cleanVendor,
 } from "@/lib/maintenance";
 
 type Prop = { id: string; name: string };
@@ -66,6 +67,9 @@ export default function MaintenanceView({ orgName }: { orgName?: string | null }
   const [creating, setCreating] = useState(false);
   const [finishing, setFinishing] = useState<MaintRequest | null>(null);
   const [toast, setToast] = useState<{ k: "ok" | "err"; m: string } | null>(null);
+  /* (v94) دليل الفنيين — null = الجدول غير موجود بعد (لا يظهر شيء) */
+  const [vendors, setVendors] = useState<Vendor[] | null>(null);
+  const [vendorsOpen, setVendorsOpen] = useState(false);
   const today = todayStr();
 
   const may = (k: string) => perms[k] !== false;
@@ -95,6 +99,11 @@ export default function MaintenanceView({ orgName }: { orgName?: string | null }
     }
     if (r.error) { setLoadErr(friendly(r.error)); setRows([]); return; }
     setRows((r.data || []) as MaintRequest[]);
+    void loadVendors(o.officeId);
+  }
+  async function loadVendors(oid: string) {
+    const v = await db.from("maintenance_vendors").select("id,name,phone,specialty,notes,active").eq("user_id", oid).order("name");
+    setVendors(v.error ? null : ((v.data || []) as Vendor[]));
   }
   useEffect(() => { void load(); // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -140,9 +149,15 @@ export default function MaintenanceView({ orgName }: { orgName?: string | null }
           <h1 className="font-display font-bold text-deep text-2xl inline-flex items-center gap-2"><Icon name="wrench" size={24} /> الصيانة</h1>
           <p className="text-sm text-muted mt-1">طلبات المستأجرين من روابطهم وما يسجّله المكتب — من البلاغ حتى التكلفة في تقرير المالك.</p>
         </div>
-        {canWork && v79 && (
-          <button className="btn btn-gold" onClick={() => setCreating(true)}><Icon name="plus" size={16} /> طلب جديد</button>
-        )}
+        <div className="flex flex-wrap gap-2">
+          {vendors !== null && (
+            <button className="btn btn-ghost" onClick={() => setVendorsOpen(true)} title="فنيو المكتب — تُختار في الطلب بضغطة">
+              👷 الفنيون{vendors.filter((v) => v.active).length ? ` (${vendors.filter((v) => v.active).length})` : ""}</button>
+          )}
+          {canWork && v79 && (
+            <button className="btn btn-gold" onClick={() => setCreating(true)}><Icon name="plus" size={16} /> طلب جديد</button>
+          )}
+        </div>
       </div>
 
       {!v79 && (
@@ -214,11 +229,16 @@ export default function MaintenanceView({ orgName }: { orgName?: string | null }
               property={propName(r.property_id)} tenant={tenantOf(r)} org={orgName || null}
               open={openId === r.id} onToggle={() => setOpenId(openId === r.id ? null : r.id)}
               onStart={() => void quickStart(r)} onFinish={() => setFinishing(r)}
-              onStatus={(s, n) => setStatus(r, s, n)} onPatch={(p) => patch(r.id, p)} db={db} notify={notify} />
+              onStatus={(s, n) => setStatus(r, s, n)} onPatch={(p) => patch(r.id, p)} db={db} notify={notify}
+              vendors={vendors} onManageVendors={() => setVendorsOpen(true)} />
           ))}
         </div>
       )}
 
+      {vendorsOpen && office && vendors !== null && (
+        <VendorsModal db={db} office={office} vendors={vendors} canEdit={canWork} notify={notify}
+          onChange={() => void loadVendors(office)} onClose={() => setVendorsOpen(false)} />
+      )}
       {creating && office && (
         <CreateModal db={db} props={props} tenants={tenants} onClose={() => setCreating(false)}
           onDone={(id) => { setCreating(false); notify("ok", "سُجّل الطلب."); void load().then(() => setOpenId(id)); }} />
@@ -240,11 +260,12 @@ export default function MaintenanceView({ orgName }: { orgName?: string | null }
 }
 
 // ─── البطاقة ─────────────────────────────────────────────────────
-function ReqCard({ r, today, office, v79, canWork, canExpense, property, tenant, org, open, onToggle, onStart, onFinish, onStatus, onPatch, db, notify }: {
+function ReqCard({ r, today, office, v79, canWork, canExpense, property, tenant, org, open, onToggle, onStart, onFinish, onStatus, onPatch, db, notify, vendors, onManageVendors }: {
   r: MaintRequest; today: string; office: string | null; v79: boolean; canWork: boolean; canExpense: boolean;
   property: string; tenant: Tenant | null; org: string | null; open: boolean; onToggle: () => void;
   onStart: () => void; onFinish: () => void; onStatus: (s: MaintStatus, note?: string | null) => Promise<boolean>;
   onPatch: (p: Partial<MaintRequest>) => void; db: any; notify: (k: "ok" | "err", m: string) => void;
+  vendors: Vendor[] | null; onManageVendors: () => void;
 }) {
   const meta = STATUS_META[r.status] || STATUS_META.new;
   const ci = catIcon(r.category);
@@ -302,7 +323,7 @@ function ReqCard({ r, today, office, v79, canWork, canExpense, property, tenant,
 
       {open && (
         <div className="border-t border-line bg-paper/60 p-4 ps-5 grid gap-4 lg:grid-cols-2">
-          {v79 && <TechPanel r={r} canWork={canWork} property={property} tenant={tenant} org={org} db={db} notify={notify} onPatch={onPatch} />}
+          {v79 && <TechPanel r={r} canWork={canWork} property={property} tenant={tenant} org={org} db={db} notify={notify} onPatch={onPatch} vendors={vendors} onManageVendors={onManageVendors} />}
           {v79 && office && <PhotosPanel r={r} office={office} canWork={canWork} db={db} />}
           {canWork && <StatusPanel r={r} onStatus={onStatus} notify={notify} />}
           {v79 && <CostPanel r={r} canWork={canWork} canExpense={canExpense} onFinish={onFinish} />}
@@ -316,9 +337,10 @@ function ReqCard({ r, today, office, v79, canWork, canExpense, property, tenant,
 const panel = "rounded-xl bg-white border border-line p-3.5";
 const panelH = "text-sm font-bold text-deep mb-2.5 inline-flex items-center gap-1.5";
 
-function TechPanel({ r, canWork, property, tenant, org, db, notify, onPatch }: {
+function TechPanel({ r, canWork, property, tenant, org, db, notify, onPatch, vendors, onManageVendors }: {
   r: MaintRequest; canWork: boolean; property: string; tenant: Tenant | null; org: string | null; db: any;
   notify: (k: "ok" | "err", m: string) => void; onPatch: (p: Partial<MaintRequest>) => void;
+  vendors: Vendor[] | null; onManageVendors: () => void;
 }) {
   const [d, setD] = useState({ priority: r.priority || "normal", tech_name: r.tech_name || "", tech_phone: r.tech_phone || "", visit_date: r.visit_date || "" });
   const [busy, setBusy] = useState(false);
@@ -347,6 +369,21 @@ function TechPanel({ r, canWork, property, tenant, org, db, notify, onPatch }: {
           </button>
         ))}
       </div>
+      {vendors !== null && canWork && (
+        <div className="mb-2">
+          {vendors.some((v) => v.active) ? (
+            <select className="fld text-sm" value="" aria-label="اختر من فنيي المكتب"
+              onChange={(e) => { const v = vendors.find((x) => x.id === e.target.value); if (v) setD({ ...d, tech_name: v.name, tech_phone: v.phone || "" }); }}>
+              <option value="">👷 اختر من فنيي المكتب…</option>
+              {vendorsFor(r.category, vendors).map((v) => (
+                <option key={v.id} value={v.id}>{v.name} — {VENDOR_SPECIALTY[v.specialty] || "أخرى"}{v.phone ? ` · ${v.phone}` : ""}</option>
+              ))}
+            </select>
+          ) : (
+            <button type="button" className="text-xs text-gold underline" onClick={onManageVendors}>+ أضف فنيي مكتبك مرة واحدة واخترهم هنا بضغطة</button>
+          )}
+        </div>
+      )}
       <div className="grid grid-cols-2 gap-2">
         <input className="fld text-sm" disabled={!canWork} value={d.tech_name} maxLength={80} onChange={(e) => setD({ ...d, tech_name: e.target.value })} placeholder="اسم الفني" />
         <input className="fld text-sm" disabled={!canWork} type="tel" dir="ltr" value={d.tech_phone} maxLength={20} onChange={(e) => setD({ ...d, tech_phone: e.target.value })} placeholder="05xxxxxxxx" />
@@ -732,6 +769,87 @@ function FinishModal({ r, db, canExpense, today, onClose, onDone, setStatus }: {
           {busy ? "…" : alreadyDone ? "سجّل التكلفة" : amount > 0 && allowCost ? "أنجز وسجّل التكلفة" : "تم الإنجاز"}
         </button>
       </div>
+    </Overlay>
+  );
+}
+
+/* ============================================================
+ * (22 نوفمبر 2026) دليل الفنيين — إضافة وتعديل وإيقاف (schema-v94)
+ * الإيقاف بدل الحذف: فني أُسند لطلبات سابقة يبقى اسمه فيها كما هو.
+ * ============================================================ */
+function VendorsModal({ db, office, vendors, canEdit, notify, onChange, onClose }: {
+  db: any; office: string; vendors: Vendor[]; canEdit: boolean;
+  notify: (k: "ok" | "err", m: string) => void; onChange: () => void; onClose: () => void;
+}) {
+  const empty = { id: "", name: "", phone: "", specialty: "general", notes: "" };
+  const [d, setD] = useState(empty);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const denied = "هذا الإجراء يحتاج صلاحية أعلى — اطلبه من صاحب المكتب.";
+  async function save() {
+    const c = cleanVendor(d);
+    if (!c.ok) { setErr(c.error); return; }
+    setBusy(true); setErr(null);
+    const q = d.id
+      ? db.from("maintenance_vendors").update(c.row).eq("id", d.id).eq("user_id", office).select("id")
+      : db.from("maintenance_vendors").insert({ ...c.row, user_id: office }).select("id");
+    const { data, error } = await q;
+    setBusy(false);
+    if (error || !data?.length) { setErr(error ? friendly(error) : denied); return; }
+    notify("ok", d.id ? "حُفظ الفني." : "أُضيف الفني — يظهر الآن في كل طلب.");
+    setD(empty); onChange();
+  }
+  async function toggle(v: Vendor) {
+    const { data, error } = await db.from("maintenance_vendors").update({ active: !v.active }).eq("id", v.id).eq("user_id", office).select("id");
+    if (error || !data?.length) return notify("err", error ? friendly(error) : denied);
+    notify("ok", v.active ? `أُوقف ${v.name} — لا يظهر في الطلبات الجديدة.` : `أُعيد ${v.name}.`);
+    onChange();
+  }
+  const list = vendors.slice().sort((a, b) => Number(b.active) - Number(a.active) || a.name.localeCompare(b.name, "ar"));
+  return (
+    <Overlay onClose={onClose}>
+      <div className="flex items-start justify-between gap-3 mb-3">
+        <div>
+          <h2 className="font-display font-bold text-deep text-lg">👷 فنيو المكتب</h2>
+          <p className="text-xs text-muted mt-0.5">احفظهم مرة واحدة، واخترهم في أي طلب بضغطة — صاحب التخصص يظهر أولًا.</p>
+        </div>
+        <button className="text-muted text-xl leading-none" onClick={onClose} aria-label="إغلاق">×</button>
+      </div>
+      {canEdit && (
+        <div className="border border-line rounded-xl p-3 bg-paper mb-3">
+          <div className="text-sm font-semibold text-deep mb-2">{d.id ? "تعديل فني" : "إضافة فني"}</div>
+          <div className="grid grid-cols-2 gap-2">
+            <input className="fld text-sm col-span-2" value={d.name} maxLength={80} onChange={(e) => setD({ ...d, name: e.target.value })} placeholder="اسم الفني أو الشركة" />
+            <input className="fld text-sm" type="tel" dir="ltr" value={d.phone} maxLength={20} onChange={(e) => setD({ ...d, phone: e.target.value })} placeholder="05xxxxxxxx" />
+            <select className="fld text-sm" value={d.specialty} onChange={(e) => setD({ ...d, specialty: e.target.value })} aria-label="التخصص">
+              {Object.entries(VENDOR_SPECIALTY).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+            </select>
+            <input className="fld text-sm col-span-2" value={d.notes} maxLength={300} onChange={(e) => setD({ ...d, notes: e.target.value })} placeholder="ملاحظة (اختياري): الأسعار، أوقات العمل…" />
+          </div>
+          {err && <p className="text-sm text-late mt-2">{err}</p>}
+          <div className="flex gap-2 mt-2">
+            <button className="btn btn-gold text-sm" disabled={busy} onClick={() => void save()}>{busy ? "…" : d.id ? "حفظ التعديل" : "+ إضافة"}</button>
+            {d.id && <button className="btn btn-ghost text-sm" onClick={() => { setD(empty); setErr(null); }}>إلغاء التعديل</button>}
+          </div>
+        </div>
+      )}
+      {list.length === 0 ? (
+        <p className="text-sm text-muted text-center py-6">لا فنيين بعد.</p>
+      ) : (
+        <ul className="flex flex-col gap-2">
+          {list.map((v) => (
+            <li key={v.id} className={`flex flex-wrap items-center gap-2 border border-line rounded-xl px-3 py-2 ${v.active ? "bg-white" : "bg-paper opacity-60"}`}>
+              <div className="min-w-0 flex-1">
+                <div className="font-semibold text-sm text-ink truncate">{v.name} <span className="text-xs font-normal text-muted">— {VENDOR_SPECIALTY[v.specialty] || "أخرى"}{v.active ? "" : " · موقوف"}</span></div>
+                <div className="text-xs text-muted truncate"><span dir="ltr">{v.phone || "بلا جوال"}</span>{v.notes ? ` · ${v.notes}` : ""}</div>
+              </div>
+              {v.phone && <button className="btn btn-ghost text-xs" onClick={() => openExternal(waLink(v.phone!, ""))} title="واتساب"><Icon name="whatsapp" size={14} /></button>}
+              {canEdit && <button className="btn btn-ghost text-xs" onClick={() => { setD({ id: v.id, name: v.name, phone: v.phone || "", specialty: v.specialty, notes: v.notes || "" }); setErr(null); }}>تعديل</button>}
+              {canEdit && <button className="btn btn-ghost text-xs" onClick={() => void toggle(v)}>{v.active ? "إيقاف" : "إعادة"}</button>}
+            </li>
+          ))}
+        </ul>
+      )}
     </Overlay>
   );
 }
