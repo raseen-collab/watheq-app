@@ -238,7 +238,7 @@ for (const m of M2) {
     else if (kind === 'rent-text' && idx.rent >= 0) row[idx.rent] = 'حسب الاتفاق';
     else if (kind === 'date-bad' && idx.start >= 0) row[idx.start] = 'بداية الشهر';
     else if (kind === 'date-impossible' && idx.start >= 0) row[idx.start] = '2026-13-45';
-    else if (kind === 'freq-unknown' && idx.freq >= 0) row[idx.freq] = 'كل شهرين';
+    else if (kind === 'freq-unknown' && idx.freq >= 0) row[idx.freq] = 'كل 5 اشهر';
     else if (kind === 'name-empty' && idx.name >= 0) row[idx.name] = '';
     else if (kind === 'paid-over' && idx.paid >= 0 && idx.periods >= 0 && m.paidKind === 'count') row[idx.paid] = String(Number(P.toEnDigits ? P.toEnDigits(row[idx.periods]) : row[idx.periods]) + 3);
     else continue;

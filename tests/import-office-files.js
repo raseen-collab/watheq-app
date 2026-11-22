@@ -76,9 +76,9 @@ function pipeline(grid, props = []) {
   t("dup in file flagged (arabic digits)", r.rows.filter((x) => /مكرّر/.test(x._error || "")).length === 2, r.rows.map((x) => x._error));
 }
 
-/* ٧) دورة سداد غير معروفة = خطأ صريح، لا «شهري» صامت */
+/* ٧) دورة سداد غير معروفة = خطأ صريح، لا «شهري» صامت («كل شهرين» صارت دورة معروفة في 22 نوفمبر 2026) */
 {
-  const g = [P.HEADERS, ["أ", "1", "2500", "كل شهرين", "2026-01-01", "6", "", "", "0"]];
+  const g = [P.HEADERS, ["أ", "1", "2500", "كل 5 اشهر", "2026-01-01", "6", "", "", "0"]];
   const r = pipeline(g);
   t("unknown freq is an error", /دورة سداد غير معروفة/.test(r.rows[0] && r.rows[0]._error || ""), r.rows[0] && r.rows[0]._error);
 }
