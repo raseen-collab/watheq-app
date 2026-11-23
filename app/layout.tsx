@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import PWARegister from "@/components/PWARegister";
 import FloatingMenu from "@/components/FloatingMenu";
 import HelpAssistant from "@/components/HelpAssistant";
+import WqAnalytics from "@/components/WqAnalytics";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase-server";
 import "./globals.css";
@@ -144,10 +145,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <PWARegister />
         {children}
         <FloatingLinks />
-        {/* مساعد الموقع — يجيب من قاعدة معرفة مكتوبة، بلا نموذج ولا تكلفة */}
+        {/* مساعد الموقع — يجيب من قاعدة معرفة مكتوبة؛ والمطابقة الذكية (v100) تختار منها فقط */}
         <HelpAssistant />
         <script dangerouslySetInnerHTML={{ __html: fabScroll }} />
         <script dangerouslySetInnerHTML={{ __html: LABEL_GUARD }} />
+        <WqAnalytics />
       </body>
     </html>
   );
