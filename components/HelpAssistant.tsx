@@ -5,11 +5,14 @@
 // يجيب من قاعدة معرفة مكتوبة ومتحقَّق منها — لا من نموذج يؤلّف.
 // وحين لا يجد، يقولها ويحوّل المستخدم إلى واتساب المكتب بدل أن يخمّن.
 //
-// كل شيء في المتصفح: لا خادم، لا استدعاء مدفوع، لا انتظار.
+// البحث بالكلمات في المتصفح أولًا (فوري ومجاني). وحين لا يجد أو يجد مطابقة ضعيفة
+// (v100) يسأل /api/help-ai: نموذج «يطابق» السؤال بأي صيغة على مداخل القاعدة نفسها،
+// ويُعرض الجواب المكتوب حرفيًّا — النموذج لا يكتب للمستخدم شيئًا.
 // ============================================================
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { searchKB, SUGGESTED, KB, CATEGORIES, type HelpEntry } from "@/lib/help-kb";
+import { needsAI } from "@/lib/help-ai";
 import { openExternal, WATHEQ_WA } from "@/lib/utils";
 
 /* rated: تقييم المستخدم للجواب (6 نوفمبر 2026) — «وجد جوابًا» لا يعني «أفاد» */
@@ -24,6 +27,7 @@ export default function HelpAssistant() {
   const [q, setQ] = useState("");
   const [msgs, setMsgs] = useState<Msg[]>([]);
   const [browse, setBrowse] = useState(false);
+  const [thinking, setThinking] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [msgs, open]);
@@ -49,19 +53,43 @@ export default function HelpAssistant() {
     } catch { /* تجاهل */ }
   }
 
-  function ask(text: string) {
+  const NO_ANSWER = "ما لقيت جوابًا مكتوبًا لسؤالك.\n\nبدل ما أخمّن، أرسله لنا مباشرة وبنرد عليك — وبنضيفه هنا للجميع.";
+  const reply = (t: string, entries: HelpEntry[]): Msg =>
+    entries.length ? { who: "bot", text: "", entries, q: t } : { who: "bot", noAnswer: true, text: NO_ANSWER };
+
+  /** (v100) مطابقة بالنموذج — يعيد مداخل من القاعدة أو null إن تعذّر (فنرجع للكلمات) */
+  async function aiMatch(t: string): Promise<HelpEntry[] | null> {
+    try {
+      const ctl = new AbortController(); const timer = setTimeout(() => ctl.abort(), 9000);
+      const r = await fetch("/api/help-ai", {
+        method: "POST", headers: { "Content-Type": "application/json" }, signal: ctl.signal,
+        body: JSON.stringify({ question: t, path: typeof location !== "undefined" ? location.pathname : null }),
+      });
+      clearTimeout(timer);
+      const j = await r.json().catch(() => null);
+      if (!j?.ok || j.error || j.capped || j.limited || j.off) return null;
+      const byId = new Map(KB.map((e) => [e.id, e]));
+      return (j.ids || []).map((id: string) => byId.get(id)).filter(Boolean) as HelpEntry[];
+    } catch { return null; }
+  }
+
+  async function ask(text: string) {
     const t = text.trim();
-    if (!t) return;
+    if (!t || thinking) return;
     const hits = searchKB(t, 3);
-    log(t, hits);
-    setMsgs((m) => [...m, { who: "user", text: t },
-      hits.length
-        ? { who: "bot", text: "", entries: hits.map((h) => h.entry), q: t }
-        : {
-            who: "bot", noAnswer: true,
-            text: "ما لقيت جوابًا مكتوبًا لسؤالك.\n\nبدل ما أخمّن، أرسله لنا مباشرة وبنرد عليك — وبنضيفه هنا للجميع.",
-          }]);
     setQ(""); setBrowse(false);
+    if (!needsAI(hits)) {
+      log(t, hits);
+      setMsgs((m) => [...m, { who: "user", text: t }, reply(t, hits.map((h) => h.entry))]);
+      return;
+    }
+    setMsgs((m) => [...m, { who: "user", text: t }]);
+    setThinking(true);
+    const ai = await aiMatch(t);
+    setThinking(false);
+    if (ai === null) log(t, hits);            // تعذّر النموذج: نسجّل نتيجة الكلمات (والخادم لم يسجّل)
+    const entries = ai && ai.length ? ai : hits.map((h) => h.entry);
+    setMsgs((m) => [...m, reply(t, entries)]);
   }
 
   /** «أفاد / ما أفاد» — يُسجَّل مرة لكل جواب، ولا ينتظره المستخدم */
@@ -195,6 +223,7 @@ export default function HelpAssistant() {
             )}
           </div>
         ))}
+        {thinking && <div className="text-xs text-muted ps-1 animate-pulse" aria-live="polite">أدوّر لك على الجواب…</div>}
         <div ref={endRef} />
       </div>
 
@@ -202,7 +231,7 @@ export default function HelpAssistant() {
         <form onSubmit={(e) => { e.preventDefault(); ask(q); }} className="flex gap-2">
           <input className="fld text-sm flex-1" value={q} onChange={(e) => setQ(e.target.value)}
             placeholder="اكتب سؤالك…" aria-label="سؤالك" />
-          <button type="submit" className="btn btn-gold text-sm px-4" disabled={!q.trim()}>اسأل</button>
+          <button type="submit" className="btn btn-gold text-sm px-4" disabled={!q.trim() || thinking}>اسأل</button>
         </form>
         {msgs.length > 0 && (
           <button onClick={() => { setMsgs([]); setBrowse(false); }} className="text-[11px] text-muted mt-1.5">
