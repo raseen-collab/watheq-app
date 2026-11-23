@@ -35,6 +35,12 @@ function table(store: SandboxStore, name: keyof SandboxStore) {
   let filtered = rows.slice();
   let pending: { op: "insert" | "update" | "delete"; payload?: any } | null = null;
 
+  const cmp = (x: any, y: any) => {
+    if (x == null) return -1;
+    const nx = Number(x), ny = Number(y);
+    if (x !== "" && y !== "" && Number.isFinite(nx) && Number.isFinite(ny)) return nx - ny;
+    return String(x).localeCompare(String(y));
+  };
   const api: any = {
     select() { return api; },
     eq(col: string, val: any) { filtered = filtered.filter((r) => String(r[col]) === String(val)); return api; },
@@ -42,6 +48,10 @@ function table(store: SandboxStore, name: keyof SandboxStore) {
     in(col: string, vals: any[]) { const s = vals.map(String); filtered = filtered.filter((r) => s.includes(String(r[col]))); return api; },
     gte(col: string, v: any) { filtered = filtered.filter((r) => String(r[col]) >= String(v)); return api; },
     lte(col: string, v: any) { filtered = filtered.filter((r) => String(r[col]) <= String(v)); return api; },
+    /* (23 نوفمبر 2026) gt/lt — كان غيابهما يكسر «سند قبض» في المكتب التجريبي (Sentry WATHEQ-APP-7).
+       رقمان ← مقارنة رقمية (المبالغ)، وإلا نصية (التواريخ ISO) كما في gte/lte */
+    gt(col: string, v: any) { filtered = filtered.filter((r) => cmp(r[col], v) > 0); return api; },
+    lt(col: string, v: any) { filtered = filtered.filter((r) => cmp(r[col], v) < 0); return api; },
     is(col: string, v: any) { filtered = filtered.filter((r) => (v === null ? r[col] == null : r[col] === v)); return api; },
     not() { return api; }, or() { return api; }, ilike() { return api; },
     order(col: string, o?: { ascending?: boolean }) {
