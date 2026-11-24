@@ -1,4 +1,6 @@
 "use client";
+import { wqConfirm } from "@/lib/confirm";
+import { friendlyError } from "@/lib/friendlyError";
 /**
  * 📒 دفتر حسابات المكتب (schema-v84) — دخل المكتب ومصروفاته وصافيه، منفصلًا عن حساب المالك.
  *
@@ -186,12 +188,12 @@ export default function OfficeLedgerView({ orgName, issuer }: { orgName: string;
       await load();
     } catch (e: any) {
       const t = String(e?.message || e);
-      flash("err", /row-level security|policy/i.test(t) ? "هذا الإجراء يحتاج صلاحية تسجيل المصروفات — اطلبه من صاحب المكتب." : t);
+      flash("err", /row-level security|policy/i.test(t) ? "هذا الإجراء يحتاج صلاحية تسجيل المصروفات — اطلبه من صاحب المكتب." : friendlyError(t));
     } finally { setBusy(false); }
   }
 
   async function remove(id: string) {
-    if (!confirm("حذف هذا القيد من دفتر المكتب؟")) return;
+    if (!(await wqConfirm("حذف هذا القيد من دفتر المكتب؟"))) return;
     const { data, error } = await supabase.from("office_ledger").delete().eq("id", id).select("id");
     if (error) return flash("err", String(error.message));
     if (!data?.length) return flash("err", "الحذف لصاحب المكتب أو المدير فقط.");

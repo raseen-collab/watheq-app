@@ -13,6 +13,7 @@ import { createClient } from "@/lib/supabase-client";
 import { officeId } from "@/lib/office";
 import { waLink } from "@/lib/utils";
 import { KIND_META, OFFER_LABEL, isOpen, type Listing } from "@/lib/listings";
+import { systemGap } from "@/lib/friendlyError";
 
 type LinkRow = { id: string; token: string; revoked: boolean; views: number; last_view_at: string | null; created_at: string };
 
@@ -42,7 +43,7 @@ export default function ListingLinkModal({ listing, onClose, onShown }: {
   function friendly(e: any) {
     const t = String(e?.message || e);
     return /listing_links/.test(t) && /(not exist|relation|schema cache)/i.test(t)
-      ? "شغّل ملف schema-v78-marketer.sql في Supabase أولًا ثم أعد المحاولة" : t;
+      ? systemGap("ListingLinkModal:45") : t;
   }
 
   async function load() {

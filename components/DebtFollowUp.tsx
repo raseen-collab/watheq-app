@@ -14,6 +14,7 @@ import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase-client";
 import { contractState, withVat } from "@/lib/contracts";
 import { waLink, openExternal, daysAr } from "@/lib/utils";
+import { friendlyError, systemGap } from "@/lib/friendlyError";
 
 const sar = (n: number) => Math.round(Number(n) || 0).toLocaleString("en-US");
 const today = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Riyadh", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
@@ -103,7 +104,7 @@ export default function DebtFollowUp({ properties, orgName, onClose, db }: {
     ]).then(([{ data, error }, { data: props, error: pErr }]: any) => {
         if (!alive) return;
         if (error) {
-          setErr(/column|does not exist/i.test(error.message) ? "شغّل schema-v36 في قاعدة البيانات أولًا." : error.message);
+          setErr(/column|does not exist/i.test(error.message) ? systemGap("DebtFollowUp:106") : friendlyError(error.message));
           setRows([]); return;
         }
         /* بلا إعدادات الضريبة لا نعرض رقمًا قد ينقص الضريبة بصمت */
@@ -152,7 +153,7 @@ export default function DebtFollowUp({ properties, orgName, onClose, db }: {
       /* الدالة تمنع «سُوّي» ومبلغٌ باقٍ — فلا يختفي مال بصمت */
       const { error } = await supabase.rpc("watheq_set_past_debt", { p_past: r.id, p_status: eStatus, p_note: eNote.trim() || null });
       setBusy(false);
-      if (error) return setErr(error.message);
+      if (error) return setErr(friendlyError(error.message));
     } else {
       if (eStatus === "settled" && r.carried_debt > 0.005) {
         setBusy(false);
@@ -162,7 +163,7 @@ export default function DebtFollowUp({ properties, orgName, onClose, db }: {
         .update({ debt_status: eStatus, debt_note: eNote.trim() || null })
         .eq("id", r.id).select("id");
       setBusy(false);
-      if (error) return setErr(error.message);
+      if (error) return setErr(friendlyError(error.message));
       if (!data?.length) return setErr("هذا التعديل يحتاج صلاحية أعلى.");
     }
     setRows((cur) => (cur || []).map((x) => (x.id === r.id && x.source === r.source ? { ...x, debt_status: eStatus, debt_note: eNote.trim() || x.debt_note } : x)));
@@ -203,13 +204,13 @@ export default function DebtFollowUp({ properties, orgName, onClose, db }: {
            الأقساط مرتين. الآن نقول ما سُجّل بالضبط ونحدّث الصفّ به. */
         if (error && toRent > 0) {
           recorded = toRent;
-          setErr(`سُجّل ${sar(toRent)} ريال للأقساط المتأخرة، ولم يُسجَّل ${sar(toCarried)} ريال للدين المرحَّل (${error.message}). سجّل الباقي وحده — لا تُعِد المبلغ كاملًا.`);
+          setErr(`سُجّل ${sar(toRent)} ريال للأقساط المتأخرة، ولم يُسجَّل ${sar(toCarried)} ريال للدين المرحَّل (${friendlyError(error.message)}). سجّل الباقي وحده — لا تُعِد المبلغ كاملًا.`);
         }
       }
     }
     setBusy(false);
     if (error && recorded === amt) return setErr(/does not exist|function/i.test(error.message)
-      ? "تسجيل السداد يحتاج تحديث قاعدة البيانات — شغّل schema-v45 أولًا." : error.message);
+      ? systemGap("DebtFollowUp:212") : friendlyError(error.message));
     const left = Math.round((r.carried_debt - recorded) * 100) / 100;
     setRows((cur) => (cur || []).map((x) => (x.id === r.id && x.source === r.source
       ? { ...x, carried_debt: left,
@@ -242,7 +243,7 @@ export default function DebtFollowUp({ properties, orgName, onClose, db }: {
       /* المبلغ صريحًا (v48): يُشطب ما رآه المكتب بالضبط، لا ما صار في القاعدة بعده */
       : await supabase.rpc("watheq_write_off_carried", { p_tenant: r.id, p_note: why.trim(), p_amount: amount });
     setBusy(false);
-    if (error) return setErr(error.message);
+    if (error) return setErr(friendlyError(error.message));
     setRows((cur) => (cur || []).map((x) => {
       if (!(x.id === r.id && x.source === r.source)) return x;
       if (x.source === "past") return { ...x, debt_status: "written_off" };

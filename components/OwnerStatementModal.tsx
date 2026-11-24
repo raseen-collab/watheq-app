@@ -14,6 +14,7 @@ import { createClient } from "@/lib/supabase-client";
 import { officeId } from "@/lib/office";
 import { pastVatOf, openDoc, ownerConsolidatedStatementHTML, type OwnerReportPayment, type OwnerStatementSection } from "@/lib/documents";
 import type { ExpenseRow } from "@/lib/expenses";
+import { friendlyError, systemGap } from "@/lib/friendlyError";
 
 const AR_MONTHS = ["يناير","فبراير","مارس","أبريل","مايو","يونيو","يوليو","أغسطس","سبتمبر","أكتوبر","نوفمبر","ديسمبر"];
 const ymLabel = (ym: string) => `${AR_MONTHS[Number(ym.slice(5, 7)) - 1] || ym} ${ym.slice(0, 4)}`;
@@ -70,7 +71,7 @@ export default function OwnerStatementModal({ properties, issuer, onClose, db }:
     const { error } = await supabase.from("owner_links")
       .insert({ user_id: uid, property_id: null, owner_name: owner, token, label: `مجمّع — ${owner}` });
     setLinkBusy(false);
-    if (error) { setErr(/owner_name|scope|null value/.test(error.message) ? "شغّل schema-v13 في القاعدة أولًا." : error.message); return; }
+    if (error) { setErr(/owner_name|scope|null value/.test(error.message) ? systemGap("OwnerStatementModal:73") : friendlyError(error.message)); return; }
     setLink(`${window.location.origin}/r/${token}?from=${from}&to=${to}`);
   }
 
@@ -99,7 +100,7 @@ export default function OwnerStatementModal({ properties, issuer, onClose, db }:
           .in("property_id", ids).gte(dateCol, fromD).lte(dateCol, toD)
           .order(dateCol, { ascending: true }).order("id", { ascending: true })
           .range(from0, from0 + PAGE - 1);
-        if (error) return { rows: out, error: error.message };
+        if (error) return { rows: out, error: friendlyError(error.message) };
         out.push(...(data || []));
         if (!data || data.length < PAGE) break;
         if (out.length > 50000) break; // صمام أمان

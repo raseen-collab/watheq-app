@@ -1,4 +1,5 @@
 "use client";
+import { wqConfirm } from "@/lib/confirm";
 import { LIMIT_MSG, atLimit, type LimitsWire } from "@/lib/entitlements";
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
@@ -19,6 +20,7 @@ import { renderReceiptPage } from "@/lib/hoaPortal";
 import { Overlay, useEscape, InfoTip, Amt, GuideCard, SendLinksModal, ClaimsModal, MullakModal, MullakToggle, RequestsPanel,
   type GuideStep, type Claim, type MullakPay, type HoaRequest, type RequestLog } from "@/components/HoaRound3";
 import { moneySigned } from "@/lib/hoaMoney";
+import { friendlyError, systemGap } from "@/lib/friendlyError";
 
 type Owner = { opening_set?: boolean | null; id: string; name: string; unit: string | null; phone: string | null; months_late: number; last_paid: string | null; partial_amount?: number | null; prepaid_months?: number | null;
   /** v63: رسم خاص (من الحصة)، الحصة ٪، المساحة م² */
@@ -54,7 +56,7 @@ const dbErr = (m: string, v = "v63") => /not authorized/.test(m) ? "هذا ال�
 /** أخطاء حذف المالك بالعربية — لا تظهر رسالة القاعدة الإنجليزية للموظف */
 const ownerDeleteErr = (m: string, code = "") =>
   /not authorized|permission denied/i.test(m) || code === "42501" ? "حذف المالك يحتاج صلاحية أعلى — اطلبه من صاحب المكتب."
-  : /payments_has_subject/i.test(m) ? "تعذّر الحذف: قاعدة البيانات تحتاج تحديث (schema-v65). لم يُحذف شيء وبقيت دفعاته."
+  : /payments_has_subject/i.test(m) ? systemGap("AssociationView:57")
   : /foreign key|violates|constraint/i.test(m) || code === "23503" || code === "23514" ? "لا يمكن حذف هذا المالك لارتباطه بسجلات أخرى — لم يُحذف شيء."
   : /Failed to fetch|NetworkError|network/i.test(m) ? "تعذّر الاتصال — تحقّق من الإنترنت ثم أعد المحاولة. لم يُحذف شيء."
   : "تعذّر حذف المالك الآن — لم يُحذف شيء. أعد المحاولة بعد قليل.";
@@ -253,7 +255,7 @@ export default function AssociationView({ initial, issuer, limits }: {
       if (error) {
         const m = String(error.message || "");
         notify("err", /not authorized/.test(m) ? "هذا الإجراء يحتاج صلاحية أعلى — اطلبه من صاحب المكتب."
-          : /Could not find|does not exist|schema cache/.test(m) ? "قاعدة البيانات تحتاج تحديث (schema-v60) — لم تُسجَّل الدفعة." : m);
+          : /Could not find|does not exist|schema cache/.test(m) ? systemGap("AssociationView:256") : m);
         return false;
       }
       const r = data as { months_late: number; partial_amount: number; prepaid_months?: number; months: number;
@@ -287,7 +289,7 @@ export default function AssociationView({ initial, issuer, limits }: {
     const { data, error } = await supabase.rpc("watheq_reverse_owner_payment", { p_payment: paymentId });
     if (error) {
       const m = String(error.message || "");
-      notify("err", /not authorized/.test(m) ? "العكس يحتاج صلاحية «التراجع والحذف» — اطلبه من صاحب المكتب." : m);
+      notify("err", /not authorized/.test(m) ? "العكس يحتاج صلاحية «التراجع والحذف» — اطلبه من صاحب المكتب." : friendlyError(m));
       return false;
     }
     const r = data as { months_late?: number; partial_amount?: number; prepaid_months?: number; fund_balance?: number };
@@ -309,7 +311,7 @@ export default function AssociationView({ initial, issuer, limits }: {
       const msg = [`السلام عليكم ${t.owner.name}،`, `استلمنا ${riyalsAr(t.amount, sar)}${t.receipt_no ? ` — سند قبض رقم ${t.receipt_no}` : ""}.`,
         `سند القبض: ${url}/p/${t.payment_id}`, "", `شاكرين لكم، إدارة ${active?.name || "الجمعية"}`].join("\n");
       openExternal(waLink(t.owner.phone, msg));
-    } catch (e: any) { notify("err", e?.message || "تعذّر تجهيز رابط السند"); }
+    } catch (e: any) { notify("err", friendlyError(e?.message || "تعذّر تجهيز رابط السند")); }
   }
   /** رابط صفحة المالك الخاصة (يُنشأ إن لم يوجد) — للتذكير والسند والمستندات */
   async function ownerPortalUrl(ownerId: string): Promise<string> {
@@ -320,17 +322,17 @@ export default function AssociationView({ initial, issuer, limits }: {
   }
 
   /** «سدّد الكل» — بتأكيد يذكر المبلغ، والقاعدة تحسبه من جديد لحظة التنفيذ */
-  function settleAll(o: Owner) {
+  async function settleAll(o: Owner) {
     const due = ownerDue(o);
     if (!(due > 0)) return notify("err", "لا مستحقات على هذا المالك.");
-    if (!confirm(`تسجيل استلام ${sar(due)} ريال من ${o.name} وإصدار سند قبض؟`)) return;
+    if (!(await wqConfirm(`تسجيل استلام ${sar(due)} ريال من ${o.name} وإصدار سند قبض؟`))) return;
     recordOwnerPayment(o, null);
   }
 
   /** عكس دفعة مالك (خطأ في التسجيل) — سطر عكس موثَّق، لا حذف */
   async function reverseOwnerPayment(row: any) {
     if (!active || !history) return;
-    if (!confirm(`عكس دفعة ${sar(row.amount)} ريال بتاريخ ${row.paid_on}؟ يبقى السطران في السجل.`)) return;
+    if (!(await wqConfirm(`عكس دفعة ${sar(row.amount)} ريال بتاريخ ${row.paid_on}؟ يبقى السطران في السجل.`))) return;
     if (!(await reversePaymentById(row.id, history.owner.id))) return;
     notify("ok", "عُكست الدفعة وبقي أثرها في السجل.");
     openHistory(history.owner);
@@ -394,7 +396,7 @@ export default function AssociationView({ initial, issuer, limits }: {
     const { data, error } = await supabase.rpc("watheq_owner_adjust", { p_owner: o.id, p_months: months, p_expected_late: o.months_late });
     if (error) {
       const m = String(error.message || "");
-      notify("err", /not authorized/.test(m) ? "تعديل الرصيد يدويًا لمدير المكتب فقط." : m);
+      notify("err", /not authorized/.test(m) ? "تعديل الرصيد يدويًا لمدير المكتب فقط." : friendlyError(m));
       return false;
     }
     const r = data as { months_late: number; partial_amount: number; prepaid_months: number };
@@ -445,7 +447,7 @@ export default function AssociationView({ initial, issuer, limits }: {
       reserve_pct: b.reserve_pct, notes: b.notes || null,
       updated_at: new Date().toISOString(),
     }, { onConflict: "association_id,year" });
-    if (error) { console.error("Watheq budget save error:", error); return notify("err", error.message); }
+    if (error) { console.error("Watheq budget save error:", error); return notify("err", friendlyError(error.message)); }
     notify("ok", `حُفظت موازنة ${b.year}.`);
   }
 
@@ -493,7 +495,7 @@ export default function AssociationView({ initial, issuer, limits }: {
     const { data, error } = await supabase.from("owners").insert(
       rows.map((r) => ({ association_id: assocId, name: r.name, unit: r.unit, phone: r.phone, months_late: 0 }))
     ).select("*");
-    if (error) { console.error("Watheq bulk owners error:", error); return notify("err", error.message); }
+    if (error) { console.error("Watheq bulk owners error:", error); return notify("err", friendlyError(error.message)); }
     let added = (data || []) as Owner[];
     setItems((list) => list.map((a) => a.id === assocId ? { ...a, owners: [...a.owners, ...added] } : a));
     setBulk(false);
@@ -552,7 +554,7 @@ export default function AssociationView({ initial, issuer, limits }: {
   async function openHistory(o: Owner) {
     const { data, error } = await supabase.from("payments")
       .select("*").eq("owner_id", o.id).order("paid_on", { ascending: false }).limit(200);
-    if (error) { console.error("Watheq history error:", error); return notify("err", error.message); }
+    if (error) { console.error("Watheq history error:", error); return notify("err", friendlyError(error.message)); }
     setHistory({ owner: o, rows: data || [] });
   }
   // ---------- v66: الحوالات · طلبات الصيانة · روابط الملاك · علامة «ملاك» ----------
@@ -569,7 +571,7 @@ export default function AssociationView({ initial, issuer, limits }: {
     const { data, error } = await supabase.from("hoa_requests")
       .select("id,owner_id,owner_name,unit,category,location,description,status,manager_note,expense_id,created_at,updated_at,closed_at")
       .eq("association_id", assocId).order("created_at", { ascending: false }).limit(300);
-    if (error) { setReqRows([]); setReqErr(/does not exist|schema cache|Could not find/.test(String(error.message)) ? "طلبات الصيانة تحتاج تحديث قاعدة البيانات (schema-v66)." : "تعذّر تحميل الطلبات."); return; }
+    if (error) { setReqRows([]); setReqErr(/does not exist|schema cache|Could not find/.test(String(error.message)) ? systemGap("AssociationView:572") : "تعذّر تحميل الطلبات."); return; }
     setReqErr(null);
     const rows = (data || []) as HoaRequest[];
     setReqRows(rows);
@@ -675,7 +677,7 @@ export default function AssociationView({ initial, issuer, limits }: {
     const tg = (globalThis as any)?.Telegram?.WebApp;
     const w = !tg && typeof window !== "undefined" ? window.open("", "_blank") : null;
     let url = "";
-    try { url = await ownerPortalUrl(o.id); } catch (e: any) { if (w) w.close(); notify("err", e?.message || "تعذّر إنشاء رابط المالك"); return false; }
+    try { url = await ownerPortalUrl(o.id); } catch (e: any) { if (w) w.close(); notify("err", friendlyError(e?.message || "تعذّر إنشاء رابط المالك")); return false; }
     const msg = [`السلام عليكم ${o.name}،`, "",
       `هذه صفحتك الخاصة في ${active.name}: حالة اشتراكك وسنداتك ومستندات الجمعية، ومنها تبلّغ عن حوالتك أو عن عطل في العمارة.`,
       url, "", "الرابط خاص بك — لا تشاركه.", `إدارة ${active.name}`].join("\n");
@@ -710,7 +712,7 @@ export default function AssociationView({ initial, issuer, limits }: {
       ...bankFields(data),
       user_id: uid,
     }).select("*").single();
-    if (error) { console.error("Watheq save error:", error); return notify("err", error.message); }
+    if (error) { console.error("Watheq save error:", error); return notify("err", friendlyError(error.message)); }
     const next = { ...(row as any), owners: [], association_notes: [] } as Association;
     setItems([next, ...items]); setActiveId(next.id); setModal(null);
   }
@@ -742,7 +744,7 @@ export default function AssociationView({ initial, issuer, limits }: {
       /* v64: تُرسل فقط إن تغيّرت — فلا يتعطّل الحفظ قبل تطبيق v64 */
       ...v64Patch(data, active),
     }).eq("id", active.id);
-    if (error) { console.error("Watheq save error:", error); return notify("err", error.message); }
+    if (error) { console.error("Watheq save error:", error); return notify("err", friendlyError(error.message)); }
     let planPatch: Partial<Association> = {};
     let ownersPatch: Record<string, Partial<Owner>> = {};
     if (planChanged) {
@@ -758,7 +760,7 @@ export default function AssociationView({ initial, issuer, limits }: {
     let fund = active.fund_balance;
     if (fundDelta) {
       const { data: nb, error: fe } = await supabase.rpc("watheq_adjust_fund", { p_assoc: active.id, p_delta: fundDelta });
-      if (fe) { notify("err", "حُفظت الإعدادات، لكن تعذّر تعديل رصيد الصندوق: " + fe.message); }
+      if (fe) { notify("err", "حُفظت الإعدادات، لكن تعذّر تعديل رصيد الصندوق: " + friendlyError(fe.message)); }
       else fund = Number(nb);
     }
     const { fund_balance: _f, fee_basis: _b, fee_period: _p, total_budget: _t, fiscal_start_month: _m, ...rest } = data as any;
@@ -771,7 +773,7 @@ export default function AssociationView({ initial, issuer, limits }: {
     if (planChanged) notify("ok", "حُدّثت خطة الرسوم — رصيد كل مالك بالريال كما هو.");
   }
   async function deleteAssociation() {
-    if (!active || !confirm("حذف الجمعية وكل بياناتها؟")) return;
+    if (!active || !(await wqConfirm("حذف الجمعية وكل بياناتها؟"))) return;
     const { data: _del, error } = await supabase.from("associations").delete().eq("id", active.id).select("id");
     /* حذف رفضته السياسات يرجع بلا خطأ وبصفر صفوف — لا نوهم الموظف أنه نجح */
     if (!error && (!_del || _del.length === 0)) { notify("err", "هذا الإجراء يحتاج صلاحية أعلى — اطلبه من صاحب المكتب."); return; }
@@ -781,7 +783,7 @@ export default function AssociationView({ initial, issuer, limits }: {
       if (/أرشفها|payments|expenses|foreign key/i.test(String(error.message))) {
         return notify("err", "لا يمكن حذف جمعية لها دفعات أو مصروفات مسجّلة — استعمل «أرشفة الجمعية» فيبقى سجلها المالي محفوظًا وتختفي من القائمة.");
       }
-      return notify("err", error.message);
+      return notify("err", friendlyError(error.message));
     }
     const rest = items.filter((a) => a.id !== active.id);
     setItems(rest); setActiveId(rest[0]?.id || null); setModal(null);
@@ -789,7 +791,7 @@ export default function AssociationView({ initial, issuer, limits }: {
   /** أرشفة الجمعية أو إرجاعها (v64) — المؤرشفة تختفي من القائمة افتراضيًّا وسجلّها باقٍ */
   async function archiveAssociation(archive: boolean) {
     if (!active) return;
-    if (archive && !confirm(`أرشفة «${active.name}»؟ تختفي من القائمة ويبقى سجلّها المالي كاملًا، ويمكن إرجاعها لاحقًا.`)) return;
+    if (archive && !(await wqConfirm(`أرشفة «${active.name}»؟ تختفي من القائمة ويبقى سجلّها المالي كاملًا، ويمكن إرجاعها لاحقًا.`))) return;
     const { data, error } = await supabase.rpc("watheq_assoc_archive", { p_assoc: active.id, p_archive: archive });
     if (error) return notify("err", dbErr(String(error.message || ""), "v64"));
     const id = active.id;
@@ -807,7 +809,7 @@ export default function AssociationView({ initial, issuer, limits }: {
     const { data, error } = await supabase.from("owners").insert({
       association_id: active.id, name: name.trim(), unit: unit || null, phone: phone || null, months_late: 0,
     }).select("*").single();
-    if (error) { console.error("Watheq save error:", error); return notify("err", error.message); }
+    if (error) { console.error("Watheq save error:", error); return notify("err", friendlyError(error.message)); }
     setItems(items.map((a) => a.id === active.id ? { ...a, owners: [...a.owners, data as Owner] } : a));
     if ((data as Owner)?.opening_set === false) setOpeningOpen(true);
   }
@@ -816,7 +818,7 @@ export default function AssociationView({ initial, issuer, limits }: {
     if (!active) return false;
     const assocId = active.id;
     const { data: _u, error } = await supabase.from("owners").update(patch).eq("id", id).select("id");
-    if (error) { console.error("Watheq save error:", error); notify("err", error.message); return false; }
+    if (error) { console.error("Watheq save error:", error); notify("err", friendlyError(error.message)); return false; }
     if (!_u?.length) { notify("err", "هذا الإجراء يحتاج صلاحية أعلى — اطلبه من صاحب المكتب."); return false; }
     setItems((list) => list.map((a) => a.id === assocId ? {
       ...a, owners: a.owners.map((o) => o.id === id ? { ...o, ...patch } : o),
@@ -825,7 +827,7 @@ export default function AssociationView({ initial, issuer, limits }: {
   }
   async function deleteOwner(id: string) {
     const who = active?.owners.find((o) => o.id === id);
-    if (!active || !confirm(`حذف المالك${who ? ` «${who.name}»` : ""}؟ سجل دفعاته وسنداته يبقى محفوظًا.`)) return;
+    if (!active || !(await wqConfirm(`حذف المالك${who ? ` «${who.name}»` : ""}؟ سجل دفعاته وسنداته يبقى محفوظًا.`))) return;
     const assocId = active.id;
     const { data: _del, error } = await supabase.from("owners").delete().eq("id", id).select("id");
     /* حذف رفضته السياسات يرجع بلا خطأ وبصفر صفوف — لا نوهم الموظف أنه نجح */
@@ -842,7 +844,7 @@ export default function AssociationView({ initial, issuer, limits }: {
     const { data, error } = await supabase.from("association_notes").insert({
       association_id: active.id, text: text.trim(), note_date: today(),
     }).select("*").single();
-    if (error) { console.error("Watheq save error:", error); return notify("err", error.message); }
+    if (error) { console.error("Watheq save error:", error); return notify("err", friendlyError(error.message)); }
     setItems(items.map((a) => a.id === active.id ? { ...a, association_notes: [data as Note, ...a.association_notes] } : a));
   }
   async function deleteNote(id: string) {
@@ -850,7 +852,7 @@ export default function AssociationView({ initial, issuer, limits }: {
     const { data: _del, error } = await supabase.from("association_notes").delete().eq("id", id).select("id");
     /* حذف رفضته السياسات يرجع بلا خطأ وبصفر صفوف — لا نوهم الموظف أنه نجح */
     if (!error && (!_del || _del.length === 0)) { notify("err", "هذا الإجراء يحتاج صلاحية أعلى — اطلبه من صاحب المكتب."); return; }
-    if (error) { console.error("Watheq save error:", error); return notify("err", error.message); }
+    if (error) { console.error("Watheq save error:", error); return notify("err", friendlyError(error.message)); }
     setItems(items.map((a) => a.id === active.id ? { ...a, association_notes: a.association_notes.filter((n) => n.id !== id) } : a));
   }
 
@@ -2721,7 +2723,7 @@ function SharesModal({ assoc, onClose, onShare, onApplied, notify }: {
   };
   const apply = async () => {
     if (!ok || busy) return;
-    if (!confirm(`تطبيق رسوم الحصص على ${owners.length} مالك (إجمالي ${sar(totalFees)} ريال ${W.every})؟ يبقى رصيد كل مالك بالريال كما هو.`)) return;
+    if (!(await wqConfirm(`تطبيق رسوم الحصص على ${owners.length} مالك (إجمالي ${sar(totalFees)} ريال ${W.every})؟ يبقى رصيد كل مالك بالريال كما هو.`))) return;
     setBusy(true); setErr(null);
     try {
       if (!(await saveShares())) return;

@@ -1,4 +1,5 @@
 "use client";
+import { wqConfirm } from "@/lib/confirm";
 // ============================================================
 // وثيق — صفحة فحص سلامة البيانات
 //
@@ -12,6 +13,7 @@ import { fetchAllRows } from "@/lib/fetch-all";
 import { createClient } from "@/lib/supabase-client";
 import { today } from "@/lib/utils";
 import { auditOffice, groupFindings, SEV_META, pastDebtGaps, futureStartUnits, type PastDebtGap, type Finding, type Group, type Severity } from "@/lib/integrity";
+import { friendlyError, systemGap } from "@/lib/friendlyError";
 
 export default function DataHealth({ initial }: { initial: any[] }) {
   const supabase = useMemo(() => createClient(), []);
@@ -65,7 +67,7 @@ export default function DataHealth({ initial }: { initial: any[] }) {
       setRanAt(new Date().toLocaleString("ar-SA-u-ca-gregory-nu-latn", { timeZone: "Asia/Riyadh", dateStyle: "medium", timeStyle: "short" }));
       setOkOnce(true);
     } catch (e: any) {
-      setRunErr(`تعذّر إكمال الفحص — ${e?.message || "خطأ غير معروف"}. لم تُحدَّث النتائج؛ اضغط «إعادة الفحص».`);
+      setRunErr(`تعذّر إكمال الفحص — ${friendlyError(e?.message || "خطأ غير معروف")}. لم تُحدَّث النتائج؛ اضغط «إعادة الفحص».`);
     } finally {
       setBusy(false);
     }
@@ -139,9 +141,9 @@ export default function DataHealth({ initial }: { initial: any[] }) {
                 <span>{g.name}{g.unit ? <span className="text-muted"> · وحدة {g.unit}</span> : null}
                   <span className="text-muted text-xs"> — مسجَّل {g.recorded.toLocaleString("en-US")} · المستحق <b className="text-late">{g.expected.toLocaleString("en-US")}</b> ريال</span></span>
                 <button className="btn btn-primary text-xs" disabled={busy} onClick={async () => {
-                  if (!confirm(`تصحيح دين ${g.name} من ${g.recorded.toLocaleString("en-US")} إلى ${g.expected.toLocaleString("en-US")} ريال؟\n\nيُحفظ التصحيح في سجل الحركات.`)) return;
+                  if (!(await wqConfirm(`تصحيح دين ${g.name} من ${g.recorded.toLocaleString("en-US")} إلى ${g.expected.toLocaleString("en-US")} ريال؟\n\nيُحفظ التصحيح في سجل الحركات.`))) return;
                   const { error } = await supabase.rpc("watheq_correct_past_debt", { p_past: g.id, p_amount: g.expected, p_note: "فحص سلامة البيانات: إعادة حساب من عقد المستأجر" });
-                  if (error) { setGapMsg(/does not exist|function/i.test(error.message) ? "التصحيح يحتاج تحديث قاعدة البيانات — شغّل schema-v46 أولًا." : error.message); return; }
+                  if (error) { setGapMsg(/does not exist|function/i.test(error.message) ? systemGap("DataHealth:144") : friendlyError(error.message)); return; }
                   setGaps((cur) => cur.filter((x) => x.id !== g.id));
                   setGapMsg(`صُحّح دين ${g.name} — سوِّه الآن من «الديون المرحَّلة».`);
                 }}>صحّح إلى {g.expected.toLocaleString("en-US")}</button>

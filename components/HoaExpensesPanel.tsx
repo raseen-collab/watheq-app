@@ -1,4 +1,5 @@
 "use client";
+import { wqConfirm } from "@/lib/confirm";
 /**
  * وثيق — صندوق العمارة ومصروفاتها (schema-v62).
  *
@@ -15,6 +16,7 @@ import { openExternal, today } from "@/lib/utils";
 import { EXPENSE_CATEGORIES, expenseCatAr, MONTHS_AR, r2, type BuildingData } from "@/lib/hoaMoney";
 import DateField from "@/components/DateField";
 import { InfoTip } from "@/components/HoaRound3";
+import { systemGap } from "@/lib/friendlyError";
 
 type Expense = VoucherRow & { id: string; reverses: string | null; created_at: string };
 
@@ -30,7 +32,7 @@ const dayAr = (iso?: string | null) => {
 };
 const uuid = () => (typeof crypto !== "undefined" && typeof (crypto as any).randomUUID === "function" ? (crypto as any).randomUUID() : null);
 const dbMsg = (m: string) => /not authorized/i.test(m) ? "هذا الإجراء لمدير المكتب — اطلبه من صاحب المكتب."
-  : /Could not find|does not exist|schema cache/i.test(m) ? "قاعدة البيانات تحتاج تحديث (schema-v62) — لم يُنفَّذ الإجراء." : m;
+  : /Could not find|does not exist|schema cache/i.test(m) ? systemGap("HoaExpensesPanel:33") : m;
 
 function Modal({ onClose, children }: { onClose: () => void; children: React.ReactNode }) {
   useEffect(() => {
@@ -174,7 +176,7 @@ export default function HoaExpensesPanel({ association, orgName, onFund, notify 
     openDoc(renderVoucherPage({ association: { name: association.name }, office: { org_name: orgName || null }, expense: e }, { nonce: "watheq" }));
 
   const reverse = async (e: Expense) => {
-    if (!confirm(`عكس سند ${e.voucher_no} بمبلغ ${fmt(e.amount)} ريال؟ يعود المبلغ للصندوق ويبقى السطران في السجل.`)) return;
+    if (!(await wqConfirm(`عكس سند ${e.voucher_no} بمبلغ ${fmt(e.amount)} ريال؟ يعود المبلغ للصندوق ويبقى السطران في السجل.`))) return;
     const { data, error } = await supabase.rpc("watheq_reverse_assoc_expense", { p_expense: e.id, p_note: null });
     if (error) return notify("err", /not authorized/.test(error.message) ? "العكس يحتاج صلاحية «التراجع والحذف»." : dbMsg(error.message));
     onFund(Number((data as any)?.fund_balance));

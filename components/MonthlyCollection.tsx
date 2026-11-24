@@ -1,4 +1,5 @@
 "use client";
+import { friendlyError } from "@/lib/friendlyError";
 // ============================================================
 // وثيق — التحصيل شهرًا بشهر
 //
@@ -53,7 +54,7 @@ export default function MonthlyCollection({ propertyId, propertyIds, propertyNam
        وSupabase يقصّ عندها بصمت — فكان الرسم يُبنى من جزء منها */
     fetchAllRows<Row>(supabase as any, "payments", "id, paid_on, amount", (q) => q.in("property_id", ids).gte("paid_on", from))
       .then((data) => { if (alive) setRows(data); })
-      .catch((e) => { if (alive) { setErr(e.message); setRows([]); } });
+      .catch((e) => { if (alive) { setErr(friendlyError(e.message)); setRows([]); } });
     return () => { alive = false; };
   }, [propertyId, (propertyIds || []).join(","), span, supabase]);
 

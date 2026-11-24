@@ -1,4 +1,5 @@
 "use client";
+import { wqConfirm } from "@/lib/confirm";
 /**
  * 📋 سجل المعروضات — الأراضي والشقق المعروضة للبيع أو الإيجار.
  *
@@ -32,6 +33,7 @@ import ListingShows from "@/components/ListingShows";
 import CommissionAgreementModal from "@/components/CommissionAgreementModal";
 import DateField from "@/components/DateField";
 import Icon, { type IconName } from "@/components/Icon";
+import { systemGap } from "@/lib/friendlyError";
 
 const TONE_CLS: Record<string, string> = {
   ok:    "bg-[#E6F4EC] text-[#137a50]",
@@ -144,11 +146,11 @@ export default function ListingsView({ initial, brokerages, requests, orgName, i
   function handleErr(e: any) {
     const t = String(e?.message || e);
     if (/listings/.test(t) && /(not exist|relation|schema cache)/i.test(t))
-      return flash("err", "شغّل ملف schema-v7.sql في Supabase أولًا ثم أعد المحاولة");
+      return flash("err", systemGap("ListingsView:147"));
     if (/listings_code_per_user|duplicate key/i.test(t))
       return flash("err", "هذا الكود مستخدم من قبل — غيّره");
     if (/commission_pct|my_share_pct|owner_authorized|authorization_ack_at|others_marketing/.test(t))
-      return flash("err", "حقول السعي والتفويض تحتاج تشغيل ملف schema-v78-marketer.sql في Supabase مرة واحدة — أو اتركها فارغة واحفظ.");
+      return flash("err", systemGap("ListingsView:151"));
     flash("err", t);
   }
 
@@ -201,7 +203,7 @@ export default function ListingsView({ initial, brokerages, requests, orgName, i
   }
 
   async function remove(l: Listing) {
-    if (!confirm(`حذف ${l.code} نهائيًّا؟ الأفضل عادةً تغيير حالته إلى «مسحوب» ليبقى في السجل.`)) return;
+    if (!(await wqConfirm(`حذف ${l.code} نهائيًّا؟ الأفضل عادةً تغيير حالته إلى «مسحوب» ليبقى في السجل.`))) return;
     const { data: _del, error } = await supabase.from("listings").delete().eq("id", l.id).select("id");
     /* حذف رفضته السياسات يرجع بلا خطأ وبصفر صفوف — لا نوهم الموظف أنه نجح */
     if (!error && (!_del || _del.length === 0)) { flash("err", "هذا الإجراء يحتاج صلاحية أعلى — اطلبه من صاحب المكتب."); return; }

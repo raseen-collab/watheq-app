@@ -1,4 +1,6 @@
 "use client";
+import { wqConfirm } from "@/lib/confirm";
+import { friendlyError } from "@/lib/friendlyError";
 // ============================================================
 // وثيق — كشف التحصيل
 //
@@ -114,11 +116,11 @@ export default function CollectionStatementModal({ properties, issuer, onClose, 
 
       /* كشف «منذ البداية» لمكتب بسبع سنوات يقارب عشرين ألف صفّ — خمسة
          ميجابايت لا تُطبع ولا تُقرأ. نسأل قبل أن نُغرق المتصفح. */
-      if (rows.length > 3000 && !confirm(
+      if (rows.length > 3000 && !(await wqConfirm(
         `الكشف سيحتوي ${rows.length.toLocaleString("en-US")} عملية تحصيل.\n\n`
         + `مستند بهذا الحجم ثقيل على المتصفح وصعب الطباعة.\n`
         + `الأفضل تضييق الفترة أو اختيار عمارة واحدة.\n\nمتابعة على أي حال؟`
-      )) { setBusy(false); return; }
+      ))) { setBusy(false); return; }
 
       const title = scopeKind === "property" ? `كشف حساب — ${pName[scope] || ""}`
         : scopeKind === "owner" ? `كشف حساب — عمائر ${scope}`
@@ -131,7 +133,7 @@ export default function CollectionStatementModal({ properties, issuer, onClose, 
       openDoc(html);
       onClose();
     } catch (e: any) {
-      setErr(e?.message || "تعذّر بناء الكشف.");
+      setErr(friendlyError(e?.message || "تعذّر بناء الكشف."));
     } finally { setBusy(false); }
   }
 

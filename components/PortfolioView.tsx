@@ -1,4 +1,5 @@
 "use client";
+import { friendlyError } from "@/lib/friendlyError";
 // ============================================================
 // وثيق — نظرة عامة على المحفظة: كل العقارات في صفحة واحدة
 //
@@ -82,7 +83,7 @@ export default function PortfolioView({ properties, windows, compliance, orgName
     setPickPays(null); setPickErr("");
     fetchAllRows(supabase as any, "payments", "id, property_id, tenant_id, amount, paid_on, method, created_at, applies_to, reverses, payer_name, unit_label", (q) => q.in("property_id", ids).eq("paid_on", pickDate))
       .then((data) => { if (live) setPickPays([...data].sort((a: any, b: any) => String(b.created_at || "").localeCompare(String(a.created_at || "")))); })
-      .catch((e) => { if (live) setPickErr(e?.message || "تعذّر التحميل"); });
+      .catch((e) => { if (live) setPickErr(friendlyError(e?.message || "تعذّر التحميل")); });
     return () => { live = false; };
   }, [pickDate, properties, supabase]);
   const [expOpen, setExpOpen] = useState(false);

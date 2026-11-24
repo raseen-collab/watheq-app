@@ -1,4 +1,5 @@
 "use client";
+import { friendlyError } from "@/lib/friendlyError";
 import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase-client";
 import { invoiceHTML, openDoc, arDate } from "@/lib/documents";
@@ -57,7 +58,7 @@ export default function UnitInvoicesModal({ tenant, property, issuer, onClose, d
       .order("issue_date", { ascending: false })
       .order("invoice_no", { ascending: false })
       .limit(500);
-    if (error) { setErr(error.message); setRows([]); return; }
+    if (error) { setErr(friendlyError(error.message)); setRows([]); return; }
     setRows((data || []) as Invoice[]);
   }
   useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [tenant.id]);
@@ -100,7 +101,7 @@ export default function UnitInvoicesModal({ tenant, property, issuer, onClose, d
     setBusy(v.id); setErr(null);
     const { data, error } = await supabase.rpc("watheq_void_invoice", { p_invoice: v.id, p_reason: why });
     setBusy(null);
-    if (error) { setErr(`تعذّر الإلغاء: ${error.message}`); return; }
+    if (error) { setErr(`تعذّر الإلغاء: ${friendlyError(error.message)}`); return; }
     setVoiding(null); setReason("");
     await load();
     /* يُفتح الإشعار الدائن ليُسلَّم للمستأجر — من صفّه المحفوظ (لقطة القاعدة) */

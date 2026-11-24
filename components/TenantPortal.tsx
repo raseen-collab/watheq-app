@@ -1,4 +1,5 @@
 "use client";
+import { wqConfirm } from "@/lib/confirm";
 /**
  * 🔑 رابط المستأجر (schema-v70) — واجهة المكتب:
  *  • TenantLinkModal: إنشاء رابط الوحدة وإرساله واتساب، إخفاء المتأخر، الإبطال.
@@ -10,11 +11,12 @@ import { useEffect, useState } from "react";
 import { waLink, openExternal, sar } from "@/lib/utils";
 import { arDate } from "@/lib/documents";
 import { REQUEST_CATEGORIES, TENANT_REQUEST_STATUS_AR as REQUEST_STATUS_AR, requestCatAr } from "@/lib/hoaMoney";
+import { systemGap } from "@/lib/friendlyError";
 
 const NEEDS_V70 = /watheq_tenant|tenant_portal|tenant_payment_claims|tenant_requests|does not exist|schema cache|Could not find/i;
 const friendly = (m: string) =>
   /not authorized/i.test(m) ? "هذا الإجراء يحتاج صلاحية «تسجيل الدفعات» — اطلبه من صاحب المكتب."
-  : NEEDS_V70.test(m) && /does not exist|schema cache|Could not find/i.test(m) ? "رابط المستأجر يحتاج تحديث قاعدة البيانات (schema-v70)."
+  : NEEDS_V70.test(m) && /does not exist|schema cache|Could not find/i.test(m) ? systemGap("TenantPortal:17")
   : m;
 
 const riyadhDate = (ts?: string | null) => {
@@ -78,7 +80,7 @@ export function TenantLinkModal({ tenant, propertyName, unitWord, orgName, db, d
     setErr(""); setLink({ ...link, show_balance: show });
   }
   async function revoke() {
-    if (!confirm(`إبطال رابط ${tenant.name}؟\n\nالرابط الحالي يتوقف فورًا. تستطيع إنشاء رابط جديد بعده.`)) return;
+    if (!(await wqConfirm(`إبطال رابط ${tenant.name}؟\n\nالرابط الحالي يتوقف فورًا. تستطيع إنشاء رابط جديد بعده.`))) return;
     setBusy(true);
     const { error } = await db.rpc("watheq_tenant_link_revoke", { p_tenant: tenant.id });
     setBusy(false);

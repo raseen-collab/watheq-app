@@ -1,4 +1,5 @@
 "use client";
+import { friendlyError } from "@/lib/friendlyError";
 /**
  * وثيق — بوابة الملاك في اتحاد الملاك: أدوات المكتب (schema-v61).
  *
@@ -91,7 +92,7 @@ export function MemberLinkButton({ owner, associationName, className, onChange }
       setUrl(`${window.location.origin}${j.path}`);
       setRevoked(false);
       onChangeRef.current?.("created");
-    } catch (e: any) { setErr(e?.message || "تعذّر إنشاء الرابط"); }
+    } catch (e: any) { setErr(friendlyError(e?.message || "تعذّر إنشاء الرابط")); }
     finally { setBusy(false); }
   }, [owner.id]);
 
@@ -124,7 +125,7 @@ export function MemberLinkButton({ owner, associationName, className, onChange }
       await postJSON("/api/hoa/member-link", { owner_id: owner.id, action: "revoke" });
       setUrl(null); setRevoked(true); setConfirming(false);
       onChangeRef.current?.("revoked");
-    } catch (e: any) { setErr(e?.message || "تعذّر إبطال الرابط"); }
+    } catch (e: any) { setErr(friendlyError(e?.message || "تعذّر إبطال الرابط")); }
     finally { setBusy(false); }
   };
 
@@ -222,7 +223,7 @@ function SendToOwners({ title, docTitle, owners, reminder, onClose }: {
       const href = `https://wa.me/${saudiWa(o.phone)}?text=${encodeURIComponent(msg)}`;
       if (w) w.location.href = href; else openExternal(href);
       setSent((x) => ({ ...x, [o.id]: true }));
-    } catch (e: any) { if (w) w.close(); setErr(e?.message || "تعذّر تجهيز الرابط"); }
+    } catch (e: any) { if (w) w.close(); setErr(friendlyError(e?.message || "تعذّر تجهيز الرابط")); }
     finally { setBusy(null); }
   };
   const n = Object.values(sent).filter(Boolean).length;
@@ -292,7 +293,7 @@ export function HoaDocumentsPanel({ association, owners, prefill, onPrefillUsed 
       const j = await r.json().catch(() => ({}));
       if (!r.ok || !j?.ok) throw new Error(j?.error || "تعذّر تحميل المستندات");
       setDocs(j.documents || []);
-    } catch (e: any) { setErr(e?.message || "تعذّر تحميل المستندات"); setDocs([]); }
+    } catch (e: any) { setErr(friendlyError(e?.message || "تعذّر تحميل المستندات")); setDocs([]); }
   }, [association.id]);
 
   useEffect(() => { setDocs(null); load(); }, [load]);
@@ -326,13 +327,13 @@ export function HoaDocumentsPanel({ association, owners, prefill, onPrefillUsed 
       setForm(null);
       await load();
       setSendList({ title: "أرسله للملاك", docTitle, owners });
-    } catch (e: any) { setFormErr(e?.message || "تعذّر إصدار المستند"); }
+    } catch (e: any) { setFormErr(friendlyError(e?.message || "تعذّر إصدار المستند")); }
     finally { setSaving(false); }
   };
 
   const cancelDoc = async (id: string) => {
     try { await postJSON("/api/hoa/documents", { action: "cancel", id }); setCancelAsk(null); await load(); }
-    catch (e: any) { setErr(e?.message || "تعذّر الإلغاء"); }
+    catch (e: any) { setErr(friendlyError(e?.message || "تعذّر الإلغاء")); }
   };
 
   const openPreview = async (d: DocRow) => {
@@ -341,7 +342,7 @@ export function HoaDocumentsPanel({ association, owners, prefill, onPrefillUsed 
       const j = await r.json();
       if (!r.ok || !j?.ok) throw new Error(j?.error);
       setPreview({ title: d.title, html: j.document.body_html || "", sha: j.document.body_sha256 || null });
-    } catch (e: any) { setErr(e?.message || "تعذّر فتح المستند"); }
+    } catch (e: any) { setErr(friendlyError(e?.message || "تعذّر فتح المستند")); }
   };
 
   const total = owners.length;

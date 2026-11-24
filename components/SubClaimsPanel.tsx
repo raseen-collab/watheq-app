@@ -1,4 +1,5 @@
 "use client";
+import { wqConfirm } from "@/lib/confirm";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { approveSubClaim, rejectSubClaim } from "@/app/admin/subs/actions";
@@ -24,7 +25,7 @@ export default function SubClaimsPanel({ claims }: { claims: AdminClaim[] }) {
 
   async function approve(c: AdminClaim) {
     if (busy) return;
-    if (!confirmAction(`تفعيل ${c.name} — ${label(c)} — ${Number(c.amount).toLocaleString("en-US")} ريال؟`)) return;
+    if (!(await confirmAction(`تفعيل ${c.name} — ${label(c)} — ${Number(c.amount).toLocaleString("en-US")} ريال؟`))) return;
     setBusy(c.id);
     const r = await approveSubClaim(c.id);
     setMsg((m) => ({ ...m, [c.id]: r.ok ? `✓ فُعّل حتى ${r.extendedTo} · فاتورة ${r.invoiceNo}` : `✗ ${r.error}` }));
@@ -70,6 +71,6 @@ export default function SubClaimsPanel({ claims }: { claims: AdminClaim[] }) {
   );
 }
 
-function confirmAction(text: string) {
-  return typeof window !== "undefined" ? window.confirm(text) : false;
+function confirmAction(text: string): Promise<boolean> {
+  return typeof window !== "undefined" ? wqConfirm(text) : Promise.resolve(false);
 }

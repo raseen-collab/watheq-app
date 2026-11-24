@@ -14,6 +14,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase-client";
 import { getOffice } from "@/lib/office";
+import { friendlyError, systemGap } from "@/lib/friendlyError";
 
 type Msg = {
   id: string; user_id: string; author_id: string; body: string;
@@ -62,7 +63,7 @@ export default function OfficeChat() {
     setOfficeId(oid);
     const { data, error } = await supabase.from("office_messages")
       .select("*").order("created_at", { ascending: true }).limit(300);
-    if (error) { setErr(/does not exist|relation/.test(error.message) ? "شغّل schema-v25 في قاعدة البيانات أولًا." : error.message); return; }
+    if (error) { setErr(/does not exist|relation/.test(error.message) ? systemGap("OfficeChat:65") : friendlyError(error.message)); return; }
     setMsgs((data || []) as Msg[]);
     const { data: actors } = await supabase.rpc("watheq_actor_names", { office: oid });
     const m: Record<string, string> = {};
@@ -153,7 +154,7 @@ export default function OfficeChat() {
     };
     const { data, error } = await supabase.from("office_messages").insert(row).select("*").single();
     setBusy(false);
-    if (error) { setErr(error.message); return; }
+    if (error) { setErr(friendlyError(error.message)); return; }
     setMsgs((cur) => (cur.some((x) => x.id === data.id) ? cur : [...cur, data as Msg]));
     setBody(""); setAssign("");
     markSeen();
@@ -164,7 +165,7 @@ export default function OfficeChat() {
     const { error } = await supabase.from("office_messages")
       .update({ done_at: done ? new Date().toISOString() : null, done_by: done ? me : null })
       .eq("id", m.id);
-    if (error) { setErr(error.message); return; }
+    if (error) { setErr(friendlyError(error.message)); return; }
     setMsgs((cur) => cur.map((x) => (x.id === m.id ? { ...x, done_at: done ? new Date().toISOString() : null } : x)));
   }
 

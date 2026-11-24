@@ -1,4 +1,6 @@
 "use client";
+import { wqConfirm } from "@/lib/confirm";
+import { systemGap } from "@/lib/friendlyError";
 /**
  * 🛠 قسم الصيانة (schema-v79، 5 نوفمبر 2026)
  *
@@ -32,8 +34,8 @@ function friendly(e: any): string {
   const m = String(e?.message || e || "");
   if (/not authorized|row-level security|violates/i.test(m)) return "هذا الإجراء يحتاج صلاحية أعلى — اطلبه من صاحب المكتب.";
   if (/watheq_tenant_request_(create|update|link_expense)|maintenance-photos|bucket/i.test(m) && /not.*found|does not exist|Could not find/i.test(m))
-    return "هذه الميزة تحتاج تحديث قاعدة البيانات (schema-v79-maintenance.sql).";
-  if (NEEDS.test(m) && /tenant_requests|tenant_portal/i.test(m)) return "قسم الصيانة يحتاج تحديث قاعدة البيانات (schema-v70).";
+    return systemGap("MaintenanceView:35");
+  if (NEEDS.test(m) && /tenant_requests|tenant_portal/i.test(m)) return systemGap("MaintenanceView:36");
   return m || "حدث خطأ — أعد المحاولة";
 }
 
@@ -162,7 +164,7 @@ export default function MaintenanceView({ orgName }: { orgName?: string | null }
 
       {!v79 && (
         <div className="mb-4 rounded-xl border border-[#EAD9A8] bg-[#FDF6E3] text-[#7a5c12] text-sm p-3 leading-relaxed">
-          الأولوية والفني والتكلفة والصور تعمل بعد تشغيل <b dir="ltr">schema-v79-maintenance.sql</b> في Supabase. الطلبات وحالاتها تعمل الآن.
+          الطلبات وحالاتها تعمل الآن. الأولوية والفني والتكلفة والصور غير مفعّلة لحسابك بعد — راسلنا على واتساب 0550165210 ونفعّلها لك.
         </div>
       )}
       {loadErr && <div className="mb-4 rounded-xl border border-[#F5C6C2] bg-[#FBE9E7] text-[#8f2b26] text-sm p-3">{loadErr}</div>}
@@ -439,7 +441,7 @@ function PhotosPanel({ r, office, canWork, db }: { r: MaintRequest; office: stri
     setBusy(null);
   }
   async function remove(s: Shot) {
-    if (!confirm("حذف هذه الصورة نهائيًّا؟")) return;
+    if (!(await wqConfirm("حذف هذه الصورة نهائيًّا؟"))) return;
     setBusy(s.path);
     const { error } = await db.storage.from(PHOTO_BUCKET).remove([s.path]);
     setBusy(null);

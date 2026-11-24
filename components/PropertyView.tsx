@@ -1,5 +1,6 @@
 "use client";
-import { friendlyError } from "@/lib/friendlyError";
+import { wqConfirm } from "@/lib/confirm";
+import { friendlyError, systemGap } from "@/lib/friendlyError";
 import { LIMIT_MSG, atLimit, type LimitsWire } from "@/lib/entitlements";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -25,6 +26,7 @@ import { statementHTML, invoiceHTML, propertyStatementHTML, moveOutSettlementHTM
 import { feeInvoiceCalc, feeInvoiceGaps, feeInvoiceExplain, feePeriodLabel } from "@/lib/fee-invoice";
 import OwnerStatementModal from "@/components/OwnerStatementModal";
 import ActivityLog from "@/components/ActivityLog";
+import { useChoice } from "@/components/ChoiceDialog";
 import StatusLegend from "@/components/StatusLegend";
 import PropertyStatementModal, { type StatementPeriod } from "@/components/PropertyStatementModal";
 import DemoGuide from "@/components/DemoGuide";
@@ -356,6 +358,12 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
   const [ownerLinkOpen, setOwnerLinkOpen] = useState(false);
   const [doc, setDoc] = useState<null | { title: string; body: string }>(null);
   const [history, setHistory] = useState<null | { tenant: Tenant; rows: any[] }>(null);
+  /* (24 نوفمبر 2026) قرارات المال بأزرار مسمّاة — لا «موافق/إلغاء» */
+  const [choiceEl, askChoice] = useChoice();
+  /* (24 نوفمبر 2026) شريط المحفظة على الجوال: سطر واحد مطوي — كان ~170px قبل العقار نفسه */
+  const [pfOpen, setPfOpen] = useState(false);
+  /* (24 نوفمبر 2026) الفلاتر: أربعة ظاهرة، والباقي تحت «المزيد» — كانت ثمانية في سطرين */
+  const [moreChips, setMoreChips] = useState(false);
   /* (v87) الأمانات: تأمين + حصص عداد مشترك — null مغلقة، tenantId لفتحها على وحدة */
   const [trustFor, setTrustFor] = useState<null | { tenantId: string | null }>(null);
   const [schedule, setSchedule] = useState<Tenant | null>(null);
@@ -440,10 +448,11 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
     let q = supabase.from("payments").select("*").eq("tenant_id", t.id).gt("amount", 0).is("reverses", null);
     q = paymentId ? q.eq("id", paymentId) : q.order("created_at", { ascending: false }).limit(1);
     const { data, error } = await q;
-    if (error) return notify("err", error.message);
+    if (error) return notify("err", friendlyError(error.message));
     const pay = (data || [])[0];
     if (!pay) return notify("err", `لا دفعة مسجّلة لـ${t.name} بعد.`);
-    if (!pay.receipt_no) return notify("err", "هذه الدفعة بلا رقم سند (شغّل تحديث قاعدة البيانات v80، أو هي دفعة تجريبية).");
+    /* دفعة سُجّلت قبل ترقيم السندات (v80) لا رقم لها — نقول ذلك بلغة المكتب لا بلغة القاعدة */
+    if (!pay.receipt_no) return notify("err", "هذه دفعة قديمة سُجّلت قبل ترقيم السندات، فلا يصدر لها سند قبض. الدفعات الجديدة كلها لها سند.");
     const { data: rv } = await supabase.from("payments").select("created_at").eq("reverses", pay.id).limit(1);
     openDoc(receiptHTML({ ...pay, reversed_on: rv && rv[0] ? rv[0].created_at : null }, t as any, active as any, issuer || {}));
   }
@@ -535,13 +544,13 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       .eq("tenant_id", t.id).eq("paid_on", day).limit(20);
     const same = (dup || []).filter((x: any) => Math.abs(Number(x.amount) - amount) < 0.01);
     /* guarded: النافذة سألت عن «دفعة مشابهة» (±3 أيام، فرق ≤1٪ أو 5 ريالات) — لا سؤال ثانٍ */
-    if (same.length && !guarded && !confirm(
+    if (same.length && !guarded && !(await wqConfirm(
       `⚠️ سُجّلت دفعة مطابقة اليوم نفسه لهذه الوحدة.\n\n`
       + `${t.name} — ${ul} ${t.unit || "—"}\n`
       + `${sar(amount)} ريال بتاريخ ${day}${same.length > 1 ? ` (مسجّلة ${same.length} مرات)` : ""}\n\n`
       + `تسجيلها مرة أخرى يضاعف المحصَّل ويقدّم عدّاد الدفعات.\n`
       + `راجع «سجل المدفوعات» قبل المتابعة.\n\nتسجيلها على أي حال؟`
-    )) return;
+    ))) return;
 
     /* (17 نوفمبر — اختبار ٥٠٠ سيناريو) هللتان كحدّ: 2083.335 كان يُحفظ خامًا والرصيد مقرّبًا */
     const amt = Math.max(0, Math.round((Number(amount) || 0) * 100) / 100);
@@ -554,7 +563,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
     if (error) {
       const m = String(error.message || "");
       return notify("err", /not authorized/.test(m) ? "هذا الإجراء يحتاج صلاحية أعلى — اطلبه من صاحب المكتب."
-        : /does not exist|function/.test(m) ? "شغّل schema-v12 في قاعدة البيانات أولًا." : m);
+        : /does not exist|function/.test(m) ? systemGap("PropertyView:557", m) : friendlyError(m));
     }
     const r = data as { paid_periods: number; partial_amount: number; completed: number };
     /* تحديث وظيفي: «سداد الدين المرحَّل + الأقساط» يسجّل عمليتين متتاليتين —
@@ -594,7 +603,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       if (error) {
         const m = String(error.message || "");
         notify("err", /not authorized/.test(m) ? "هذا الإجراء يحتاج صلاحية أعلى — اطلبه من صاحب المكتب."
-          : /does not exist|function/.test(m) ? "شغّل schema-v45 في قاعدة البيانات أولًا." : m);
+          : /does not exist|function/.test(m) ? systemGap("PropertyView:597", m) : friendlyError(m));
         return false;
       }
       const left = Math.max(0, Number((data as any)?.remaining) || 0);
@@ -645,7 +654,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       if (error) {
         const m = String(error.message || "");
         return notify("err", /not authorized/.test(m) ? "هذا الإجراء يحتاج صلاحية أعلى — اطلبه من صاحب المكتب."
-          : /does not exist|schema cache|Could not find/.test(m) ? "شغّل schema-v70 في قاعدة البيانات أولًا." : m);
+          : /does not exist|schema cache|Could not find/.test(m) ? systemGap("PropertyView:648", m) : friendlyError(m));
       }
       const r = data as { duplicate?: boolean; paid_periods?: number; partial_amount?: number; completed?: number };
       setInboxKey((k) => k + 1);
@@ -689,7 +698,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
     const head = part > 0
       ? `تسجيل استلام باقي الدفعة الحالية؟\n\n${sar(amt)} ريال${vatNote} = الدفعة ${sar(rent)} − مدفوع منها سابقًا ${sar(part)}`
       : `تسجيل استلام دفعة كاملة؟\n\n${sar(amt)} ريال${vatNote}`;
-    if (confirm(`${head}\nمن ${t.name} — ${ul} ${t.unit || "—"} — ${active?.name}\n\nتاريخ السداد: اليوم (${today()})\nلمبلغ أو تاريخ مختلف أو مرجع حوالة استعمل «½ جزئي».\n\n(تُسجَّل باسمك في سجل الحركات المالية)`)) recordPayment(t, amt);
+    if ((await wqConfirm(`${head}\nمن ${t.name} — ${ul} ${t.unit || "—"} — ${active?.name}\n\nتاريخ السداد: اليوم (${today()})\nلمبلغ أو تاريخ مختلف أو مرجع حوالة استعمل «½ جزئي».\n\n(تُسجَّل باسمك في سجل الحركات المالية)`))) recordPayment(t, amt);
   }
 
   useEffect(() => {
@@ -757,12 +766,12 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       ? `سيُعكس ${sar(last.amount)} ريال (دفعة ${arDate(last.paid_on)}) ويُخصم من المحصَّل`
       : known ? "لا دفعة مسجّلة في الدفتر لهذه المدة — سيُصحَّح عدّاد الدفعات وحده بلا أثر نقدي (رصيد افتتاحي)"
       : "سيُعكس آخر مبلغ إيجار مسجَّل (تجده في «سجل المدفوعات») ويُخصم من المحصَّل";
-    if (!confirm(`التراجع عن آخر دفعة مسجّلة؟\n\n${t.name} — ${ul} ${t.unit || "—"} — ${active.name}\n${what}، ويُسجَّل التراجع باسمك في سجل الحركات المالية.`)) return;
+    if (!(await wqConfirm(`التراجع عن آخر دفعة مسجّلة؟\n\n${t.name} — ${ul} ${t.unit || "—"} — ${active.name}\n${what}، ويُسجَّل التراجع باسمك في سجل الحركات المالية.`))) return;
     const amt = last?.amount || 0;
     const { data, error } = await supabase.rpc("watheq_undo_payment", { p_tenant: t.id });
     if (error) {
       const m = String(error.message || "");
-      return notify("err", /not authorized/.test(m) ? "التراجع عن الدفعات للمدير أو صاحب المكتب." : m);
+      return notify("err", /not authorized/.test(m) ? "التراجع عن الدفعات للمدير أو صاحب المكتب." : friendlyError(m));
     }
     const r = data as { paid_periods: number; partial_amount?: number; reversed: number; paid_on?: string; opening_balance?: boolean };
     setItems(items.map((p) => p.id === active.id ? {
@@ -828,7 +837,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
    * والنموذج يُفتح بحقول المستأجر فارغة: كان يُفتح ببيانات السابق، فمن
    * غيّر الاسم ونسي الجوال أرسل تذكيرات الجديد إلى جوال السابق.
    */
-  function reLet(t: Tenant) {
+  async function reLet(t: Tenant) {
     /* v78: وحدة شاغرة لم تُؤجَّر قط (أُنشئت شاغرة، بلا عقد ولا دفعات): لا سابق
        يُؤرشف ولا دين يُسأل عنه — تُملأ مباشرة بنموذج المستأجر الجديد كاملًا، بسؤال
        «ساكن الآن؟» و«مسدَّد حتى». كانت تمرّ بالأرشفة فيظهر «شاغرة» مستأجرًا سابقًا،
@@ -859,15 +868,17 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
      */
     let fate: "none" | "open" | "paid" | "forgiven" = "none";
     if (debt > 0) {
-      const keep = confirm(
-        `على المستأجر السابق ${t.name} مبلغ ${sar(debt)} ريال.\n\n`
-        + `موافق = يبقى دينًا عليه باسمه وجواله في «الديون المرحَّلة» — ولا يظهر على المستأجر الجديد.\n`
-        + `إلغاء = سُوّي (ستُسأل: استلمتَه أم تنازلتَ عنه).`);
-      if (keep) fate = "open";
-      else fate = confirm(
-        `كيف سُوّي دين ${t.name} (${sar(debt)} ريال)؟\n\n`
-        + `موافق = استلمتُه — يُسجَّل في الدفتر ويظهر في تقرير المالك.\n`
-        + `إلغاء = تنازلتُ عنه — يُشطب ويُحفظ أثره.`) ? "paid" : "forgiven";
+      const pick = await askChoice({
+        title: `على ${t.name} ${sar(debt)} ريال — ماذا نفعل بها؟`,
+        body: "المستأجر الجديد لا يتحمّل هذا المبلغ في كل الأحوال.",
+        options: [
+          { value: "open", label: "يبقى دينًا على المستأجر السابق", hint: "يُحفظ باسمه وجواله في «الديون المرحَّلة» وتتابعه لاحقًا.", tone: "primary" },
+          { value: "paid", label: "استلمتُه منه", hint: "يُسجَّل سداده في الدفتر ويظهر في تقرير المالك." },
+          { value: "forgiven", label: "تنازلتُ عنه", hint: "يُشطب ويبقى أثره في السجل — لا يظهر في المحصَّل.", tone: "danger" },
+        ],
+      });
+      if (!pick) return;   // رجوع: لا تأجير ولا تغيير
+      fate = pick as "open" | "paid" | "forgiven";
     }
     const keepDebt = debt > 0 ? debt : 0;
     const x = t as any;
@@ -899,14 +910,24 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
   async function openHistory(t: Tenant) {
     const { data, error } = await supabase.from("payments")
       .select("*").eq("tenant_id", t.id).order("paid_on", { ascending: false }).limit(200);
-    if (error) { console.error("Watheq history error:", error); return notify("err", error.message); }
+    if (error) { console.error("Watheq history error:", error); return notify("err", friendlyError(error.message)); }
     setHistory({ tenant: t, rows: data || [] });
   }
   async function saveProperty(d: any, id?: string) {
     /* أول عقار حقيقي بينما التجريبي قائم: نسأل ونحذف — الخلط بين الاثنين
        أخطر ما في الفكرة، ولا نتركه لذاكرة المستخدم. */
-    if (!id && hasDemo && confirm("تضيف عقارك الحقيقي الأول — نحذف البيانات التجريبية الآن؟\n\nموافق = حذف التجريبي والبدء نظيفًا\nإلغاء = إبقاؤه مؤقتًا")) {
-      await clearDemo(true);
+    if (!id && hasDemo) {
+      const pick = await askChoice({
+        title: "تضيف عقارك الحقيقي الأول",
+        body: "البيانات التجريبية ما زالت في حسابك. نحذفها الآن حتى لا تختلط بأرقامك الحقيقية؟",
+        options: [
+          { value: "clear", label: "احذف التجريبي وابدأ نظيفًا", hint: "تُحذف العقارات التجريبية فقط — لا يُمسّ عقارك الجديد.", tone: "primary" },
+          { value: "keep", label: "أبقِ التجريبي مؤقتًا", hint: "تحذفه لاحقًا من زر «حذف البيانات التجريبية»." },
+        ],
+        backLabel: "رجوع — لا تحفظ العقار الآن",
+      });
+      if (!pick) return;
+      if (pick === "clear") await clearDemo(true);
     }
     const payload = {
       name: d.name, address: d.address || null, city: d.city || null,
@@ -1011,7 +1032,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
     const { data: _del, error } = await supabase.from("properties").delete().eq("id", active.id).select("id");
     /* حذف رفضته السياسات يرجع بلا خطأ وبصفر صفوف — لا نوهم الموظف أنه نجح */
     if (!error && (!_del || _del.length === 0)) { notify("err", "هذا الإجراء يحتاج صلاحية أعلى — اطلبه من صاحب المكتب."); return; }
-    if (error) { console.error("Watheq save error:", error); return notify("err", error.message); }
+    if (error) { console.error("Watheq save error:", error); return notify("err", friendlyError(error.message)); }
     const rest = items.filter((p) => p.id !== active.id);
     setItems(rest); setActiveId(rest[0]?.id || null); setModal(null);
   }
@@ -1027,7 +1048,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
     const unitTxt = String(d.unit || "").trim();
     if (unitTxt) {
       const clash = active.tenants.find((t) => t.id !== id && String(t.unit || "").trim() === unitTxt && !isVacant(t));
-      if (clash && !confirm(`${ul} ${unitTxt} مشغولة حاليًّا بـ«${clash.name}».\n\nإن كان مستأجرًا جديدًا، سجّل إخلاء السابق أولًا حتى لا تظهر الوحدة مرتين.\n\nمتابعة الإضافة على أي حال؟`)) { setSaving(false); return; }
+      if (clash && !(await wqConfirm(`${ul} ${unitTxt} مشغولة حاليًّا بـ«${clash.name}».\n\nإن كان مستأجرًا جديدًا، سجّل إخلاء السابق أولًا حتى لا تظهر الوحدة مرتين.\n\nمتابعة الإضافة على أي حال؟`))) { setSaving(false); return; }
     }
     /* أشيع خطأ عند النقل من إكسل: كتابة 1447-03-15 في منتقي التاريخ الميلادي.
        المتصفح يقبلها كسنة 1447 ميلادية فيصير العقد قبل ستة قرون. */
@@ -1148,12 +1169,12 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
         const st0 = contractState(prev, { graceDays: Number(active.grace_days) || 0, ...windowsOf(active) });
         const after = contractState({ ...prev, rent_amount: Number(d.rent_amount) || 0 }, { graceDays: Number(active.grace_days) || 0, ...windowsOf(active) });
         const diff = Math.round(after.amountDue - st0.amountDue);
-        if (!confirm(
+        if (!(await wqConfirm(
           `تغيير الإيجار من ${sar(prev.rent_amount)} إلى ${sar(d.rent_amount)} ريال.\n\n`
           + `على هذا العقد ${prev.paid_periods} دفعة مسجَّلة، وستُقيَّم بالسعر الجديد — `
           + (diff > 0 ? `فيرتفع المتأخر ${sar(diff)} ريال.` : diff < 0 ? `فينخفض المتأخر ${sar(-diff)} ريال.` : "بلا أثر على المتأخر.")
           + `\n\nإن كان السعر الجديد يبدأ من مدة قادمة فالأفضل «تجديد العقد» بدل التعديل.\n\nمتابعة التعديل؟`
-        )) { setSaving(false); return; }
+        ))) { setSaving(false); return; }
       }
       /* الرصيد الافتتاحي يُعدَّل يدويًّا، لكنه لا يقابله سجل دفعات — فإن
          كان للوحدة دفعات مسجّلة ننبّه، لأن التعديل يفكّ ارتباط العدّاد
@@ -1165,12 +1186,12 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
         const { count } = await supabase.from("payments")
           .select("id", { count: "exact", head: true }).eq("tenant_id", id);
         const recorded = Number(count) || 0;
-        if (recorded > 0 && !confirm(
+        if (recorded > 0 && !(await wqConfirm(
           `تغيير «الدفعات المسدَّدة» من ${Number(init.paid_periods) || 0} إلى ${paidNew}؟\n\n`
           + `على هذه الوحدة ${recorded} دفعة مسجّلة في السجل.\n`
           + `التعديل اليدوي لا يضيف ولا يحذف دفعة — فقد يختلف العدّاد عن سجل المدفوعات وتقرير المالك.\n\n`
           + `للتراجع عن دفعة سُجّلت خطأً استعمل «↩︎ تراجع عن آخر دفعة».\n\nمتابعة؟`
-        )) { setSaving(false); return; }
+        ))) { setSaving(false); return; }
       }
 
       const reletting = prev && isVacant(prev);
@@ -1184,8 +1205,8 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
         if (re) {
           console.error("Watheq relet error:", re);
           return fail(/does not exist|function/i.test(re.message)
-            ? "إعادة التأجير تحتاج تحديث قاعدة البيانات — شغّل schema-v45 أولًا."
-            : re.message);
+            ? systemGap("PropertyView:1187", re)
+            : friendlyError(re.message));
         }
         /* الجديد دفع عند التوقيع؟ رصيده الافتتاحي بعد الأرشفة (يُسجَّل أثره) */
         /* كان فشله يُعرض نجاحًا فيظهر الجديد متأخرًا بعد أول تحديث */
@@ -1234,10 +1255,17 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       if (prev && prev.contract_start && payload.contract_start && paidNew === 0) {
         const jump = (Date.parse(String(payload.contract_start)) - Date.parse(String(prev.contract_start))) / 86400000;
         const st0 = contractState(prev, { graceDays: Number(active.grace_days) || 0, ...windowsOf(active) });
-        if (jump >= 25 && (st0.amountDue || 0) > 0 && !confirm(
-          `نقلتَ بداية العقد ${plural(jump, "يومًا واحدًا", "يومين", "أيام", "يومًا")} للأمام وصفّرت المسدَّد، وعلى المدة الحالية متأخرات ${sar(st0.amountDue)} ريال.\n\n`
-          + `إن كان هذا تجديدًا لعقد جديد: اضغط «إلغاء» واستعمل «تجديد العقد» من قائمة الوحدة — يسألك عن المتأخرات ولا يضيّعها.\n\n`
-          + `إن كان تصحيحًا لبيانات أُدخلت خطأً: اضغط «موافق».`)) { setSaving(false); return; }
+        if (jump >= 25 && (st0.amountDue || 0) > 0) {
+          const pick = await askChoice({
+            title: `على المدة الحالية متأخرات ${sar(st0.amountDue)} ريال`,
+            body: `نقلتَ بداية العقد ${plural(jump, "يومًا واحدًا", "يومين", "أيام", "يومًا")} للأمام وصفّرت المسدَّد — بهذا الحفظ تختفي هذه المتأخرات.`,
+            options: [
+              { value: "renew", label: "هذا تجديد — سأستعمل «تجديد العقد»", hint: "من قائمة الوحدة: يسألك عن المتأخرات ولا يضيّعها.", tone: "primary" },
+              { value: "fix", label: "هذا تصحيح لبيانات أُدخلت خطأً — احفظ", tone: "danger" },
+            ],
+          });
+          if (pick !== "fix") { setSaving(false); return; }
+        }
       }
       /* (20 أكتوبر 2026) تخفيض «الدين المرحَّل» من التعديل يمسحه بلا سجل نقدي ولا سبب:
          المستأجر سدّد 3,600 فيصفّرها الموظف هنا — لا تدخل المحصَّل ولا تقرير المالك.
@@ -1258,11 +1286,11 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
           const opts = { graceDays: Number(active.grace_days) || 0, ...windowsOf(active) };
           const before = contractState(prev, opts).amountDue || 0;
           const after = contractState({ ...(prev as any), ...payload, paid_periods: paidNew } as any, opts).amountDue || 0;
-          if (Math.abs(before - after) > 0.5 && !confirm(
+          if (Math.abs(before - after) > 0.5 && !(await wqConfirm(
             `تغيير ${moved >= 25 ? "بداية العقد" : fdChanged ? "أول تاريخ استحقاق" : "التقويم"} وعلى العقد ${paidNew} دفعة مسدَّدة يغيّر المتأخر:\n\n`
             + `قبل: ${sar(before)} ريال\nبعد: ${sar(after)} ريال\n\n`
             + `الدفعات المسدَّدة تُحسب من البداية الجديدة. إن كنت ترجّع العقد لبدايته الحقيقية لتُدخل دفعات قديمة، فسجّلها كلها بعد الحفظ حتى يرجع المتأخر صحيحًا.\n\nمتابعة؟`
-          )) { setSaving(false); return; }
+          ))) { setSaving(false); return; }
         }
       }
       /**
@@ -1283,7 +1311,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       if (paidChanged) guard("paid_periods", init.paid_periods);
       if (carriedChanged) guard("carried_debt", init.carried_debt);
       const { data: _u2, error } = await upd.select("id");
-      if (error) { console.error("Watheq save error:", error); return fail(error.message); }
+      if (error) { console.error("Watheq save error:", error); return fail(friendlyError(error.message)); }
       if (!_u2 || _u2.length === 0) {
         if (paidChanged || carriedChanged) {
           /* صفر صفوف مع حارس: إمّا تغيّر العدّاد في القاعدة، وإمّا الصلاحيات. نقرأ لنعرف */
@@ -1304,7 +1332,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
     } else {
       const paidSoFar = Math.max(0, Math.min(Math.floor(Number(d.paid_periods) || 0), periods || 9999));
       const { data, error } = await supabase.from("tenants").insert({ ...payload, paid_periods: paidSoFar }).select("*").single();
-      if (error) { console.error("Watheq save error:", error); return fail(error.message); }
+      if (error) { console.error("Watheq save error:", error); return fail(friendlyError(error.message)); }
       setItems(items.map((p) => (p.id === active.id ? { ...p, tenants: [...p.tenants, data as Tenant] } : p)));
     }
     setSaving(false); setSaveErr(null);
@@ -1314,7 +1342,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
   async function patchTenant(id: string, patch: any, collectedDelta = 0) {
     if (!active) return;
     const { data: _upd, error } = await supabase.from("tenants").update(patch).eq("id", id).select("id");
-    if (error) { console.error("Watheq save error:", error); notify("err", error.message); return false; }
+    if (error) { console.error("Watheq save error:", error); notify("err", friendlyError(error.message)); return false; }
     /* تعديل رفضته السياسات يرجع بلا خطأ وبصفر صفوف — لا نُحدّث الشاشة كأنه نجح */
     if (!_upd || _upd.length === 0) { notify("err", "هذا الإجراء يحتاج صلاحية أعلى — اطلبه من صاحب المكتب."); return false; }
     if (collectedDelta) await supabase.from("properties").update({ collected: (active.collected || 0) + collectedDelta }).eq("id", active.id);
@@ -1338,10 +1366,19 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
     const { count } = await supabase.from("payments")
       .select("id", { count: "exact", head: true }).eq("tenant_id", id);
     const n = Number(count) || 0;
-    const msg = n > 0
-      ? `حذف «${t?.name || "الوحدة"}» — ${ul} ${t?.unit || "—"}؟\n\n⚠️ عليها ${n} دفعة مسجّلة.\nالدفعات لن تُحذف: تبقى في تقارير المالك وكشف التحصيل باسم «${t?.name || "—"}» و${ul} ${t?.unit || "—"}، لكنها تختفي من كشف الوحدة.\n\nإن كان المستأجر خرج وسيحلّ غيره، فاستعمل «إعادة التأجير» لا الحذف — تحفظ دينه وسجلّه.\nوإن كنت تحذف صفًّا مكرّرًا فاحذف الصفّ الذي لا دفعات عليه.\n\nمتابعة الحذف؟`
-      : `حذف «${t?.name || "الوحدة"}» — ${ul} ${t?.unit || "—"}؟\n\nلا دفعات مسجّلة عليها.`;
-    if (!confirm(msg)) return;
+    /* (24 نوفمبر 2026) نافذة بأزرار مسمّاة: «رجوع» هو الافتراضي، والحذف زر أحمر يقول ما يحدث */
+    const pick = await askChoice({
+      title: `حذف ${ul} ${t?.unit || "—"} — ${t?.name || "الوحدة"}؟`,
+      body: n > 0
+        ? `عليها ${n} دفعة مسجّلة. الدفعات لا تُحذف: تبقى في تقارير المالك وكشف التحصيل باسم «${t?.name || "—"}»، لكنها تختفي من كشف الوحدة.\n\nإن كان المستأجر خرج وسيحلّ غيره فاستعمل «إعادة التأجير» — تحفظ دينه وسجلّه.`
+        : "لا دفعات مسجّلة عليها. يُحذف صفّ الوحدة وبياناتها.",
+      options: [
+        { value: "back", label: "رجوع — لا تحذف", tone: "primary" },
+        { value: "delete", label: `احذف ${ul} ${t?.unit || ""}`.trim(), hint: n > 0 ? "للصفوف المكرّرة أو المُدخلة خطأً فقط." : undefined, tone: "danger" },
+      ],
+      backLabel: "إغلاق",
+    });
+    if (pick !== "delete") return;
     if (n > 0 && t) {
       /* اسم الدافع ووحدته على دفعاته قبل الحذف — وإلا تظهر «—» في التقارير */
       const { error: se } = await supabase.from("payments")
@@ -1354,7 +1391,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
     const { data: _del, error } = await supabase.from("tenants").delete().eq("id", id).select("id");
     /* حذف رفضته السياسات يرجع بلا خطأ وبصفر صفوف — لا نوهم الموظف أنه نجح */
     if (!error && (!_del || _del.length === 0)) { notify("err", "هذا الإجراء يحتاج صلاحية أعلى — اطلبه من صاحب المكتب."); return; }
-    if (error) { console.error("Watheq save error:", error); return notify("err", error.message); }
+    if (error) { console.error("Watheq save error:", error); return notify("err", friendlyError(error.message)); }
     setItems(items.map((p) => (p.id === active.id ? { ...p, tenants: p.tenants.filter((t) => t.id !== id) } : p)));
   }
 
@@ -1364,7 +1401,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       .insert({ property_id: active.id, text: text.trim(), note_date: today(),
                 due_date: extra?.due_date || null, kind: extra?.kind || "other", unit: extra?.unit || null })
       .select("*").single();
-    if (error) { console.error("Watheq save error:", error); return notify("err", error.message); }
+    if (error) { console.error("Watheq save error:", error); return notify("err", friendlyError(error.message)); }
     setItems(items.map((p) => (p.id === active.id ? { ...p, property_notes: [data as Note, ...p.property_notes] } : p)));
   }
 
@@ -1374,7 +1411,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
     const done_at = n.done_at ? null : new Date().toISOString();
     const { data, error } = await supabase.from("property_notes")
       .update({ done_at }).eq("id", n.id).select("*");
-    if (error) return notify("err", error.message);
+    if (error) return notify("err", friendlyError(error.message));
     if (!data?.length) return notify("err", "هذا الإجراء يحتاج صلاحية أعلى.");
     setItems(items.map((p) => (p.id === active.id
       ? { ...p, property_notes: p.property_notes.map((x) => (x.id === n.id ? (data[0] as Note) : x)) } : p)));
@@ -1419,7 +1456,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       return notify("err", `جُدّد عقد ${t.name} أو عُدّلت مدته للتو من جهاز آخر (ينتهي الآن ${fresh.contract_end || "—"}) — لم يُجدَّد مرة ثانية. راجع الوحدة ثم جدّد إن لزم.`);
     }
     /* خارج نافذة التجديد: غالبًا ضغطة على الوحدة الخطأ — نسأل ولا نمنع */
-    if (!needsRenewal(fresh) && renewAcked.current !== t.id && !confirm(`عقد ${t.name} لا ينتهي قبل ${contractState(fresh).endDate || "—"} — خارج نافذة التجديد.\n\nالتجديد الآن يبدأ المدة الجديدة من نهاية الحالية ويُرحّل ما لم يُدفع منها دينًا.\n\nالمتابعة على أي حال؟`)) return;
+    if (!needsRenewal(fresh) && renewAcked.current !== t.id && !(await wqConfirm(`عقد ${t.name} لا ينتهي قبل ${contractState(fresh).endDate || "—"} — خارج نافذة التجديد.\n\nالتجديد الآن يبدأ المدة الجديدة من نهاية الحالية ويُرحّل ما لم يُدفع منها دينًا.\n\nالمتابعة على أي حال؟`))) return;
     /* vat: الرصيد المرحَّل بضريبة الوحدة (lib/contracts يقبله حين يدعمه؛ any ليبني في الحالين) */
     const renewOpts: any = { periods: opts.periods, newAmount: opts.newAmount, newFrequency: opts.newFrequency, arrears: "carry", vat: unitVat(fresh, active), fromToday: !!opts.fromToday };
     const fields = renewContract(fresh, renewOpts);
@@ -1427,18 +1464,24 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
     const toSettle = Math.round(((Number((fields as any).carried_debt) || 0) - (Number(t.carried_debt) || 0)) * 100) / 100;
     let fate: "carry" | "paid" | "forgiven" = "carry";
     if (toSettle > 0 && opts.arrears !== "carry") {
-      const keep = confirm(`على ${t.name} ${sar(toSettle)} ريال متبقية من المدة المنتهية (متأخرة أو لم تحلّ بعد).\n\n`
-        + `موافق = تبقى دينًا مرحَّلًا على العقد الجديد حتى تُسدَّد.\n`
-        + `إلغاء = سُوّيت (ستُسأل: استلمتَها أم تنازلتَ عنها).`);
-      if (!keep) fate = confirm(`كيف سُوّي المتبقي على ${t.name} (${sar(toSettle)} ريال)؟\n\n`
-        + `موافق = استلمتُه — يُسجَّل في الدفتر ويظهر في تقرير المالك.\n`
-        + `إلغاء = تنازلتُ عنه — يُشطب ويُحفظ أثره.`) ? "paid" : "forgiven";
+      const pick = await askChoice({
+        title: `على ${t.name} ${sar(toSettle)} ريال من المدة المنتهية`,
+        body: "متأخرة أو لم تحلّ بعد. كيف نتعامل معها في التجديد؟",
+        options: [
+          { value: "carry", label: "تبقى دينًا مرحَّلًا على العقد الجديد", hint: "يبقى مطلوبًا حتى يُسدَّد.", tone: "primary" },
+          { value: "paid", label: "استلمتُها", hint: "يُسجَّل سدادها في الدفتر ويظهر في تقرير المالك." },
+          { value: "forgiven", label: "تنازلتُ عنها", hint: "تُشطب ويبقى أثرها في السجل.", tone: "danger" },
+        ],
+        backLabel: "رجوع — لا تجدّد الآن",
+      });
+      if (!pick) return;   // رجوع: لا تجديد
+      fate = pick as "carry" | "paid" | "forgiven";
     }
     let rq: any = supabase.from("tenants").update(fields).eq("id", t.id);
     rq = t.contract_end ? rq.eq("contract_end", t.contract_end) : rq.is("contract_end", null);
     rq = t.contract_start ? rq.eq("contract_start", t.contract_start) : rq.is("contract_start", null);
     const { data: _u3, error } = await rq.select("id");
-    if (error) { console.error("Watheq save error:", error); return notify("err", error.message); }
+    if (error) { console.error("Watheq save error:", error); return notify("err", friendlyError(error.message)); }
     if (!_u3 || _u3.length === 0) {
       /* صفر صفوف: جدّده غيرنا بين القراءة والكتابة، أو لا صلاحية */
       const { data: again } = await supabase.from("tenants").select("contract_end").eq("id", t.id).limit(1);
@@ -1468,7 +1511,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
         ? await supabase.rpc("watheq_record_carried_payment", { p_tenant: t.id, p_amount: moved, p_paid_on: today() })
         : await supabase.rpc("watheq_write_off_carried", { p_tenant: t.id, p_amount: moved, p_note: "تنازل عن متأخرات المدة المنتهية عند التجديد" });
       if (fe) notify("err", `جُدّد العقد، لكن تعذّرت تسوية المتأخرات (${/p_amount|does not exist|function/i.test(fe.message)
-        ? "تحتاج تحديث قاعدة البيانات — شغّل schema-v48" : fe.message}). هي محفوظة دينًا مرحَّلًا — سوِّها من «الديون المرحَّلة».`);
+        ? systemGap("PropertyView:1471") : friendlyError(fe.message)}). هي محفوظة دينًا مرحَّلًا — سوِّها من «الديون المرحَّلة».`);
       else {
         carriedAfter = Math.round((carriedNow - moved) * 100) / 100;
         notify("ok", fate === "paid" ? `جُدّد العقد — وسُجّل استلام المتأخرات (${sar(moved)} ريال) في الدفتر.`
@@ -1560,7 +1603,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
   async function clearDemo(silent = false) {
     /* التجربة العامة بلا حساب: لا شيء يُحذف من خادم — ندعوه للتسجيل */
     if (demo) { window.dispatchEvent(new CustomEvent("watheq:demo-join")); return; }
-    if (!silent && !confirm("حذف كل البيانات التجريبية؟\n\nتُحذف العقارات الخمسة ووحداتها ودفعاتها ومصروفاتها — ولا تمسّ أي بيانات حقيقية.")) return;
+    if (!silent && !(await wqConfirm("حذف كل البيانات التجريبية؟\n\nتُحذف العقارات الخمسة ووحداتها ودفعاتها ومصروفاتها — ولا تمسّ أي بيانات حقيقية."))) return;
     const r = await fetch("/api/demo", { method: "DELETE" });
     const j = await r.json();
     if (!r.ok) return notify("err", j.error || "تعذّر الحذف");
@@ -1582,7 +1625,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
         (q) => q.eq("property_id", active.id).gte("spent_on", period.from).lte("spent_on", period.to))
         .then((data) => ({ data, error: null as any })).catch((e) => ({ data: null as any, error: { message: e.message } })),
     ]);
-    if (pay.error) return notify("err", pay.error.message);
+    if (pay.error) return notify("err", friendlyError(pay.error.message));
     const nameOf: Record<string, { name: string; unit: string | null }> = {};
     (active.tenants || []).forEach((t) => { nameOf[t.id] = { name: t.name, unit: t.unit }; });
     const rowsP = (pay.data || []).map((x: any) => ({
@@ -1652,11 +1695,16 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       .eq("tenant_id", t.id).eq("period_label", period).neq("status", "void").limit(3);
     if (dup && dup.length) {
       const list = dup.map((x: any) => `${x.invoice_no}${x.issue_date ? ` (${arDate(x.issue_date)})` : ""}`).join("\n");
-      if (!confirm(
-        `صدرت فاتورة لنفس الفترة من قبل:\n\n${list}\n\n` +
-        `${period} — ${t.name}\n\nتُصدر فاتورة أخرى بنفس الفترة؟\n` +
-        `موافق = إصدار فاتورة جديدة برقم جديد\nإلغاء = فتح سجل الفواتير لإعادة طباعة واحدة منها`,
-      )) { setInvoicesFor(t); return; }
+      const pick = await askChoice({
+        title: `صدرت فاتورة لنفس الفترة من قبل`,
+        body: `${period} — ${t.name}\n${list}`,
+        options: [
+          { value: "reprint", label: "أعد طباعة الفاتورة الموجودة", hint: "يفتح سجل فواتير الوحدة — بلا رقم جديد.", tone: "primary" },
+          { value: "new", label: "أصدر فاتورة جديدة برقم جديد", hint: "فاتورة ضريبية ثانية لنفس الفترة — فقط إن كان ذلك مقصودًا." },
+        ],
+      });
+      if (!pick) return;
+      if (pick === "reprint") { setInvoicesFor(t); return; }
     }
 
     // ترقيم متسلسل من قاعدة البيانات
@@ -1668,7 +1716,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
     if (invErr || typeof data !== "string") {
       notify("err", /not authorized/i.test(invErr?.message || "")
         ? "لا تملك صلاحية إصدار الفواتير في هذا المكتب"
-        : `تعذّر الحصول على رقم فاتورة — لم تُصدر${invErr?.message ? ` (${invErr.message})` : ""}`);
+        : `تعذّر الحصول على رقم فاتورة — لم تُصدر. ${friendlyError(invErr?.message || "")}`);
       return;
     }
     const invoiceNo = data;
@@ -1851,8 +1899,8 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
     if (error) {
       const m = String(error.message || "");
       return notify("err", /watheq_log_meter_notice|function|schema cache/i.test(m)
-        ? "فُتحت الرسالة، لكن حفظ تاريخ الإرسال يحتاج تشغيل schema-v74 في Supabase."
-        : `فُتحت الرسالة، ولم يُحفظ تاريخ الإرسال: ${m}`);
+        ? systemGap("PropertyView:1854")
+        : `فُتحت الرسالة، ولم يُحفظ تاريخ الإرسال: ${friendlyError(m)}`);
     }
     const at = String(data || new Date().toISOString());
     setItems((list) => list.map((p) => p.id === active.id ? {
@@ -2135,7 +2183,15 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       {items.length > 1 && (
 
         <div className="bg-deep text-[#EAF1EE] rounded-2xl p-4 mb-5 flex flex-wrap items-center gap-x-6 gap-y-3">
-          <div className="font-display font-bold text-sm text-goldSoft">محفظتك · {plural(items.length, "عقار واحد", "عقاران", "عقارات", "عقارًا")}</div>
+          <button type="button" onClick={() => setPfOpen((o) => !o)} aria-expanded={pfOpen}
+            className="sm:pointer-events-none flex w-full sm:w-auto items-center justify-between gap-3 text-right min-h-[28px]">
+            <span className="font-display font-bold text-sm text-goldSoft">محفظتك · {plural(items.length, "عقار واحد", "عقاران", "عقارات", "عقارًا")}</span>
+            <span className="sm:hidden flex items-center gap-2 text-xs">
+              {portfolio.overdue > 0 ? <span className="text-[#F3B6AE] font-bold tabular-nums">{sar(portfolio.overdue)} متأخر</span> : <span className="text-[#C9DAD5]">لا متأخرات</span>}
+              <span aria-hidden className={`transition-transform ${pfOpen ? "rotate-180" : ""}`}>▾</span>
+            </span>
+          </button>
+          <div className={`${pfOpen ? "flex" : "hidden"} sm:contents flex-wrap items-center gap-x-6 gap-y-3 w-full`}>
           <PortfolioStat v={String(portfolio.units)} l={portfolio.units === 1 ? "وحدة" : portfolio.units === 2 ? "وحدتان" : portfolio.units <= 10 ? "وحدات" : "وحدة"} />
           {/* ستة مؤشرات أربعة منها أصفار، ومؤشران يكرران المعنى نفسه
               («0 متأخرة» و«0 ريال متأخر»). نُبقي الحيّ بارزًا ونطوي الصفري
@@ -2156,6 +2212,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
             <div className="text-xs text-[#9FB8B3]">لا متأخرات ولا استحقاقات قريبة ✓</div>
           )}
           <PortfolioStat v={`${occupancyPct}%`} l={`إشغال (${portfolio.vacant === 0 ? "لا شاغر" : plural(portfolio.vacant, "وحدة شاغرة", "وحدتان شاغرتان", "شاغرة", "شاغرة")})`} tone={portfolio.vacant ? "warn" : undefined} />
+          </div>
             {/* «دخل شهري تقريبي» للمكتب كله أزيل من صفحة العمارة: نطاق آخر يُقرأ مناقضًا — مكانه «نظرة عامة» */}
         </div>
       )}
@@ -2200,6 +2257,18 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
           onClick={(e) => { if (demo) { e.preventDefault(); demoJoin(); } }}>🗂️ نظرة عامة</Link>}
         {isManager && may("all_properties") && <button className="btn btn-ghost text-sm" onClick={openNewProperty}>+ عقار</button>}
       </div>
+
+      {/* (24 نوفمبر 2026) الجوال: الوحدات كانت بعد ~1450px من الأرقام واللوحات. زرّان يوصلان لها بضغطة */}
+      {tenants.length > 0 && (
+        <div className="sm:hidden grid grid-cols-2 gap-2 -mt-2 mb-4">
+          <button type="button" className="btn btn-primary text-sm min-h-[44px]"
+            onClick={() => document.getElementById("units-list")?.scrollIntoView({ behavior: "smooth", block: "start" })}>
+            {ul === "شقة" ? "الشقق" : "الوحدات"} ({tenants.length}) ↓</button>
+          <button type="button" className="btn btn-ghost bg-white text-sm min-h-[44px]"
+            onClick={() => { document.getElementById("units-list")?.scrollIntoView({ behavior: "smooth", block: "start" }); setTimeout(() => (document.getElementById("units-q") as HTMLInputElement | null)?.focus({ preventScroll: true }), 450); }}>
+            🔍 ابحث عن مستأجر</button>
+        </div>
+      )}
 
       {/* (22 نوفمبر 2026) «اليوم» — كل ما يحتاج إجراءً في هذا العقار في مكان واحد أعلى الصفحة:
           المتأخر (مع التذكير)، ما يستحق قريبًا، العقود المنتهية، ومهام السجل المستحقة.
@@ -2386,6 +2455,33 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
             <div className="flex gap-2 flex-wrap">
               {/* ثلاث قوائم بدل تسعة أزرار: ما يُطبع · ما يخصّ المالك · ما يخصّ البيانات.
                   الأدوات نفسها — لكن العين تجد مكانها بدل أن تمسح صفًّا طويلًا. */}
+              {/* (24 نوفمبر 2026) الجوال: قائمة واحدة «أدوات العقار» بدل ثلاث تأخذ سطرين */}
+              <div className="sm:hidden">
+                <MenuBtn label={<><Icon name="doc" className="me-1.5" />أدوات العقار</>} items={[
+                  { sep: "مستندات" },
+                { label: "كشف حساب العقار", run: () => setStmtOpen(true) },
+                { label: "كشف المستحقات (للمحصّل)", run: () => setDueOpen(true) },
+                { label: "عرض سعر لمستأجر محتمل", run: () => setQuoteOpen(true) },
+                /* «التزامات المكتب» انتقلت إلى «نظرة عامة» — للمكتب كله لا لعقار */
+                  ...(may("view_financials") ? [
+                { sep: "تُرسل للمالك" },
+                { label: "تقرير المالك", run: () => setReporting(true) },
+                { label: "كشف مالك مجمّع", run: () => setOwnerStmtOpen(true) },
+                /* (v89) رابط المالك قد يشمل عقارات أخرى للمالك — لصاحب «كل العقارات» */
+                ...(may("all_properties") ? [{ label: "رابط المالك", run: () => setOwnerLinkOpen(true) }] : []),
+                { sep: "متابعة المال" },
+                { label: "كشف التحصيل", run: () => setCollOpen(true) },
+                ...(may("manage_expenses") ? [{ label: "المصروفات", run: () => setExpensesOpen(true) }] : []),
+                { label: "🛡️ الأمانات — تأمين وفواتير مشتركة", run: () => setTrustFor({ tenantId: null }) },
+                { label: `الديون المرحَّلة${carriedTotal > 0 ? ` (${sar(carriedTotal)})` : ""}`, run: () => setDebtOpen(true) }] : []),
+                  { sep: "البيانات" },
+                ...(may("edit_tenants") ? [demo ? { label: "رفع من Excel", run: demoJoin } : { label: "رفع من Excel", href: "/dashboard/property/import" }] : []),
+                { label: "تصدير CSV", run: exportCSV },
+                ...(may("view_activity") ? [{ label: "سجل الحركات المالية", run: () => setLogOpen(true) }] : []),
+                ...(!may("view_financials") && canTrust ? [{ label: "🛡️ الأمانات — تأمين وفواتير مشتركة", run: () => setTrustFor({ tenantId: null }) }] : []),
+                ]} />
+              </div>
+              <div className="hidden sm:contents">
               <MenuBtn label={<><Icon name="doc" className="me-1.5" />مستندات</>} items={[
                 { label: "كشف حساب العقار", run: () => setStmtOpen(true) },
                 { label: "كشف المستحقات (للمحصّل)", run: () => setDueOpen(true) },
@@ -2413,6 +2509,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                 ...(!may("view_financials") && canTrust ? [{ label: "🛡️ الأمانات — تأمين وفواتير مشتركة", run: () => setTrustFor({ tenantId: null }) }] : []),
               ]} />
 
+              </div>
               {lateCount > 0 && may("send_reminders") && (
                 <button className="btn btn-wa text-xs" onClick={() => setRemindAll(true)}
                   title="إرسال تذكير واتساب لكل المتأخرين واحدًا تلو الآخر">💬 تذكير جماعي ({lateCount})</button>
@@ -2425,7 +2522,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
           {tenants.length > 0 && (
             <div className="border-b border-line px-4 py-3 flex flex-wrap gap-2 items-center bg-paper">
               {/* النص الطويل كان يُقصّ على الجوال فلا يُعرف ما يُبحث به — قصير هنا، والكامل في title (30 سبتمبر 2026) */}
-              <input className="fld flex-1 min-w-[150px] basis-full sm:basis-0 sm:w-auto" value={q} onChange={(e) => setQ(e.target.value)} type="search"
+              <input id="units-q" className="fld flex-1 min-w-[150px] basis-full sm:basis-0 sm:w-auto" value={q} onChange={(e) => setQ(e.target.value)} type="search"
                 aria-label={`بحث في الوحدات: الاسم أو رقم ${ul} أو الجوال أو الهوية أو رقم العقد أو حساب الكهرباء`}
                 title={`ابحث بالاسم أو رقم ${ul} أو الجوال أو الهوية أو رقم العقد أو حساب الكهرباء`}
                 placeholder={`ابحث: اسم، ${ul}، جوال، هوية…`} />
@@ -2436,7 +2533,16 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                 <option value="name">الاسم</option>
               </select>
               <div className="flex flex-wrap gap-1.5 w-full">
-                {chips.map((c) => (
+                {(() => {
+                  /* الأساسية دائمًا · الثانوية حين يكون فيها شيء · «المزيد» يكشفها (أو تُكشف إن كانت هي المختارة) */
+                  const PRIMARY = ["all", "late", "incomplete", "expiring", "vacant"];
+                  const cnt = (k: string) => k === "all" ? allRows.length : Number((counts as any)[k]) || 0;
+                  const primary = chips.filter((c) => PRIMARY.includes(c.k));
+                  const extra = chips.filter((c) => !PRIMARY.includes(c.k) && (cnt(c.k) > 0 || filter === c.k));
+                  const showExtra = moreChips || extra.some((c) => c.k === filter);
+                  const list = showExtra ? [...primary, ...extra] : primary;
+                  return (<>
+                {list.map((c) => (
                   <button key={c.k} onClick={() => setFilter(c.k)}
                     /* كانت 26px — أصغر من الحد الموصى به للمس (44px)، فيخطئ
                        الإبهام على الجوال. 40px مع الحشو الرأسي كافية. */
@@ -2445,6 +2551,14 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                     {c.label}
                   </button>
                 ))}
+                {extra.length > 0 && !extra.some((c) => c.k === filter) && (
+                  <button type="button" onClick={() => setMoreChips((v) => !v)} aria-expanded={showExtra}
+                    className="text-xs font-semibold rounded-lg px-3 py-2.5 sm:py-1 min-h-[40px] sm:min-h-0 border border-dashed border-line text-muted hover:text-deep hover:border-goldSoft">
+                    {showExtra ? "أقل ▴" : `المزيد (${extra.length}) ▾`}
+                  </button>
+                )}
+                  </>);
+                })()}
               </div>
             </div>
           )}
@@ -2621,7 +2735,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                                   { label: "سجل الفواتير", run: () => setInvoicesFor(t) },
                                   { label: "جدول الدفعات", run: () => setSchedule(t) },
                                   { label: "سجل المدفوعات", run: () => openHistory(t) },
-                                  ...(!isVacant(t) && !t.covered_by ? [{ label: "🧾 سند قبض آخر دفعة", run: () => { void openReceipt(t); } }] : []),
+                                  ...(!isVacant(t) && !t.covered_by && (Number(t.paid_periods) > 0 || Number(t.partial_amount) > 0) ? [{ label: "🧾 سند قبض آخر دفعة", run: () => { void openReceipt(t); } }] : []),
                                   ...(canTrust && !t.covered_by ? [{ label: "🛡️ التأمين والفواتير المشتركة", run: () => setTrustFor({ tenantId: t.id }) }] : []),
                                   ...(isVacant(t) ? [{ label: "مخالصة الإخلاء", run: () => openSettlement(t) }] : []),
 
@@ -2643,7 +2757,8 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                                   ...(may("move_out") && !isVacant(t) ? [{ label: "إنهاء العقد وإخلاء", run: () => setTurnover(t) }] : []),
                                   ...(isManager && !t.litigation && st.unpaid > 0 ? [{ label: "رفع للتنفيذ القضائي", run: () => setEnforcing(t) }] : []),
                                   ...(may("undo_actions") && (t.paid_periods || 0) > 0 ? [{ label: "↩︎ تراجع عن آخر دفعة", run: () => undoPayment(t), danger: true }] : []),
-                                  ...(may("undo_actions") ? [{ label: "🗑 حذف الوحدة", run: () => deleteTenant(t.id), danger: true }] : []),
+                                  /* (24 نوفمبر 2026) الحذف في مجموعة وحده — كان تحت «رفع للتنفيذ» مباشرة */
+                                  ...(may("undo_actions") ? [{ sep: "⚠️ منطقة خطر" } as any, { label: "🗑 حذف الوحدة", run: () => deleteTenant(t.id), danger: true }] : []),
                                 ]} />
                               </div>
                             </td>
@@ -2792,7 +2907,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                   ) : key === "litigation" ? (
                     <>
                       <button className="btn btn-ghost text-xs" onClick={() => setEnforcing(t)}>متابعة التنفيذ</button>
-                      {isManager && <button className={`btn btn-ghost text-xs ${wide}`} onClick={() => { if (confirm("إلغاء رفع العقد للتنفيذ؟ ستعود الإشعارات الودية.")) patchTenant(t.id, { litigation: false }); }}>إلغاء الرفع</button>}
+                      {isManager && <button className={`btn btn-ghost text-xs ${wide}`} onClick={async () => { if ((await wqConfirm("إلغاء رفع العقد للتنفيذ؟ ستعود الإشعارات الودية."))) patchTenant(t.id, { litigation: false }); }}>إلغاء الرفع</button>}
                     </>
                   ) : (
                     <>
@@ -2834,7 +2949,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                       { label: "سجل الفواتير", run: () => setInvoicesFor(t) },
                       { label: "جدول الدفعات", run: () => setSchedule(t) },
                       { label: "سجل المدفوعات", run: () => openHistory(t) },
-                      ...(!isVacant(t) && !t.covered_by ? [{ label: "🧾 سند قبض آخر دفعة", run: () => { void openReceipt(t); } }] : []),
+                      ...(!isVacant(t) && !t.covered_by && (Number(t.paid_periods) > 0 || Number(t.partial_amount) > 0) ? [{ label: "🧾 سند قبض آخر دفعة", run: () => { void openReceipt(t); } }] : []),
                       ...(canTrust && !t.covered_by ? [{ label: "🛡️ التأمين والفواتير المشتركة", run: () => setTrustFor({ tenantId: t.id }) }] : []),
                       ...(isVacant(t) ? [{ label: "مخالصة الإخلاء", run: () => openSettlement(t) }] : []),
 
@@ -2854,10 +2969,10 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                       ...(needsRenewal(t) && !t.covered_by && may("renew_contracts") ? [{ label: "تجديد العقد", run: () => askRenew(t) }] : []),
                       ...(may("move_out") && !isVacant(t) ? [{ label: "إنهاء العقد وإخلاء", run: () => setTurnover(t) }] : []),
                       ...(may("move_out") && isVacant(t) ? [{ label: "تعديل بيانات الإخلاء", run: () => setTurnover(t) }] : []),
-                      ...(isManager && t.litigation ? [{ label: "إلغاء الرفع للتنفيذ", run: () => { if (confirm("إلغاء رفع العقد للتنفيذ؟ ستعود الإشعارات الودية.")) patchTenant(t.id, { litigation: false }); } }] : []),
+                      ...(isManager && t.litigation ? [{ label: "إلغاء الرفع للتنفيذ", run: async () => { if ((await wqConfirm("إلغاء رفع العقد للتنفيذ؟ ستعود الإشعارات الودية."))) patchTenant(t.id, { litigation: false }); } }] : []),
                       ...(isManager && !t.litigation && st.unpaid > 0 ? [{ label: "رفع للتنفيذ القضائي", run: () => setEnforcing(t) }] : []),
                       ...(may("undo_actions") && (t.paid_periods || 0) > 0 ? [{ label: "↩︎ تراجع عن آخر دفعة", run: () => undoPayment(t), danger: true }] : []),
-                      ...(may("undo_actions") ? [{ label: "🗑 حذف الوحدة", run: () => deleteTenant(t.id), danger: true }] : []),
+                      ...(may("undo_actions") ? [{ sep: "⚠️ منطقة خطر" } as any, { label: "🗑 حذف الوحدة", run: () => deleteTenant(t.id), danger: true }] : []),
                     ]}
                   />
                 </div>
@@ -2914,7 +3029,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                     {/* كان «حذف» نصًّا صغيرًا يحذف بنقرة بلا سؤال — ملاصق للنص فيُلمس خطأً (30 سبتمبر 2026) */}
                     <button className="text-muted opacity-70 hover:opacity-100 hover:text-late text-xs min-h-[44px] min-w-[44px] -my-2.5 px-2 shrink-0"
                       aria-label={`حذف الملاحظة: ${n.text.slice(0, 40)}`}
-                      onClick={() => { if (confirm(`حذف هذه الملاحظة نهائيًّا؟\n\n«${n.text.slice(0, 120)}»`)) deleteNote(n.id); }}>حذف</button>
+                      onClick={async () => { if ((await wqConfirm(`حذف هذه الملاحظة نهائيًّا؟\n\n«${n.text.slice(0, 120)}»`))) deleteNote(n.id); }}>حذف</button>
                   </div>
                 );
               };
@@ -2970,6 +3085,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
 
       {ownerStmtOpen && <OwnerStatementModal properties={items} issuer={issuer} db={db} onClose={() => setOwnerStmtOpen(false)} />}
       {logOpen && <ActivityLog properties={items} db={db} onClose={() => setLogOpen(false)} />}
+      {choiceEl}
       {/* الصفحة العامة ترسم دليلها بنفسها — لا نكرّره هنا */}
       {dueOpen && <DueListModal properties={items as any} issuer={issuer} db={db} onClose={() => setDueOpen(false)} />}
       {collOpen && <CollectionStatementModal properties={items as any /* كاملة: نسبة الأتعاب وإعدادات الضريبة تحدّد صافي المالك */} issuer={issuer} db={db} onClose={() => setCollOpen(false)} />}
@@ -3111,7 +3227,7 @@ function MeterLine({ t, onSend }: { t: Tenant; onSend?: () => void }) {
       <span>⚡ عداد <bdi dir="ltr" className="tabular-nums">{acc}</bdi></span>
       {sent
         ? <span className="text-[#137a50]">· أُشعر بالتسجيل {arDate(sent)}{Number(t.elec_notice_count) === 2 ? " (مرتان)" : Number(t.elec_notice_count) > 2 ? ` (${t.elec_notice_count} مرات)` : ""}</span>
-        : <span className="text-[#9A4B00]">· لم يُشعَر بتسجيله</span>}
+        : <span className="text-[#9A4B00]">· لم يُرسَل للمستأجر طلب نقل العداد باسمه</span>}
       {onSend && (
         <button type="button" className="underline text-deep font-semibold hover:text-gold" onClick={onSend}
           title="رسالة واتساب للمستأجر برقم الحساب وطلب تسجيل العداد باسمه لدى شركة الكهرباء">
@@ -3542,16 +3658,16 @@ function HistoryModal({ data, unitWord, onClose, canEdit = true, onChanged, db, 
    * الصحيح دفعةً عادية. الصفّان يبقيان في السجل للتدقيق.
    */
   async function reverseOne(r: any) {
-    if (!confirm(
+    if (!(await wqConfirm(
       `عكس هذه الدفعة؟\n\n${sar(Number(r.amount))} ريال بتاريخ ${arDate(r.paid_on)}\n\n`
       + `سيُضاف صفّ سالب مطابق، ويُنقص عدّاد الدفعات المسدَّدة، ويعود المبلغ مستحقًّا.\n`
       + `الدفعة الأصلية تبقى في السجل للتدقيق.\n\n`
       + `إن كان المستأجر سدّد مبلغًا أقل، اعكسها ثم سجّل المبلغ الصحيح بزر «💰 تسجيل دفعة».`
-    )) return;
+    ))) return;
     setBusy(true); setErr(null);
     const { data, error } = await supabase.rpc("watheq_reverse_payment", { p_payment: r.id });
     setBusy(false);
-    if (error) { setErr(/does not exist|function/i.test(error.message) ? "شغّل schema-v35 في قاعدة البيانات أولًا." : error.message); return; }
+    if (error) { setErr(/does not exist|function/i.test(error.message) ? systemGap("PropertyView:3554") : friendlyError(error.message)); return; }
     const res = data as any;
     setRows((cur) => [{ id: res?.payment_id || `rev_${r.id}`, tenant_id: r.tenant_id, paid_on: r.paid_on,
       amount: -Number(r.amount), method: "other", periods_covered: -1, reverses: r.id,
@@ -3575,18 +3691,18 @@ function HistoryModal({ data, unitWord, onClose, canEdit = true, onChanged, db, 
       if (nd < floor) { setErr(`التاريخ ${arDate(nd)} قبل بداية العقد (${arDate(cs)}) بأكثر من سنة — تأكّد منه.`); return; }
     }
     const od = String(orig?.paid_on || "").slice(0, 10);
-    if (od && od.slice(0, 7) !== nd.slice(0, 7) && !confirm(
+    if (od && od.slice(0, 7) !== nd.slice(0, 7) && !(await wqConfirm(
       `نقل الدفعة من ${arDate(od)} إلى ${arDate(nd)} ينقل مبلغها من محصَّل شهر إلى شهر آخر في التقارير وكشف المالك.\n\n`
-      + `تقارير أُرسلت للمالك سابقًا لا تتغيّر — قد يختلف رقمها عن الكشف الجديد.\n\nمتابعة؟`)) return;
+      + `تقارير أُرسلت للمالك سابقًا لا تتغيّر — قد يختلف رقمها عن الكشف الجديد.\n\nمتابعة؟`))) return;
     const amt = Math.round(Number(String(eAmount).replace(/[٠-٩]/g, (c) => String("٠١٢٣٤٥٦٧٨٩".indexOf(c))).replace(/[^\d.]/g, "")) * 100) / 100;
     if (!(amt > 0)) { setErr("اكتب مبلغًا أكبر من صفر."); return; }
     const oldAmt = Number(orig?.amount) || 0;
-    if (Math.abs(amt - oldAmt) >= 0.005 && !confirm(
+    if (Math.abs(amt - oldAmt) >= 0.005 && !(await wqConfirm(
       `تعديل مبلغ الدفعة من ${sar(oldAmt)} إلى ${sar(amt)} ريال؟\n\n`
       + `• يبقى رقم السند ${orig?.receipt_no || ""} نفسه ويُطبع بالمبلغ الجديد.\n`
       + `• يُعاد حساب الأقساط المسدّدة والمتبقي على المستأجر والمحصَّل تلقائيًّا.\n`
       + `• يُسجَّل التعديل (القيمة السابقة، من عدّل، متى) ويظهر بجانب الدفعة.\n\n`
-      + `سند أُرسل للمستأجر سابقًا يحمل المبلغ القديم — أرسل له السند من جديد.`)) return;
+      + `سند أُرسل للمستأجر سابقًا يحمل المبلغ القديم — أرسل له السند من جديد.`))) return;
     setBusy(true);
     const { data: res, error } = await supabase.rpc("watheq_edit_payment", {
       p_payment: id, p_amount: amt, p_method: eMethod, p_paid_on: nd,
@@ -3595,8 +3711,8 @@ function HistoryModal({ data, unitWord, onClose, canEdit = true, onChanged, db, 
     if (error) {
       const m = String(error.message || "");
       setErr(/watheq_edit_payment/.test(m) && /does not exist|schema cache|function/i.test(m)
-        ? "تعديل المبلغ والطريقة يحتاج تحديث قاعدة البيانات (schema-v88) — تواصل معنا على واتساب 0550165210."
-        : /not authorized/i.test(m) ? "تعديل الدفعة يحتاج صلاحية «التراجع والحذف» (المالك أو المدير)." : m);
+        ? systemGap("PropertyView:3598")
+        : /not authorized/i.test(m) ? "تعديل الدفعة يحتاج صلاحية «التراجع والحذف» (المالك أو المدير)." : friendlyError(m));
       return;
     }
     await reload();
@@ -3632,13 +3748,13 @@ function HistoryModal({ data, unitWord, onClose, canEdit = true, onChanged, db, 
    */
   async function moveToTrust(r: any, kind: "deposit_in" | "utility_in") {
     const what = kind === "deposit_in" ? "تأمين" : "حصة فاتورة عداد مشترك";
-    if (!confirm(`نقل ${sar(Number(r.amount))} ريال (${arDate(r.paid_on)}) من الإيجار إلى الأمانات كـ«${what}»؟\n\n`
+    if (!(await wqConfirm(`نقل ${sar(Number(r.amount))} ريال (${arDate(r.paid_on)}) من الإيجار إلى الأمانات كـ«${what}»؟\n\n`
       + `• تُعكس الدفعة من الإيجار ويعود مبلغها مستحقًّا على المستأجر.\n• يُسجَّل قيد أمانة بالمبلغ والتاريخ نفسيهما ويصدر له سند قبض أمانة جديد.\n`
-      + `• لا يدخل المبلغ بعدها المحصَّل ولا تقرير المالك ولا الأتعاب.`)) return;
+      + `• لا يدخل المبلغ بعدها المحصَّل ولا تقرير المالك ولا الأتعاب.`))) return;
     setBusy(true); setErr(null); setInfo(null);
     const { error } = await supabase.rpc("watheq_payment_to_trust", { p_payment: r.id, p_kind: kind });
     setBusy(false); setMoving(null);
-    if (error) { setErr(rpcErr(error, "schema-v87")); return; }
+    if (error) { setErr(rpcErr(error, systemGap("PropertyView:3641"))); return; }
     await reload();
     setInfo(`نُقلت إلى الأمانات كـ«${what}» — تجدها في «🛡️ التأمين والفواتير المشتركة» من قائمة الوحدة.`);
     onChanged?.();
@@ -4022,8 +4138,8 @@ function Shell({ children, onClose, wide }: { children: React.ReactNode; onClose
   const dirty = useRef(false);
   const closeRef = useRef(onClose);
   closeRef.current = onClose;
-  const tryClose = () => {
-    if (dirty.current && !confirm("لديك إدخال لم يُحفظ في هذه النافذة.\n\nإغلاقها وتجاهل ما أدخلته؟")) return;
+  const tryClose = async () => {
+    if (dirty.current && !(await wqConfirm("لديك إدخال لم يُحفظ في هذه النافذة.\n\nإغلاقها وتجاهل ما أدخلته؟"))) return;
     closeRef.current();
   };
   const tryCloseRef = useRef(tryClose);
@@ -4979,7 +5095,7 @@ function OwnerReportModal({ property, unitWord, issuer, onClose, db, canFee = tr
       const dup = (feeList || []).find((x) => x.doc_type === "invoice" && x.status !== "void" && x.period_from === from && x.period_to === to);
       if (dup) gaps.unshift(`صدرت فاتورة أتعاب لهذه الفترة من قبل (${dup.invoice_no}) — ألغِها بإشعار دائن أولًا إن أردت إعادة الإصدار`);
       setFee({ calc, gaps, explain: feeInvoiceExplain(calc), basis: RF.basis, label: feePeriodLabel(from, to), feeSpec: RF.feeSpec });
-    } catch (e: any) { setErr(e?.message || "تعذّر حساب الأتعاب"); }
+    } catch (e: any) { setErr(friendlyError(e?.message || "تعذّر حساب الأتعاب")); }
     setFeeBusy(false);
   }
 
@@ -5002,7 +5118,7 @@ function OwnerReportModal({ property, unitWord, issuer, onClose, db, canFee = tr
       openDoc(feeInvoiceHTML(property as any, { ...row, vat_snapshot: typeof row.vat_enabled === "boolean" ? row.vat_enabled : null }, issuer || {}));
       setFee(null);
       await loadFeeList();
-    } catch (e: any) { setErr(e?.message || "تعذّر إصدار الفاتورة"); }
+    } catch (e: any) { setErr(friendlyError(e?.message || "تعذّر إصدار الفاتورة")); }
     setFeeBusy(false);
   }
 
@@ -5019,7 +5135,7 @@ function OwnerReportModal({ property, unitWord, issuer, onClose, db, canFee = tr
     if (why.length < 3) { setErr("اكتب سبب الإلغاء (٣ أحرف على الأقل)."); return; }
     setFeeBusy(true); setErr(null);
     const { error } = await supabase.rpc("watheq_void_invoice", { p_invoice: voidFor.id, p_reason: why });
-    if (error) setErr(error.message); else { setVoidFor(null); setVoidWhy(""); await loadFeeList(); }
+    if (error) setErr(friendlyError(error.message)); else { setVoidFor(null); setVoidWhy(""); await loadFeeList(); }
     setFeeBusy(false);
   }
 
@@ -5041,7 +5157,7 @@ function OwnerReportModal({ property, unitWord, issuer, onClose, db, canFee = tr
           (q) => q.eq("property_id", property.id).gte("spent_on", from).lte("spent_on", to).order("spent_on", { ascending: true })),
         fetchAllRows(supabase as any, "payments", "*", (q) => q.eq("property_id", property.id).not("tenant_id", "is", null)),
       ]);
-    } catch (e: any) { setLoading(false); setErr(e?.message || "تعذّر تحميل بيانات التقرير"); return; }
+    } catch (e: any) { setLoading(false); setErr(friendlyError(e?.message || "تعذّر تحميل بيانات التقرير")); return; }
     setLoading(false);
 
     const byId: Record<string, Tenant> = {};

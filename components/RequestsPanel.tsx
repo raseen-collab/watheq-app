@@ -1,4 +1,5 @@
 "use client";
+import { wqConfirm } from "@/lib/confirm";
 /**
  * 🔎 طلبات الباحثين — ذاكرة المكتب: «منو كان يدور أرض في النرجس؟»
  * كل طلب يعرض فورًا كم معروضًا مفتوحًا يطابقه (مطابقة حتمية قابلة
@@ -12,6 +13,7 @@ import { officeId } from "@/lib/office";
 import { sar, waLink, today } from "@/lib/utils";
 import { KIND_META, OFFER_LABEL, pricePerMeter, shortDesc, type Listing, type ListingKind, type OfferType } from "@/lib/listings";
 import { matchesForRequest, requestDesc, isActiveRequest, followUpOf, needsFollowUp, type SeekerRequest } from "@/lib/requests";
+import { systemGap } from "@/lib/friendlyError";
 
 const KIND_ICON = { land: "land", apartment: "apartment", villa: "villa", building: "building", shop: "shop", other: "box" } as const;
 
@@ -34,10 +36,10 @@ export default function RequestsPanel({ initial, listings, prefill, onPrefillUse
   function flash(k: "ok" | "err", m: string) { setMsg({ k, m }); setTimeout(() => setMsg(null), 3500); }
   function friendly(e: any) {
     const t = String(e?.message || e);
-    if (/rooms_min/.test(t)) return "حقل «الغرف» يحتاج تشغيل ملف schema-v77-request-rooms.sql في Supabase مرة واحدة — أو احذف الغرف من الطلب واحفظ.";
-    if (/last_contact_at|follow_up_at/.test(t)) return "المتابعة تحتاج تشغيل ملف schema-v78-marketer.sql في Supabase مرة واحدة.";
+    if (/rooms_min/.test(t)) return systemGap("RequestsPanel:37");
+    if (/last_contact_at|follow_up_at/.test(t)) return systemGap("RequestsPanel:38");
     return /seeker_requests/.test(t) && /(not exist|relation|schema cache)/i.test(t)
-      ? "شغّل ملف schema-v8.sql في Supabase أولًا ثم أعد المحاولة" : t;
+      ? systemGap("RequestsPanel:40") : t;
   }
 
   /* المتأخرة أولًا ثم مستحقّة اليوم (v78) — ثم بقية النشطة بترتيبها */
@@ -79,7 +81,7 @@ export default function RequestsPanel({ initial, listings, prefill, onPrefillUse
   }
 
   async function remove(r: SeekerRequest) {
-    if (!confirm(`حذف طلب «${r.seeker_name || "بلا اسم"}» نهائيًّا؟ الأفضل عادةً «✓ أُنجز» ليبقى في السجل.`)) return;
+    if (!(await wqConfirm(`حذف طلب «${r.seeker_name || "بلا اسم"}» نهائيًّا؟ الأفضل عادةً «✓ أُنجز» ليبقى في السجل.`))) return;
     const { data: _del, error } = await supabase.from("seeker_requests").delete().eq("id", r.id).select("id");
     /* حذف رفضته السياسات يرجع بلا خطأ وبصفر صفوف — لا نوهم الموظف أنه نجح */
     if (!error && (!_del || _del.length === 0)) { flash("err", "هذا الإجراء يحتاج صلاحية أعلى — اطلبه من صاحب المكتب."); return; }

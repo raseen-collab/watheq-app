@@ -1,4 +1,5 @@
 "use client";
+import { wqConfirm, wqAlert } from "@/lib/confirm";
 // ============================================================
 // وثيق — قسم «الموظفون» في الإعدادات (المالك فقط)
 //
@@ -13,6 +14,7 @@
 import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase-client";
 import { getOffice, makeInviteCode, ROLE_LABEL } from "@/lib/office";
+import { friendlyError, systemGap } from "@/lib/friendlyError";
 
 type Member = { owner_id: string; member_id: string; role: string; member_name: string | null; created_at: string; perms?: Record<string, boolean> | null;
   /** (v89) null = كل العقارات · مصفوفة = هذه فقط */
@@ -112,8 +114,8 @@ export default function TeamSection() {
     setBusy(false);
     if (error) {
       setMsg(preset && /member_name|perms|property_ids/.test(error.message)
-        ? "تجهيز الصلاحيات قبل الإضافة يحتاج تشغيل schema-v89 ثم schema-v90 في Supabase."
-        : "تعذّر إنشاء الدعوة — شغّل schema-v9 وv9b أولًا إن لم تفعل.");
+        ? systemGap("TeamSection:115")
+        : systemGap("TeamSection:116"));
       return;
     }
     setInvName(""); setInvPerms({}); setInvScope(null);
@@ -130,7 +132,7 @@ export default function TeamSection() {
 
   async function revokeInvite(id: string) {
     const { data: d1 } = await supabase.from("team_invites").delete().eq("id", id).select("id");
-    if (!d1?.length) { alert("هذا الإجراء يحتاج صلاحية صاحب المكتب."); return; }
+    if (!d1?.length) { (await wqAlert("هذا الإجراء يحتاج صلاحية صاحب المكتب.")); return; }
     await load();
   }
 
@@ -142,15 +144,15 @@ export default function TeamSection() {
 
   async function togglePerm(m: Member, k: string) {
     const meta = PERMS.find((p) => p.k === k);
-    if (meta?.locked) { alert("التراجع والحذف صلاحية إدارية — تُمنح بترقية الموظف إلى «مدير» لا باستثناء."); return; }
+    if (meta?.locked) { (await wqAlert("التراجع والحذف صلاحية إدارية — تُمنح بترقية الموظف إلى «مدير» لا باستثناء.")); return; }
     const next = { ...(m.perms || {}), [k]: !permOn(m, k) };
     // إن عاد الاستثناء لمطابقة افتراضي الدور نحذفه — نُبقي الاستثناءات الصريحة فقط
     const def = PERMS.find((p) => p.k === k)?.def[m.role];
     if (next[k] === def) delete next[k];
     const { data, error } = await supabase.from("team_members").update({ perms: next })
       .eq("owner_id", m.owner_id).eq("member_id", m.member_id).select("member_id");
-    if (error) return alert(error.message);
-    if (!data?.length) return alert("هذا الإجراء يحتاج صلاحية صاحب المكتب.");
+    if (error) return (await wqAlert(friendlyError(error.message)));
+    if (!data?.length) return (await wqAlert("هذا الإجراء يحتاج صلاحية صاحب المكتب."));
     setMembers((cur) => cur.map((x) => x.member_id === m.member_id ? { ...x, perms: next } : x));
   }
 
@@ -159,9 +161,9 @@ export default function TeamSection() {
     const { data, error } = await supabase.from("team_members").update({ property_ids: ids })
       .eq("owner_id", m.owner_id).eq("member_id", m.member_id).select("member_id, property_ids");
     if (error) {
-      return alert(/property_ids/.test(error.message) ? "شغّل ملف schema-v89 في Supabase أولًا." : error.message);
+      return (await wqAlert(/property_ids/.test(error.message) ? systemGap("TeamSection:162") : friendlyError(error.message)));
     }
-    if (!data?.length) return alert("هذا الإجراء يحتاج صلاحية صاحب المكتب.");
+    if (!data?.length) return (await wqAlert("هذا الإجراء يحتاج صلاحية صاحب المكتب."));
     const saved = ((data[0] as any).property_ids ?? null) as string[] | null;
     setMembers((cur) => cur.map((x) => x.member_id === m.member_id ? { ...x, property_ids: saved } : x));
   }
@@ -182,18 +184,18 @@ export default function TeamSection() {
     const name = v.trim().slice(0, 60) || null;
     const { data, error } = await supabase.from("team_members").update({ member_name: name })
       .eq("owner_id", m.owner_id).eq("member_id", m.member_id).select("member_id");
-    if (error) return alert(/member_name|permission/.test(error.message) ? "شغّل ملف schema-v90 في Supabase أولًا." : error.message);
-    if (!data?.length) return alert("هذا الإجراء يحتاج صلاحية صاحب المكتب.");
+    if (error) return (await wqAlert(/member_name|permission/.test(error.message) ? systemGap("TeamSection:185") : friendlyError(error.message)));
+    if (!data?.length) return (await wqAlert("هذا الإجراء يحتاج صلاحية صاحب المكتب."));
     setMembers((cur) => cur.map((x) => x.member_id === m.member_id ? { ...x, member_name: name } : x));
   }
 
   async function removeMember(m: Member) {
-    if (!confirm(`إزالة «${m.member_name || "الموظف"}» من المكتب؟ يفقد الوصول فورًا، وكل ما سجّله يبقى محفوظًا باسمه.`)) return;
+    if (!(await wqConfirm(`إزالة «${m.member_name || "الموظف"}» من المكتب؟ يفقد الوصول فورًا، وكل ما سجّله يبقى محفوظًا باسمه.`))) return;
     // حذف رفضته السياسات يرجع بلا خطأ وبصفر صفوف — لا نوهم صاحب المكتب بالنجاح
     const { data, error } = await supabase.from("team_members").delete()
       .eq("owner_id", m.owner_id).eq("member_id", m.member_id).select("member_id");
-    if (error) return alert(error.message);
-    if (!data?.length) return alert("هذا الإجراء يحتاج صلاحية صاحب المكتب.");
+    if (error) return (await wqAlert(friendlyError(error.message)));
+    if (!data?.length) return (await wqAlert("هذا الإجراء يحتاج صلاحية صاحب المكتب."));
     await load();
   }
 

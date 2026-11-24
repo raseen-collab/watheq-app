@@ -1,4 +1,5 @@
 "use client";
+import { wqConfirm } from "@/lib/confirm";
 /**
  * 📷 صور المعروض — رفع بضغط إلزامي في المتصفح وعرض بروابط موقّتة.
  *
@@ -10,6 +11,7 @@
 import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase-client";
 import { officeId } from "@/lib/office";
+import { systemGap } from "@/lib/friendlyError";
 
 const BUCKET = "listing-photos";
 const MAX_PHOTOS = 12;
@@ -44,7 +46,7 @@ export default function ListingPhotos({ listingId, code }: { listingId: string; 
   function friendly(e: any) {
     const t = String(e?.message || e);
     if (/bucket.*not.*found|listing-photos/i.test(t) && /not/i.test(t))
-      return "شغّل ملف schema-v8.sql في Supabase أولًا (ينشئ دلو الصور وسياساته)";
+      return systemGap("ListingPhotos:47");
     if (/row-level security|violates/i.test(t)) return "لا تملك صلاحية على هذا المجلد";
     return t;
   }
@@ -92,7 +94,7 @@ export default function ListingPhotos({ listingId, code }: { listingId: string; 
   }
 
   async function remove(p: Photo) {
-    if (!confirm("حذف هذه الصورة نهائيًّا؟")) return;
+    if (!(await wqConfirm("حذف هذه الصورة نهائيًّا؟"))) return;
     setBusy(p.path);
     const { error } = await supabase.storage.from(BUCKET).remove([p.path]);
     setBusy(null);

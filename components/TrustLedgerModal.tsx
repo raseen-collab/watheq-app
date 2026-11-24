@@ -1,4 +1,6 @@
 "use client";
+import { wqConfirm } from "@/lib/confirm";
+import { systemGap } from "@/lib/friendlyError";
 /**
  * 🛡️ الأمانات — تأمين المستأجرين وحصص العدادات المشتركة (schema-v87).
  *
@@ -52,7 +54,7 @@ export default function TrustLedgerModal({ propertyId, propertyName, propertyTyp
   function friendly(e: any) {
     const t = String(e?.message || e);
     if (/trust_ledger|watheq_payment_to_trust/.test(t) && /(does not exist|schema cache|relation)/i.test(t))
-      return "الأمانات تحتاج تحديث قاعدة البيانات (schema-v87) — تواصل معنا على واتساب 0550165210.";
+      return systemGap("TrustLedgerModal:55");
     if (e?.code === "42501" || /row-level security|permission/i.test(t)) return "هذا الإجراء يحتاج صلاحية أعلى — اطلبه من صاحب المكتب.";
     return t;
   }
@@ -93,7 +95,7 @@ export default function TrustLedgerModal({ propertyId, propertyName, propertyTyp
   async function save(d: Draft) {
     const { errors, warnings } = checkTrustDraft(d, { today: today(), heldForTenant: heldOf(d.tenant_id), meterBalance: d.kind === "utility_out" ? meterBal(d.meter) : undefined });
     if (errors.length) { flash("err", errors.join(" ")); return; }
-    if (warnings.length && !confirm(`${warnings.join("\n\n")}\n\nحفظ القيد؟`)) return;
+    if (warnings.length && !(await wqConfirm(`${warnings.join("\n\n")}\n\nحفظ القيد؟`))) return;
     setBusy(true);
     try {
       const uid = await officeId(supabase);
@@ -133,7 +135,7 @@ export default function TrustLedgerModal({ propertyId, propertyName, propertyTyp
   }
 
   async function remove(r: TrustRow) {
-    if (!confirm(`حذف «${trustKindLabel(r.kind)} — ${sar(Number(r.amount))} ريال» (سند ${r.doc_no || "—"})؟\n\nيُلغى السند ولا يُعاد استعمال رقمه. للتصحيح: احذف ثم سجّل من جديد.`)) return;
+    if (!(await wqConfirm(`حذف «${trustKindLabel(r.kind)} — ${sar(Number(r.amount))} ريال» (سند ${r.doc_no || "—"})؟\n\nيُلغى السند ولا يُعاد استعمال رقمه. للتصحيح: احذف ثم سجّل من جديد.`))) return;
     setBusy(true);
     const { data, error } = await supabase.from("trust_ledger").delete().eq("id", r.id).select("id");
     setBusy(false);

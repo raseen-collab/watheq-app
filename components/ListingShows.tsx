@@ -1,4 +1,5 @@
 "use client";
+import { wqConfirm } from "@/lib/confirm";
 /**
  * 👁 «عُرض على» — ذاكرة المسوّق مع زبائنه لكل معروض (2 نوفمبر 2026)
  *
@@ -13,6 +14,7 @@ import { officeId } from "@/lib/office";
 import { today, waLink } from "@/lib/utils";
 import { arDate, openDoc, listingShowsHTML, type ListingLinkRow } from "@/lib/documents";
 import type { Listing } from "@/lib/listings";
+import { systemGap } from "@/lib/friendlyError";
 
 export type ShowRow = {
   id: string; listing_id: string; customer_name: string | null; customer_phone: string | null;
@@ -30,7 +32,7 @@ export default function ListingShows({ listing, onCount, orgName, issuer }: { li
   function friendly(e: any) {
     const t = String(e?.message || e);
     return /listing_shows/.test(t) && /(not exist|relation|schema cache)/i.test(t)
-      ? "شغّل ملف schema-v78-marketer.sql في Supabase أولًا ثم أعد المحاولة" : t;
+      ? systemGap("ListingShows:33") : t;
   }
 
   async function load() {
@@ -74,7 +76,7 @@ export default function ListingShows({ listing, onCount, orgName, issuer }: { li
   }
 
   async function remove(r: ShowRow) {
-    if (!confirm(`حذف سجل العرض على «${r.customer_name || r.customer_phone}»؟`)) return;
+    if (!(await wqConfirm(`حذف سجل العرض على «${r.customer_name || r.customer_phone}»؟`))) return;
     const { data: del, error } = await supabase.from("listing_shows").delete().eq("id", r.id).select("id");
     if (error) return setErr(friendly(error));
     if (!del?.length) return setErr("هذا الإجراء يحتاج صلاحية أعلى — اطلبه من صاحب المكتب.");

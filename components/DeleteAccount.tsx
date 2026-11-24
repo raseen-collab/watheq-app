@@ -1,4 +1,5 @@
 "use client";
+import { friendlyError } from "@/lib/friendlyError";
 // ============================================================
 // وثيق — حذف الحساب نهائيًّا (منطقة الخطر)
 //
@@ -35,7 +36,7 @@ export default function DeleteAccount() {
       try { await createClient().auth.signOut(); } catch { /* الجلسة ماتت مع الحساب */ }
       window.location.assign("/?deleted=1");
     } catch (e: any) {
-      setErr(e?.message || "تعذّر الاتصال"); setBusy(false);
+      setErr(friendlyError(e?.message || "تعذّر الاتصال")); setBusy(false);
     }
   }
 

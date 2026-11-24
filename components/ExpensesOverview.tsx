@@ -13,6 +13,7 @@ import { createClient } from "@/lib/supabase-client";
 import { expensesRegisterHTML, openDoc } from "@/lib/documents";
 import { EXPENSE_CATS, catLabel, isBillable, PAID_BY, type ExpenseRow } from "@/lib/expenses";
 import DateField from "@/components/DateField";
+import { friendlyError, systemGap } from "@/lib/friendlyError";
 
 type Row = ExpenseRow & { id: string; property_id: string; property_name?: string; owner_name?: string };
 const sar = (n: number) => Math.round(Number(n) || 0).toLocaleString("en-US");
@@ -52,7 +53,7 @@ export default function ExpensesOverview({ properties, issuer, onClose }: {
       .then((data) => ({ data, error: null as any }), (e) => ({ data: null as any, error: { message: String(e?.message || e) } }))
       .then(({ data, error }) => {
         if (!alive) return;
-        if (error) { setErr(/does not exist|column/.test(error.message) ? "شغّل schema-v30 في قاعدة البيانات أولًا." : error.message); setRows([]); return; }
+        if (error) { setErr(/does not exist|column/.test(error.message) ? systemGap("ExpensesOverview:55") : friendlyError(error.message)); setRows([]); return; }
         setRows((data || []).map((x: any) => ({
           ...x, property_name: nameOf[x.property_id]?.name || "—",
           owner_name: nameOf[x.property_id]?.owner_name || "",

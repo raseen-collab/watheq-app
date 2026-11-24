@@ -1,4 +1,5 @@
 "use client";
+import { wqConfirm } from "@/lib/confirm";
 /**
  * ⚖️ التزامات المكتب العقاري — عقود الوساطة · تراخيص الإعلانات · رخصة فال.
  *
@@ -20,6 +21,7 @@ import {
 } from "@/lib/compliance";
 import { complianceRegisterHTML, openDoc, arDate } from "@/lib/documents";
 import DateField from "@/components/DateField";
+import { friendlyError, systemGap } from "@/lib/friendlyError";
 
 type PropOpt = { id: string; name: string };
 
@@ -88,23 +90,23 @@ export default function ComplianceModal({ initial, properties, orgName, issuer, 
     } catch (e: any) {
       const t = String(e?.message || e);
       flash("err", /compliance_items/.test(t) && /not (exist|found)|relation/i.test(t)
-        ? "شغّل ملف schema-v6.sql في Supabase أولًا ثم أعد المحاولة"
+        ? systemGap("ComplianceModal:91")
         : t);
     } finally { setBusy(false); }
   }
 
   async function setStatus(it: ComplianceItem, status: "active" | "closed") {
     const { error } = await supabase.from("compliance_items").update({ status }).eq("id", it.id);
-    if (error) return flash("err", error.message);
+    if (error) return flash("err", friendlyError(error.message));
     commit(items.map((x) => (x.id === it.id ? { ...x, status } : x)));
   }
 
   async function remove(it: ComplianceItem) {
-    if (!confirm(`حذف «${it.title}» نهائيًّا؟`)) return;
+    if (!(await wqConfirm(`حذف «${it.title}» نهائيًّا؟`))) return;
     const { data: _del, error } = await supabase.from("compliance_items").delete().eq("id", it.id).select("id");
     /* حذف رفضته السياسات يرجع بلا خطأ وبصفر صفوف — لا نوهم الموظف أنه نجح */
     if (!error && (!_del || _del.length === 0)) { flash("err", "هذا الإجراء يحتاج صلاحية أعلى — اطلبه من صاحب المكتب."); return; }
-    if (error) return flash("err", error.message);
+    if (error) return flash("err", friendlyError(error.message));
     commit(items.filter((x) => x.id !== it.id));
   }
 

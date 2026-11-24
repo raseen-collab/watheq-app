@@ -1,4 +1,5 @@
 "use client";
+import { wqConfirm } from "@/lib/confirm";
 
 import { riyadhDate } from "@/lib/utils";
 import { Fragment, useMemo, useState } from "react";
@@ -140,7 +141,7 @@ export default function SubsAdmin({ rows, pays, paysFailed, signature }: { rows:
   const [typeOverride, setTypeOverride] = useState<Record<string, string>>({});
   const [typeFor, setTypeFor] = useState<string | null>(null);
   async function grant(r: SubRow, days: number) {
-    if (!confirm(`منح «${r.org_name || r.full_name || "الحساب"}» تجربة ${days === 90 ? "3 أشهر" : `${days} يومًا`} إضافية من اليوم أو من نهاية تجربته الحالية؟`)) return;
+    if (!(await wqConfirm(`منح «${r.org_name || r.full_name || "الحساب"}» تجربة ${days === 90 ? "3 أشهر" : `${days} يومًا`} إضافية من اليوم أو من نهاية تجربته الحالية؟`))) return;
     setBusy(true); setMsg(null);
     const res = await grantTrialDays(r.id, days);
     setBusy(false);
@@ -153,7 +154,7 @@ export default function SubsAdmin({ rows, pays, paysFailed, signature }: { rows:
     const warn = t === "marketer"
       ? "سيُحوَّل إلى «مسوّق عقاري»: يرى المعروضات والطلبات فقط، وتُمسح باقة الأملاك إن وُجدت (بياناته لا تُمسّ). متأكد؟"
       : `تحويل نوع الحساب إلى «${TYPE_AR[t]}»؟ باقته الحالية قد تُمسح إن لم تناسب النوع الجديد.`;
-    if (!confirm(warn)) return;
+    if (!(await wqConfirm(warn))) return;
     setBusy(true); setMsg(null);
     const res = await setAccountType(r.id, t);
     setBusy(false);

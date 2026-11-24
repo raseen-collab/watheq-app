@@ -1,4 +1,5 @@
 "use client";
+import { friendlyError } from "@/lib/friendlyError";
 // ============================================================
 // وثيق — سجل الحركات المالية: كل دفعة وكل تراجع، بمن سجّلها ولمن وبأي ساعة
 //
@@ -73,7 +74,7 @@ export default function ActivityLog({ properties, onClose, db }: { properties: a
           .select("id, created_at, tenant_id, property_id, kind, delta, amount, note, created_by")
           .order("created_at", { ascending: false }).limit(100),
       ]);
-      if (pay.error) { setErr(pay.error.message); setLoading(false); return; }
+      if (pay.error) { setErr(friendlyError(pay.error.message)); setLoading(false); return; }
       const merged: Entry[] = [
         ...((pay.data || []) as any[]).map((x) => ({ ...x, kind: "payment" as const })),
         // المصروفات لا تخصّ مستأجرًا: تُعرض بوحدتها إن ذُكرت

@@ -1,4 +1,5 @@
 "use client";
+import { friendlyError } from "@/lib/friendlyError";
 // ============================================================
 // وثيق — كشف المستحقات القادمة (ورقة المحصّل)
 //
@@ -80,7 +81,7 @@ export default function DueListModal({ properties, issuer, onClose, db }: {
       openDoc(html);
       onClose();
     } catch (e: any) {
-      setErr(e?.message || "تعذّر بناء الكشف.");
+      setErr(friendlyError(e?.message || "تعذّر بناء الكشف."));
     } finally { setBusy(false); }
   }
 

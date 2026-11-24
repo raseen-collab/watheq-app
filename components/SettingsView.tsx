@@ -1,4 +1,6 @@
 "use client";
+import { wqConfirm } from "@/lib/confirm";
+import { friendlyError } from "@/lib/friendlyError";
 import { useState } from "react";
 import { cleanVatNo, isValidVatNo, PAYMENT_MEANS } from "@/lib/einvoice";
 import Link from "next/link";
@@ -35,16 +37,16 @@ export default function SettingsView({ profile }: { profile: any }) {
   async function regen() {
     // بلا وسيط — الدالة تقرأ auth.uid() بنفسها في القاعدة (منع توليد رمز لحساب غير حسابك)
     const { data, error } = await supabase.rpc("regen_link_code");
-    if (error) return setMsg({ t: "err", m: error.message });
+    if (error) return setMsg({ t: "err", m: friendlyError(error.message) });
     setP({ ...p, telegram_link_code: data });
     setMsg({ t: "ok", m: "أُنشئ رمز جديد — الرمز القديم لم يعد صالحًا." });
   }
 
   async function unlink() {
-    if (!confirm("فكّ ربط تليجرام؟ ستتوقف التنبيهات اليومية.")) return;
+    if (!(await wqConfirm("فكّ ربط تليجرام؟ ستتوقف التنبيهات اليومية."))) return;
     const { error } = await supabase.from("profiles")
       .update({ telegram_chat_id: null, telegram_username: null, telegram_linked_at: null }).eq("id", p.id);
-    if (error) return setMsg({ t: "err", m: error.message });
+    if (error) return setMsg({ t: "err", m: friendlyError(error.message) });
     setP({ ...p, telegram_chat_id: null, telegram_username: null });
     setMsg({ t: "ok", m: "فُكّ الربط." });
     router.refresh();
@@ -100,7 +102,7 @@ export default function SettingsView({ profile }: { profile: any }) {
       delete patch[col]; skipped.push(col);
     }
     setSaving(false);
-    if (error) { setMsg({ t: "err", m: error.message }); return; }
+    if (error) { setMsg({ t: "err", m: friendlyError(error.message) }); return; }
     const AR: Record<string, string> = { default_calendar: "التقويم الافتراضي", billing_address: "عنوان المنشأة", payment_means: "وسيلة الدفع" };
     setMsg(skipped.length
       ? { t: "ok", m: `تم الحفظ — عدا ${skipped.map((c) => AR[c] || c).join("، ")}: يحتاج تحديثًا في قاعدة البيانات، أخبر الدعم.` }

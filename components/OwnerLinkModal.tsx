@@ -10,6 +10,7 @@ import { createClient } from "@/lib/supabase-client";
 import { officeId } from "@/lib/office";
 import { waLink, openExternal } from "@/lib/utils";
 import { arDate } from "@/lib/documents";
+import { systemGap } from "@/lib/friendlyError";
 
 type LinkRow = {
   id: string; token: string; label: string | null;
@@ -63,7 +64,7 @@ export default function OwnerLinkModal({ propertyId, propertyName, ownerPhoneHin
   function friendly(e: any) {
     const t = String(e?.message || e);
     return /owner_links/.test(t) && /(not exist|relation|schema cache)/i.test(t)
-      ? "شغّل ملف schema-v8.sql في Supabase أولًا ثم أعد المحاولة" : t;
+      ? systemGap("OwnerLinkModal:66") : t;
   }
 
   async function load() {

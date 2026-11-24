@@ -1,4 +1,5 @@
 "use client";
+import { wqConfirm } from "@/lib/confirm";
 /**
  * 💸 مصروفات العقار — ما دفعه المكتب نيابة عن المالك (سباك، فواتير،
  * رسوم…). هذه الأرقام هي النصف الثاني من تقرير المالك: بدونها يعرف
@@ -12,6 +13,7 @@ import { sar, today } from "@/lib/utils";
 import { arDate, openDoc, expenseVoucherHTML, type ExpenseVoucher } from "@/lib/documents";
 import { EXPENSE_CATS, catIcon, catLabel, sumExpenses, PAID_BY, type ExpenseRow, type ExpenseCategory, type ExpenseTemplate } from "@/lib/expenses";
 import DateField from "@/components/DateField";
+import { systemGap } from "@/lib/friendlyError";
 
 const AR_MONTHS = ["يناير","فبراير","مارس","أبريل","مايو","يونيو","يوليو","أغسطس","سبتمبر","أكتوبر","نوفمبر","ديسمبر"];
 const ymLabel = (ym: string) => /^\d{4}-\d{2}$/.test(ym) ? `${AR_MONTHS[Number(ym.slice(5, 7)) - 1] || ym} ${ym.slice(0, 4)}` : ym;
@@ -76,7 +78,7 @@ export default function ExpensesModal({ propertyId, propertyName, unitWord, onCl
     flash("ok", active ? "أُعيد تشغيل المصروف المتكرر" : "أُوقف — ما رُحِّل سابقًا يبقى في السجل");
   }
   async function removeTemplate(t: ExpenseTemplate) {
-    if (!confirm(`حذف المصروف المتكرر «${catLabel(t.category)} — ${sar(Number(t.amount))} ريال شهريًّا»؟\n\nما رُحِّل من مصروفات سابقة يبقى في السجل كما هو.`)) return;
+    if (!(await wqConfirm(`حذف المصروف المتكرر «${catLabel(t.category)} — ${sar(Number(t.amount))} ريال شهريًّا»؟\n\nما رُحِّل من مصروفات سابقة يبقى في السجل كما هو.`))) return;
     const { data, error } = await supabase.from("expense_templates").delete().eq("id", t.id).select("id");
     if (error) return flash("err", friendly(error));
     if (!data || !data.length) return flash("err", "هذا الإجراء يحتاج صلاحية تسجيل المصروفات — اطلبه من صاحب المكتب.");
@@ -86,14 +88,14 @@ export default function ExpensesModal({ propertyId, propertyName, unitWord, onCl
   function friendly(e: any) {
     const t = String(e?.message || e);
     if (/payee_name|payee_ref|voucher_no/.test(t) && /(column|schema cache)/i.test(t))
-      return "سند الصرف يحتاج تشغيل schema-v74 في Supabase أولًا — سجّل المصروف بلا سند الآن، أو اطلب التحديث.";
+      return systemGap("ExpensesModal:89");
     /* (15 نوفمبر 2026) رفض قيد CHECK كان يُعرض «شغّل schema-v8» لأن نصه فيه «relation "expenses"» */
     if (e?.code === "23514" || /check constraint/i.test(t))
       return /category/i.test(t)
-        ? "هذا التصنيف يحتاج تحديث قاعدة البيانات (schema-v83) — اختر «أخرى» مؤقتًا، أو تواصل معنا على واتساب 0550165210."
+        ? systemGap("ExpensesModal:93")
         : "قيمة غير مقبولة في أحد الحقول — راجع المدخلات.";
     return /expenses/.test(t) && /(does not exist|schema cache)/i.test(t)
-      ? "شغّل ملف schema-v8.sql في Supabase أولًا ثم أعد المحاولة" : t;
+      ? systemGap("ExpensesModal:96") : t;
   }
 
   async function load(month: string) {
@@ -124,10 +126,10 @@ export default function ExpensesModal({ propertyId, propertyName, unitWord, onCl
       String(r.spent_on) === String(d.spent_on) &&
       Math.abs(Number(r.amount) - Number(d.amount)) < 0.01 &&
       String(r.category) === String(d.category));
-    if (dup && !confirm(
+    if (dup && !(await wqConfirm(
       `يوجد مصروف مطابق مسجّل مسبقًا:\n${catLabel(dup.category)} — ${sar(Number(dup.amount))} ريال — ${dup.spent_on}` +
       `${dup.vendor ? ` — ${dup.vendor}` : ""}\n\nتسجيله مرة أخرى؟`
-    )) return;
+    ))) return;
     setBusy(true);
     try {
       const uid = await officeId(supabase);
@@ -145,7 +147,7 @@ export default function ExpensesModal({ propertyId, propertyName, unitWord, onCl
   }
 
   async function remove(x: Row) {
-    if (!confirm(`حذف مصروف «${catLabel(x.category)} — ${sar(Number(x.amount))} ريال»؟${x.voucher_no ? `\n\nله سند صرف ${x.voucher_no} — يُلغى معه، ولا يُعاد استعمال رقمه.` : ""}`)) return;
+    if (!(await wqConfirm(`حذف مصروف «${catLabel(x.category)} — ${sar(Number(x.amount))} ريال»؟${x.voucher_no ? `\n\nله سند صرف ${x.voucher_no} — يُلغى معه، ولا يُعاد استعمال رقمه.` : ""}`))) return;
     const { data: _del, error } = await supabase.from("expenses").delete().eq("id", x.id).select("id");
     /* حذف رفضته السياسات يرجع بلا خطأ وبصفر صفوف — لا نوهم الموظف أنه نجح */
     if (!error && (!_del || _del.length === 0)) { flash("err", "هذا الإجراء يحتاج صلاحية أعلى — اطلبه من صاحب المكتب."); return; }

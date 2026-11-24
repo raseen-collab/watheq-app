@@ -1,4 +1,5 @@
 "use client";
+import { wqAlert } from "@/lib/confirm";
 import { useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase-client";
@@ -17,6 +18,7 @@ import {
 } from "@/lib/importParse";
 import type { Frequency } from "@/lib/contracts";
 import { buildImportPayload, resolveCovered, importPayloadProblems } from "@/lib/importPayload";
+import { friendlyError, systemGap } from "@/lib/friendlyError";
 
 /* التحليل كله في lib/importParse (دوال نقية مختبَرة) — هنا الواجهة والحفظ فقط (30 سبتمبر 2026) */
 const blocked = (r: Row) => !!(r._error || r._exists);
@@ -141,7 +143,7 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
     try { list = await readSheets(f); }
     catch (e: any) {
       // السبب الفعلي يظهر للمستخدم — لا رسالة عامة تخفي المشكلة
-      setFileName(`${f.name} — تعذّرت قراءته: ${e?.message || e}`);
+      setFileName(`${f.name} — تعذّرت قراءته: ${friendlyError(e?.message || e)}`);
       return;
     }
     if (!list.length) { setFileName(`${f.name} — الملف فارغ`); return; }
@@ -238,12 +240,12 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
 
   async function importRows() {
     const valid0 = rows.filter((r) => !blocked(r));
-    if (!valid0.length) return alert("لا توجد صفوف صالحة");
+    if (!valid0.length) return (await wqAlert("لا توجد صفوف صالحة"));
     // كل صف يذهب لعقاره المذكور في الملف، وإلا للعقار المختار في القائمة
     const groups = new Map<string, Row[]>();
     for (const r of valid0) {
       const pid = r.prop_id || propId;
-      if (!pid) return alert("اختر العقار أولًا — أو اكتب اسم العقار في عمود «العقار» لكل صف");
+      if (!pid) return (await wqAlert("اختر العقار أولًا — أو اكتب اسم العقار في عمود «العقار» لكل صف"));
       /* push لا نسخ المصفوفة كل صف: النسخ كان O(n²) على ملف 2000 صف (30 سبتمبر 2026) */
       const g = groups.get(pid);
       if (g) g.push(r); else groups.set(pid, [r]);
@@ -254,7 +256,7 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
     /* فحص أخير وقت الحفظ: المعاينة قد تكون قديمة (زميل أضاف وحدة، أو رفعٌ سابق نجح) */
     let unitsNow: Set<string>;
     try { unitsNow = await fetchExistingUnits(Array.from(groups.keys())); }
-    catch (e: any) { setBusy(false); return alert(`تعذّر التحقق من الوحدات الموجودة: ${e?.message || e}`); }
+    catch (e: any) { setBusy(false); return (await wqAlert(`تعذّر التحقق من الوحدات الموجودة: ${friendlyError(e?.message || e)}`)); }
     const skippedRows = new Set<Row>();
     const opts = { dueChoice, today: today() };
     /* (16 نوفمبر 2026) فحص الحمولة كلها قبل أول إدراج: ما سيرفضه Postgres يُقال الآن
@@ -266,7 +268,7 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
       });
       if (problems.length) {
         setBusy(false);
-        return alert(`لم يُحفظ شيء — في الملف ما سترفضه قاعدة البيانات:\n\n${problems.slice(0, 8).join("\n")}${problems.length > 8 ? `\n… و${problems.length - 8} غيرها` : ""}\n\nأرسل الملف للدعم (واتساب) ونصلحه لك.`);
+        return (await wqAlert(`لم يُحفظ شيء — في الملف ما سترفضه قاعدة البيانات:\n\n${problems.slice(0, 8).join("\n")}${problems.length > 8 ? `\n… و${problems.length - 8} غيرها` : ""}\n\nأرسل الملف للدعم (واتساب) ونصلحه لك.`));
       }
     }
     for (const [pid, list] of groups) {
@@ -307,7 +309,7 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
         }
         if (error) {
           setBusy(false);
-          return alert(`تعذّر الحفظ: ${error.message}\n\nأُضيف ${inserted + i} صفًّا قبل التوقف.\nراجع اللوحة، واحذف الملف من الصفوف المضافة قبل إعادة الرفع (المكرر يُتخطّى تلقائيًّا).`);
+          return (await wqAlert(`تعذّر الحفظ: ${friendlyError(error.message)}\n\nأُضيف ${inserted + i} صفًّا قبل التوقف.\nراجع اللوحة، واحذف الملف من الصفوف المضافة قبل إعادة الرفع (المكرر يُتخطّى تلقائيًّا).`));
         }
         setProgress(inserted + Math.min(i + BATCH, payload.length));
       }
@@ -319,8 +321,8 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
         const { error } = le ? { error: le } : missing ? { error: { message: `تعذّر إيجاد الوحدة الرئيسية لـ${missing} وحدة` } as any } : await supabase.from("tenants").insert(part);
         if (error) {
           setBusy(false);
-          const hint = /covered_by/.test(error.message) ? "\n\nقاعدة البيانات تحتاج تحديث schema-v79 (وحدات «ضمن عقد») — أبلغ الدعم." : "";
-          return alert(`حُفظت ${inserted + payload.length} وحدة، وتعذّر حفظ ${part.length} وحدة «ضمن عقد»: ${error.message}${hint}\n\nأعد رفع الملف نفسه بعد الإصلاح — الموجود يُتخطّى تلقائيًّا.`);
+          const hint = /covered_by/.test(error.message) ? systemGap("ImportView:322") : "";
+          return (await wqAlert(`حُفظت ${inserted + payload.length} وحدة، وتعذّر حفظ ${part.length} وحدة «ضمن عقد»: ${friendlyError(error.message)}${hint}\n\nأعد رفع الملف نفسه بعد الإصلاح — الموجود يُتخطّى تلقائيًّا.`));
         }
       }
       inserted += fresh.length;
@@ -331,8 +333,8 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
     const left = rows.filter((r) => blocked(r) || skippedRows.has(r)).map((r) => skippedRows.has(r) && !r._exists
       ? { ...r, _exists: `الوحدة «${r.unit || r.name}» موجودة أصلًا — تُخطّيت` } : r);
     const leftMsg = left.length ? `\n\n⚠️ لم تُرفع ${left.length} ${left.length === 1 ? "وحدة" : "وحدات"} بها مشكلة أو موجودة أصلًا — بقيت أمامك في الجدول: صحّحها في الملف وارفعها وحدها.` : "";
-    if (!inserted) return alert(`كل الصفوف (${skipped}) موجودة أصلًا — لم يُضف شيء.${leftMsg}`);
-    if (skipped || left.length) alert(`أُضيفت ${inserted} وحدة${skipped ? `، وتُخطّيت ${skipped} موجودة أصلًا` : ""}.${leftMsg}`);
+    if (!inserted) return (await wqAlert(`كل الصفوف (${skipped}) موجودة أصلًا — لم يُضف شيء.${leftMsg}`));
+    if (skipped || left.length) (await wqAlert(`أُضيفت ${inserted} وحدة${skipped ? `، وتُخطّيت ${skipped} موجودة أصلًا` : ""}.${leftMsg}`));
     setDone(inserted); setRows(left);
     router.refresh();
   }
