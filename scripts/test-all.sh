@@ -31,6 +31,9 @@ npx esbuild lib/domain.ts --bundle --format=cjs --platform=node --alias:@=. --ou
 npx esbuild lib/export-extras.ts --bundle --format=cjs --platform=node --alias:@=. --outfile=/tmp/b/exportExtras.js
 npx esbuild lib/friendlyError.ts --bundle --format=cjs --platform=node --external:@sentry/nextjs --outfile=/tmp/b/friendlyError.js
 npx esbuild lib/confirm.ts --bundle --format=cjs --platform=node --alias:@=. --outfile=/tmp/b/confirm.js
+npx esbuild lib/office-copy.ts --bundle --format=cjs --platform=node --alias:@=. --external:@supabase/supabase-js --outfile=/tmp/b/officeCopy.js
+npx esbuild lib/msg-lang.ts --bundle --format=cjs --platform=node --alias:@=. --outfile=/tmp/b/msgLang.js
+npx esbuild lib/tenant-messages.ts --bundle --format=cjs --platform=node --alias:@=. --outfile=/tmp/b/tenantMessages.js
 npx esbuild lib/einvoice.ts --bundle --format=cjs --platform=node --alias:@=. --outfile=/tmp/b/einvoice.js
 npx esbuild lib/fee-invoice.ts --bundle --format=cjs --platform=node --alias:@=. --outfile=/tmp/b/fee-invoice.js
 npx esbuild lib/help-ai.ts lib/help-kb.ts --bundle --format=cjs --platform=node --alias:@=. --outdir=/tmp/b/helpai
