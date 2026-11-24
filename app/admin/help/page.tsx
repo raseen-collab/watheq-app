@@ -109,7 +109,7 @@ export default async function HelpMonitorPage() {
         <div className="max-w-5xl mx-auto flex items-center justify-between gap-3">
           <div>
             <div className="font-display font-bold text-goldSoft">🛟 مراقب المساعد</div>
-            <div className="text-[11px] opacity-75">آخر ٣٠ يومًا · ما يسأله الناس وما عجز عنه</div>
+            <div className="text-[11px] opacity-75">آخر 30 يومًا · ما يسأله الناس وما عجز عنه</div>
           </div>
           <Link href="/admin" className="text-xs text-[#CFE0DB] hover:text-white">← الإدارة</Link>
         </div>
@@ -145,7 +145,7 @@ export default async function HelpMonitorPage() {
         </div>
 
         <div className="bg-white border border-line rounded-2xl p-4">
-          <h2 className="font-display font-bold text-deep text-sm mb-3">الاستعمال — آخر ١٤ يومًا</h2>
+          <h2 className="font-display font-bold text-deep text-sm mb-3">الاستعمال — آخر 14 يومًا</h2>
           <div className="flex items-end gap-1 h-24">
             {days.map((x) => (
               <div key={x.d} className="flex-1 h-full flex flex-col justify-end items-center gap-1" title={`${x.d}: ${x.n}`}>
