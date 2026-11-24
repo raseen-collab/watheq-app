@@ -55,7 +55,7 @@ export default function FloatingMenu({ isAdmin, signedIn }: { isAdmin: boolean; 
       run: () => { window.dispatchEvent(new CustomEvent("watheq:help")); setOpen(false); } },
     ...(signedIn ? [{ label: "المستشار الذكي", icon: "chart" as IconName, href: "/dashboard/advisor" }] : []),
     { label: dark ? "الوضع النهاري" : "الوضع الليلي", icon: dark ? "check" : "shield", run: toggleTheme },
-    ...(isAdmin ? [{ label: "لوحة الإدارة", icon: "settings" as IconName, href: "/admin" }] : []),
+    ...(isAdmin ? [{ label: "لوحة الإدارة", icon: "key" as IconName, href: "/admin" }] : []),
   ];
 
   return (
@@ -81,9 +81,10 @@ export default function FloatingMenu({ isAdmin, signedIn }: { isAdmin: boolean; 
         </>
       )}
       <button type="button" onClick={() => setOpen((v) => !v)}
-        aria-label="أدوات" aria-expanded={open}
-        className="bg-deep text-goldSoft rounded-full shadow-lg border border-goldSoft/30 w-12 h-12 grid place-items-center">
-        <Icon name={open ? "close" : "settings"} size={20} />
+        aria-label="مساعدة وأدوات" aria-expanded={open} title="مساعدة وأدوات"
+        className="bg-deep text-goldSoft rounded-full shadow-lg border border-goldSoft/30 w-12 h-12 grid place-items-center text-lg font-bold">
+        {/* (24 نوفمبر 2026 — تقييم P2-8) كان ترسًا: يُقرأ «إعدادات» فلا يُتوقَّع أن المساعدة خلفه، وتكرّر مع «الإعدادات» */}
+        {open ? <Icon name="close" size={20} /> : <span aria-hidden="true">؟</span>}
       </button>
     </div>
   );

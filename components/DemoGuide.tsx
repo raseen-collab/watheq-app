@@ -22,7 +22,7 @@ type Step = {
 
 const STEPS: Step[] = [
   { title: "هذا مكتبك التجريبي 👋",
-    body: "٥ عقارات و٨٠ وحدة بحالات حقيقية: متأخرون ومنتظمون وشواغر. كل ما تراه يعمل فعلًا — جرّب بلا خوف، وتحذفه بضغطة متى شئت.",
+    body: "5 عقارات و80 وحدة بحالات حقيقية: متأخرون ومنتظمون وشواغر. كل ما تراه يعمل فعلًا — جرّب بلا خوف، وتحذفه بضغطة متى شئت.",
     action: { label: "ابدأ الجولة", event: "next" } },
   { title: "من عليه متأخرات؟",
     body: "الشارات تقول كل شيء: أحمر متأخر، برتقالي مستحق، أخضر منتظم. اضغط الفلتر لترى المتأخرين وحدهم.",
@@ -85,7 +85,7 @@ export default function DemoGuide({ onEvent }: { onEvent: (event: string) => voi
   if (!open) {
     return (
       <button type="button" onClick={() => setOpen(true)}
-        className="fixed z-40 start-3 bottom-[calc(4.5rem+env(safe-area-inset-bottom,0px))] sm:bottom-24 bg-gold text-white rounded-full shadow-lg px-3.5 py-2 text-xs font-semibold">
+        className="fixed z-40 start-3 bottom-[calc(4.5rem+env(safe-area-inset-bottom,0px))] sm:bottom-24 bg-gold text-white rounded-full shadow-lg px-3.5 py-2 min-h-[44px] text-xs font-semibold">
         🧭 دليل التجربة {step + 1}/{STEPS.length}
       </button>
     );
@@ -97,7 +97,7 @@ export default function DemoGuide({ onEvent }: { onEvent: (event: string) => voi
         <span className="text-[11px] font-bold text-goldInk">🧭 دليل التجربة · {step + 1} من {STEPS.length}</span>
         <div className="flex gap-1">
           <button className="text-muted text-xs px-2" onClick={() => setOpen(false)} title="طيّ">▁</button>
-          <button className="text-muted text-xs px-2" onClick={finish} title="إنهاء الدليل">✕</button>
+          <button className="text-muted text-sm min-w-[44px] min-h-[44px] grid place-items-center -m-2" onClick={finish} title="إنهاء الدليل" aria-label="إنهاء الدليل">✕</button>
         </div>
       </div>
       <div className="h-1 bg-paper rounded-full mb-3 overflow-hidden">

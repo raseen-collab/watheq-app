@@ -4,7 +4,7 @@
 //
 // لماذا صفحة عامة لا ميزة داخل اللوحة:
 // أغلب المكاتب لا تعرف أن أنظمتها تحسب عقودها الهجرية بأشهر ميلادية،
-// فينزاح الاستحقاق ١١ يومًا كل سنة. الادّعاء لا يُقنع؛ لكن جدولًا يراه
+// فينزاح الاستحقاق 11 يومًا كل سنة. الادّعاء لا يُقنع؛ لكن جدولًا يراه
 // المكتب بعينه على عقده هو يُقنع في ثانيتين.
 //
 // وهي تُشارَك بلا مقابل: لا تسجيل، لا بريد، لا حدّ استعمال. الأداة التي
@@ -28,9 +28,9 @@ const todayISO = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Riyadh
 
 /** مدد العقد الشائعة — المكتب يفكّر بالمدة لا بعدد الدفعات */
 const TERMS = [
-  { months: 3, label: "٣ أشهر" }, { months: 6, label: "٦ أشهر" },
+  { months: 3, label: "3 أشهر" }, { months: 6, label: "6 أشهر" },
   { months: 12, label: "سنة" }, { months: 18, label: "سنة ونصف" },
-  { months: 24, label: "سنتان" }, { months: 36, label: "٣ سنوات" },
+  { months: 24, label: "سنتان" }, { months: 36, label: "3 سنوات" },
 ];
 const PER_YEAR = new Proxy({} as Record<string, number>, { get: (_o, f: string) => freqMonths(f) ? periodsPerYear(f) : undefined });
 
@@ -51,7 +51,7 @@ export default function HijriScheduleTool() {
     if (!hy || !hm || !hd) return { startISO: null, hijriErr: null };
     const iso = fromHijri(Number(hy), Number(hm), Number(hd));
     if (iso) return { startISO: iso, hijriErr: null };
-    /* الأشهر الهجرية ٢٩ أو ٣٠ يومًا — واختيار ٣٠ في شهر مدته ٢٩ خطأ شائع.
+    /* الأشهر الهجرية 29 أو 30 يومًا — واختيار 30 في شهر مدته 29 خطأ شائع.
        نقول له آخر يوم موجود بدل رسالة عامة. */
     let last = 0;
     for (let k = Number(hd) - 1; k >= 27; k--) if (fromHijri(Number(hy), Number(hm), k)) { last = k; break; }
@@ -186,7 +186,7 @@ export default function HijriScheduleTool() {
                   لو حُسب عقدك بالأشهر الميلادية، لانزاحت آخر دفعة {Math.abs(totalDrift)} يومًا
                 </div>
                 <p className="text-sm text-[#7a3b36] leading-relaxed">
-                  السنة الهجرية ٣٥٤ يومًا والميلادية ٣٦٥. وأكثر الأنظمة تحسب العقد الهجري بأشهر ميلادية،
+                  السنة الهجرية 354 يومًا والميلادية 365. وأكثر الأنظمة تحسب العقد الهجري بأشهر ميلادية،
                   فتتأخر الاستحقاقات تدريجيًّا — ويبقى المستأجر ساكنًا بعد انتهاء عقده الحقيقي دون أن ينتبه أحد.
                 </p>
               </div>

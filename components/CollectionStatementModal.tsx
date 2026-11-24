@@ -27,8 +27,8 @@ const ORD = ["", "الأول", "الثاني", "الثالث", "الرابع", "
 
 const RANGES = [
   { k: "m", label: "هذا الشهر", from: () => today().slice(0, 7) + "-01", to: today },
-  { k: "3", label: "آخر ٣ أشهر", from: () => shift(-90), to: today },
-  { k: "6", label: "آخر ٦ أشهر", from: () => shift(-180), to: today },
+  { k: "3", label: "آخر 3 أشهر", from: () => shift(-90), to: today },
+  { k: "6", label: "آخر 6 أشهر", from: () => shift(-180), to: today },
   { k: "y", label: "هذه السنة", from: () => today().slice(0, 4) + "-01-01", to: today },
   { k: "c", label: "فترة مخصّصة", from: () => shift(-30), to: today },
 ];

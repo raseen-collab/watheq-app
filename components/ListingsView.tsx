@@ -7,7 +7,7 @@ import { wqConfirm } from "@/lib/confirm";
  * (الصور، الصك، الإعلان، محادثة واتساب)، وحالة صريحة، وزر واحد
  * «✓ أكّدت التوفر» لأن المعروضات تتعفّن ولا تضيع.
  *
- * (29 أكتوبر 2026 — طلب عميل من حراج: «جاني زبون يبي شقة ٣ غرف، أبحث في
+ * (29 أكتوبر 2026 — طلب عميل من حراج: «جاني زبون يبي شقة 3 غرف، أبحث في
  * وثيق») صار البحث بحث زبون: النوع والعرض والغرف وأقصى سعر، وترتيب،
  * وعرض بطاقات بصورة الغلاف أو قائمة، وزرّ يحفظ البحث طلبًا للزبون.
  */
@@ -248,7 +248,7 @@ export default function ListingsView({ initial, brokerages, requests, orgName, i
       <div className="inline-flex bg-white border border-line rounded-xl p-1 mt-4">
         {([["listings", "tag", "المعروضات", s.total], ["requests", "search", "طلبات الزبائن", activeReq]] as const).map(([k, ic, label, n]) => (
           <button key={k} onClick={() => setTab(k)}
-            className={`inline-flex items-center gap-1.5 px-3.5 min-h-[40px] rounded-lg text-sm font-semibold transition ${
+            className={`inline-flex items-center gap-1.5 px-3.5 min-h-[44px] rounded-lg text-sm font-semibold transition ${
               tab === k ? "bg-[#FBF1DF] text-deep" : "text-muted hover:bg-paper"}`}>
             <Icon name={ic} /> {label}
             <span className={`text-[.7rem] rounded-full px-1.5 min-w-[1.4rem] ${tab === k ? "bg-white text-deep" : "bg-[#F1F5F9] text-[#475569]"}`}>{n}</span>
@@ -270,10 +270,10 @@ export default function ListingsView({ initial, brokerages, requests, orgName, i
             <button className="text-xs text-muted underline underline-offset-2 shrink-0" onClick={hideTips}>فهمت، أخفِ</button>
           </div>
           <ol className="mt-2 grid sm:grid-cols-2 gap-x-4 gap-y-1.5 text-[13px] text-[#33413D] leading-relaxed list-none p-0 m-0">
-            <li className="flex gap-2"><span className="font-bold text-gold shrink-0">١</span><span><b>أضف المعروض</b> بزر «+ معروض» وسجّل السعي والتفويض، ثم صوره من <Icon name="camera" size={13} />.</span></li>
-            <li className="flex gap-2"><span className="font-bold text-gold shrink-0">٢</span><span><b>أرسل للزبون رابطًا</b> من <Icon name="link" size={13} /> بدل الصور — بلا جوال المالك، ويتوقّف وحده إذا بيع.</span></li>
-            <li className="flex gap-2"><span className="font-bold text-gold shrink-0">٣</span><span><b>سجّل على من عرضته</b> من <Icon name="eye" size={13} /> — ويطلع لك «محضر عرض» مؤرّخ عند أي نزاع سعي.</span></li>
-            <li className="flex gap-2"><span className="font-bold text-gold shrink-0">٤</span><span><b>سجّل طلبات الزبائن</b> في التبويب الثاني — كل معروض جديد يُطابَق معها تلقائيًّا، ومعها موعد المتابعة.</span></li>
+            <li className="flex gap-2"><span className="font-bold text-gold shrink-0">1</span><span><b>أضف المعروض</b> بزر «+ معروض» وسجّل السعي والتفويض، ثم صوره من <Icon name="camera" size={13} />.</span></li>
+            <li className="flex gap-2"><span className="font-bold text-gold shrink-0">2</span><span><b>أرسل للزبون رابطًا</b> من <Icon name="link" size={13} /> بدل الصور — بلا جوال المالك، ويتوقّف وحده إذا بيع.</span></li>
+            <li className="flex gap-2"><span className="font-bold text-gold shrink-0">3</span><span><b>سجّل على من عرضته</b> من <Icon name="eye" size={13} /> — ويطلع لك «محضر عرض» مؤرّخ عند أي نزاع سعي.</span></li>
+            <li className="flex gap-2"><span className="font-bold text-gold shrink-0">4</span><span><b>سجّل طلبات الزبائن</b> في التبويب الثاني — كل معروض جديد يُطابَق معها تلقائيًّا، ومعها موعد المتابعة.</span></li>
           </ol>
         </div>
       )}
@@ -418,7 +418,7 @@ function Chip({ on, onClick, children, small }: { on: boolean; onClick: () => vo
   return (
     <button type="button" onClick={onClick} aria-pressed={on}
       className={`inline-flex items-center gap-1.5 shrink-0 whitespace-nowrap rounded-full border font-semibold transition ${
-        small ? "px-3 min-h-[36px] text-xs" : "px-3.5 min-h-[40px] text-[13px]"} ${
+        small ? "px-3 min-h-[36px] text-xs" : "px-3.5 min-h-[44px] text-[13px]"} ${
         on ? "border-gold bg-[#FBF1DF] text-deep" : "border-line bg-white text-muted hover:border-goldSoft hover:text-deep"}`}>
       {children}
     </button>
@@ -877,7 +877,7 @@ function ListingForm({ editing, all, brokerages, busy, onSave, onCancel, markete
           <div className="grid grid-cols-3 gap-2">
             {([[true, "موجود", "check"], [false, "لا يوجد", "alert"], [null, "لم أحدّد", "clock"]] as const).map(([v, label, ic]) => (
               <button key={String(v)} type="button" onClick={() => setD({ ...d, owner_authorized: v })} aria-pressed={d.owner_authorized === v}
-                className={`border-2 rounded-lg min-h-[40px] text-xs font-semibold transition inline-flex items-center justify-center gap-1 ${
+                className={`border-2 rounded-lg min-h-[44px] text-xs font-semibold transition inline-flex items-center justify-center gap-1 ${
                   d.owner_authorized === v ? "border-gold bg-[#FBF1DF]" : "border-line bg-white hover:border-goldSoft"}`}>
                 <Icon name={ic} size={14} /> {label}
               </button>

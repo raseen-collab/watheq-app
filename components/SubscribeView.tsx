@@ -2,6 +2,7 @@
 import { arDate } from "@/lib/documents";
 import { useMemo, useState } from "react";
 import Link from "next/link";
+import DateField from "@/components/DateField";
 import { useRouter } from "next/navigation";
 import { PROP_PLANS, HOA_PLANS, OFFICE_YEARLY, MARKETER_PLAN, subPrice, type PropPlan, type HoaPlan } from "@/lib/pricing";
 import { WATHEQ_WA } from "@/lib/utils";
@@ -81,6 +82,7 @@ export default function SubscribeView({ accountType, status, subscribedUntil, cl
     setErr(null);
     if (total === null) { setErr("اختر باقة صالحة."); return; }
     if (payer.trim().length < 2) { setErr("اكتب اسم المحوِّل كما يظهر في البنك."); return; }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) { setErr("اختر تاريخ التحويل."); return; }
     setBusy(true);
     try {
       const r = await fetch("/api/subscribe", {
@@ -135,7 +137,7 @@ export default function SubscribeView({ accountType, status, subscribedUntil, cl
             <dt className="text-muted">المبلغ</dt><dd className="font-semibold">{sar(Number(open.amount))} ريال</dd>
             <dt className="text-muted">المحوِّل</dt><dd>{open.payer_name}</dd>
             {open.bank_ref && <><dt className="text-muted">المرجع</dt><dd>{open.bank_ref}</dd></>}
-            <dt className="text-muted">تاريخ التحويل</dt><dd>{open.transfer_date}</dd>
+            <dt className="text-muted">تاريخ التحويل</dt><dd>{arDate(open.transfer_date)}</dd>
           </dl>
           {open.status === "pending" && (
             <button onClick={cancel} disabled={busy} className="text-sm text-[#8f2b26] underline">
@@ -155,7 +157,7 @@ export default function SubscribeView({ accountType, status, subscribedUntil, cl
 
           {marketer && (
             <section className="bg-white border border-line rounded-2xl p-5">
-              <h2 className="font-display font-bold text-deep mb-3">١) باقة المسوّق العقاري</h2>
+              <h2 className="font-display font-bold text-deep mb-3">1) باقة المسوّق العقاري</h2>
               <div className="grid sm:grid-cols-2 gap-3">
                 <PlanCard active onClick={() => setProp("marketer")} title={MARKETER_PLAN.name}
                   price={`${sar(MARKETER_PLAN.yearly)} ريال / سنويًا`} note={MARKETER_PLAN.note} />
@@ -166,7 +168,7 @@ export default function SubscribeView({ accountType, status, subscribedUntil, cl
 
           {hasProp && !marketer && (
             <section className="bg-white border border-line rounded-2xl p-5">
-              <h2 className="font-display font-bold text-deep mb-3">{accountType === "both" ? "١) باقة إدارة الأملاك" : "١) اختر الباقة"}</h2>
+              <h2 className="font-display font-bold text-deep mb-3">{accountType === "both" ? "1) باقة إدارة الأملاك" : "1) اختر الباقة"}</h2>
               <div className="grid sm:grid-cols-2 gap-3">
                 {accountType === "both" && (
                   <PlanCard active={prop === null} onClick={() => setProp(null)} title="بلا تجديد الآن" price="" note="أجدّد الجمعيات فقط" />
@@ -182,7 +184,7 @@ export default function SubscribeView({ accountType, status, subscribedUntil, cl
 
           {hasHoa && (
             <section className="bg-white border border-line rounded-2xl p-5">
-              <h2 className="font-display font-bold text-deep mb-3">{accountType === "both" ? "٢) باقة اتحاد الملاك" : "١) اختر الباقة"}</h2>
+              <h2 className="font-display font-bold text-deep mb-3">{accountType === "both" ? "2) باقة اتحاد الملاك" : "1) اختر الباقة"}</h2>
               <div className="grid sm:grid-cols-2 gap-3">
                 {accountType === "both" && (
                   <PlanCard active={hoa === null} onClick={() => setHoa(null)} title="بلا تجديد الآن" price="" note="أجدّد الأملاك فقط" />
@@ -219,7 +221,7 @@ export default function SubscribeView({ accountType, status, subscribedUntil, cl
           )}
 
           <section className="bg-white border border-line rounded-2xl p-5">
-            <h2 className="font-display font-bold text-deep mb-3">٢) حوّل المبلغ</h2>
+            <h2 className="font-display font-bold text-deep mb-3">2) حوّل المبلغ</h2>
             {bank ? (
               <div className="space-y-2 text-sm">
                 {bank.name && <Row label="اسم المستفيد" value={bank.name} onCopy={() => copy(bank.name, "name")} copied={copied === "name"} />}
@@ -235,7 +237,7 @@ export default function SubscribeView({ accountType, status, subscribedUntil, cl
           </section>
 
           <section className="bg-white border border-line rounded-2xl p-5 space-y-3">
-            <h2 className="font-display font-bold text-deep">٣) أبلغنا بالتحويل</h2>
+            <h2 className="font-display font-bold text-deep">3) أبلغنا بالتحويل</h2>
             <label className="block text-sm">
               <span className="text-muted">اسم المحوِّل كما يظهر في البنك</span>
               <input value={payer} onChange={(e) => setPayer(e.target.value)} maxLength={80} required
@@ -244,8 +246,8 @@ export default function SubscribeView({ accountType, status, subscribedUntil, cl
             <div className="grid sm:grid-cols-2 gap-3">
               <label className="block text-sm">
                 <span className="text-muted">تاريخ التحويل</span>
-                <input type="date" value={date} max={today} onChange={(e) => setDate(e.target.value)} required
-                  className="mt-1 w-full border border-line rounded-lg px-3 py-2" />
+                {/* (24 نوفمبر 2026 — تقييم P2-9) خانة وثيق نفسها بدل خانة المتصفح الخام: ميلادي/هجري و«الموافق» */}
+                <div className="mt-1"><DateField value={date} onChange={(v) => setDate(v && v > today ? today : v)} /></div>
               </label>
               <label className="block text-sm">
                 <span className="text-muted">رقم المرجع (اختياري)</span>

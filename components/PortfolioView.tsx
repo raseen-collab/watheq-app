@@ -33,24 +33,32 @@ type Tenant = any; type Property = any;
 const PER_MONTH = new Proxy({} as Record<string, number>, { get: (_o, f: string) => f === "daily" ? 30 : f === "weekly" ? 4.33 : 1 / (freqMonths(f) || 1) });
 const UNIT_AR: Record<string, string> = { residential: "شقة", commercial: "محل", office: "مكتب", warehouse: "مستودع", land: "أرض", villa: "فيلا" };
 
-export default function PortfolioView({ properties, windows, compliance, orgName = "", issuer = {} }: {
+export default function PortfolioView({ properties, windows, compliance, orgName = "", issuer = {}, db, demo = false, onOpen }: {
   properties: Property[];
   windows: { soon: number; imminent: number; expiring: number };
   /** التزامات المكتب — انتقلت من قائمة «مستندات» في صفحة العقار: للمكتب كله لا لعقار */
   compliance?: ComplianceItem[]; orgName?: string; issuer?: any;
+  /** (24 نوفمبر 2026) التجربة العامة: قاعدة المتصفح بدل الخادم، و«فتح» يعود للوحة بدل رابط */
+  db?: any; demo?: boolean; onOpen?: (propertyId: string, q?: string) => void;
 }) {
-  const supabase = createClient();
+  const supabase = useMemo(() => db || createClient(), [db]);
   const router = useRouter();
+  /** «فتح» عقار: رابط في الحساب الحقيقي، وزرّ يعود للوحة في التجربة */
+  const OpenBtn = ({ pid, q: qq, label = "فتح", className = "btn btn-ghost text-xs" }: { pid: string; q?: string; label?: string; className?: string }) =>
+    demo && onOpen
+      ? <button type="button" className={className} onClick={() => onOpen(pid, qq)}>{label}</button>
+      : <Link className={className} href={`/dashboard/property?p=${pid}${qq ? `&q=${encodeURIComponent(qq)}` : ""}`}>{label}</Link>;
+  const demoJoin = () => window.dispatchEvent(new CustomEvent("watheq:demo-join"));
   const [comp, setComp] = useState<ComplianceItem[]>(compliance || []);
   const [compOpen, setCompOpen] = useState(false);
   /* صلاحية إدارة الالتزامات — كما في صفحة العقار (الحماية الحقيقية في القاعدة) */
   const [canComp, setCanComp] = useState(true);
-  useEffect(() => { getOffice(supabase).then((o) => setCanComp(o?.isOwner !== false || (o?.perms || {}).manage_compliance !== false)); }, [supabase]);
+  useEffect(() => { if (demo) return; getOffice(supabase).then((o) => setCanComp(o?.isOwner !== false || (o?.perms || {}).manage_compliance !== false)); }, [supabase, demo]);
   /* مصروفات الشهر لكل العقارات: على المالك، وعلى المكتب */
   const [expMonth, setExpMonth] = useState<{ owner: number; office: number } | null>(null);
   const [q, setQ] = useState("");
   /**
-   * «يحتاج إجراء» كان يقصّ عند ١٢ ويقول «افتح كل عقار لرؤيتهم» — وهذا
+   * «يحتاج إجراء» كان يقصّ عند 12 ويقول «افتح كل عقار لرؤيتهم» — وهذا
    * يُبطل الغرض من الشاشة: صاحب المكتب جاء ليرى كل شيء في مكان واحد لا
    * ليفتح عشرين عقارًا. والأسوأ أن «مستحق» و«تنتهي قريبًا» كانتا تُقصّان
    * بلا أي تنبيه، فلا يعلم أن هناك المزيد.
@@ -161,6 +169,11 @@ export default function PortfolioView({ properties, windows, compliance, orgName
   const needle = normalizeSearch(q);
   /* البحث برقم السند أو نص الحوالة (24 نوفمبر 2026 — طلب مكتب الأولى): استعلام للقاعدة
      بعد توقّف الكتابة، لأن الدفعات والمصروفات لا تُحمَّل في هذه الصفحة. RLS تحصره في المكتب. */
+  /* مقتطف فقط حين يكون النص فيه فعلًا — البحث برقم السند وحده لا يعرض ملاحظة لا علاقة لها */
+  const hitSnip = (parts: any[], text: string) => {
+    const full = parts.filter(Boolean).join(" · ");
+    return text && full.toLowerCase().includes(text.toLowerCase()) ? snippet(full, text) : "";
+  };
   type DocHit = { key: string; kind: "rc" | "pv"; no: string | null; amount: number; date: string; pid: string; who: string; unit: string; snip: string; reversed: boolean };
   const [docHits, setDocHits] = useState<DocHit[] | null>(null);
   useEffect(() => {
@@ -178,7 +191,7 @@ export default function PortfolioView({ properties, windows, compliance, orgName
           .in("property_id", idChunk).or(pf).order("paid_on", { ascending: false }).limit(15);
         (data || []).forEach((x: any) => out.push({ key: "p" + x.id, kind: "rc", no: x.receipt_no, amount: Number(x.amount) || 0, date: x.paid_on,
           pid: x.property_id, who: x.payer_name || "", unit: x.unit_label || "",
-          snip: dq.text ? snippet([x.reference, x.note].filter(Boolean).join(" · "), dq.text) : "", reversed: !!x.reverses }));
+          snip: hitSnip([x.reference, x.note], dq.text), reversed: !!x.reverses }));
       }
       if (ef) {
         const { data } = await supabase.from("expenses")
@@ -186,7 +199,7 @@ export default function PortfolioView({ properties, windows, compliance, orgName
           .in("property_id", idChunk).or(ef).order("spent_on", { ascending: false }).limit(15);
         (data || []).forEach((x: any) => out.push({ key: "e" + x.id, kind: "pv", no: x.voucher_no, amount: Number(x.amount) || 0, date: x.spent_on,
           pid: x.property_id, who: x.payee_name || "", unit: x.unit || "",
-          snip: dq.text ? snippet([x.note, x.payee_ref, x.invoice_no].filter(Boolean).join(" · "), dq.text) : "", reversed: false }));
+          snip: hitSnip([x.note, x.payee_ref, x.invoice_no], dq.text), reversed: false }));
       }
       if (live) setDocHits(out);
     }, 350);
@@ -264,7 +277,7 @@ export default function PortfolioView({ properties, windows, compliance, orgName
         {tone !== "exp" && t.phone && <a className="btn btn-wa text-xs px-2.5" href={remind(p, t, st)} target="_blank" rel="noreferrer" title="تذكير واتساب">💬</a>}
         {/* عقود تنتهي: إشعار بانتهاء العقد مع حالة المستحقات (lib/tenant-messages) */}
         {tone === "exp" && t.phone && <a className="btn btn-wa text-xs px-2.5" href={endNotice(p, t, st)} target="_blank" rel="noreferrer" title="إشعار انتهاء العقد (واتساب)">📅</a>}
-        <Link className="btn btn-ghost text-xs" href={`/dashboard/property?p=${p.id}&q=${encodeURIComponent(t.unit || t.name)}`}>فتح</Link>
+        <OpenBtn pid={p.id} q={t.unit || t.name} />
       </div>
     </div>
   );
@@ -273,7 +286,7 @@ export default function PortfolioView({ properties, windows, compliance, orgName
     <div>
       {/* ═══ البحث الشامل ═══ */}
       <div className="flex justify-end mb-3">
-        <button className="btn btn-ghost text-sm" onClick={() => setExpOpen(true)}
+        <button className="btn btn-ghost text-sm" onClick={() => (demo ? demoJoin() : setExpOpen(true))}
           title="كل مصروفات المكتب بفلترة على المالك والفترة — جاهزة للطباعة">💸 مصروفات كل العقارات</button>
       </div>
       {/**
@@ -391,7 +404,7 @@ export default function PortfolioView({ properties, windows, compliance, orgName
             <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
               <div className="font-semibold text-deep text-sm">التزامات المكتب
                 {alerts > 0 && <span className="ms-2 text-[11px] px-2 py-0.5 rounded-full bg-[#FBE9E7] text-late">{alerts} تحتاج انتباهًا</span>}</div>
-              <button type="button" className="btn btn-ghost text-xs" onClick={() => setCompOpen(true)}>إدارة الالتزامات</button>
+              <button type="button" className="btn btn-ghost text-xs" onClick={() => (demo ? demoJoin() : setCompOpen(true))}>إدارة الالتزامات</button>
             </div>
             {withState.length === 0 ? (
               <p className="text-xs text-muted">لا التزامات مسجّلة — عقود الوساطة وتراخيص الإعلانات ورخصة فال تُتابَع هنا بمواعيد انتهائها.</p>
@@ -451,7 +464,7 @@ export default function PortfolioView({ properties, windows, compliance, orgName
                       <div className="text-[11px] text-muted truncate">{[h.who, h.unit, p?.name].filter(Boolean).join(" · ")}</div>
                       {h.snip && <div className="text-[11px] text-ink/70 truncate">«{h.snip}»</div>}
                     </div>
-                    {p && <Link className="btn btn-ghost text-xs shrink-0" href={`/dashboard/property?p=${p.id}${h.unit ? `&q=${encodeURIComponent(h.unit)}` : ""}`}>فتح</Link>}
+                    {p && <OpenBtn pid={p.id} q={h.unit || undefined} className="btn btn-ghost text-xs shrink-0" />}
                   </div>
                 );
               })}
@@ -508,7 +521,7 @@ export default function PortfolioView({ properties, windows, compliance, orgName
                   <td className={`px-3 py-2 text-center tabular-nums ${r.expiring ? "text-[#991B1B] font-semibold" : "text-muted"}`}>{r.expiring || "—"}</td>
                   <td className="px-3 py-2 text-center tabular-nums text-[#137a50] font-semibold">{r.collected === null ? "…" : sar(Math.round(r.collected))}</td>
                   <td className="px-3 py-2 text-center tabular-nums text-muted">{sar(Math.round(r.monthly))}</td>
-                  <td className="px-3 py-2"><Link className="btn btn-ghost text-xs" href={`/dashboard/property?p=${r.p.id}`}>فتح</Link></td>
+                  <td className="px-3 py-2"><OpenBtn pid={r.p.id} /></td>
                 </tr>
               ))}
             </tbody>

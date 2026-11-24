@@ -239,6 +239,15 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
     } catch { /* */ }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  /* التجربة العامة: «فتح» من «نظرة عامة» يرجع لهذا العقار ويبحث بالوحدة (DemoClient يبعث الحدث) */
+  useEffect(() => {
+    const h = (e: any) => { const pid = e?.detail?.pid, qq = e?.detail?.q;
+      if (pid && initial.some((x) => x.id === pid)) setActiveId(pid);
+      setQ(qq ? String(qq) : ""); };
+    window.addEventListener("watheq:open-prop", h);
+    return () => window.removeEventListener("watheq:open-prop", h);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [modal, setModal] = useState<null | { kind: "newProp" | "editProp" | "tenant" | "afterProp"; id?: string }>(null);
   const [quoteOpen, setQuoteOpen] = useState(false);
   // ⚖️ التزامات المكتب: تُدار محليًّا وتُزامَن مع بيانات السيرفر عند كل refresh
@@ -495,7 +504,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
 
   // الصفوف المعروضة: بحث ← تصفية ← فرز
   const rows = useMemo(() => {
-    /* (30 سبتمبر 2026) normalizeSearch: الأرقام العربية وى/ي وة/ه والهمزات — كان «٠٥٥» لا يجد «055» */
+    /* (30 سبتمبر 2026) normalizeSearch: الأرقام العربية وى/ي وة/ه والهمزات — كان «055» لا يجد «055» */
     const needle = normalizeSearch(q);
     let out = allRowsForFilter.filter((r) => {
       if (filter !== "all" && r.key !== filter && !(filter === "soon" && r.key === "due")) return false;
@@ -557,7 +566,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       + `راجع «سجل المدفوعات» قبل المتابعة.\n\nتسجيلها على أي حال؟`
     ))) return;
 
-    /* (17 نوفمبر — اختبار ٥٠٠ سيناريو) هللتان كحدّ: 2083.335 كان يُحفظ خامًا والرصيد مقرّبًا */
+    /* (17 نوفمبر — اختبار 500 سيناريو) هللتان كحدّ: 2083.335 كان يُحفظ خامًا والرصيد مقرّبًا */
     const amt = Math.max(0, Math.round((Number(amount) || 0) * 100) / 100);
     if (!amt || !active) return;
     return once(`pay:${t.id}`, async () => {
@@ -966,7 +975,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       meters: cleanMeters(d.meters),
     };
     if (payload.owner_vat_number && !isValidVatNo(payload.owner_vat_number))
-      return notify("err", "الرقم الضريبي للمالك غير صحيح — ١٥ رقمًا يبدأ بـ3 وينتهي بـ3، أو اتركه فارغًا.");
+      return notify("err", "الرقم الضريبي للمالك غير صحيح — 15 رقمًا يبدأ بـ3 وينتهي بـ3، أو اتركه فارغًا.");
     if (id) {
       const { data: _u1, error } = await supabase.from("properties").update(payload).eq("id", id).select("id");
       if (error) { console.error("Watheq save error:", error); return notify("err", friendlyError(error)); }
@@ -981,7 +990,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       const next = { ...(data as any), tenants: [], property_notes: [] };
       setItems([next, ...items]); setActiveId(next.id);
       /* v78: عقار جديد ⇒ الخطوة التالية أمامه مباشرة. كان النموذج يُغلق بلا كلمة،
-         فيرى «لا توجد وحدات بعد» ولا يعرف أنه في الخطوة ٢ من ٣ — مستخدمان
+         فيرى «لا توجد وحدات بعد» ولا يعرف أنه في الخطوة 2 من 3 — مستخدمان
          وقفا عند «عقار · 0 وحدة». */
       setModal({ kind: "afterProp", id: next.id });
       return;
@@ -1076,7 +1085,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       return;
     }
     if (d.vat_number && !isValidVatNo(d.vat_number)) {
-      fail("الرقم الضريبي للمستأجر غير صحيح — ١٥ رقمًا يبدأ بـ3 وينتهي بـ3، أو اتركه فارغًا.");
+      fail("الرقم الضريبي للمستأجر غير صحيح — 15 رقمًا يبدأ بـ3 وينتهي بـ3، أو اتركه فارغًا.");
       return;
     }
     const freq = (d.payment_frequency || "monthly") as Frequency;
@@ -1856,7 +1865,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
   function ownerAlert(t: Tenant) {
     if (!active) return;
     if (!String(active.owner_phone || "").trim()) {
-      notify("err", "أضف جوال المالك أولًا: ⚙️ إعدادات العقار ← «جوال المالك»");
+      notify("err", "أضف جوال المالك أولًا: «✎ تعديل» بجانب اسم العقار ← «جوال المالك»");
       if (isManager) setModal({ kind: "editProp" });
       return;
     }
@@ -2011,9 +2020,9 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
 
         {/* ثلاث خطوات: المستخدم الجديد يعرف أين هو وما التالي بدل لوحة فارغة */}
         <div className="grid sm:grid-cols-3 gap-2 text-right mb-5">
-          {[["١", "أضف عقارك", "الاسم والمدينة — دقيقة"],
-            ["٢", "أدخل وحداته", "يدويًّا أو رفع Excel دفعة واحدة"],
-            ["٣", "سجّل أول دفعة", "وتبدأ اللوحة تعمل لك"]].map(([n, t, d]) => (
+          {[["1", "أضف عقارك", "الاسم والمدينة — دقيقة"],
+            ["2", "أدخل وحداته", "يدويًّا أو رفع Excel دفعة واحدة"],
+            ["3", "سجّل أول دفعة", "وتبدأ اللوحة تعمل لك"]].map(([n, t, d]) => (
             <div key={n} className="border border-line rounded-xl p-3 bg-paper">
               <div className="text-xs font-bold text-goldInk mb-0.5">{n}</div>
               <div className="text-sm font-semibold text-deep">{t}</div>
@@ -2246,11 +2255,11 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
             ومستندات المالك موزّعة بينهما بلا منطق. */}
         <button type="button" className="btn btn-ghost text-sm px-3" onClick={refreshNow} disabled={refreshing}
           title="تحديث البيانات من السيرفر (بعد تسجيل دفعة من البوت مثلًا)">{refreshing ? "…" : "↻"}</button>
-        {isManager && <button type="button" className="btn btn-ghost text-sm px-3" onClick={() => setModal({ kind: "editProp" })} title="إعدادات هذا العقار">⚙️</button>}
+        {isManager && <button type="button" className="btn btn-ghost text-sm px-3" onClick={() => setModal({ kind: "editProp" })} title="تعديل بيانات هذا العقار" aria-label="تعديل بيانات العقار">✎ تعديل</button>}
         {/* التجربة العامة بلا جلسة: الروابط إلى صفحات اللوحة تنتهي في /login —
             نفتح دعوة التسجيل بدلها كبقية الأفعال المحجوبة في التجربة (30 سبتمبر 2026) */}
         {items.length > 1 && <Link href="/dashboard/property/overview" className="btn btn-ghost text-sm" title="كل العقارات في صفحة واحدة"
-          onClick={(e) => { if (demo) { e.preventDefault(); demoJoin(); } }}>🗂️ نظرة عامة</Link>}
+          onClick={(e) => { if (demo) { e.preventDefault(); window.dispatchEvent(new CustomEvent("watheq:demo-overview")); } }}>🗂️ نظرة عامة</Link>}
         {isManager && may("all_properties") && <button className="btn btn-ghost text-sm" onClick={openNewProperty}>+ عقار</button>}
       </div>
 
@@ -2328,15 +2337,15 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                 {(arrears.litigation > 0 || arrears.carried > 0 || vacantArrears > 0) && (
                   <div className="flex flex-wrap gap-2 pt-1">
                     {arrears.litigation > 0 && (
-                      <button type="button" onClick={() => goList("litigation")} className="text-xs px-3 py-2 rounded-full border bg-white border-line text-[#475569]">
+                      <button type="button" onClick={() => goList("litigation")} className="text-xs px-3 py-2 min-h-[44px] rounded-full border bg-white border-line text-[#475569]">
                         تحت التنفيذ <b className="tabular-nums">{sar(arrears.litigation)}</b> · {plural(arrears.litigationCount, "وحدة واحدة", "وحدتان", "وحدات", "وحدة")}</button>
                     )}
                     {arrears.carried > 0 && (
-                      <button type="button" onClick={() => setDebtOpen(true)} className="text-xs px-3 py-2 rounded-full border bg-white border-line text-[#9A4B00]">
+                      <button type="button" onClick={() => setDebtOpen(true)} className="text-xs px-3 py-2 min-h-[44px] rounded-full border bg-white border-line text-[#9A4B00]">
                         دين مُرحَّل <b className="tabular-nums">{sar(arrears.carried)}</b> · {plural(arrears.carriedCount, "وحدة واحدة", "وحدتان", "وحدات", "وحدة")}</button>
                     )}
                     {vacantArrears > 0 && (
-                      <button type="button" onClick={() => goList("vacant")} className="text-xs px-3 py-2 rounded-full border bg-white border-line text-[#9A4B00]">
+                      <button type="button" onClick={() => goList("vacant")} className="text-xs px-3 py-2 min-h-[44px] rounded-full border bg-white border-line text-[#9A4B00]">
                         على مستأجرين سابقين <b className="tabular-nums">{sar(vacantArrears)}</b></button>
                     )}
                   </div>
@@ -2409,7 +2418,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
             <div className="text-sm font-semibold text-deep">
               ⚡ عدادات العقار الرئيسية <span className="text-xs text-muted font-normal">— {metersCountLine(active.meters)}</span>
             </div>
-            {isManager && <button type="button" className="text-xs text-muted hover:text-deep underline min-h-[40px] sm:min-h-0 inline-flex items-center" onClick={() => setModal({ kind: "editProp" })}>تعديل</button>}
+            {isManager && <button type="button" className="text-xs text-muted hover:text-deep underline min-h-[44px] sm:min-h-0 inline-flex items-center" onClick={() => setModal({ kind: "editProp" })}>تعديل</button>}
           </div>
           <div className="flex flex-wrap gap-2">
             {(active.meters || []).map((m, i) => (
@@ -2432,8 +2441,8 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
             {/* كان مخفيًّا تحت 1024px: من حفظ «جدول» مرة يبقى حبيسه بلا مخرج،
                 والجدول على 400px يحتاج تمريرًا أفقيًّا بثلاثة أضعاف العرض. */}
             <div className="inline-flex items-center gap-0.5 border border-line rounded-lg p-0.5 me-2 align-middle text-[11px]">
-              <button type="button" onClick={() => pickView("table")} className={`px-3 py-2 sm:py-1 rounded-md ${view === "table" ? "bg-deep text-goldSoft" : "text-muted hover:text-deep"}`} title="جدول: صف لكل وحدة">☰ جدول</button>
-              <button type="button" onClick={() => pickView("cards")} className={`px-3 py-2 sm:py-1 rounded-md ${view === "cards" ? "bg-deep text-goldSoft" : "text-muted hover:text-deep"}`} title="بطاقات">▦ بطاقات</button>
+              <button type="button" onClick={() => pickView("table")} className={`px-3 py-2 min-h-[44px] sm:min-h-0 sm:py-1 rounded-md ${view === "table" ? "bg-deep text-goldSoft" : "text-muted hover:text-deep"}`} title="جدول: صف لكل وحدة">☰ جدول</button>
+              <button type="button" onClick={() => pickView("cards")} className={`px-3 py-2 min-h-[44px] sm:min-h-0 sm:py-1 rounded-md ${view === "cards" ? "bg-deep text-goldSoft" : "text-muted hover:text-deep"}`} title="بطاقات">▦ بطاقات</button>
             </div>
             {view === "table" && (
               <div className="hidden lg:inline-flex items-center gap-0.5 border border-line rounded-lg p-0.5 me-2 align-middle text-[11px]">
@@ -2542,14 +2551,14 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                   <button key={c.k} onClick={() => setFilter(c.k)}
                     /* كانت 26px — أصغر من الحد الموصى به للمس (44px)، فيخطئ
                        الإبهام على الجوال. 40px مع الحشو الرأسي كافية. */
-                    className={`text-xs font-semibold rounded-lg px-3 py-2.5 sm:py-1 min-h-[40px] sm:min-h-0 border transition ${
+                    className={`text-xs font-semibold rounded-lg px-3 py-2.5 sm:py-1 min-h-[44px] sm:min-h-0 border transition ${
                       filter === c.k ? "bg-deep text-[#F6F1E4] border-deep" : "bg-white text-deep border-line hover:border-goldSoft"}`}>
                     {c.label}
                   </button>
                 ))}
                 {extra.length > 0 && !extra.some((c) => c.k === filter) && (
                   <button type="button" onClick={() => setMoreChips((v) => !v)} aria-expanded={showExtra}
-                    className="text-xs font-semibold rounded-lg px-3 py-2.5 sm:py-1 min-h-[40px] sm:min-h-0 border border-dashed border-line text-muted hover:text-deep hover:border-goldSoft">
+                    className="text-xs font-semibold rounded-lg px-3 py-2.5 sm:py-1 min-h-[44px] sm:min-h-0 border border-dashed border-line text-muted hover:text-deep hover:border-goldSoft">
                     {showExtra ? "أقل ▴" : `المزيد (${extra.length}) ▾`}
                   </button>
                 )}
@@ -2569,7 +2578,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                  وحدها لا تقول ما الخطوة ولا أن هناك طريقًا أسرع من وحدة وحدة، ولا أن
                  المكتب يقدر يرسل ملفه ونجهّزه له (الطريق الذي جاء منه كل مشترك دافع). */
               <div className="text-center py-8 px-2">
-                <div className="text-[11px] font-semibold text-gold mb-1">الخطوة ٢ من ٣</div>
+                <div className="text-[11px] font-semibold text-gold mb-1">الخطوة 2 من 3</div>
                 <div className="font-display font-bold text-deep text-base">أضف وحدات {active?.name ? `«${active.name}»` : "العقار"}</div>
                 <p className="text-xs text-muted mt-1 leading-relaxed">بعدها تسجّل المستأجرين والمسدَّد، ويحسب لك المتأخر تلقائيًّا.</p>
                 <div className="mt-4 flex flex-wrap gap-2 justify-center">
@@ -4071,7 +4080,7 @@ function AddNote({ onAdd, unitWord }: {
           {Object.entries(NOTE_KINDS).map(([k, v]) => (
             /* (دراسة 29 أكتوبر 2026) كانت ~26px — 40px على الجوال كرقائق التصفية */
             <button key={k} type="button" onClick={() => setKind(k)} aria-pressed={kind === k}
-              className={`text-[11px] min-h-[40px] px-3 sm:min-h-0 sm:px-2 sm:py-1 rounded-full border whitespace-nowrap ${kind === k ? "bg-deep text-goldSoft border-deep" : "border-line text-muted hover:text-deep"}`}>
+              className={`text-[11px] min-h-[44px] px-3 sm:min-h-0 sm:px-2 sm:py-1 rounded-full border whitespace-nowrap ${kind === k ? "bg-deep text-goldSoft border-deep" : "border-line text-muted hover:text-deep"}`}>
               {v.icon} {v.label}
             </button>
           ))}
@@ -4300,7 +4309,7 @@ function PropertyModal({ open, initial, orgName, ownerNames = [], officeSoon = 1
         <Field label="أتعاب الإدارة" hint={d.mgmt_fee_mode === "fixed"
           ? ((d.mgmt_fee_period || "month") === "month" ? "مبلغ ثابت يُخصم كل شهر في تقرير المالك (كشف شهرَين = مرتان)"
             : d.mgmt_fee_period === "once" ? "يُخصم مرة واحدة فقط في التقرير الذي تقع فيه فترتُه على تاريخ الاستحقاق"
-            : "يُخصم في كل تقرير يقع في فترته استحقاق: التاريخ المحدد ثم كل " + (d.mgmt_fee_period === "half" ? "٦ أشهر" : "سنة") + " بعده")
+            : "يُخصم في كل تقرير يقع في فترته استحقاق: التاريخ المحدد ثم كل " + (d.mgmt_fee_period === "half" ? "6 أشهر" : "سنة") + " بعده")
           : "اختياري — نسبة من المحصَّل تُخصم ويظهر الصافي في تقرير المالك"}>
           <div className="flex gap-2 items-stretch flex-wrap">
             <div className="flex rounded-lg border border-line overflow-hidden shrink-0">
@@ -4358,7 +4367,7 @@ function PropertyModal({ open, initial, orgName, ownerNames = [], officeSoon = 1
               </div>
               {d.rent_seller === "owner" ? (
                 <div className="grid sm:grid-cols-2 gap-3 mt-3">
-                  <Field label="الرقم الضريبي للمالك" hint={d.owner_vat_number && !isValidVatNo(d.owner_vat_number) ? "غير صحيح — ١٥ رقمًا يبدأ وينتهي بـ3" : "بدونه تصدر «فاتورة» لا «فاتورة ضريبية»"}>
+                  <Field label="الرقم الضريبي للمالك" hint={d.owner_vat_number && !isValidVatNo(d.owner_vat_number) ? "غير صحيح — 15 رقمًا يبدأ وينتهي بـ3" : "بدونه تصدر «فاتورة» لا «فاتورة ضريبية»"}>
                     <input className="fld" dir="ltr" inputMode="numeric" maxLength={20} value={d.owner_vat_number || ""} placeholder="3xxxxxxxxxxxxx3"
                       onChange={(e) => setD({ ...d, owner_vat_number: e.target.value })} />
                   </Field>
@@ -4431,7 +4440,7 @@ function PropertyModal({ open, initial, orgName, ownerNames = [], officeSoon = 1
 }
 
 /**
- * الخطوة ٢ من ٣ بعد إضافة العقار (v78).
+ * الخطوة 2 من 3 بعد إضافة العقار (v78).
  *
  * ثلاثة طرق للوحدات بحسب حال المكتب: وحدة بمستأجرها الآن، أو ملف Excel
  * لمن عنده قائمة، أو «عمارة جديدة/فاضية» تُنشأ وحداتها مرقّمة دفعة واحدة.
@@ -4454,7 +4463,7 @@ function AfterPropModal({ propertyName, unitWord, demo, onAddUnit, onBulk, onClo
       <div className="text-center">
         <div className="text-3xl mb-1">✅</div>
         <h2 className="font-display font-bold text-deep text-xl">أُضيف «{propertyName}»</h2>
-        <p className="text-muted text-sm mt-1">الخطوة ٢ من ٣: أدخل {unitWord === "شقة" ? "شققه" : "وحداته"} — ثم سجّل أول دفعة.</p>
+        <p className="text-muted text-sm mt-1">الخطوة 2 من 3: أدخل {unitWord === "شقة" ? "شققه" : "وحداته"} — ثم سجّل أول دفعة.</p>
       </div>
       <div className="flex flex-col gap-2 mt-5">
         <button type="button" className="btn btn-gold w-full justify-center py-3" onClick={onAddUnit}>+ أضف أول {unitWord} بمستأجرها</button>
@@ -4875,7 +4884,7 @@ function TenantModal({ open, initial, unitWord, error, saving, onClose, onSubmit
           <Field label="رقم الهوية / السجل" hint="اختياري — أدخله فقط إن احتجته في الخطابات"><input className="fld" value={d.national_id || ""} onChange={(e) => setD({ ...d, national_id: e.target.value })} /></Field>
           {(vatEnabled || d.vat_number) && (
             <div className="grid sm:grid-cols-2 gap-3">
-              <Field label="الرقم الضريبي للمستأجر" hint={d.vat_number && !isValidVatNo(d.vat_number) ? "غير صحيح — ١٥ رقمًا يبدأ وينتهي بـ3" : "للمستأجر المسجَّل في الضريبة (شركة/مؤسسة) — تصدر له «فاتورة ضريبية» قياسية بدل المبسطة"}>
+              <Field label="الرقم الضريبي للمستأجر" hint={d.vat_number && !isValidVatNo(d.vat_number) ? "غير صحيح — 15 رقمًا يبدأ وينتهي بـ3" : "للمستأجر المسجَّل في الضريبة (شركة/مؤسسة) — تصدر له «فاتورة ضريبية» قياسية بدل المبسطة"}>
                 <input className="fld" dir="ltr" inputMode="numeric" maxLength={20} value={d.vat_number || ""} placeholder="3xxxxxxxxxxxxx3"
                   onChange={(e) => setD({ ...d, vat_number: e.target.value })} />
               </Field>
@@ -4891,7 +4900,7 @@ function TenantModal({ open, initial, unitWord, error, saving, onClose, onSubmit
               {MSG_LANGS.map((o) => (
                 <button key={o.v} type="button" role="radio" aria-checked={normLang(d.msg_lang) === o.v}
                   onClick={() => setD({ ...d, msg_lang: o.v })}
-                  className={`text-xs font-semibold rounded-lg px-3 py-2 min-h-[40px] border transition ${normLang(d.msg_lang) === o.v ? "bg-deep text-[#F6F1E4] border-deep" : "bg-white text-deep border-line hover:border-goldSoft"}`}>
+                  className={`text-xs font-semibold rounded-lg px-3 py-2 min-h-[44px] border transition ${normLang(d.msg_lang) === o.v ? "bg-deep text-[#F6F1E4] border-deep" : "bg-white text-deep border-line hover:border-goldSoft"}`}>
                   {o.label}</button>
               ))}
             </div>
@@ -5146,7 +5155,7 @@ function OwnerReportModal({ property, unitWord, issuer, onClose, db, canFee = tr
   async function confirmVoidFee() {
     if (!voidFor) return;
     const why = voidWhy.trim();
-    if (why.length < 3) { setErr("اكتب سبب الإلغاء (٣ أحرف على الأقل)."); return; }
+    if (why.length < 3) { setErr("اكتب سبب الإلغاء (3 أحرف على الأقل)."); return; }
     setFeeBusy(true); setErr(null);
     const { error } = await supabase.rpc("watheq_void_invoice", { p_invoice: voidFor.id, p_reason: why });
     if (error) setErr(friendlyError(error.message)); else { setVoidFor(null); setVoidWhy(""); await loadFeeList(); }
@@ -5582,7 +5591,7 @@ function DocModal({ doc, onClose }: { doc: { title: string; body: string }; onCl
  *
  * كانت التنبيهات أنواعًا: نصّ أصفر بلا زر، أو زرّ تصحيح بلا «أعي ذلك»، أو نافذة
  * confirm من المتصفح عند الحفظ يضغط المكتب «موافق» فيها دون قراءة. الآن كل تنبيه:
- *   ١) زرّ تصحيح بما يقترحه (إن وُجد)   ٢) «أعي ذلك» يُبقي ما أدخله
+ *   1) زرّ تصحيح بما يقترحه (إن وُجد)   2) «أعي ذلك» يُبقي ما أدخله
  * وبعد الرد يتحوّل إلى سطر أخضر يقول ما اختاره المكتب، ومعه «تراجع».
  * الحفظ لا يتمّ وتنبيه بلا رد — فلا يمرّ خطأ لأن أحدًا لم ينتبه له.
  *
@@ -5616,10 +5625,10 @@ function Advisory({ answer, sig, title, children, fixLabel, onFix, ackLabel = "�
       {children && <div className="mt-1">{children}</div>}
       <div className="flex flex-wrap gap-2 mt-2.5">
         {fixLabel && onFix && (
-          <button type="button" className="btn btn-gold text-xs min-h-[40px] sm:min-h-0" onClick={onFix}>{fixLabel}</button>
+          <button type="button" className="btn btn-gold text-xs min-h-[44px] sm:min-h-0" onClick={onFix}>{fixLabel}</button>
         )}
         {ackLabel && onAck && (
-          <button type="button" className="btn btn-ghost text-xs min-h-[40px] sm:min-h-0 bg-white" onClick={onAck}>{ackLabel}</button>
+          <button type="button" className="btn btn-ghost text-xs min-h-[44px] sm:min-h-0 bg-white" onClick={onAck}>{ackLabel}</button>
         )}
       </div>
     </div>
@@ -5864,6 +5873,10 @@ function RemindAllModal({ rows, unitWord, linkOf, onClose, demo = false, dueOf =
   const withPhone = rows.filter((r) => r.t.phone);
   const noPhone = rows.length - withPhone.length;
   const sentCount = Object.values(sent).filter(Boolean).length;
+  /* (24 نوفمبر 2026 — تقييم رحلة العميل) كان على المكتب أن يبحث في القائمة عن التالي بعد كل رجوع من واتساب.
+     الآن زرّ واحد كبير «أرسل للتالي» يفتح أول من لم يُرسل له — ضغطة لكل مستأجر، بلا تمرير ولا بحث. */
+  const next = withPhone.find((r) => !sent[r.t.id]) || null;
+  const openFor = (t: Tenant) => { openExternal(linkOf(t)); setSent((s) => ({ ...s, [t.id]: true })); };
 
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4" onClick={onClose}>
@@ -5873,6 +5886,13 @@ function RemindAllModal({ rows, unitWord, linkOf, onClose, demo = false, dueOf =
           واتساب لا يسمح بالإرسال الجماعي الآلي — لكن كل زر هنا يفتح محادثة برسالة جاهزة بتفاصيل ذلك المستأجر.
           أرسلها بضغطة، وارجع للتالي. أُرسل {sentCount} من {withPhone.length}.
         </p>
+        {withPhone.length > 0 && (next ? (
+          <button type="button" data-testid="remind-next" className="btn btn-wa w-full justify-center min-h-[52px] text-base mb-3" onClick={() => openFor(next.t)}>
+            💬 أرسل للتالي: {next.t.name || `${unitWord} ${next.t.unit || ""}`} <span className="text-xs opacity-90 tabular-nums">({sentCount + 1}/{withPhone.length})</span>
+          </button>
+        ) : (
+          <div className="rounded-xl border border-[#B7DFC7] bg-[#F2FAF5] text-paid font-bold text-sm text-center p-3 mb-3">✓ فُتحت رسائل الجميع ({withPhone.length})</div>
+        ))}
 
         <div className="flex flex-col gap-2">
           {withPhone.map(({ t, st }) => (
@@ -5884,7 +5904,7 @@ function RemindAllModal({ rows, unitWord, linkOf, onClose, demo = false, dueOf =
               {sent[t.id] && <span className="text-xs font-bold text-paid">✓ أُرسل</span>}
               <a href={linkOf(t)} target="_blank" rel="noreferrer" className="btn btn-wa text-xs"
                 /* openExternal كأزرار الصفوف — رابط عادي داخل تطبيق تليجرام يُفسد العربية بترميز مزدوج */
-                onClick={(e) => { e.preventDefault(); openExternal(linkOf(t)); setSent((s) => ({ ...s, [t.id]: true })); }}>فتح واتساب</a>
+                onClick={(e) => { e.preventDefault(); openFor(t); }}>{sent[t.id] ? "مرة أخرى" : "فتح واتساب"}</a>
             </div>
           ))}
           {!withPhone.length && <div className="text-center text-muted text-sm py-6">لا يوجد متأخرون لديهم أرقام جوال مسجّلة.</div>}

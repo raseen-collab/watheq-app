@@ -136,7 +136,10 @@ export default function DashboardShell({
           </div>
 
           <div className="flex items-center gap-2 text-sm">
-            {isOwner && <Link href="/settings" className="text-[#CFE0DB] hover:text-white text-sm">الإعدادات</Link>}
+            {/* (24 نوفمبر 2026 — تقييم P2-8) المساعدة كانت مخفية داخل زرّ الترس العائم — صارت ظاهرة في الشريط */}
+            <button type="button" onClick={() => window.dispatchEvent(new CustomEvent("watheq:help"))}
+              className="text-[#CFE0DB] hover:text-white text-sm min-h-[44px] px-1 whitespace-nowrap">❓ مساعدة</button>
+            {isOwner && <Link href="/settings" className="text-[#CFE0DB] hover:text-white text-sm min-h-[44px] inline-flex items-center px-1">الإعدادات</Link>}
             {/* (22 نوفمبر 2026) بلاغ مشكلة — الصفحة والجهاز يُرفقان تلقائيًّا */}
             <ReportProblem className="text-[#CFE0DB] hover:text-white text-sm whitespace-nowrap" />
             <span className="text-[#9FB8B3] hidden sm:inline max-w-[130px] truncate">{userName}</span>
@@ -163,7 +166,8 @@ export default function DashboardShell({
       {sub?.expired && (
         <div className="text-center text-sm py-2 px-4 bg-[#FBE9E7] text-[#8f2b26] border-b border-[#F5C6C2]">
           🔒 {sub.planPaid ? <>انتهى اشتراكك</> : <>انتهت تجربتك المجانية</>} — الحساب الآن <b>للقراءة والتصدير فقط</b>:
-          بياناتك كلها محفوظة وتستطيع عرضها وتصديرها، والإضافة والتعديل تعود فور التفعيل.{" "}
+          بياناتك كلها محفوظة وتستطيع عرضها وتصديرها، والإضافة والتعديل تعود فور التفعيل.
+          والمستندات تخرج الآن بعلامة «نسخة تجريبية — غير معتمدة» حتى التفعيل.{" "}
           <Link href="/subscribe" className="underline font-bold">اشترك الآن</Link>
         </div>
       )}
@@ -172,9 +176,11 @@ export default function DashboardShell({
         <div className={`text-center text-sm py-2 px-4 ${
           days <= 5 ? "bg-[#FBE9E7] text-[#8f2b26] border-b border-[#F5C6C2]"
                     : "bg-[#FBF1DF] text-[#8a5a11] border-b border-[#EBD9AA]"}`}>
-          🎁 تجربتك المجانية — متبقٍ <b>{days}</b> يومًا{marketer ? "" : " من أصل ٣٠"}. كل المزايا مفعّلة.
+          🎁 تجربتك المجانية — متبقٍ <b>{days}</b> يومًا{marketer ? "" : " من أصل 30"}. كل المزايا مفعّلة.
+          {/* (24 نوفمبر 2026 — تقييم رحلة العميل) ما يظهر على المستندات يُقال مسبقًا لا يُكتشف عند الطباعة */}
+          <span className="hidden sm:inline"> مستندات التجربة في آخرها سطر صغير «أُنشئ عبر وثيق».</span>
           {days > 5 && <> <Link href="/subscribe" className="underline font-bold">اختر باقتك</Link></>}
-          {days <= 5 && <> بعدها يصير الحساب للقراءة والتصدير فقط حتى تشترك — <Link href="/subscribe" className="underline font-bold">اختر باقتك</Link></>}
+          {days <= 5 && <> بعدها يصير الحساب للقراءة والتصدير فقط، وتخرج المستندات بعلامة «نسخة تجريبية»، حتى تشترك — <Link href="/subscribe" className="underline font-bold">اختر باقتك</Link></>}
         </div>
       )}
 

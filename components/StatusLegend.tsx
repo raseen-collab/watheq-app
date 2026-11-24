@@ -37,7 +37,7 @@ export default function StatusLegend({ soonDays, imminentDays, expiringDays = 60
   return (
     <>
       <button type="button" onClick={() => setOpen(true)} title="ماذا تعني الحالات؟"
-        className="text-xs border border-line rounded-full w-7 h-7 sm:w-5 sm:h-5 inline-grid place-items-center text-muted hover:text-deep hover:border-deep ms-1 align-middle">?</button>
+        className="text-xs border border-line rounded-full w-11 h-11 sm:w-5 sm:h-5 inline-grid place-items-center text-muted hover:text-deep hover:border-deep ms-1 align-middle">?</button>
       {open && (
         <div className="fixed inset-0 z-50 bg-black/40 grid place-items-center p-4" onClick={() => setOpen(false)}>
           <div className="bg-white rounded-2xl border border-line max-w-lg w-full p-5" onClick={(e) => e.stopPropagation()}>

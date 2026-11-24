@@ -2491,10 +2491,10 @@ function RenewalModal({ assoc, annualBudget, onClose, onEditBudget, onPrintBudge
           {assoc.name} — موازنة العام القادم ومحضر الاجتماع، ثم إدخال الأرقام في قرار الرسوم بالمنصة.
         </p>
 
-        {/* الخطوة ١ — الموازنة */}
+        {/* الخطوة 1 — الموازنة */}
         <div className="border border-line rounded-xl p-4 mb-3 bg-paper">
           <div className="flex items-center gap-2 mb-2">
-            <span className="w-6 h-6 rounded-full bg-deep text-goldSoft grid place-items-center text-xs font-bold shrink-0">١</span>
+            <span className="w-6 h-6 rounded-full bg-deep text-goldSoft grid place-items-center text-xs font-bold shrink-0">1</span>
             <b className="text-deep">موازنة عام {nextYear}</b>
             {annualBudget !== null
               ? <span className="text-xs font-semibold text-paid bg-[#E6F4EC] border border-[#B7DFC7] rounded-full px-2 py-0.5 mr-auto">محفوظة · {sar(annualBudget)} ريال</span>
@@ -2507,10 +2507,10 @@ function RenewalModal({ assoc, annualBudget, onClose, onEditBudget, onPrintBudge
           </div>
         </div>
 
-        {/* الخطوة ٢ — محضر الاجتماع السنوي */}
+        {/* الخطوة 2 — محضر الاجتماع السنوي */}
         <div className="border border-line rounded-xl p-4 mb-3 bg-paper">
           <div className="flex items-center gap-2 mb-2">
-            <span className="w-6 h-6 rounded-full bg-deep text-goldSoft grid place-items-center text-xs font-bold shrink-0">٢</span>
+            <span className="w-6 h-6 rounded-full bg-deep text-goldSoft grid place-items-center text-xs font-bold shrink-0">2</span>
             <b className="text-deep">محضر الاجتماع العمومي السنوي</b>
           </div>
           <p className="text-xs text-muted mb-3">املأ ما تعرفه، واترك الباقي فراغات تُملأ بخطّ اليد. يُدرج جدول توقيعات الملّاك المسجّلين تلقائيًّا.</p>
@@ -2579,10 +2579,10 @@ function RenewalModal({ assoc, annualBudget, onClose, onEditBudget, onPrintBudge
           </button>}
         </div>
 
-        {/* الخطوة ٣ — الرفع في منصة ملاك */}
+        {/* الخطوة 3 — الرفع في منصة ملاك */}
         <div className="border border-line rounded-xl p-4 bg-paper">
           <div className="flex items-center gap-2 mb-2">
-            <span className="w-6 h-6 rounded-full bg-deep text-goldSoft grid place-items-center text-xs font-bold shrink-0">٣</span>
+            <span className="w-6 h-6 rounded-full bg-deep text-goldSoft grid place-items-center text-xs font-bold shrink-0">3</span>
             <b className="text-deep">ماذا تفعل بعدها في منصة ملاك</b>
           </div>
           <ol className="text-xs text-[#33413d] leading-relaxed pr-4 list-decimal space-y-1">

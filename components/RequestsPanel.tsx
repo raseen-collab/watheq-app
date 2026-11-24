@@ -248,7 +248,7 @@ function RequestForm({ busy, onSave, onCancel, seed }: {
           <div className="grid grid-cols-3 gap-2">
             {(Object.keys(KIND_META) as ListingKind[]).map((k) => (
               <button key={k} type="button" onClick={() => setD({ ...d, kind: k, ...(KIND_META[k].land ? { rooms_min: 0 } : {}) })}
-                className={`border-2 rounded-lg min-h-[40px] text-[.72rem] font-semibold transition inline-flex items-center justify-center gap-1 ${
+                className={`border-2 rounded-lg min-h-[44px] text-[.72rem] font-semibold transition inline-flex items-center justify-center gap-1 ${
                   d.kind === k ? "border-gold bg-[#FBF1DF]" : "border-line bg-white hover:border-goldSoft"}`}>
                 <Icon name={KIND_ICON[k]} size={14} /> {KIND_META[k].label}
               </button>

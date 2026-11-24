@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import PropertyView from "@/components/PropertyView";
+import PortfolioView from "@/components/PortfolioView";
 import DemoGuide from "@/components/DemoGuide";
 import { buildDemo, demoPayments, setDemoPhone } from "@/lib/demo-data";
 import { sandboxClient, type SandboxStore } from "@/lib/sandbox-db";
@@ -42,6 +43,20 @@ export default function DemoClient() {
   const { store, properties } = useMemo(buildStore, []);
   const db = useMemo(() => sandboxClient(store), [store]);
   const [joinOpen, setJoinOpen] = useState(false);
+  /* (24 نوفمبر 2026 — تقييم P2-10) «نظرة عامة» كانت تفتح جدار التسجيل والصفحة تقول «كل شيء يعمل».
+     الآن تُعرض فعلًا من قاعدة المتصفح نفسها، واللوحة تبقى مركّبة خلفها فلا يضيع ما سجّله الزائر. */
+  const [view, setView] = useState<"property" | "overview">("property");
+  const [ovKey, setOvKey] = useState(0);
+  useEffect(() => {
+    const show = () => { setOvKey((k) => k + 1); setView("overview"); window.scrollTo({ top: 0 }); };
+    window.addEventListener("watheq:demo-overview", show);
+    return () => window.removeEventListener("watheq:demo-overview", show);
+  }, []);
+  /* الوحدات الحالية من القاعدة (تتغيّر مع كل دفعة يسجّلها الزائر) */
+  const overviewProps = useMemo(() => view !== "overview" ? [] :
+    store.properties.map((p: any) => ({ ...p, tenants: store.tenants.filter((t: any) => t.property_id === p.id) })),
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  [view, ovKey, store]);
   /* مصدر الزائر الأصلي (حراج، بحث…) يُمرَّر لصفحة التسجيل بدل «demo» الثابت:
      كان كل من سجّل عبر التجربة يُنسب إلى «النسخة التجريبية» فتختفي القناة
      التي جابته. فتح التجربة نفسه صار محطة مستقلة في القمع (demo_open). */
@@ -64,9 +79,11 @@ export default function DemoClient() {
             <span className="text-[11px] opacity-75 truncate">تجربة حيّة — بلا تسجيل</span>
           </div>
           <div className="flex gap-2 shrink-0">
-            <button onClick={() => setJoinOpen(true)} className="bg-gold text-white rounded-lg px-3 py-1.5 text-xs font-bold">ابدأ مجانًا</button>
+            <button onClick={() => setJoinOpen(true)} className="bg-goldInk text-white rounded-lg px-3 min-h-[44px] text-xs font-bold">ابدأ مجانًا</button>
             {/* (دراسة 29 أكتوبر 2026) كان هدف اللمس ~16px — أصغر عنصر في الصفحة */}
-            <Link href="/login" className="text-[#CFE0DB] hover:text-white text-xs self-center min-h-[40px] inline-flex items-center px-2 -mx-1 sm:min-h-0 sm:px-0 sm:mx-0">دخول</Link>
+            <button type="button" onClick={() => window.dispatchEvent(new CustomEvent("watheq:help"))}
+              className="text-[#CFE0DB] hover:text-white text-xs self-center min-h-[44px] px-2 -mx-1">مساعدة</button>
+            <Link href="/login" className="text-[#CFE0DB] hover:text-white text-xs self-center min-h-[44px] inline-flex items-center px-2 -mx-1 sm:min-h-0 sm:px-0 sm:mx-0">دخول</Link>
           </div>
         </div>
       </div>
@@ -74,11 +91,27 @@ export default function DemoClient() {
       <div className="max-w-6xl mx-auto px-3 py-4">
         <div className="bg-[#FBF1DF] border-2 border-dashed border-gold rounded-2xl px-4 py-3 mb-4 text-sm">
           <b className="text-deep">🎯 هذا مكتب تجريبي</b>
-          <span className="text-muted"> — ٥ عقارات و٨٠ وحدة بحالات حقيقية. كل شيء هنا يعمل فعلًا:
+          <span className="text-muted"> — 5 عقارات و80 وحدة بحالات حقيقية. كل شيء هنا يعمل فعلًا:
             سجّل دفعة، افتح كشف حساب، جرّب تقرير المالك. التغييرات في متصفحك فقط ولا تُحفظ،
             والمستأجرون بلا أرقام أو هويات حقيقية.</span>
         </div>
 
+        {view === "overview" && (
+          <div data-testid="demo-overview">
+            <div className="flex items-center justify-between gap-3 mb-3 flex-wrap">
+              <div>
+                <h1 className="font-display font-bold text-deep text-xl">نظرة عامة على المحفظة</h1>
+                <p className="text-xs text-muted">كل العقارات في صفحة واحدة — ما يحتاج إجراءً، وبحث في كل المستأجرين والسندات.</p>
+              </div>
+              <button type="button" className="btn btn-ghost text-sm min-h-[44px]" onClick={() => setView("property")}>← لوحة العقارات</button>
+            </div>
+            <PortfolioView key={ovKey} properties={overviewProps} db={db} demo
+              windows={{ soon: 10, imminent: 5, expiring: 60 }} compliance={[]} orgName="مكتب التجربة للأملاك"
+              issuer={{ billing_name: "مكتب التجربة للأملاك", trial: true }}
+              onOpen={(pid, q) => { setView("property"); window.dispatchEvent(new CustomEvent("watheq:open-prop", { detail: { pid, q } })); window.scrollTo({ top: 0 }); }} />
+          </div>
+        )}
+        <div className={view === "overview" ? "hidden" : ""}>
         <PropertyView
           initial={properties}
           orgName="مكتب التجربة للأملاك"
@@ -86,6 +119,7 @@ export default function DemoClient() {
           dueSoonDays={10} dueImminentDays={5} expiringDays={60}
           db={db} demo
         />
+        </div>
       </div>
 
       <DemoGuide onEvent={(e) => {

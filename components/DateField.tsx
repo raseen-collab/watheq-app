@@ -79,11 +79,11 @@ export default function DateField({ value, onChange, id, relative }: {
           والمكتب يبدّل للهجري من الجوال. 40px على الشاشات الصغيرة كرقائق التصفية. */}
       <div className="flex items-center gap-1 mb-1.5">
         <button type="button" onClick={() => pick("g")}
-          className={`text-[11px] min-h-[40px] px-3 sm:min-h-0 sm:px-2 sm:py-0.5 rounded-full border ${cal === "g" ? "bg-deep text-goldSoft border-deep" : "bg-white border-line text-muted"}`}>
+          className={`text-[11px] min-h-[44px] px-3 sm:min-h-0 sm:px-2 sm:py-0.5 rounded-full border ${cal === "g" ? "bg-deep text-goldSoft border-deep" : "bg-white border-line text-muted"}`}>
           ميلادي
         </button>
         <button type="button" onClick={() => pick("h")}
-          className={`text-[11px] min-h-[40px] px-3 sm:min-h-0 sm:px-2 sm:py-0.5 rounded-full border ${cal === "h" ? "bg-deep text-goldSoft border-deep" : "bg-white border-line text-muted"}`}>
+          className={`text-[11px] min-h-[44px] px-3 sm:min-h-0 sm:px-2 sm:py-0.5 rounded-full border ${cal === "h" ? "bg-deep text-goldSoft border-deep" : "bg-white border-line text-muted"}`}>
           هجري
         </button>
       </div>

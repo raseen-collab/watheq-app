@@ -42,7 +42,7 @@ export default function CommissionAgreementModal({ listing, orgName, issuer, onC
             <div className="grid grid-cols-3 gap-2">
               {([["owner", rent ? "المؤجّر" : "البائع"], ["buyer", rent ? "المستأجر" : "المشتري"], ["split", "مناصفة"]] as const).map(([v, l]) => (
                 <button key={v} type="button" onClick={() => setT({ ...t, payer: v })} aria-pressed={t.payer === v}
-                  className={`border-2 rounded-lg min-h-[40px] text-xs font-semibold transition ${t.payer === v ? "border-gold bg-[#FBF1DF]" : "border-line bg-white hover:border-goldSoft"}`}>{l}</button>
+                  className={`border-2 rounded-lg min-h-[44px] text-xs font-semibold transition ${t.payer === v ? "border-gold bg-[#FBF1DF]" : "border-line bg-white hover:border-goldSoft"}`}>{l}</button>
               ))}
             </div>
           </div>

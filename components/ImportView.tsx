@@ -7,6 +7,7 @@ import { FREQUENCIES } from "@/lib/contracts";
 import { typeIcon, unitLabel } from "@/lib/domain";
 import { sar, openExternal, today } from "@/lib/utils";
 import { hijriShort } from "@/lib/hijri";
+import { arDate } from "@/lib/documents";
 import { waLink, WATHEQ_WA } from "@/lib/utils";
 
 import {
@@ -19,6 +20,17 @@ import {
 import type { Frequency } from "@/lib/contracts";
 import { buildImportPayload, resolveCovered, importPayloadProblems } from "@/lib/importPayload";
 import { friendlyError, systemGap } from "@/lib/friendlyError";
+
+/** سطر مشكلة الحفظ بأسماء أعمدة القالب بدل أسماء القاعدة */
+const COL_AR: [RegExp, string][] = [
+  [/\bproperty_id\b/g, "العقار"], [/\bname\b/g, "اسم المستأجر"], [/\bstatus\b/g, "حالة الوحدة"],
+  [/\bcalendar\b/g, "التقويم"], [/\bvat_mode\b/g, "الضريبة"], [/\bcarried_debt\b/g, "دين مرحَّل"],
+  [/\brooms\b/g, "الغرف"], [/\bbaths\b/g, "دورات المياه"], [/\bacs\b/g, "المكيفات"], [/\bphone2\b/g, "جوال إضافي"],
+  [/\brent_amount\b/g, "قيمة الدفعة"], [/\bcontract_start\b/g, "بداية العقد"], [/\bcontract_end\b/g, "نهاية العقد"],
+  [/ = undefined \(يُحفظ NULL\)/g, " بلا قيمة"], [/مفاتيح مختلفة عن بقية الدفعة/g, "أعمدة مختلفة عن بقية الصفوف"],
+  [/ فارغ$/g, " فارغ — مطلوب"],
+];
+const issueAr = (x: string) => COL_AR.reduce((s, [re, ar]) => s.replace(re, ar), String(x));
 
 /* التحليل كله في lib/importParse (دوال نقية مختبَرة) — هنا الواجهة والحفظ فقط (30 سبتمبر 2026) */
 const blocked = (r: Row) => !!(r._error || r._exists);
@@ -46,6 +58,10 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
   const [propId, setPropId] = useState(properties[0]?.id || "");
   const [rows, setRows] = useState<Row[]>([]);
   const [busy, setBusy] = useState(false);
+  /* (24 نوفمبر 2026 — تقييم رحلة العميل) مشاكل الحفظ كانت في نافذة واحدة تقصّ عند 8 أسطر
+     بأسماء أعمدة القاعدة (calendar, vat_mode…). الآن لوحة في الصفحة: كل المشاكل بأسماء أعمدة
+     القالب، وزرّا «نسخ» و«أرسلها للدعم». */
+  const [saveIssues, setSaveIssues] = useState<string[] | null>(null);
   /* صفوف بدايتها بعد اليوم بلا دفعات: كانت تُلوَّن فقط وتُرفع — والنمط نفسه
      (موعد الدفعة القادمة في خانة البداية) تكرّر 33 مرة عند مكتب واحد. الآن
      لا يُحفظ الملف حتى يقرّر المكتب صراحةً أنها عقود جديدة لم تبدأ. */
@@ -268,8 +284,11 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
       });
       if (problems.length) {
         setBusy(false);
-        return (await wqAlert(`لم يُحفظ شيء — في الملف ما سترفضه قاعدة البيانات:\n\n${problems.slice(0, 8).join("\n")}${problems.length > 8 ? `\n… و${problems.length - 8} غيرها` : ""}\n\nأرسل الملف للدعم (واتساب) ونصلحه لك.`));
+        setSaveIssues(problems.map(issueAr));
+        setTimeout(() => document.getElementById("import-issues")?.scrollIntoView({ behavior: "smooth", block: "center" }), 50);
+        return;
       }
+      setSaveIssues(null);
     }
     for (const [pid, list] of groups) {
       /**
@@ -364,17 +383,17 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
           <p className="text-sm text-muted mb-4">حمّل القالب وعبّئه، واكتب اسم العقار في عمود «العقار» لكل وحدة. ثم أنشئ العقارات بالأسماء نفسها وارفع الملف مرة واحدة.</p>
           <div className="grid sm:grid-cols-3 gap-3 mb-5">
             <div className="border border-line rounded-xl p-3">
-              <div className="text-xs font-bold text-goldInk mb-1">١</div>
+              <div className="text-xs font-bold text-goldInk mb-1">1</div>
               <div className="text-sm font-semibold text-deep mb-2">حمّل القالب</div>
               <a href="/watheq-template.xlsx" download className="btn btn-gold text-xs justify-center w-full">⬇ قالب Excel</a>
             </div>
             <div className="border border-line rounded-xl p-3">
-              <div className="text-xs font-bold text-goldInk mb-1">٢</div>
+              <div className="text-xs font-bold text-goldInk mb-1">2</div>
               <div className="text-sm font-semibold text-deep mb-2">أنشئ عقاراتك</div>
               <a href="/dashboard/property" className="btn btn-ghost text-xs justify-center w-full">+ إضافة عقار</a>
             </div>
             <div className="border border-line rounded-xl p-3">
-              <div className="text-xs font-bold text-goldInk mb-1">٣</div>
+              <div className="text-xs font-bold text-goldInk mb-1">3</div>
               <div className="text-sm font-semibold text-deep mb-2">ارجع وارفع</div>
               <span className="text-[11px] text-muted">كل صف يذهب لعقاره تلقائيًّا — وملفك بأعمدته هو يُطابَق معك ويُقرأ داخل جهازك</span>
             </div>
@@ -389,15 +408,15 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
         <>
           {/* الخطوات */}
           <div className="grid md:grid-cols-3 gap-3 mb-6">
-            <StepCard n="١" title="حمّل القالب" desc="ملف جاهز بالأعمدة الصحيحة وأمثلة توضيحية.">
+            <StepCard n="1" title="حمّل القالب" desc="ملف جاهز بالأعمدة الصحيحة وأمثلة توضيحية.">
               <div className="flex flex-col gap-1.5 mt-2">
                 <a href="/watheq-template.xlsx" download className="btn btn-gold text-xs justify-center"
                   title="قوائم منسدلة لدورة السداد، وخانات لا تحذف صفر الجوال، وورقة شرح">⬇ قالب Excel — منسدلات جاهزة</a>
                 <button onClick={downloadTemplate} className="btn btn-ghost text-xs">⬇ قالب CSV مجرّد</button>
               </div>
             </StepCard>
-            <StepCard n="٢" title="املأ بياناتك — أو استعمل ملفك" desc="عندك ملف إكسل بأعمدتك؟ ارفعه كما هو — سطر العنوان وعمود «م» وصف الإجمالي تُتجاهل، والمدة تُحسب من «تاريخ نهاية العقد»، والهجري مقبول. وما يلتبس نسألك عنه." />
-            <StepCard n="٣" title="ارفعه هنا" desc="يُقرأ داخل متصفحك — لا يُحفظ شيء حتى تراجع المعاينة وتضغط «حفظ»." />
+            <StepCard n="2" title="املأ بياناتك — أو استعمل ملفك" desc="عندك ملف إكسل بأعمدتك؟ ارفعه كما هو — سطر العنوان وعمود «م» وصف الإجمالي تُتجاهل، والمدة تُحسب من «تاريخ نهاية العقد»، والهجري مقبول. وما يلتبس نسألك عنه." />
+            <StepCard n="3" title="ارفعه هنا" desc="يُقرأ داخل متصفحك — لا يُحفظ شيء حتى تراجع المعاينة وتضغط «حفظ»." />
           </div>
 
           <div className="bg-white border border-line rounded-2xl p-5 mb-5">
@@ -474,6 +493,21 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
                   {busy ? (progress ? `جارٍ الحفظ… ${progress}` : "جارٍ الحفظ…") : `حفظ ${validCount} وحدة`}
                 </button>
               </div>
+              {saveIssues && saveIssues.length > 0 && (
+                <div id="import-issues" role="alert" className="mx-4 mb-3 rounded-xl border border-[#F5C6C2] bg-[#FBE9E7] p-3 text-[12.5px] leading-relaxed text-[#8f2b26]">
+                  <b>لم يُحفظ شيء — {saveIssues.length} {saveIssues.length === 1 ? "مشكلة" : "مشاكل"} في الملف:</b>
+                  <ul className="list-disc ps-5 mt-1.5 max-h-56 overflow-auto space-y-0.5 text-ink">
+                    {saveIssues.map((x, k) => <li key={k}>{x}</li>)}
+                  </ul>
+                  <div className="flex flex-wrap gap-2 mt-2.5">
+                    <button type="button" className="btn btn-ghost text-xs" onClick={() => { try { void navigator.clipboard.writeText(saveIssues.join("\n")); } catch { /* */ } }}>نسخ القائمة</button>
+                    <a className="btn btn-wa text-xs" target="_blank" rel="noreferrer"
+                      href={`https://wa.me/966550165210?text=${encodeURIComponent("رفع ملف Excel في وثيق — المشاكل:\n" + saveIssues.slice(0, 40).join("\n"))}`}>أرسلها للدعم واتساب</a>
+                    <button type="button" className="btn btn-ghost text-xs" onClick={() => setSaveIssues(null)}>إخفاء</button>
+                  </div>
+                  <p className="text-[11px] mt-1.5 text-muted">صحّح الصفوف في ملفك وارفعه من جديد — أو أرسله لنا ونصلحه لك.</p>
+                </div>
+              )}
               {warnCount > 0 && (
                 <div className="mx-4 mb-3 rounded-xl border border-[#F2D49B] bg-[#FFF6E5] p-3 text-[12.5px] leading-relaxed">
                   <b className="text-deep">{warnCount} {warnCount === 1 ? "وحدة" : "وحدات"} بداية عقدها بعد اليوم ولا دفعات مسدَّدة</b> (الصفوف الصفراء).
@@ -518,7 +552,7 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
                         <td className="p-2">{r.unit || "—"}</td>
                         <td className="p-2">{r._cover ? <span className="text-muted text-xs">ضمن عقد {r._cover}</span> : r._vacant ? <span className="text-muted text-xs">شاغرة</span> : sar(r.rent_amount)}</td>
                         <td className="p-2">{FREQUENCIES.find((f) => f.value === r.payment_frequency)?.label}</td>
-                        <td className="p-2">{r.contract_start || "—"}{r.contract_start && <div className="text-[11px] text-muted">{hijriShort(r.contract_start)}</div>}
+                        <td className="p-2">{r.contract_start ? arDate(r.contract_start) : "—"}{r.contract_start && <div className="text-[11px] text-muted">{hijriShort(r.contract_start)}</div>}
                           {!r._error && r._due && <div className={`text-[11px] font-semibold ${dueChoice === "drop" ? "text-muted line-through" : "text-[#8a5a11]"}`}>⚠ {r._due}</div>}</td>
                         <td className="p-2">{r._error || r._exists
                           ? <span className="text-late font-semibold">{r._error || r._exists}</span>

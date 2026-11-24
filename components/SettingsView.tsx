@@ -90,7 +90,7 @@ export default function SettingsView({ profile }: { profile: any }) {
     /* رقم ضريبي غير صحيح كان يُطبع في فواتير «ضريبية» (وُجد رقمان كذلك في الإنتاج) */
     if (patch.vat_number && !isValidVatNo(patch.vat_number)) {
       setSaving(false);
-      setMsg({ t: "err", m: "الرقم الضريبي غير صحيح — ١٥ رقمًا يبدأ بـ3 وينتهي بـ3. صحّحه أو اتركه فارغًا." });
+      setMsg({ t: "err", m: "الرقم الضريبي غير صحيح — 15 رقمًا يبدأ بـ3 وينتهي بـ3. صحّحه أو اتركه فارغًا." });
       return;
     }
     const skipped: string[] = [];
@@ -208,18 +208,18 @@ export default function SettingsView({ profile }: { profile: any }) {
             <div className="font-semibold text-deep mb-3">اربط حسابك في خطوتين</div>
 
             <div className="flex gap-3 mb-4">
-              <span className="w-7 h-7 rounded-lg bg-gold text-white grid place-items-center font-bold text-sm shrink-0">١</span>
+              <span className="w-7 h-7 rounded-lg bg-gold text-white grid place-items-center font-bold text-sm shrink-0">1</span>
               <div className="flex-1">
                 <div className="text-sm font-semibold mb-2">افتح البوت واضغط Start</div>
                 <a href={`https://t.me/${BOT_USERNAME}`} target="_blank" rel="noreferrer"
-                   className="btn text-sm" style={{ background: "#229ED9", color: "#fff" }}>
+                   className="btn text-sm" style={{ background: "#176E9E", color: "#fff" }}>
                   فتح @{BOT_USERNAME}
                 </a>
               </div>
             </div>
 
             <div className="flex gap-3">
-              <span className="w-7 h-7 rounded-lg bg-gold text-white grid place-items-center font-bold text-sm shrink-0">٢</span>
+              <span className="w-7 h-7 rounded-lg bg-gold text-white grid place-items-center font-bold text-sm shrink-0">2</span>
               <div className="flex-1">
                 <div className="text-sm font-semibold mb-2">أرسل له هذا الأمر</div>
                 <div className="flex gap-2 items-center flex-wrap">
@@ -338,7 +338,7 @@ export default function SettingsView({ profile }: { profile: any }) {
         <div className="space-y-3">
           <label className="block">
             <span className="block text-sm font-semibold mb-1">اسم المنشأة أو المالك</span>
-            <input className="fld" value={p.billing_name || ""} placeholder="مكتب اليمامة لإدارة الأملاك"
+            <input className="fld" value={p.billing_name || ""} placeholder="مكتب اليمامة لإدارة الأملاك — أو اسمك"
               onChange={(e) => setP({ ...p, billing_name: e.target.value })} />
           </label>
           <div className="grid sm:grid-cols-2 gap-3">
@@ -351,7 +351,7 @@ export default function SettingsView({ profile }: { profile: any }) {
               <input className="fld" dir="ltr" inputMode="numeric" maxLength={20} value={p.vat_number || ""} placeholder="3xxxxxxxxxxxxx3"
                 onChange={(e) => setP({ ...p, vat_number: e.target.value })} />
               {p.vat_number && !isValidVatNo(p.vat_number) && (
-                <span className="block text-xs text-late mt-1">الرقم الضريبي ١٥ رقمًا يبدأ بـ3 وينتهي بـ3 — بهذا الرقم لا تصدر فواتير ضريبية.</span>
+                <span className="block text-xs text-late mt-1">الرقم الضريبي 15 رقمًا يبدأ بـ3 وينتهي بـ3 — بهذا الرقم لا تصدر فواتير ضريبية.</span>
               )}
             </label>
           </div>

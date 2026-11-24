@@ -67,7 +67,7 @@ function Modal({ onClose, children, wide }: { onClose: () => void; children: Rea
 
 const LEGAL_NOTE = "الاعتماد عبر الرابط يُسجَّل باسم المالك المكتوب ووقت الرد وعنوان الشبكة وبصمة المستند، فهو دليل موثَّق على الاطلاع والموافقة، لكنه ليس توقيعًا إلكترونيًّا معتمدًا (مثل التوقيع عبر «نفاذ»).";
 
-// ─── ١) رابط المالك ─────────────────────────────────────────────
+// ─── 1) رابط المالك ─────────────────────────────────────────────
 export type HoaOwnerLite = { id: string; name: string; unit?: string | null; phone?: string | null };
 
 export function MemberLinkButton({ owner, associationName, className, onChange }: {
@@ -183,7 +183,7 @@ export function MemberLinkButton({ owner, associationName, className, onChange }
   );
 }
 
-// ─── ٢) مستندات الجمعية ─────────────────────────────────────────
+// ─── 2) مستندات الجمعية ─────────────────────────────────────────
 type OwnerRow = {
   owner_id: string | null; name: string; unit: string | null; seen_at: string | null;
   decision: "approve" | "reject" | null; decided_at: string | null; typed_name: string | null;
