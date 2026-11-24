@@ -180,6 +180,26 @@ export async function tgSetWebhook(url: string, secret: string) {
   });
 }
 
+/**
+ * (23 نوفمبر) إرسال ملف — للنسخة الاحتياطية الأسبوعية خارج Supabase.
+ * حد تليجرام للبوت 50MB؛ مسار النسخة يرفض ما فوق 45MB قبل الوصول هنا.
+ */
+export async function tgSendDocument(chatId: string | number, file: Buffer, filename: string, caption?: string) {
+  if (!BOT_TOKEN()) return { ok: false, error: "TELEGRAM_BOT_TOKEN غير مضبوط" };
+  try {
+    const fd = new FormData();
+    fd.append("chat_id", String(chatId));
+    if (caption) { fd.append("caption", caption.slice(0, 1000)); fd.append("parse_mode", "HTML"); }
+    fd.append("document", new Blob([new Uint8Array(file)], { type: "application/octet-stream" }), filename);
+    const res = await fetch(api("sendDocument"), { method: "POST", cache: "no-store", body: fd });
+    const data = await res.json();
+    if (data?.ok) return { ok: true };
+    return reportFail("sendDocument", data?.description || "فشل الطلب");
+  } catch (e: any) {
+    return reportFail("sendDocument", String(e?.message || e));
+  }
+}
+
 /** ===== توافق مع الكود القديم ===== */
 export async function sendTelegram(chatId: string, text: string) {
   return tgSend(chatId, text);

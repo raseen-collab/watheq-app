@@ -121,3 +121,21 @@ export async function buildBackup(db: SupabaseClient, url: string, serviceKey: s
   });
   return { json, counts, unordered, failed };
 }
+
+/** (23 نوفمبر) الجمعة بتوقيت الرياض — يوم إرسال نسخة إلى تليجرام خارج Supabase */
+export const isOffsiteDay = (dayISO: string) => new Date(`${dayISO}T12:00:00+03:00`).getUTCDay() === 5;
+
+/**
+ * (23 نوفمبر) تحقّق القراءة: النص المفكوك من الملف المرفوع فعلًا يطابق ما جُمع.
+ * يُرجع null إن طابق، أو وصف أول اختلاف.
+ */
+export function verifyRoundTrip(plainJson: string, counts: Record<string, number>): string | null {
+  let m: any;
+  try { m = JSON.parse(plainJson); } catch { return "JSON غير صالح"; }
+  if (m?.format !== "watheq-backup") return "صيغة غير معروفة";
+  for (const [t, n] of Object.entries(counts)) {
+    const got = Array.isArray(m.tables?.[t]) ? m.tables[t].length : -1;
+    if (got !== n) return `${t}: ${got} صف بدل ${n}`;
+  }
+  return null;
+}
