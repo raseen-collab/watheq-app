@@ -28,6 +28,9 @@ npx esbuild lib/documents.ts  --bundle --format=cjs --platform=node --outfile=/t
 npx esbuild lib/documents.ts --bundle --format=cjs --platform=node --alias:@=. --outfile=/tmp/b/documents.js
 npx esbuild lib/documents.ts --bundle --format=cjs --platform=node --alias:@=. --outfile=/tmp/docs.js
 npx esbuild lib/domain.ts --bundle --format=cjs --platform=node --alias:@=. --outfile=/tmp/b/domain.js
+npx esbuild lib/export-extras.ts --bundle --format=cjs --platform=node --alias:@=. --outfile=/tmp/b/exportExtras.js
+npx esbuild lib/friendlyError.ts --bundle --format=cjs --platform=node --external:@sentry/nextjs --outfile=/tmp/b/friendlyError.js
+npx esbuild lib/confirm.ts --bundle --format=cjs --platform=node --alias:@=. --outfile=/tmp/b/confirm.js
 npx esbuild lib/einvoice.ts --bundle --format=cjs --platform=node --alias:@=. --outfile=/tmp/b/einvoice.js
 npx esbuild lib/fee-invoice.ts --bundle --format=cjs --platform=node --alias:@=. --outfile=/tmp/b/fee-invoice.js
 npx esbuild lib/help-ai.ts lib/help-kb.ts --bundle --format=cjs --platform=node --alias:@=. --outdir=/tmp/b/helpai
