@@ -228,6 +228,7 @@ export function endNoticeTextEn(i: EndNoticeInput): string {
 export type MeterNoticeInput = {
   tenantName: string;
   unitText: string;
+  unitTextEn?: string;
   propertyName: string;
   account: string;
   /** المهلة بالأيام — 0 = بلا مهلة */
@@ -258,6 +259,7 @@ export function meterNoticeText(i: MeterNoticeInput): string {
 export type AcDripNoticeInput = {
   tenantName: string;
   unitText: string;
+  unitTextEn?: string;
   propertyName: string;
   /** مهلة بالأيام — 0 أو فارغ = «في أقرب وقت» */
   days?: number;
@@ -324,3 +326,148 @@ export function ownerAlertText(i: OwnerAlertInput): string {
   L.push(i.signer);
   return L.join("\n");
 }
+
+/* ============================================================
+ * (24 نوفمبر 2026 — طلب مكتب الأولى) لغة المراسلة: كل رسالة للمستأجر بالعربي والإنجليزي.
+ * الأرقام تُحسب في الواجهة (حالة العقد) وتُمرَّر كما هي — النصّان مرآة سطرًا بسطر.
+ * ============================================================ */
+
+/** تذكير الدفع — كان يُبنى داخل لوحة العقار؛ نُقل هنا ليشترك فيه العربي والإنجليزي ولوحة المحفظة */
+export type ReminderInput = {
+  tenantName: string;
+  unitText: string; unitTextEn?: string;
+  propertyName: string;
+  hijri?: boolean;
+  /** 0 = لا متأخر: تذكير بالدفعة القادمة */
+  unpaid: number;
+  nextDueDate: string | null;
+  daysToNextDue: number | null;
+  upcomingDate?: string | null;
+  instalment: number; instalmentVat: number;
+  partial?: number;
+  owed: number; owedVat?: boolean;
+  carried: number;
+  endDate?: string | null; daysToEnd?: number | null; expiringSoon?: boolean;
+  signer: string;
+};
+
+const arDays = (n: number) => n === 1 ? "يوم واحد" : n === 2 ? "يومين" : n <= 10 ? `${n} أيام` : `${n} يومًا`;
+const hj = (iso: string | null | undefined, on?: boolean) => (on && iso ? ` (${hijriText(iso)})` : "");
+
+export function reminderText(i: ReminderInput): string {
+  const unit = i.unitText;
+  const L: string[] = [`السلام عليكم ورحمة الله، ${i.tenantName}`, ""];
+  if (i.unpaid === 0) {
+    if (!i.nextDueDate) L.push(`نودّ التواصل معكم بخصوص عقد ${unit} بعقار ${i.propertyName}.`);
+    else L.push(`تذكير ودّي بأن الدفعة القادمة عن ${unit} بعقار ${i.propertyName} تستحق بتاريخ ${arDate(i.nextDueDate)}${hj(i.nextDueDate, i.hijri)}${
+      i.daysToNextDue !== null && i.daysToNextDue > 0 ? ` — بعد ${arDays(i.daysToNextDue)}` : i.daysToNextDue === 0 ? " — اليوم" : ""}.`);
+    if (i.instalment) L.push(`• قيمة الدفعة: ${sar(i.instalment)} ريال${i.instalmentVat > 0 ? ` (منها ${sar(i.instalmentVat)} ريال ضريبة قيمة مضافة)` : ""}`);
+    if (i.carried > 0) L.push(`• ويتبقّى عليكم دين مرحَّل من مدة سابقة: ${sar(i.carried)} ريال`);
+  } else {
+    L.push(`نودّ تذكيركم بوجود مستحقّات غير مسدَّدة عن ${unit} بعقار ${i.propertyName}، وبيانها:`);
+    L.push(`• عدد الدفعات المتأخرة: ${i.unpaid}`);
+    if (i.instalment) L.push(`• قيمة الدفعة: ${sar(i.instalment)} ريال`);
+    if ((i.partial || 0) > 0) L.push(`• المسدَّد جزئيًّا: ${sar(i.partial!)} ريال`);
+    L.push(`• المبلغ المتبقّي${i.owedVat ? " (شامل الضريبة)" : ""}: ${sar(i.owed)} ريال`);
+    if (i.carried > 0) {
+      L.push(`• دين مرحَّل من مدة سابقة: ${sar(i.carried)} ريال`);
+      L.push(`• الإجمالي المطلوب: ${sar(round2(i.owed + i.carried))} ريال`);
+    }
+    if (i.nextDueDate) L.push(`• مستحقّة منذ: ${arDate(i.nextDueDate)}${hj(i.nextDueDate, i.hijri)}`);
+    if (i.upcomingDate) L.push(`• والدفعة القادمة تستحق بتاريخ: ${arDate(i.upcomingDate)}${hj(i.upcomingDate, i.hijri)}`);
+  }
+  if (i.endDate && i.daysToEnd !== null && i.daysToEnd !== undefined && (i.daysToEnd < 0 || i.expiringSoon)) {
+    L.push(`• علمًا بأن العقد ${i.daysToEnd < 0 ? "انتهى" : "ينتهي"} بتاريخ ${arDate(i.endDate)}${hj(i.endDate, i.hijri)}`);
+  }
+  L.push("", "ويكون السداد بالوسيلة المتفق عليها في العقد.", "",
+    "فإن كان السداد قد تم فنعتذر عن التذكير، ونرجو تزويدنا بما يفيد لتحديث السجل.", "",
+    "شاكرين لكم حسن تعاونكم،", i.signer);
+  return L.join("\n");
+}
+
+export function reminderTextEn(i: ReminderInput): string {
+  const where = `${i.unitTextEn || i.unitText}, ${i.propertyName}`;
+  const L: string[] = [`Dear ${i.tenantName || "tenant"},`, ""];
+  if (i.unpaid === 0) {
+    if (!i.nextDueDate) L.push(`We would like to contact you regarding the lease for ${where}.`);
+    else L.push(`A friendly reminder that your next rent instalment for ${where} is due on ${enDate(i.nextDueDate)}${
+      i.daysToNextDue !== null && i.daysToNextDue > 0 ? ` — in ${daysEn(i.daysToNextDue)}` : i.daysToNextDue === 0 ? " — today" : ""}.`);
+    if (i.instalment) L.push(`• Instalment amount: SAR ${sar(i.instalment)}${i.instalmentVat > 0 ? ` (incl. SAR ${sar(i.instalmentVat)} VAT)` : ""}`);
+    if (i.carried > 0) L.push(`• Balance carried from a previous term: SAR ${sar(i.carried)}`);
+  } else {
+    L.push(`This is a reminder that the following amounts for ${where} remain unpaid:`);
+    L.push(`• Overdue instalments: ${i.unpaid}`);
+    if (i.instalment) L.push(`• Instalment amount: SAR ${sar(i.instalment)}`);
+    if ((i.partial || 0) > 0) L.push(`• Paid partially: SAR ${sar(i.partial!)}`);
+    L.push(`• Remaining amount${i.owedVat ? " (incl. VAT)" : ""}: SAR ${sar(i.owed)}`);
+    if (i.carried > 0) {
+      L.push(`• Balance carried from a previous term: SAR ${sar(i.carried)}`);
+      L.push(`• Total due: SAR ${sar(round2(i.owed + i.carried))}`);
+    }
+    if (i.nextDueDate) L.push(`• Overdue since: ${enDate(i.nextDueDate)}`);
+    if (i.upcomingDate) L.push(`• Next instalment due on: ${enDate(i.upcomingDate)}`);
+  }
+  if (i.endDate && i.daysToEnd !== null && i.daysToEnd !== undefined && (i.daysToEnd < 0 || i.expiringSoon)) {
+    L.push(`• Please note the lease ${i.daysToEnd < 0 ? "ended" : "ends"} on ${enDate(i.endDate)}`);
+  }
+  L.push("", "Payment is to be made by the method agreed in the lease.", "",
+    "If you have already paid, please accept our apologies and send us proof of payment so we can update our records.", "",
+    "Thank you for your cooperation,", i.signer);
+  return L.join("\n");
+}
+
+export function meterNoticeTextEn(i: MeterNoticeInput): string {
+  const days = Math.max(0, Math.round(Number(i.days ?? 7)) || 0);
+  return [
+    `Dear ${i.tenantName || "tenant"},`, "",
+    `Please note that ${i.unitTextEn || i.unitText}, ${i.propertyName}, is linked to an electricity meter with account number:`,
+    i.account, "",
+    `We kindly ask you to register this meter in your name, as the tenant, with the Saudi Electricity Company${days ? ` within ${daysEn(days)} from today` : ""}, so that consumption bills are issued in your name for the duration of the lease.`,
+    "", "Please send us confirmation once the registration is complete.",
+    "", "Thank you for your cooperation,", i.signer,
+  ].join("\n");
+}
+
+export function acDripNoticeTextEn(i: AcDripNoticeInput): string {
+  const d = Math.max(0, Math.floor(Number(i.days) || 0));
+  return [
+    `Dear ${i.tenantName || "tenant"},`, "",
+    `We would like to inform you that drain water is overflowing from some air-conditioning units in ${i.unitTextEn || i.unitText}, ${i.propertyName}, usually because the drain lines are blocked and the units have not been serviced.`,
+    "Air conditioners need regular servicing and cleaning to work efficiently, which also lowers the electricity bill.", "",
+    `To avoid damage to the neighbours and the building, we kindly ask you to have the units cleaned${d > 0 ? ` within ${daysEn(d)}` : " as soon as possible"}, or to authorise us to arrange it at your expense.`,
+    "", "Thank you for your cooperation,", i.signer,
+  ].join("\n");
+}
+
+/** إرسال سند القبض واتساب */
+export type ReceiptMsgInput = { tenantName: string; amount: number; paidOn: string; receiptNo?: string | null; url: string; signer: string };
+export const receiptMsg = (i: ReceiptMsgInput) => [`السلام عليكم ${i.tenantName}،`,
+  `استلمنا ${sar(Number(i.amount))} ريال بتاريخ ${arDate(i.paidOn)}${i.receiptNo ? ` — سند قبض رقم ${i.receiptNo}` : ""}.`,
+  `سند القبض: ${i.url}`, "", `شاكرين لكم، ${i.signer}`].join("\n");
+export const receiptMsgEn = (i: ReceiptMsgInput) => [`Dear ${i.tenantName || "tenant"},`,
+  `We have received SAR ${sar(Number(i.amount))} on ${enDate(i.paidOn)}${i.receiptNo ? ` — receipt no. ${i.receiptNo}` : ""}.`,
+  `Payment receipt: ${i.url}`, "", `Thank you, ${i.signer}`].join("\n");
+
+/** رابط صفحة المستأجر الخاصة */
+export type PortalMsgInput = { tenantName: string; unitText: string; unitTextEn?: string; propertyName: string; url: string; signer?: string };
+export const portalLinkMsg = (i: PortalMsgInput) => [`السلام عليكم ${i.tenantName}،`, "",
+  `هذه صفحتك الخاصة لعقد ${i.unitText} في ${i.propertyName}: الدفعة القادمة وسجل دفعاتك، ومنها تبلّغنا عن حوالتك أو عن أي عطل.`,
+  i.url, "", "الرابط خاص بك — لا تشاركه.", ...(i.signer ? [i.signer] : [])].join("\n");
+export const portalLinkMsgEn = (i: PortalMsgInput) => [`Dear ${i.tenantName || "tenant"},`, "",
+  `This is your private page for the lease of ${i.unitTextEn || i.unitText}, ${i.propertyName}: your next instalment and payment history. You can also use it to tell us about a transfer you made or report a maintenance issue.`,
+  i.url, "", "This link is personal — please do not share it.", ...(i.signer ? [i.signer] : [])].join("\n");
+
+/** دين على مستأجر سابق أو مرحَّل */
+export type PastDebtMsgInput = { name: string; propertyName: string; unit?: string | null; amount: number; signer?: string | null };
+export const pastDebtMsg = (i: PastDebtMsgInput) =>
+  `السلام عليكم ورحمة الله، ${i.name}\n\n`
+  + `بخصوص مبلغ متبقٍّ بذمتكم عن ${i.propertyName}${i.unit ? ` — وحدة ${i.unit}` : ""} بمقدار ${sar(i.amount)} ريال.\n`
+  + `نرجو التكرم بسداده أو تحديد موعد يناسبكم.\n\n`
+  + `وإن كان السداد قد تم فنعتذر عن التذكير، ونرجو تزويدنا بما يفيد لتحديث السجل.\n\n`
+  + `شاكرين لكم حسن تعاونكم،\n${i.signer || ""}`;
+export const pastDebtMsgEn = (i: PastDebtMsgInput) =>
+  `Dear ${i.name || "tenant"},\n\n`
+  + `This is regarding an outstanding balance of SAR ${sar(i.amount)} for ${i.propertyName}${i.unit ? ` — unit ${i.unit}` : ""}.\n`
+  + `We kindly ask you to settle it or let us know a date that suits you.\n\n`
+  + `If you have already paid, please accept our apologies and send us proof of payment so we can update our records.\n\n`
+  + `Thank you for your cooperation,\n${i.signer || ""}`;

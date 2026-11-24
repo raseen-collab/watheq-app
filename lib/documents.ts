@@ -434,7 +434,7 @@ document.documentElement.setAttribute("lang",en?"en":"ar");document.documentElem
 document.title=l.getAttribute(en?"data-en-title":"data-ar-title")||document.title;l.textContent=en?"العربية":"English";
 p.textContent=en?"🖨️ Print / Save PDF":"🖨️ طباعة / حفظ PDF";if(c)c.textContent=en?"Close":"إغلاق";}
 l.addEventListener("click",function(){var e=document.getElementById("wq-en");show(!!(e&&e.hidden));});
-document.addEventListener("DOMContentLoaded",function(){if(/^#en$/i.test(location.hash))show(true);});})();</script>
+document.addEventListener("DOMContentLoaded",function(){if(/^#en$/i.test(location.hash)||document.documentElement.getAttribute("data-start")==="en")show(true);});})();</script>
 ${mark === "wm" ? `<div class="wm"><span>نسخة تجريبية — غير معتمدة${en ? " · Trial copy — not valid" : ""}</span></div>` : ""}
 ${en ? `<div id="wq-ar">${inner}</div><div id="wq-en" lang="en" dir="ltr" hidden>${en.inner}</div>` : inner}
 ${mark === "brand" ? `<div class="madeby">أُنشئ عبر <b>وثيق</b> · watheqapp.com</div>` : ""}
@@ -4176,4 +4176,13 @@ ${rows.length ? Object.entries(byProp).map(([name, items]) => `
   صادر آليًّا بتاريخ ${arDate(today())} — قد تتغيّر الحالة بعد الطباعة إن سُجّلت دفعات.
 </div>`;
   return SHELL(`كشف المستحقات — ${period.label}`, inner + footer(issuer), markOf(issuer));
+}
+
+
+/**
+ * (24 نوفمبر 2026 — v105) مستند يُفتح بالإنجليزية لمستأجر لغته English.
+ * المستند فيه النسختان وزرّ التبديل — هذا يختار البداية فقط. لا أثر على مستند بلا نسخة إنجليزية.
+ */
+export function startInEnglish(html: string): string {
+  return html.includes('id="wq-en"') ? html.replace(/<html lang="ar" dir="rtl">/, '<html lang="ar" dir="rtl" data-start="en">') : html;
 }

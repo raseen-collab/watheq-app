@@ -29,6 +29,8 @@ export function tenantInsertRow(r: Row, pid: string, o: ImportOpts): TenantInser
   const row: TenantInsert = {
     property_id: pid,
     name: r.name, unit: r.unit || null, phone: r.phone || null, phone2, national_id: r.national_id || null,
+    /* (v105) عمود «اللغة» اختياري — فارغ = عربي */
+    msg_lang: r.msg_lang === "en" || r.msg_lang === "both" ? r.msg_lang : "ar",
     rent_amount: r.rent_amount, contract_start: r.contract_start || null,
     payment_frequency: r.payment_frequency, contract_periods: r.contract_periods ?? null,
     /* بتقويم العقد لا ميلاديًّا دائمًا: عقد هجري كان يُحفظ بنهاية متأخرة 11 يومًا */

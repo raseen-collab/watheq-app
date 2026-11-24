@@ -4,18 +4,19 @@
 // فُصل عن ImportView (30 سبتمبر 2026) ليُختبر مباشرة، ولتقرأه ورقة «قالب الرفع»
 // في التصدير من المصدر نفسه — فلا يعود ترتيب الأعمدة يختلف بين الطرفين.
 // ============================================================
+import { parseLangCell } from "@/lib/msg-lang";
 import { firstDueGap, contractState, defaultTermPeriods, periodsPerYear, customMonths, normalizeFreq, type Frequency } from "./contracts";
 import { parseHijriInput } from "./hijri";
 
 // العمود التاسع «الدفعات المسدّدة» اختياري: بدونه يُعدّ العقد لم يُسدَّد منه شيء —
 // وهذا كارثة لمكتب ينقل عقودًا قائمة (عقد من يناير يُرفع في سبتمبر = 8 «متأخرات» وهمية).
 // القوالب القديمة بثمانية أعمدة تبقى تعمل: الغائب = 0.
-export const HEADERS = ["اسم المستأجر", "رقم الوحدة", "قيمة الدفعة", "دورة السداد", "بداية العقد", "عدد الدفعات", "الجوال", "رقم الهوية", "الدفعات المسدّدة", "العقار", "حساب الكهرباء", "حساب الماء", "رقم العقد", "نوع الوحدة", "الغرف", "دورات المياه", "المكيفات", "أول استحقاق", "الضريبة", "التقويم", "مدة العقد (أشهر)", "دين مرحَّل", "جوال إضافي"];
+export const HEADERS = ["اسم المستأجر", "رقم الوحدة", "قيمة الدفعة", "دورة السداد", "بداية العقد", "عدد الدفعات", "الجوال", "رقم الهوية", "الدفعات المسدّدة", "العقار", "حساب الكهرباء", "حساب الماء", "رقم العقد", "نوع الوحدة", "الغرف", "دورات المياه", "المكيفات", "أول استحقاق", "الضريبة", "التقويم", "مدة العقد (أشهر)", "دين مرحَّل", "جوال إضافي", "اللغة"];
 // عمود عاشر اختياري «العقار»: ملف واحد لكل المحفظة بدل ملف لكل عقار — مكتب بـ40
 // عقارًا لا يرفع 40 مرة. الاسم يجب أن يطابق عقارًا موجودًا؛ الصف الفارغ يذهب للعقار المختار.
 
 /** مفاتيح الحقول بترتيب HEADERS نفسه — الترتيب هو القراءة الموضعية للقوالب القديمة */
-export const FIELDS = ["name", "unit", "rent", "freq", "start", "periods", "phone", "nid", "paid", "prop", "elec", "water", "contract_no", "unit_type", "rooms", "baths", "acs", "first_due", "vat", "calendar", "months", "carried", "phone2"] as const;
+export const FIELDS = ["name", "unit", "rent", "freq", "start", "periods", "phone", "nid", "paid", "prop", "elec", "water", "contract_no", "unit_type", "rooms", "baths", "acs", "first_due", "vat", "calendar", "months", "carried", "phone2", "lang"] as const;
 export type Field = typeof FIELDS[number];
 
 /** عمود الملاحظة في القالب — يحمل علامة «مثال» ولا يُستورد */
@@ -27,6 +28,8 @@ export type Row = {
   name: string; unit: string; rent_amount: number; phone: string; national_id: string;
   /** (v85) جوال إضافي اختياري */
   phone2?: string;
+  /** (v105) لغة الرسائل: ar · en · both */
+  msg_lang?: string;
   contract_start: string; payment_frequency: Frequency; contract_periods: number | null;
   paid_periods: number;
   elec_account?: string; water_account?: string; contract_no?: string; calendar?: string;
@@ -275,6 +278,7 @@ const SYNONYMS: Record<Field, string[]> = {
   months: ["مدة العقد (أشهر)", "مدة العقد بالأشهر", "مدة العقد", "المدة بالأشهر", "عدد الأشهر", "عدد الشهور", "مدة الإيجار", "مدة العقد بالشهور"],
   carried: ["دين مرحَّل", "الدين المرحل", "رصيد سابق", "متأخرات سابقة"],
   /* (v85) الرقم الثاني للمستأجر */
+  lang: ["اللغة", "لغة الرسائل", "لغة المراسلة", "لغة المستأجر", "language", "lang"],
   phone2: ["جوال إضافي", "جوال اضافي", "الجوال الإضافي", "جوال 2", "جوال ٢", "الجوال الثاني", "جوال ثاني", "رقم إضافي", "رقم اضافي", "رقم آخر", "جوال آخر", "هاتف إضافي", "phone2", "phone 2", "mobile2", "second phone"],
 };
 export const HEADER_LOOKUP: Record<string, Field> = (() => {
@@ -713,6 +717,7 @@ export function parseGrid(grid: string[][], properties: Prop[], todayIso: string
 
     rows.push({
       name, unit, rent_amount: rentPay, phone, phone2: phone2 || undefined, national_id: toEnDigits(nid),
+      msg_lang: parseLangCell(g("lang")) || undefined,
       contract_start: cs, payment_frequency: frequency, contract_periods: pr, paid_periods: pd,
       elec_account: toEnDigits(elecAcc) || undefined, water_account: toEnDigits(waterAcc) || undefined,
       contract_no: contractNo || undefined, calendar,
@@ -859,6 +864,7 @@ export function tenantTemplateCells(t: any, propName: string): Partial<Record<Fi
     calendar: t.calendar === "hijri" ? "هجري" : "ميلادي",
     months: "",
     carried: Number(t.carried_debt) || 0,
+    lang: t.msg_lang === "en" ? "English" : t.msg_lang === "both" ? "عربي + English" : "عربي",
   };
 }
 
