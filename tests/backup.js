@@ -3,7 +3,7 @@
           npx esbuild lib/backup.ts --bundle --format=cjs --platform=node --alias:@=. --external:@supabase/supabase-js --outfile=/tmp/b/backup.js
           node tests/backup.js */
 const { encryptBackup, decryptBackup, parseKey } = require("/tmp/b/backupCrypto.js");
-const { tablesFromOpenApi, expiredDaily, riyadhToday } = require("/tmp/b/backup.js");
+const { tablesFromOpenApi, expiredDaily, riyadhToday, isOffsiteDay, verifyRoundTrip } = require("/tmp/b/backup.js");
 const crypto = require("crypto");
 let ok = 0, bad = 0;
 const t = (n, c) => { if (c) ok++; else { bad++; console.log("✗", n); } };
@@ -59,5 +59,18 @@ t("riyadh day after 21:00 UTC", riyadhToday(new Date("2026-11-21T22:30:00Z")) ==
 t("riyadh day before 21:00 UTC", riyadhToday(new Date("2026-11-21T20:30:00Z")) === "2026-11-21");
 t("monthly trigger day", riyadhToday(new Date("2026-11-30T21:05:00Z")).endsWith("-01"));
 
+
+/* (23 نوفمبر) الجمعة + تحقق القراءة */
+t("2026-11-27 is Friday → offsite", isOffsiteDay("2026-11-27") === true);
+t("2026-11-23 Monday → no offsite", isOffsiteDay("2026-11-23") === false);
+t("2026-11-28 Saturday → no offsite", isOffsiteDay("2026-11-28") === false);
+t("2027-01-01 Friday → offsite", isOffsiteDay("2027-01-01") === true);
+const good = JSON.stringify({ format: "watheq-backup", tables: { tenants: [{}, {}], "auth.users": [{}] } });
+t("roundtrip match", verifyRoundTrip(good, { tenants: 2, "auth.users": 1 }) === null);
+t("roundtrip count mismatch", /tenants/.test(verifyRoundTrip(good, { tenants: 3 }) || ""));
+t("roundtrip missing table", /payments/.test(verifyRoundTrip(good, { payments: 0 }) || ""));
+t("roundtrip bad json", verifyRoundTrip("{oops", {}) !== null);
+t("roundtrip wrong format", verifyRoundTrip(JSON.stringify({ format: "x", tables: {} }), {}) !== null);
+t("roundtrip through real encryption", verifyRoundTrip(decryptBackup(encryptBackup(good, key), key), { tenants: 2, "auth.users": 1 }) === null);
 console.log(`${ok} ✓ · ${bad} ✗`);
 process.exit(bad ? 1 : 0);
