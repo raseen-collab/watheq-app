@@ -15,6 +15,10 @@
     {
       "path": "/api/cron/support-weekly",
       "schedule": "0 6 * * 0"
+    },
+    {
+      "path": "/api/cron/office-copy",
+      "schedule": "20 4 * * *"
     }
   ]
 }
