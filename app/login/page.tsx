@@ -274,7 +274,7 @@ function LoginInner() {
           {mode !== "forgot" && (
             <div>
               <label className="block text-sm font-semibold mb-1">كلمة المرور</label>
-              <input className="fld" type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="٦ أحرف على الأقل" required minLength={6} />
+              <input className="fld" type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="6 أحرف على الأقل" required minLength={6} />
               {mode === "signin" && (
                 <div className="text-left mt-1">
                   <button type="button" className="text-xs text-muted hover:text-gold font-semibold"
