@@ -33,6 +33,7 @@ npx esbuild lib/friendlyError.ts --bundle --format=cjs --platform=node --externa
 npx esbuild lib/confirm.ts --bundle --format=cjs --platform=node --alias:@=. --outfile=/tmp/b/confirm.js
 npx esbuild lib/office-copy.ts --bundle --format=cjs --platform=node --alias:@=. --external:@supabase/supabase-js --outfile=/tmp/b/officeCopy.js
 npx esbuild lib/msg-lang.ts --bundle --format=cjs --platform=node --alias:@=. --outfile=/tmp/b/msgLang.js
+npx esbuild lib/doc-search.ts --bundle --format=cjs --platform=node --outfile=/tmp/b/docSearch.js
 npx esbuild lib/tenant-messages.ts --bundle --format=cjs --platform=node --alias:@=. --outfile=/tmp/b/tenantMessages.js
 npx esbuild lib/einvoice.ts --bundle --format=cjs --platform=node --alias:@=. --outfile=/tmp/b/einvoice.js
 npx esbuild lib/fee-invoice.ts --bundle --format=cjs --platform=node --alias:@=. --outfile=/tmp/b/fee-invoice.js
