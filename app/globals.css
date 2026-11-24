@@ -184,7 +184,7 @@ html[data-theme="dark"] .wq-theme-btn {
   /* حدّ اللمس: زر أصغر من 40px يُخطئه الإبهام. نرفع الحد الأدنى لكل زر
      في اللوحة بلا تكبير النصّ — الأزرار الصغيرة (⋯ · ½ · ✔) هي الأكثر
      استعمالًا يوميًّا وأكثرها عرضةً للنقر الخاطئ على الجوال. */
-  .btn, button.btn, a.btn { min-height: 40px; }
+  .btn, button.btn, a.btn { min-height: 44px; }   /* (24 نوفمبر 2026) 40 ← 44 — تقييم P3-11 */
   .wq-quick { min-width: 44px; min-height: 44px; }
 
   /* الأزرار الثابتة تغطّي سطور المستأجرين وأنت تقرأ. تختفي مع التمرير لأسفل
@@ -229,6 +229,7 @@ html[data-theme="dark"] .wq-theme-btn {
    مزعج جدًا في التطبيق المثبَّت. على الجوال نثبّت 16px للحقول والقوائم */
 @media (max-width: 640px) {
   .fld, input.fld, select.fld, textarea.fld { font-size: 16px !important; }
+  input.fld, select.fld { min-height: 44px; }
 }
 
 
@@ -437,3 +438,17 @@ html[data-theme="dark"] .shadow-sm, html[data-theme="dark"] [class*="shadow-[0_1
 /* أسطح بشفافية (bg-paper/60 · bg-white/90): كانت تبقى رمادية فاتحة فوق الخلفية الداكنة */
 html[data-theme="dark"] [class*="bg-paper/"] { background-color: var(--d-soft) !important; }
 html[data-theme="dark"] [class*="bg-white/70"], html[data-theme="dark"] [class*="bg-white/90"] { background-color: var(--d-card) !important; }
+
+/* ===== (24 نوفمبر 2026 — تقييم P3-11) الوضوح وأهداف اللمس =====
+   • خلفية bg-gold مع نص أبيض = 3.63 — تُغمَّق كما في btn-gold (5.04).
+   • النص الإرشادي داخل الخانات كان رمادي المتصفح (~2.5) — #6B7773 = 4.65 على الأبيض.
+   • أصغر خطّين في التطبيق (10 و11px) يكبران بكسلًا: يُقرأان على الجوال بلا تقريب، ولا يكسران الصفوف.
+   • على شاشات اللمس: كل زرّ ≥44px (عدا أزرار التعديل داخل خلايا الجداول ≥36px). */
+.bg-gold.text-white { background-color: #9A6314 !important; }
+html:not([data-theme="dark"]) .fld::placeholder, html:not([data-theme="dark"]) input::placeholder, html:not([data-theme="dark"]) textarea::placeholder { color: #6B7773; opacity: 1; }
+.text-\[10px\] { font-size: 11px !important; }
+.text-\[11px\] { font-size: 12px !important; }
+@media (pointer: coarse) {
+  .btn, button.btn, a.btn { min-height: 44px; }
+  button.btn.\!py-0\.5, button.btn.\!py-1 { min-height: 36px; }
+}
