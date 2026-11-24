@@ -83,7 +83,7 @@ export default function ResetPasswordPage() {
               <div>
                 <label className="block text-sm font-semibold mb-1">كلمة المرور الجديدة</label>
                 <input className="fld" type="password" value={pw1} onChange={(e) => setPw1(e.target.value)}
-                  placeholder="٦ أحرف على الأقل" required minLength={6} autoFocus />
+                  placeholder="6 أحرف على الأقل" required minLength={6} autoFocus />
               </div>
               <div>
                 <label className="block text-sm font-semibold mb-1">أعدها للتأكيد</label>
