@@ -20,6 +20,9 @@ export type OfficeContext = EntProfile & {
   vat_number?: string | null;
   cr_number?: string | null;
   billing_phone?: string | null;
+  /** (v100) هوية المكتب في ترويسة اللوحة */
+  brand_logo?: string | null;
+  brand_header?: boolean | null;
   due_soon_days?: number | null;
   due_imminent_days?: number | null;
   expiring_days?: number | null;
