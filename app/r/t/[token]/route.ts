@@ -1,7 +1,7 @@
 import { portalHeaders, denyHeaders, TOKEN_RE } from "@/lib/hoaPortal";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { PHOTO_BUCKET } from "@/lib/maintenance";
-import { renderTenantPage, renderTenantDeny, TENANT_FLASH_CODES, type TenantPortalData, type TenantReqPhotos } from "@/lib/tenantPortal";
+import { renderTenantPage, renderTenantDeny, TENANT_FLASH_CODES, portalLang, type TenantPortalData, type TenantReqPhotos } from "@/lib/tenantPortal";
 import { portalDb, newNonce } from "@/lib/hoaPortalServer";
 
 export const dynamic = "force-dynamic";
@@ -61,11 +61,14 @@ export async function GET(req: Request, { params }: { params: { token: string } 
     const { data, error } = await db.rpc("watheq_tenant_portal", { p_token: token });
     if (error) throw error;
     if (!data) return deny();
-    const m = new URL(req.url).searchParams.get("m");
+    const sp = new URL(req.url).searchParams;
+    const m = sp.get("m");
     const nonce = newNonce();
     const d = data as TenantPortalData;
     const photos = await loadPhotos(db, (d.requests || []).map((x) => x.id));
-    const html = renderTenantPage(d, { nonce, base: `/r/t/${token}`, flash: m && TENANT_FLASH_CODES.has(m) ? m : null, photos });
+    /* (v105) بلغة المستأجر، وزرّ التبديل يمرّ بـ ?lang= */
+    const lang = portalLang((d.tenant as any)?.msg_lang, sp.get("lang"));
+    const html = renderTenantPage(d, { nonce, base: `/r/t/${token}`, flash: m && TENANT_FLASH_CODES.has(m) ? m : null, photos, lang });
     return new Response(html, { headers: pageHeaders(nonce) });
   } catch (e: any) {
     console.error("tenant portal failed", e?.message);
