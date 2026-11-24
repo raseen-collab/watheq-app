@@ -29,6 +29,26 @@ export type SandboxStore = {
   trust_ledger?: Row[];
 };
 
+/** شرط واحد من or(): eq/neq/gt/lt/gte/lte/ilike/like/is — والمجهول متحقق */
+function sbMatch(v: any, op: string, val: string): boolean {
+  const n = Number(v), m = Number(val), num = v !== null && v !== "" && Number.isFinite(n) && Number.isFinite(m);
+  switch (op) {
+    case "eq": return String(v) === val;
+    case "neq": return String(v) !== val;
+    case "gt": return num ? n > m : String(v ?? "") > val;
+    case "lt": return num ? n < m : String(v ?? "") < val;
+    case "gte": return num ? n >= m : String(v ?? "") >= val;
+    case "lte": return num ? n <= m : String(v ?? "") <= val;
+    case "is": return val === "null" ? v == null : String(v) === val;
+    case "ilike": case "like": {
+      if (v == null) return false;
+      const re = new RegExp("^" + val.split("*").map((x) => x.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join(".*") + "$", op === "ilike" ? "is" : "s");
+      return re.test(String(v));
+    }
+    default: return true;
+  }
+}
+
 /** منشئ استعلامات يحاكي سلسلة Supabase: select/eq/order/limit ثم await */
 function table(store: SandboxStore, name: keyof SandboxStore) {
   let rows: Row[] = store[name] || [];
@@ -53,7 +73,16 @@ function table(store: SandboxStore, name: keyof SandboxStore) {
     gt(col: string, v: any) { filtered = filtered.filter((r) => cmp(r[col], v) > 0); return api; },
     lt(col: string, v: any) { filtered = filtered.filter((r) => cmp(r[col], v) < 0); return api; },
     is(col: string, v: any) { filtered = filtered.filter((r) => (v === null ? r[col] == null : r[col] === v)); return api; },
-    not() { return api; }, or() { return api; }, ilike() { return api; },
+    /* (24 نوفمبر 2026) or() وilike() حقيقيان — «نظرة عامة» في التجربة تبحث برقم السند ونص الحوالة.
+       الصيغة كـPostgREST: "col.op.value,col.op.value" و* بدل %. عامل غير معروف يُعدّ متحققًا (كما كان السلوك القديم). */
+    not() { return api; },
+    or(expr: string) {
+      const parts = String(expr || "").split(",").map((x) => { const a = x.indexOf("."), b = x.indexOf(".", a + 1); return a < 0 || b < 0 ? null : { col: x.slice(0, a), op: x.slice(a + 1, b), val: x.slice(b + 1) }; }).filter(Boolean) as { col: string; op: string; val: string }[];
+      if (!parts.length) return api;
+      filtered = filtered.filter((r) => parts.some((pt) => sbMatch(r[pt.col], pt.op, pt.val)));
+      return api;
+    },
+    ilike(col: string, pat: string) { filtered = filtered.filter((r) => sbMatch(r[col], "ilike", String(pat).replace(/%/g, "*"))); return api; },
     order(col: string, o?: { ascending?: boolean }) {
       const asc = o?.ascending !== false;
       filtered.sort((a, b) => String(a[col] ?? "").localeCompare(String(b[col] ?? "")) * (asc ? 1 : -1));

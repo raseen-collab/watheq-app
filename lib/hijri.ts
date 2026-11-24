@@ -38,12 +38,10 @@ export function hijriText(iso: string): string {
   return `${h.d} ${HIJRI_MONTHS[h.m - 1]} ${h.y}هـ`;
 }
 
-/** «1447-03-15هـ» — صيغة مختصرة للجداول الضيقة */
+/** «15 ربيع الأول 1447هـ» — (24 نوفمبر 2026، تقييم P2-9) كانت «1447-03-15هـ» رقميةً بجوار
+ *  ميلادي مكتوب «30 نوفمبر 2026»، فيُقرأ الهجري تاريخًا آخر أو يُخلط شهره. الآن بصيغة الميلادي نفسها. */
 export function hijriShort(iso: string): string {
-  const h = toHijri(iso);
-  if (!h) return "";
-  const p = (n: number) => String(n).padStart(2, "0");
-  return `${h.y}-${p(h.m)}-${p(h.d)}هـ`;
+  return hijriText(iso);
 }
 
 const dayMs = 86400000;

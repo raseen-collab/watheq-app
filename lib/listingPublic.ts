@@ -109,7 +109,7 @@ h1{font-size:20px;margin:16px 0 2px}
 .cta{position:fixed;bottom:0;inset-inline:0;background:rgba(244,241,234,.96);border-top:1px solid #E4DDCD;padding:10px 16px calc(10px + env(safe-area-inset-bottom))}
 .cta .in{max-width:640px;margin:0 auto;display:flex;gap:8px}
 .btn{flex:1;display:flex;align-items:center;justify-content:center;gap:8px;min-height:48px;border-radius:12px;font-weight:700;font-size:15px;text-decoration:none;border:0}
-.b-wa{background:#1FA855;color:#fff}.b-call{background:#0E3A37;color:#F6F1E4}
+.b-wa{background:#15803D;color:#fff}.b-call{background:#0E3A37;color:#F6F1E4}
 .closed{text-align:center;padding:40px 16px}
 .closed .ic{font-size:44px}
 .closed h1{font-size:18px}
