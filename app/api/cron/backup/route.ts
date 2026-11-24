@@ -2,10 +2,10 @@ import { NextResponse } from "next/server";
 import * as Sentry from "@sentry/nextjs";
 import { createHash } from "crypto";
 import { createClient as createAdmin } from "@supabase/supabase-js";
-import { sendTelegram } from "@/lib/telegram";
+import { sendTelegram, tgSendDocument } from "@/lib/telegram";
 import { noStoreFetch } from "@/lib/no-store-fetch";
-import { BUCKET, buildBackup, expiredDaily, riyadhToday } from "@/lib/backup";
-import { encryptBackup, parseKey } from "@/lib/backup-crypto";
+import { BUCKET, buildBackup, expiredDaily, isOffsiteDay, riyadhToday, verifyRoundTrip } from "@/lib/backup";
+import { decryptBackup, encryptBackup, parseKey } from "@/lib/backup-crypto";
 
 export const dynamic = "force-dynamic";
 export const fetchCache = "force-no-store";
@@ -19,6 +19,10 @@ const MAX_BYTES = 45 * 1024 * 1024; // حد رفع Storage الافتراضي 50
  *   daily/YYYY-MM-DD.wqbk   تُحذف بعد 30 يومًا
  *   monthly/YYYY-MM.wqbk    نسخة أول كل شهر — تبقى
  * فك التشفير: scripts/decrypt-backup.mjs
+ *
+ * (23 نوفمبر) بعد الرفع: نُنزّل الملف من Storage ونفكّه ونطابق عدد الصفوف — نسخة
+ * لا تُفتح تُعامَل كفشل. وكل جمعة تُرسل النسخة المشفّرة ملفًّا إلى تليجرام المالك،
+ * فتبقى نسخة خارج Supabase لو تعطّل المشروع نفسه. ‎?offsite=1 يفرض الإرسال يدويًّا.
  */
 export async function GET(req: Request) {
   const secret = process.env.CRON_SECRET;
@@ -53,6 +57,14 @@ export async function GET(req: Request) {
     await put(`daily/${day}.wqbk`);
     if (day.endsWith("-01")) await put(`monthly/${day.slice(0, 7)}.wqbk`);
 
+    /* تحقّق القراءة: ما في Storage فعلًا يُفك ويطابق */
+    const { data: dl, error: derr } = await db.storage.from(BUCKET).download(`daily/${day}.wqbk`);
+    if (derr || !dl) throw new Error(`تحقق القراءة: تعذّر تنزيل الملف (${derr?.message || "فارغ"})`);
+    const back = Buffer.from(await dl.arrayBuffer());
+    if (!back.equals(file)) throw new Error("تحقق القراءة: الملف في Storage يختلف عن المرفوع");
+    const mismatch = verifyRoundTrip(decryptBackup(back, key), b.counts);
+    if (mismatch) throw new Error(`تحقق القراءة: ${mismatch}`);
+
     /* التنظيف بعد نجاح الرفع فقط — لا نحذف القديم ثم نفشل في كتابة الجديد */
     let pruned = 0;
     const { data: list, error: lerr } = await db.storage.from(BUCKET).list("daily", { limit: 1000 });
@@ -65,13 +77,23 @@ export async function GET(req: Request) {
     }
 
     const rows = Object.values(b.counts).reduce((s, n) => s + n, 0);
+
+    /* نسخة خارج Supabase — الجمعة أسبوعيًّا */
+    let offsite: boolean | null = null;
+    const force = new URL(req.url).searchParams.get("offsite") === "1";
+    if (admin && (force || isOffsiteDay(day))) {
+      const r = await tgSendDocument(admin, file, `watheq-${day}.wqbk`,
+        `🗄 <b>نسخة وثيق الأسبوعية</b> — ${day}\n${Object.keys(b.counts).length} جدول · ${rows} صف · sha ${sha}\nمشفّرة: لا تُفتح إلا بمفتاح BACKUP_ENCRYPTION_KEY. احتفظ بها هنا ولا تحذفها.`);
+      offsite = r.ok;
+      if (!r.ok) await alert(`⚠️ نسخة ${day} حُفظت في Supabase لكن تعذّر إرسالها لتليجرام: ${String((r as any).error || "").replace(/[<>&]/g, "").slice(0, 200)}`);
+    }
     if (b.failed.length) {
       Sentry.captureMessage(`backup partial: ${b.failed.join(" | ")}`, { level: "warning", tags: { job: "backup" } });
       await alert(`⚠️ النسخة الاحتياطية ${day} <b>ناقصة</b>: تعذّر ${b.failed.length} جدول.\n${b.failed.slice(0, 5).map((f) => "• " + f.replace(/[<>&]/g, "")).join("\n")}`);
     }
     return NextResponse.json({
       ok: true, complete: b.failed.length === 0, day, bytes: file.length, sha256_16: sha,
-      tables: Object.keys(b.counts).length, rows, pruned, unordered: b.unordered, failed: b.failed,
+      tables: Object.keys(b.counts).length, rows, pruned, verified: true, offsite, unordered: b.unordered, failed: b.failed,
     });
   } catch (e: any) {
     Sentry.captureException(e, { tags: { job: "backup" } });
