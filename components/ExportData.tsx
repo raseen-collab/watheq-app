@@ -292,6 +292,7 @@ export default function ExportData() {
         "ملاحظات التأمين": t.deposit_notes || "", "تاريخ الإشعار": t.notice_date || "",
         /* v74: إشعار نقل حساب الكهرباء — كم مرة أُرسل وآخر مرة */
         "إشعارات نقل الكهرباء": Number(t.elec_notice_count) || "", "آخر إشعار كهرباء": String(t.elec_notice_at || "").slice(0, 10),
+        "لغة الرسائل": (t as any).msg_lang === "en" ? "English" : (t as any).msg_lang === "both" ? "عربي + English" : "عربي",
       })), [22, 10, 22, 14, 14, 12, 10, 12, 12, 10, 10, 10, 12, 12, 10, 12, 14, 14, 12, 12, 12, 12, 10, 12, 14, 8, 10, 10, 10, 12, 20, 10, 14, 20, 12]);
 
       /* M1: ورقة «الدفعات» للإيجارات فقط — دفعات الجمعيات في ورقتها (كانت تختلط بلا عقار ولا مستأجر) */
@@ -616,7 +617,8 @@ export default function ExportData() {
         بياناتك ملكك — تأخذها كاملة متى شئت، وتعيد رفعها كما هي إن عدت.
       </p>
       <p className="text-xs text-muted mb-4 leading-relaxed -mt-2">
-        <b className="text-deep">الاسترجاع:</b> لو احتجت إرجاع بياناتك من نسختك (JSON)
+        <b className="text-deep">نسخة شهرية تلقائية:</b> إن كان تليجرام مربوطًا بحسابك، تصلك أول كل شهر نسخة كاملة (Excel + JSON) بكل ما أدخلته أنت وموظفوك.
+        <br /><b className="text-deep">الاسترجاع:</b> لو احتجت إرجاع بياناتك من نسختك (JSON)
         أرسلها لنا على واتساب <bdi dir="ltr">0550165210</bdi> ونعيدها لحسابك.
       </p>
       <div className="flex flex-wrap items-center gap-3">

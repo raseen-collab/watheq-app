@@ -9,7 +9,7 @@ import Icon from "@/components/Icon";
 import { createClient } from "@/lib/supabase-client";
 import { cleanMeters, metersCountLine, METER_TYPE_AR, MAX_METERS, type PropertyMeter } from "@/lib/meters";
 import { officeId, getOffice, ROLE_LABEL, OWNER_PERMS } from "@/lib/office";
-import { arDate, termRentPaidOf, pastVatOf } from "@/lib/documents";
+import { arDate, termRentPaidOf, pastVatOf , startInEnglish } from "@/lib/documents";
 import { sellerOf, taxInvoiceGaps, isValidVatNo, cleanVatNo } from "@/lib/einvoice";
 import { annualRentRoll } from "@/lib/income";
 import { unitStatus, unitStatusLabel, arrearsOf, firstDueOutOfRange, dateDistanceAr, contractRemaining, excessOverRemaining, nearDuplicatePayment, renewalTooEarly, gregorianAr, recentCovers, vatInclusiveSlip, renewalDue } from "@/lib/contract-state";
@@ -17,7 +17,9 @@ import type { ComplianceItem } from "@/lib/compliance";
 import { fetchAllRows } from "@/lib/fetch-all";
 import { hijriShort, hijriText, parseHijriInput } from "@/lib/hijri";
 import { sar, waLink, today, WATHEQ_WA, openExternal, daysAr, countAr, normalizeSearch, csvCell } from "@/lib/utils";
-import { endNoticeText, endNoticeTextEn, meterNoticeText, noticeTermsOf, acDripNoticeText, ownerAlertText } from "@/lib/tenant-messages";
+import { endNoticeText, endNoticeTextEn, meterNoticeText, meterNoticeTextEn, noticeTermsOf, acDripNoticeText, acDripNoticeTextEn, ownerAlertText,
+  reminderText, reminderTextEn, receiptMsg, receiptMsgEn, type ReminderInput } from "@/lib/tenant-messages";
+import { pickMsg, normLang, suggestLang, MSG_LANGS, langLabel, type MsgLang } from "@/lib/msg-lang";
 import { unitWordEn } from "@/lib/docEn";
 import { contractState, expectedNext12, buildSchedule, FREQUENCIES, freqLabel, freqShort, freqMonths, periodsPerYear, customMonths, normalizeFreq, derivedEndDate, renewContract, needsRenewal, applyPayment, splitVat, isCommercial, isVacant, settleDeposit, unitVatApplies,
   vacancyDays, TURNOVER_CHECKLIST, defaultTermPeriods, parseDate, dueWithVat, rentWithVat, withVat, unitVat, firstDueGap, type Frequency } from "@/lib/contracts";
@@ -47,6 +49,8 @@ const PERIODS_PER_MONTH = new Proxy({} as Record<Frequency, number>, {
 });
 
 type Tenant = {
+  /** (v105) لغة المراسلة: ar · en · both */
+  msg_lang?: string | null;
   id: string; name: string; unit: string | null; phone: string | null; national_id: string | null;
   /** (v85) جوال إضافي اختياري — الأول يبقى الأساسي */
   phone2?: string | null;
@@ -454,7 +458,8 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
     /* دفعة سُجّلت قبل ترقيم السندات (v80) لا رقم لها — نقول ذلك بلغة المكتب لا بلغة القاعدة */
     if (!pay.receipt_no) return notify("err", "هذه دفعة قديمة سُجّلت قبل ترقيم السندات، فلا يصدر لها سند قبض. الدفعات الجديدة كلها لها سند.");
     const { data: rv } = await supabase.from("payments").select("created_at").eq("reverses", pay.id).limit(1);
-    openDoc(receiptHTML({ ...pay, reversed_on: rv && rv[0] ? rv[0].created_at : null }, t as any, active as any, issuer || {}));
+    const rh = receiptHTML({ ...pay, reversed_on: rv && rv[0] ? rv[0].created_at : null }, t as any, active as any, issuer || {});
+    openDoc(normLang(t.msg_lang) === "en" ? startInEnglish(rh) : rh);
   }
 
   /** إرسال السند للمستأجر واتساب: رابط سنده في صفحته الخاصة (يُنشأ إن لم يوجد) */
@@ -465,8 +470,8 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
     if (error || !data?.token) return notify("err", friendlyError(String(error?.message || "تعذّر تجهيز رابط السند")));
     const url = `${window.location.origin}/r/t/${data.token}/p/${pay.id}`;
     const who = (issuer as any)?.billing_name || orgName || active.manager || "إدارة الأملاك";
-    const msg = [`السلام عليكم ${t.name}،`, `استلمنا ${sar(Number(pay.amount))} ريال بتاريخ ${arDate(pay.paid_on)}${pay.receipt_no ? ` — سند قبض رقم ${pay.receipt_no}` : ""}.`,
-      `سند القبض: ${url}`, "", `شاكرين لكم، ${who}`].join("\n");
+    const ri = { tenantName: t.name, amount: Number(pay.amount), paidOn: pay.paid_on, receiptNo: pay.receipt_no, url, signer: who };
+    const msg = pickMsg(t.msg_lang, () => receiptMsg(ri), () => receiptMsgEn(ri));
     openExternal(waLink(t.phone || "", msg));
   }
 
@@ -1088,6 +1093,8 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       move_out_date: String(d.status || "active") === "vacated" ? (d.move_out_date || today()) : null,
       property_id: active.id, name: d.name, unit: d.unit || null, phone: d.phone || null,
       phone2: String(d.phone2 || "").trim() || null,
+      /* (v105) لغة المراسلة */
+      msg_lang: normLang(d.msg_lang),
       national_id: d.national_id || null, rent_amount: Number(d.rent_amount) || 0,
       /* (v96) المستأجر المسجَّل في الضريبة: تصدر له «فاتورة ضريبية» قياسية برقمه وعنوانه */
       vat_number: cleanVatNo(d.vat_number) || null,
@@ -1214,6 +1221,10 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
           const { error: oe } = await supabase.from("tenants").update({ paid_periods: opening }).eq("id", id);
           if (oe) notify("err", `أُعيد تأجير الوحدة، لكن تعذّر حفظ ما دفعه ${payload.name} عند التوقيع (${opening} ${opening === 1 ? "دفعة" : "دفعات"}) — عدّله من «تعديل البيانات».`);
         }
+        /* (v105) لغة المستأجر الجديد — دالة إعادة التأجير لا تكتب هذا العمود */
+        if (normLang(payload.msg_lang) !== normLang(prev.msg_lang)) {
+          await supabase.from("tenants").update({ msg_lang: normLang(payload.msg_lang) }).eq("id", id);
+        }
         const fresh = { ...prev, ...payload, status: "active", paid_periods: opening, partial_amount: 0,
           carried_debt: 0, carried_debt_note: null, move_out_date: null } as Tenant;
         setItems(items.map((p) => p.id === active.id
@@ -1337,6 +1348,20 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
     }
     setSaving(false); setSaveErr(null);
     setModal(null);
+  }
+
+  /** (v105) لغة رسائل المستأجر — من قائمة الوحدة بضغطة، وتُحفظ على الوحدة */
+  async function chooseLang(t: Tenant) {
+    const sug = suggestLang(t.name);
+    const pick = await askChoice({
+      title: `لغة الرسائل لـ${t.name || "المستأجر"}`,
+      body: "كل رسالة واتساب لهذا المستأجر (التذكير، الإشعارات، السند، رابطه) تخرج بهذه اللغة تلقائيًّا.",
+      options: MSG_LANGS.map((o) => ({ value: o.v, label: `${o.label}${normLang(t.msg_lang) === o.v ? " ✓ (الحالية)" : sug === o.v ? " — مقترحة" : ""}`,
+        hint: o.v === "both" ? "العربي ثم الإنجليزي في الرسالة نفسها — إن لم تعرف لغته" : undefined, tone: normLang(t.msg_lang) === o.v ? "primary" as const : "neutral" as const })),
+    });
+    if (!pick || pick === normLang(t.msg_lang)) return;
+    if (demo) { setItems(items.map((p) => p.id === active?.id ? { ...p, tenants: p.tenants.map((x) => x.id === t.id ? { ...x, msg_lang: pick } : x) } : p)); return; }
+    if (await patchTenant(t.id, { msg_lang: pick })) notify("ok", `رسائل ${t.name} صارت: ${langLabel(pick)}`);
   }
 
   async function patchTenant(id: string, patch: any, collectedDelta = 0) {
@@ -1549,7 +1574,8 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
     if (since && /^\d{4}-\d{2}-\d{2}T/.test(String(since))) q = q.gte("created_at", since);
     const { data, error } = await q.order("paid_on", { ascending: true }).limit(500);
     if (error) console.error("Watheq statement payments error:", error);
-    openDoc(statementHTML(t as any, active as any, issuer || {}, (data || []) as any, mode));
+    const sh = statementHTML(t as any, active as any, issuer || {}, (data || []) as any, mode);
+    openDoc(normLang(t.msg_lang) === "en" ? startInEnglish(sh) : sh);
   }
 
   const [stmtOpen, setStmtOpen] = useState(false);
@@ -1765,48 +1791,16 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
     const rentOwed = vUnit.enabled ? splitVat(st.amountDue, vUnit).total : st.amountDue;
     const carried = Math.max(0, Number((t as any).carried_debt) || 0);
 
-    const L: string[] = [`السلام عليكم ورحمة الله، ${t.name}`, ""];
-
-    if (st.unpaid === 0) {
-      /* المستأجر يقرأ عقده بالتقويم المكتوب فيه: نضيف الهجري للعقد الهجري،
-         وعدد الأيام لأن «1 ديسمبر» وحدها لا تقول إن أمامه شهرين. */
-      const dueTxt = `${arDate(st.nextDueDate)}${t.calendar === "hijri" && st.nextDueDate ? ` (${hijriText(st.nextDueDate)})` : ""}`;
-      const inDays = st.daysToNextDue;
-      /* صف ناقص البيانات بلا تاريخ استحقاق: كانت الرسالة تقول «تستحق بتاريخ —» */
-      if (!st.nextDueDate) L.push(`نودّ التواصل معكم بخصوص عقد ${unit} بعقار ${active.name}.`);
-      else L.push(`تذكير ودّي بأن الدفعة القادمة عن ${unit} بعقار ${active.name} تستحق بتاريخ ${dueTxt}${
-        inDays !== null && inDays > 0 ? ` — بعد ${inDays === 1 ? "يوم واحد" : inDays === 2 ? "يومين" : inDays <= 10 ? `${inDays} أيام` : `${inDays} يومًا`}` : inDays === 0 ? " — اليوم" : ""}.`);
-      if (one.total) L.push(`• قيمة الدفعة: ${sar(one.total)} ريال${one.vat > 0 ? ` (منها ${sar(one.vat)} ريال ضريبة قيمة مضافة)` : ""}`);
-      if (carried > 0) L.push(`• ويتبقّى عليكم دين مرحَّل من مدة سابقة: ${sar(carried)} ريال`);
-    } else {
-      L.push(`نودّ تذكيركم بوجود مستحقّات غير مسدَّدة عن ${unit} بعقار ${active.name}، وبيانها:`);
-      L.push(`• عدد الدفعات المتأخرة: ${st.unpaid}`);
-      if (one.total) L.push(`• قيمة الدفعة: ${sar(one.total)} ريال`);
-      if (st.hasPartial) L.push(`• المسدَّد جزئيًّا: ${sar(st.partial)} ريال`);
-      L.push(`• المبلغ المتبقّي${vUnit.enabled ? " (شامل الضريبة)" : ""}: ${sar(rentOwed)} ريال`);
-      if (carried > 0) {
-        L.push(`• دين مرحَّل من مدة سابقة: ${sar(carried)} ريال`);
-        L.push(`• الإجمالي المطلوب: ${sar(Math.round((rentOwed + carried) * 100) / 100)} ريال`);
-      }
-      /* «أقرب دفعة مستحقة» كانت تُطلق على تاريخ مضى — والمستأجر يقرؤها
-         موعدًا قادمًا. نسمّي الماضي «مستحقّة منذ» والقادم «القادمة». */
-      if (st.nextDueDate) L.push(`• مستحقّة منذ: ${arDate(st.nextDueDate)}${t.calendar === "hijri" ? ` (${hijriText(st.nextDueDate)})` : ""}`);
-      if (st.upcomingDate) L.push(`• والدفعة القادمة تستحق بتاريخ: ${arDate(st.upcomingDate)}${t.calendar === "hijri" ? ` (${hijriText(st.upcomingDate)})` : ""}`);
-    }
-    /* العقد منتهٍ أو قريب الانتهاء: يُذكر في رسالة السداد نفسها حتى لا تُرسل مطالبة
-       كأن العقد ممتدّ وهو ينتهي بعد أيام */
-    if (st.endDate && st.daysToEnd !== null && (st.daysToEnd < 0 || st.expiringSoon)) {
-      L.push(`• علمًا بأن العقد ${st.daysToEnd < 0 ? "انتهى" : "ينتهي"} بتاريخ ${arDate(st.endDate)}${t.calendar === "hijri" ? ` (${hijriText(st.endDate)})` : ""}`);
-    }
-
-    L.push("");
-    L.push("ويكون السداد بالوسيلة المتفق عليها في العقد.");
-    L.push("");
-    L.push("فإن كان السداد قد تم فنعتذر عن التذكير، ونرجو تزويدنا بما يفيد لتحديث السجل.");
-    L.push("");
-    L.push("شاكرين لكم حسن تعاونكم،");
-    L.push(who);
-    return waLink(toPhone || t.phone, L.join("\n"));
+    /* (24 نوفمبر 2026) النص في lib/tenant-messages بالعربي والإنجليزي — يُختار بلغة المستأجر (v105) */
+    const ri: ReminderInput = {
+      tenantName: t.name, unitText: unit, unitTextEn: `${unitWordEn(t.unit_type, active.property_type)} (${t.unit || "—"})`,
+      propertyName: active.name, hijri: t.calendar === "hijri",
+      unpaid: st.unpaid, nextDueDate: st.nextDueDate, daysToNextDue: st.daysToNextDue, upcomingDate: st.upcomingDate,
+      instalment: one.total, instalmentVat: one.vat, partial: st.hasPartial ? st.partial : 0,
+      owed: rentOwed, owedVat: vUnit.enabled, carried,
+      endDate: st.endDate, daysToEnd: st.daysToEnd, expiringSoon: st.expiringSoon, signer: who,
+    };
+    return waLink(toPhone || t.phone, pickMsg(t.msg_lang, () => reminderText(ri), () => reminderTextEn(ri)));
   }
 
   /** هل يظهر «إشعار انتهاء العقد»؟ عقد منتهٍ أو داخل نافذة «ينتهي قريبًا» للمكتب */
@@ -1814,10 +1808,9 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
   function acDripLink(t: Tenant) {
     if (!active) return "#";
     const who = (issuer as any)?.billing_name || orgName || active.manager || "إدارة الأملاك";
-    return waLink(t.phone || "", acDripNoticeText({
-      tenantName: t.name || "", unitText: `${unitWordFor(t.unit_type, active.property_type)} (${t.unit || "—"})`,
-      propertyName: active.name, days: 7, signer: who,
-    }));
+    const ai = { tenantName: t.name || "", unitText: `${unitWordFor(t.unit_type, active.property_type)} (${t.unit || "—"})`,
+      unitTextEn: `${unitWordEn(t.unit_type, active.property_type)} (${t.unit || "—"})`, propertyName: active.name, days: 7, signer: who };
+    return waLink(t.phone || "", pickMsg(t.msg_lang, () => acDripNoticeText(ai), () => acDripNoticeTextEn(ai)));
   }
 
   function endNoticeDue(t: Tenant, st: ReturnType<typeof contractState>) {
@@ -1826,14 +1819,14 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
   }
 
   /** واتساب: إشعار بانتهاء العقد (أو قربه) مع حالة المستحقات صريحة — lib/tenant-messages */
-  function endNoticeLink(t: Tenant, en = false) {
+  function endNoticeLink(t: Tenant, lang: MsgLang | string | null | undefined = t.msg_lang) {
     if (!active) return "#";
     const st = contractState(t, { graceDays: Number(active?.grace_days) || 0, ...windowsOf(active) });
     const who = (issuer as any)?.billing_name || orgName || active.manager || "إدارة الأملاك";
     const v = { enabled: !!active.vat_enabled, rate: Number(active.vat_rate) || 15, inclusive: active.vat_inclusive !== false };
     const vUnit = unitVatApplies(t, active) ? v : { ...v, enabled: false };
     const one = splitVat(Number(t.rent_amount) || 0, vUnit);
-    return waLink(t.phone, (en ? endNoticeTextEn : endNoticeText)({
+    const ni = {
       mode: "end",
       tenantName: t.name || "",
       unitText: `${unitWordFor(t.unit_type, active.property_type)} (${t.unit || "—"})`,
@@ -1850,7 +1843,8 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       /* (14 نوفمبر 2026) بنود المكتب من الإعدادات: رسوم التجديد، الأجرة اليومية، شرط المتأخرات */
       terms: noticeTermsOf(issuer),
       annualRent: (Number(t.rent_amount) || 0) * defaultTermPeriods((t.payment_frequency || "monthly") as Frequency),
-    }));
+    };
+    return waLink(t.phone, pickMsg(lang, () => endNoticeText(ni as any), () => endNoticeTextEn(ni as any)));
   }
 
   /** (v98) «إبلاغ المالك»: عقد منتهٍ أو متأخرات، والمستأجر لا يتجاوب — للمكتب صلاحية التذكير */
@@ -1887,13 +1881,15 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
     if (!active) return;
     const who = (issuer as any)?.billing_name || orgName || active.manager || "إدارة الأملاك";
     /* يُفتح واتساب أولًا وبنقرة المستخدم نفسها — بعد انتظار الشبكة يحجبه المتصفح */
-    openExternal(waLink(t.phone, meterNoticeText({
+    const mi = {
       tenantName: t.name || "",
       unitText: `${unitWordFor(t.unit_type, active.property_type)} (${t.unit || "—"})`,
+      unitTextEn: `${unitWordEn(t.unit_type, active.property_type)} (${t.unit || "—"})`,
       propertyName: active.name,
       account: String(t.elec_account || "").trim(),
       days: 7, signer: who,
-    })));
+    };
+    openExternal(waLink(t.phone, pickMsg(t.msg_lang, () => meterNoticeText(mi), () => meterNoticeTextEn(mi))));
     /* ثم يُحفظ تاريخ الإرسال على الوحدة — هو الإثبات في اللوحة إن احتجّ المستأجر لاحقًا */
     const { data, error } = await supabase.rpc("watheq_log_meter_notice", { p_tenant: t.id });
     if (error) {
@@ -2740,8 +2736,8 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                                   ...(isVacant(t) ? [{ label: "مخالصة الإخلاء", run: () => openSettlement(t) }] : []),
 
                                   { sep: "✉️ مراسلة" } as any,
-                                  ...(endNoticeDue(t, st) ? [{ label: "📅 إشعار انتهاء العقد (واتساب)", run: () => openExternal(endNoticeLink(t)) },
-                                    { label: "📅 إشعار الانتهاء بالإنجليزية (English)", run: () => openExternal(endNoticeLink(t, true)) }] : []),
+                                  ...(endNoticeDue(t, st) ? [{ label: "📅 إشعار انتهاء العقد (واتساب)", run: () => openExternal(endNoticeLink(t)) }] : []),
+                                  ...(!isVacant(t) && may("send_reminders") ? [{ label: `🌐 لغة الرسائل: ${langLabel(t.msg_lang)}`, run: () => { void chooseLang(t); } }] : []),
                                   ...(ownerAlertDue(t, st) ? [{ label: "📞 إبلاغ المالك — المستأجر لا يتجاوب (واتساب)", run: () => ownerAlert(t) }] : []),
                                   ...(meterNoticeDue(t) ? [{ label: "⚡ إشعار تسجيل عداد الكهرباء (واتساب)", run: () => { void sendMeterNotice(t); } }] : []),
                                   ...(!isVacant(t) && t.phone && may("send_reminders") ? [{ label: "❄️ تنبيه تنقيط المكيفات (واتساب)", run: () => openExternal(acDripLink(t)) }] : []),
@@ -2955,6 +2951,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
 
                       { sep: "✉️ مراسلة" } as any,
                       ...(endNoticeDue(t, st) ? [{ label: "📅 إشعار انتهاء العقد (واتساب)", run: () => openExternal(endNoticeLink(t)) }] : []),
+                      ...(!isVacant(t) && may("send_reminders") ? [{ label: `🌐 لغة الرسائل: ${langLabel(t.msg_lang)}`, run: () => { void chooseLang(t); } }] : []),
                       ...(ownerAlertDue(t, st) ? [{ label: "📞 إبلاغ المالك — المستأجر لا يتجاوب (واتساب)", run: () => ownerAlert(t) }] : []),
                       ...(meterNoticeDue(t) ? [{ label: "⚡ إشعار تسجيل عداد الكهرباء (واتساب)", run: () => { void sendMeterNotice(t); } }] : []),
                       ...(!isVacant(t) && t.phone && may("send_reminders") ? [{ label: "❄️ تنبيه تنقيط المكيفات (واتساب)", run: () => openExternal(acDripLink(t)) }] : []),
@@ -4882,6 +4879,17 @@ function TenantModal({ open, initial, unitWord, error, saving, onClose, onSubmit
             </div>
           )}
           <Field label="جوال إضافي" hint="اختياري — رقم ثانٍ للمستأجر (الأول يبقى الأساسي للتذكير)"><input className="fld" value={d.phone2 || ""} onChange={(e) => setD({ ...d, phone2: e.target.value })} placeholder="05xxxxxxxx" /></Field>
+          {/* (v105) لغة المراسلة — مع اقتراح English لاسم مكتوب بحروف لاتينية */}
+          <Field label="لغة الرسائل للمستأجر" hint={suggestLang(d.name) === "en" && normLang(d.msg_lang) === "ar" ? "الاسم مكتوب بالإنجليزي — هل تفضّل English أو «عربي + English»؟" : "التذكير والإشعارات والسند تخرج بهذه اللغة تلقائيًّا"}>
+            <div className="inline-flex flex-wrap gap-1.5" role="radiogroup" aria-label="لغة الرسائل للمستأجر">
+              {MSG_LANGS.map((o) => (
+                <button key={o.v} type="button" role="radio" aria-checked={normLang(d.msg_lang) === o.v}
+                  onClick={() => setD({ ...d, msg_lang: o.v })}
+                  className={`text-xs font-semibold rounded-lg px-3 py-2 min-h-[40px] border transition ${normLang(d.msg_lang) === o.v ? "bg-deep text-[#F6F1E4] border-deep" : "bg-white text-deep border-line hover:border-goldSoft"}`}>
+                  {o.label}</button>
+              ))}
+            </div>
+          </Field>
           <Field label="دين مرحَّل (ريال)" hint="متأخرات من عقد سابق أو مستأجر سابق — تظهر في الكشوف ولا تدخل في دفعات العقد الجاري">
             <input className="fld" type="number" min={0} value={d.carried_debt ?? ""} onChange={(e) => setD({ ...d, carried_debt: e.target.value })} placeholder="0" />
           </Field>

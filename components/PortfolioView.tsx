@@ -19,7 +19,9 @@ import { annualRentRoll } from "@/lib/income";
 import { isPartialOnly, renewalDue } from "@/lib/contract-state";
 import { sar, waLink, today, daysAr, normalizeSearch } from "@/lib/utils";
 import { arDate } from "@/lib/documents";
-import { endNoticeText, noticeTermsOf } from "@/lib/tenant-messages";
+import { endNoticeText, endNoticeTextEn, noticeTermsOf, reminderText, reminderTextEn, type ReminderInput } from "@/lib/tenant-messages";
+import { pickMsg } from "@/lib/msg-lang";
+import { unitWordEn } from "@/lib/docEn";
 import { getOffice } from "@/lib/office";
 import { alertCount, complianceState, KIND_META, type ComplianceItem } from "@/lib/compliance";
 import ComplianceModal from "@/components/ComplianceModal";
@@ -183,46 +185,29 @@ export default function PortfolioView({ properties, windows, compliance, orgName
     };
   }).sort((a, b) => b.overdue - a.overdue || b.late - a.late || a.p.name.localeCompare(b.p.name, "ar"));
 
-  const remind = (p: Property, t: Tenant, st: any) =>
-    /* (مراجعة 29 سبتمبر 2026) كانت: «الدفعة المستحقة … بمبلغ amountDue» — مفردًا
-       ولو تأخّرت ثلاث دفعات، وبلا الضريبة المضافة فوق الإيجار، وبلا الدين
-       المرحَّل، وبلا توقيع. الآن كتذكير لوحة العقار. */
-    (() => {
-      const v = { enabled: unitVatApplies(t, p), rate: Number((p as any).vat_rate) || 15, inclusive: (p as any).vat_inclusive !== false };
-      const rentOwed = v.enabled ? splitVat(Number(st.amountDue) || 0, v).total : (Number(st.amountDue) || 0);
-      const carried = Math.max(0, Number((t as any).carried_debt) || 0);
-      const n = Number(st.unpaid) || 0;
-      const what = n > 1 ? `${n} دفعات مستحقة` : "الدفعة المستحقة";
-      const who = issuer?.billing_name || orgName || (p as any).manager || "إدارة الأملاك";
-      const unitTxt = `${UNIT_AR[p.property_type] || "الوحدة"} ${t.unit || ""}`;
-      /* قائمة «مستحق قريبًا»: لا متأخر بعد — كانت الرسالة تقول «الدفعة المستحقة
-         بمبلغ 0 ريال لم تصلنا بعد». الآن: الدفعة القادمة بتاريخها وقيمتها. */
-      if (n === 0) {
-        const one = splitVat(Number(t.rent_amount) || 0, v);
-        const U = [
-          `السلام عليكم ${t.name}`, "",
-          `تذكير ودّي بأن الدفعة القادمة عن ${unitTxt} بعقار ${p.name} تستحق بتاريخ ${arDate(st.nextDueDate)}${one.total ? ` بمبلغ ${sar(one.total)} ريال${v.enabled ? " (شامل الضريبة)" : ""}` : ""}.`,
-          ...(carried > 0 ? [`ويتبقّى عليكم دين مرحَّل من مدة سابقة: ${sar(carried)} ريال.`] : []),
-          "وإن كان السداد قد تم فنعتذر ونرجو إرسال ما يثبته.", "",
-          "شكرًا لتعاونكم،", who,
-        ];
-        return waLink(t.phone, U.join("\n"));
-      }
-      const L = [
-        `السلام عليكم ${t.name}`, "",
-        `تذكير ودّي بأن ${what} عن ${unitTxt} بعقار ${p.name} بمبلغ ${sar(rentOwed)} ريال${v.enabled ? " (شامل الضريبة)" : ""} لم تصلنا بعد.`,
-        ...(carried > 0 ? [`ويتبقّى عليكم دين مرحَّل من مدة سابقة: ${sar(carried)} ريال — الإجمالي ${sar(Math.round((rentOwed + carried) * 100) / 100)} ريال.`] : []),
-        "نرجو السداد في أقرب وقت، وإن كان السداد قد تم فنعتذر ونرجو إرسال ما يثبته.", "",
-        "شكرًا لتعاونكم،", who,
-      ];
-      return waLink(t.phone, L.join("\n"));
-    })();
+  /* (24 نوفمبر 2026) التذكير نفسه في لوحة العقار (lib/tenant-messages) — بلغة المستأجر (v105) */
+  const remind = (p: Property, t: Tenant, st: any) => {
+    const v = { enabled: unitVatApplies(t, p), rate: Number((p as any).vat_rate) || 15, inclusive: (p as any).vat_inclusive !== false };
+    const one = splitVat(Number(t.rent_amount) || 0, v);
+    const ri: ReminderInput = {
+      tenantName: t.name || "", unitText: `${UNIT_AR[p.property_type] || "الوحدة"} (${t.unit || "—"})`,
+      unitTextEn: `${unitWordEn(t.unit_type, p.property_type)} (${t.unit || "—"})`, propertyName: p.name,
+      hijri: t.calendar === "hijri", unpaid: Number(st.unpaid) || 0, nextDueDate: st.nextDueDate || null,
+      daysToNextDue: st.daysToNextDue ?? null, upcomingDate: st.upcomingDate || null,
+      instalment: one.total, instalmentVat: one.vat, partial: st.hasPartial ? Number(st.partial) || 0 : 0,
+      owed: v.enabled ? splitVat(Number(st.amountDue) || 0, v).total : (Number(st.amountDue) || 0), owedVat: v.enabled,
+      carried: Math.max(0, Number(t.carried_debt) || 0),
+      endDate: st.endDate || null, daysToEnd: st.daysToEnd ?? null, expiringSoon: !!st.expiringSoon,
+      signer: issuer?.billing_name || orgName || (p as any).manager || "إدارة الأملاك",
+    };
+    return waLink(t.phone, pickMsg(t.msg_lang, () => reminderText(ri), () => reminderTextEn(ri)));
+  };
 
   const endNotice = (p: Property, t: Tenant, st: any) => {
     const v = { enabled: unitVatApplies(t, p), rate: Number((p as any).vat_rate) || 15, inclusive: (p as any).vat_inclusive !== false };
     const one = splitVat(Number(t.rent_amount) || 0, v);
-    return waLink(t.phone, endNoticeText({
-      mode: "end", tenantName: t.name || "",
+    const ni: any = {
+      mode: "end", tenantName: t.name || "", unitTextEn: `${unitWordEn(t.unit_type, p.property_type)} (${t.unit || "—"})`,
       unitText: `${UNIT_AR[p.property_type] || "الوحدة"} (${t.unit || "—"})`, propertyName: p.name,
       endDate: st.endDate, daysToEnd: st.daysToEnd, hijri: (t as any).calendar === "hijri",
       overdue: v.enabled ? splitVat(Number(st.amountDue) || 0, v).total : (Number(st.amountDue) || 0), overdueVat: v.enabled,
@@ -231,7 +216,8 @@ export default function PortfolioView({ properties, windows, compliance, orgName
       signer: issuer?.billing_name || orgName || (p as any).manager || "إدارة الأملاك",
       terms: noticeTermsOf(issuer),
       annualRent: (Number(t.rent_amount) || 0) * defaultTermPeriods((t.payment_frequency || "monthly") as Frequency),
-    }));
+    };
+    return waLink(t.phone, pickMsg(t.msg_lang, () => endNoticeText(ni), () => endNoticeTextEn(ni)));
   };
 
   const Item = ({ p, t, st, note, tone }: { p: Property; t: Tenant; st: any; note: string; tone?: "late" | "due" | "exp" }) => (

@@ -1,4 +1,6 @@
 "use client";
+import { pastDebtMsg, pastDebtMsgEn } from "@/lib/tenant-messages";
+import { pickMsg } from "@/lib/msg-lang";
 // ============================================================
 // وثيق — متابعة الديون المرحَّلة
 //
@@ -96,7 +98,7 @@ export default function DebtFollowUp({ properties, orgName, onClose, db }: {
     const ids = properties.map((p) => p.id);
     Promise.all([
       supabase.from("tenants")
-        .select("id,name,unit,phone,carried_debt,debt_since,debt_status,debt_note,status,property_id,rent_amount,payment_frequency,contract_start,contract_end,contract_periods,paid_periods,partial_amount,calendar,move_out_date,first_due,billing_anchor_day,unit_type,vat_mode")
+        .select("id,name,unit,phone,carried_debt,debt_since,debt_status,debt_note,status,property_id,rent_amount,payment_frequency,contract_start,contract_end,contract_periods,paid_periods,partial_amount,calendar,move_out_date,first_due,billing_anchor_day,unit_type,vat_mode,msg_lang")
         .or("carried_debt.gt.0,status.eq.vacated").limit(5000),
       ids.length
         ? supabase.from("properties").select("id,vat_enabled,vat_rate,vat_inclusive,property_type").in("id", ids)
@@ -127,7 +129,7 @@ export default function DebtFollowUp({ properties, orgName, onClose, db }: {
         })));
         /* الأرشيف (v45) — قبل الترحيل لا جدول، فالخطأ يُتجاهَل */
         supabase.from("past_tenancies")
-          .select("id, property_id, name, unit, phone, debt_amount, debt_paid, debt_status, debt_note, archived_at, legacy")
+          .select("id, property_id, name, unit, phone, debt_amount, debt_paid, debt_status, debt_note, archived_at, legacy, msg_lang:snapshot->>msg_lang")
           .limit(2000)
           .then(({ data: pd, error: pe }: any) => {
             if (!alive || pe || !Array.isArray(pd)) return;
@@ -138,7 +140,7 @@ export default function DebtFollowUp({ properties, orgName, onClose, db }: {
                 carried_debt: Math.max(0, Math.round(((Number(x.debt_amount) || 0) - (Number(x.debt_paid) || 0)) * 100) / 100),
                 debt_since: String(x.archived_at || "").slice(0, 10) || null,
                 debt_status: x.debt_status, debt_note: x.debt_note, status: "archived",
-                source: "past" as const, legacyFlag: !!x.legacy,
+                source: "past" as const, legacyFlag: !!x.legacy, msg_lang: x.msg_lang,
               }))
               .filter((r: Row) => r.carried_debt > 0 || ["written_off"].includes(String(r.debt_status)));
             setRows((cur) => [...(cur || []).filter((r) => r.source !== "past"), ...pastRows]);
@@ -262,12 +264,11 @@ export default function DebtFollowUp({ properties, orgName, onClose, db }: {
   const old = shown.filter((r) => ageOf(r.debt_since).days > 365);
   const oldSum = old.reduce((a, r) => a + Number(r.carried_debt || 0), 0);
 
-  const msg = (r: Row) =>
-    `السلام عليكم ورحمة الله، ${r.name}\n\n`
-    + `بخصوص مبلغ متبقٍّ بذمتكم عن ${r.property_name}${r.unit ? ` — وحدة ${r.unit}` : ""} بمقدار ${sar(r.carried_debt)} ريال.\n`
-    + `نرجو التكرم بسداده أو تحديد موعد يناسبكم.\n\n`
-    + `وإن كان السداد قد تم فنعتذر عن التذكير، ونرجو تزويدنا بما يفيد لتحديث السجل.\n\n`
-    + `شاكرين لكم حسن تعاونكم،\n${orgName || ""}`;
+  /* (v105) بلغة المستأجر: الحالي من وحدته، والسابق من نسخة صفّه عند الأرشفة */
+  const msg = (r: Row) => {
+    const di = { name: r.name, propertyName: r.property_name || "", unit: r.unit, amount: Number(r.carried_debt) || 0, signer: orgName };
+    return pickMsg((r as any).msg_lang, () => pastDebtMsg(di), () => pastDebtMsgEn(di));
+  };
 
   return (
     <div className="fixed inset-0 z-50 bg-black/45 grid place-items-center p-3" onClick={onClose}>

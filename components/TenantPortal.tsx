@@ -1,4 +1,7 @@
 "use client";
+import { portalLinkMsg, portalLinkMsgEn } from "@/lib/tenant-messages";
+import { pickMsg } from "@/lib/msg-lang";
+import { unitWordEn } from "@/lib/docEn";
 import { wqConfirm } from "@/lib/confirm";
 /**
  * 🔑 رابط المستأجر (schema-v70) — واجهة المكتب:
@@ -63,9 +66,12 @@ export function TenantLinkModal({ tenant, propertyName, unitWord, orgName, db, d
   useEffect(() => { if (!demo) void load(); // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tenant.id]);
 
-  const waText = () => [`السلام عليكم ${tenant.name}،`, "",
-    `هذه صفحتك الخاصة لعقد ${unitWord} (${tenant.unit || "—"}) في ${propertyName}: الدفعة القادمة وسجل دفعاتك، ومنها تبلّغنا عن حوالتك أو عن أي عطل.`,
-    url, "", "الرابط خاص بك — لا تشاركه.", orgName ? orgName : ""].filter((x, i, a) => !(x === "" && i === a.length - 1)).join("\n");
+  /* (v105) بلغة المستأجر — lib/tenant-messages */
+  const waText = () => {
+    const pi = { tenantName: tenant.name, unitText: `${unitWord} (${tenant.unit || "—"})`,
+      unitTextEn: `${unitWordEn((tenant as any).unit_type, null)} (${tenant.unit || "—"})`, propertyName, url, signer: orgName || undefined };
+    return pickMsg((tenant as any).msg_lang, () => portalLinkMsg(pi), () => portalLinkMsgEn(pi));
+  };
 
   async function copy() {
     try { await navigator.clipboard.writeText(url); setCopied(true); setTimeout(() => setCopied(false), 2000); }
