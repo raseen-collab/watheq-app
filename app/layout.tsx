@@ -3,6 +3,7 @@ import PWARegister from "@/components/PWARegister";
 import FloatingMenu from "@/components/FloatingMenu";
 import HelpAssistant from "@/components/HelpAssistant";
 import WqAnalytics from "@/components/WqAnalytics";
+import ConfirmHost from "@/components/ConfirmHost";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase-server";
 import "./globals.css";
@@ -150,6 +151,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <script dangerouslySetInnerHTML={{ __html: fabScroll }} />
         <script dangerouslySetInnerHTML={{ __html: LABEL_GUARD }} />
         <WqAnalytics />
+        {/* (24 نوفمبر 2026) نوافذ التأكيد والتنبيه بتصميم وثيق بدل نوافذ المتصفح */}
+        <ConfirmHost />
       </body>
     </html>
   );
