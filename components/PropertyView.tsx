@@ -445,6 +445,19 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
     router.refresh();
     setTimeout(() => setRefreshing(false), 1200);
   }
+  /* (24 نوفمبر 2026) زرّ ↻ صار مخفيًّا على الجوال: نحدّث تلقائيًّا حين يرجع المستخدم للتطبيق
+     بعد دقيقة أو أكثر (دفعة من البوت أو من موظف ثانٍ أثناء غيابه). التجربة العامة بلا خادم: لا شيء. */
+  useEffect(() => {
+    if (demo) return;
+    let hiddenAt = 0;
+    const onVis = () => {
+      if (document.visibilityState === "hidden") hiddenAt = Date.now();
+      else if (hiddenAt && Date.now() - hiddenAt > 60000) { hiddenAt = 0; router.refresh(); }
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => document.removeEventListener("visibilitychange", onVis);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [demo]);
   function notify(k: "ok" | "err", m: string, undo?: () => void, extra?: { label: string; run: () => void }) {
     setToast({ k, m, undo, extra });
     /* الإشعار القابل للتراجع يبقى أطول: زرّ ✔ ينفّذ بنقرة واحدة وهو ملاصق
@@ -2240,7 +2253,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
             placeholder="بحث عقار…" />
         )}
         {/* كان max-w-[220px] يقصّ عدد الوحدات من آخر الخيار على 390px — يأخذ الآن ما بقي من السطر (30 سبتمبر 2026) */}
-        <select value={p.id} onChange={(e) => setActiveId(e.target.value)} aria-label="اختيار العقار"
+        <select value={p.id} onChange={(e) => { if (e.target.value === "__new") { openNewProperty(); return; } setActiveId(e.target.value); }} aria-label="اختيار العقار"
           className="fld flex-1 min-w-[170px] max-w-full sm:flex-none sm:max-w-[300px] font-semibold text-deep">
           {(() => {
             const q = normalizeSearch(propQ);
@@ -2249,18 +2262,20 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
             return list.map((x) =>
               <option key={x.id} value={x.id}>{typeIcon(x.property_type)} {x.name} · {x.tenants.length}</option>);
           })()}
+          {/* (24 نوفمبر 2026) على الجوال «+ عقار» داخل القائمة نفسها — زرّ أقل فوق الوحدات */}
+          {isManager && may("all_properties") && <option value="__new">＋ إضافة عقار جديد…</option>}
         </select>
 {/* شريط العقار صار للتنقّل وحده. كل الأدوات انتقلت إلى شريط الوحدات
             مجمَّعةً في ثلاث قوائم — كان الشريطان يعرضان 15 زرًّا معًا،
             ومستندات المالك موزّعة بينهما بلا منطق. */}
-        <button type="button" className="btn btn-ghost text-sm px-3" onClick={refreshNow} disabled={refreshing}
+        <button type="button" className="btn btn-ghost text-sm px-3 max-sm:!hidden" onClick={refreshNow} disabled={refreshing}
           title="تحديث البيانات من السيرفر (بعد تسجيل دفعة من البوت مثلًا)">{refreshing ? "…" : "↻"}</button>
         {isManager && <button type="button" className="btn btn-ghost text-sm px-3" onClick={() => setModal({ kind: "editProp" })} title="تعديل بيانات هذا العقار" aria-label="تعديل بيانات العقار">✎ تعديل</button>}
         {/* التجربة العامة بلا جلسة: الروابط إلى صفحات اللوحة تنتهي في /login —
             نفتح دعوة التسجيل بدلها كبقية الأفعال المحجوبة في التجربة (30 سبتمبر 2026) */}
         {items.length > 1 && <Link href="/dashboard/property/overview" className="btn btn-ghost text-sm" title="كل العقارات في صفحة واحدة"
           onClick={(e) => { if (demo) { e.preventDefault(); window.dispatchEvent(new CustomEvent("watheq:demo-overview")); } }}>🗂️ نظرة عامة</Link>}
-        {isManager && may("all_properties") && <button className="btn btn-ghost text-sm" onClick={openNewProperty}>+ عقار</button>}
+        {isManager && may("all_properties") && <button className="btn btn-ghost text-sm max-sm:!hidden" onClick={openNewProperty}>+ عقار</button>}
       </div>
 
       {/* (24 نوفمبر 2026) الجوال: الوحدات كانت بعد ~1450px من الأرقام واللوحات. زرّان يوصلان لها بضغطة */}
@@ -4018,32 +4033,51 @@ function useFloatingMenu(open: boolean, setOpen: (v: boolean) => void, anchor: R
 
 function RowMenu({ items }: { items: { label?: string; run?: () => void; danger?: boolean; sep?: string }[] }) {
   const [open, setOpen] = useState(false);
+  /* (24 نوفمبر 2026 — التقييم الثاني) القائمة كانت 18 بندًا مفتوحة دفعة واحدة على الجوال.
+     الآن كل قسم يُطوى تحت عنوانه، والقسم الأول وحده مفتوح؛ «منطقة خطر» مطويّة دائمًا حتى تُفتح عمدًا. */
+  const [sec, setSec] = useState<number | null>(null);
   const btnRef = useRef<HTMLButtonElement | null>(null);
   const { menuRef, style } = useFloatingMenu(open, setOpen, btnRef, 190);
 
   if (!items.length) return null;
+  /* الأقسام: [عنوان، بنود] — والبنود قبل أول عنوان قسم بلا عنوان يبقى ظاهرًا */
+  const groups: { title: string | null; at: number; list: typeof items }[] = [];
+  items.forEach((it, i) => {
+    if (it.sep) groups.push({ title: it.sep, at: i, list: [] });
+    else { if (!groups.length) groups.push({ title: null, at: -1, list: [] }); groups[groups.length - 1].list.push(it); }
+  });
+  const shown = groups.filter((g) => g.list.length);
+  const firstTitled = shown.find((g) => g.title && !/خطر/.test(g.title));
+  const openAt = sec ?? (firstTitled ? firstTitled.at : null);
+  const itemBtn = (it: typeof items[number], k: string | number) => (
+    /* 44px على شاشات اللمس — كانت 28px فيلمس الإبهام البند المجاور (30 سبتمبر 2026) */
+    <button key={k} type="button" role="menuitem"
+      onClick={() => { setOpen(false); setSec(null); it.run?.(); }}
+      className={`block w-full text-right px-3.5 py-1.5 [@media(pointer:coarse)]:min-h-[44px] [@media(pointer:coarse)]:py-2.5 text-xs font-semibold hover:bg-paper2 transition ${it.danger ? "text-late" : "text-deep"}`}>
+      {it.label}
+    </button>
+  );
   return (
     <div className="relative">
-      <button ref={btnRef} type="button" onClick={() => setOpen((v) => !v)} aria-label="إجراءات أخرى" aria-haspopup="menu" aria-expanded={open}
+      <button ref={btnRef} type="button" onClick={() => { setOpen((v) => !v); setSec(null); }} aria-label="إجراءات أخرى" aria-haspopup="menu" aria-expanded={open}
         className="btn btn-ghost text-xs px-2.5" title="المزيد">⋯</button>
       {open && (
         <>
-          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
+          <div className="fixed inset-0 z-40" onClick={() => { setOpen(false); setSec(null); }} />
           <div ref={menuRef} role="menu" style={style}
-            className="fixed z-50 min-w-[190px] max-w-[calc(100vw-16px)] bg-white border border-line rounded-xl shadow-lg py-1">
-            {items.map((it, i) => it.sep ? (
-              /* لا نعرض عنوان قسم لا عناصر بعده — يحدث مع الموظف محدود الصلاحيات */
-              items.slice(i + 1).findIndex((x) => !x.sep) === -1 || items[i + 1]?.sep ? null : (
-              /* عنوان قسم: تسع خيارات متساوية تُقرأ ببطء — التقسيم يجعل العين تقفز */
-              <div key={i} className="px-3.5 pt-2 pb-1 text-[10px] font-bold text-muted border-t border-line first:border-0 first:pt-1">{it.sep}</div>
-              )
+            className="fixed z-50 min-w-[210px] max-w-[calc(100vw-16px)] bg-white border border-line rounded-xl shadow-lg py-1">
+            {shown.map((g, gi) => !g.title ? (
+              <div key={"g" + gi}>{g.list.map((it, k) => itemBtn(it, "u" + k))}</div>
             ) : (
-              /* 44px على شاشات اللمس — كانت 28px فيلمس الإبهام البند المجاور (30 سبتمبر 2026) */
-              <button key={i} type="button" role="menuitem"
-                onClick={() => { setOpen(false); it.run?.(); }}
-                className={`block w-full text-right px-3.5 py-1.5 [@media(pointer:coarse)]:min-h-[44px] [@media(pointer:coarse)]:py-2.5 text-xs font-semibold hover:bg-paper2 transition ${it.danger ? "text-late" : "text-deep"}`}>
-                {it.label}
-              </button>
+              <div key={"g" + gi} className="border-t border-line first:border-0">
+                <button type="button" aria-expanded={openAt === g.at}
+                  onClick={() => setSec(openAt === g.at ? -2 : g.at)}
+                  className={`flex w-full items-center justify-between gap-2 px-3.5 py-1.5 [@media(pointer:coarse)]:min-h-[44px] text-[11px] font-bold hover:bg-paper2 ${/خطر/.test(g.title) ? "text-late" : "text-muted"}`}>
+                  <span>{g.title} <span className="font-normal">({g.list.length})</span></span>
+                  <span aria-hidden="true">{openAt === g.at ? "▾" : "◂"}</span>
+                </button>
+                {openAt === g.at && g.list.map((it, k) => itemBtn(it, g.at + "-" + k))}
+              </div>
             ))}
           </div>
         </>
