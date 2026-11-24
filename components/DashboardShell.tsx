@@ -15,8 +15,10 @@ import { getOffice, allProperties } from "@/lib/office";
 /* أزرار التجديد والاشتراك تفتح صفحة /subscribe (v71) بدل واتساب */
 
 export default function DashboardShell({
-  userName, accountType, showSwitcher, trialEndsAt, sub: subAll, subs, isOwner = true, children,
+  userName, accountType, showSwitcher, trialEndsAt, sub: subAll, subs, isOwner = true, brand = null, children,
 }: {
+  /** (v100) هوية المكتب: شعاره واسمه بدل «وثيق» في الترويسة */
+  brand?: { name: string; logo: string | null } | null;
   userName: string;
   accountType: AccountType;
   showSwitcher: boolean;
@@ -90,15 +92,32 @@ export default function DashboardShell({
     <div className="min-h-screen bg-paper">
       <header className="bg-deep text-[#EAF1EE] wq-safe-top overflow-x-hidden">
         <div className="max-w-6xl mx-auto flex flex-wrap items-center justify-between gap-3 px-4 py-3">
-          <a href="https://watheqapp.com" className="flex items-center gap-2.5 font-display font-bold hover:opacity-90" title="العودة إلى موقع وثيق">
-            <span className="w-8 h-8 rounded-lg bg-deep2 grid place-items-center text-goldSoft">و</span>
-            <div>
-              <div>وثيق</div>
-              <div className="text-[.65rem] font-normal text-[#9FB8B3] -mt-1">
-                {marketer ? "المسوّق العقاري" : onProperty ? "إدارة الأملاك" : "جمعية الملاك"}
+          {brand ? (
+            <Link href="/dashboard" className="flex items-center gap-2.5 font-display font-bold hover:opacity-90 min-w-0" title={brand.name}>
+              {brand.logo ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={brand.logo} alt={`شعار ${brand.name}`} className="w-10 h-10 rounded-lg bg-white object-contain p-0.5 shrink-0" />
+              ) : (
+                <span className="w-10 h-10 rounded-lg bg-deep2 grid place-items-center text-goldSoft shrink-0">{brand.name.trim().charAt(0)}</span>
+              )}
+              <div className="min-w-0">
+                <div className="truncate max-w-[60vw] sm:max-w-[260px]">{brand.name}</div>
+                <div className="text-[.65rem] font-normal text-[#9FB8B3] -mt-0.5">
+                  {marketer ? "المسوّق العقاري" : onProperty ? "إدارة الأملاك" : "جمعية الملاك"} · عبر وثيق
+                </div>
               </div>
-            </div>
-          </a>
+            </Link>
+          ) : (
+            <a href="https://watheqapp.com" className="flex items-center gap-2.5 font-display font-bold hover:opacity-90" title="العودة إلى موقع وثيق">
+              <span className="w-8 h-8 rounded-lg bg-deep2 grid place-items-center text-goldSoft">و</span>
+              <div>
+                <div>وثيق</div>
+                <div className="text-[.65rem] font-normal text-[#9FB8B3] -mt-1">
+                  {marketer ? "المسوّق العقاري" : onProperty ? "إدارة الأملاك" : "جمعية الملاك"}
+                </div>
+              </div>
+            </a>
+          )}
 
           <div className="flex items-center gap-2 flex-wrap min-w-0 order-3 w-full sm:order-none sm:w-auto">
             {/* مبدّل اللوحتين — للحساب المزدوج فقط */}

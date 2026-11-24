@@ -77,6 +77,9 @@ export default function SettingsView({ profile }: { profile: any }) {
       notice_daily_article: String(p.notice_daily_article || "").trim().slice(0, 40) || null,
       notice_no_renew_arrears: !!p.notice_no_renew_arrears,
       notice_show_rent: !!p.notice_show_rent,
+      /* (v100) هوية المكتب في ترويسة اللوحة */
+      brand_logo: p.brand_logo || null,
+      brand_header: !!p.brand_header,
     };
 
     /**
@@ -103,11 +106,35 @@ export default function SettingsView({ profile }: { profile: any }) {
     }
     setSaving(false);
     if (error) { setMsg({ t: "err", m: friendlyError(error.message) }); return; }
-    const AR: Record<string, string> = { default_calendar: "التقويم الافتراضي", billing_address: "عنوان المنشأة", payment_means: "وسيلة الدفع" };
+    const AR: Record<string, string> = { brand_logo: "شعار المكتب", brand_header: "إظهار هوية المكتب", default_calendar: "التقويم الافتراضي", billing_address: "عنوان المنشأة", payment_means: "وسيلة الدفع" };
     setMsg(skipped.length
       ? { t: "ok", m: `تم الحفظ — عدا ${skipped.map((c) => AR[c] || c).join("، ")}: يحتاج تحديثًا في قاعدة البيانات، أخبر الدعم.` }
       : { t: "ok", m: "تم الحفظ." });
     router.refresh();
+  }
+
+  /* (v100) الشعار يُصغَّر في المتصفح إلى 256px ويُحفظ صورة webp صغيرة (لا رفع ملفات ولا svg) */
+  async function pickLogo(file: File | undefined) {
+    if (!file) return;
+    if (!/^image\/(png|jpeg|webp)$/.test(file.type)) return setMsg({ t: "err", m: "الشعار لازم يكون صورة PNG أو JPG أو WEBP." });
+    if (file.size > 5 * 1024 * 1024) return setMsg({ t: "err", m: "الصورة أكبر من 5 ميجا — اختر صورة أصغر." });
+    try {
+      const url = URL.createObjectURL(file);
+      const img = await new Promise<HTMLImageElement>((ok, bad) => { const i = new Image(); i.onload = () => ok(i); i.onerror = bad; i.src = url; });
+      const k = Math.min(1, 256 / Math.max(img.width, img.height));
+      const c = document.createElement("canvas");
+      c.width = Math.max(1, Math.round(img.width * k)); c.height = Math.max(1, Math.round(img.height * k));
+      c.getContext("2d")!.drawImage(img, 0, 0, c.width, c.height);
+      URL.revokeObjectURL(url);
+      let data = c.toDataURL("image/webp", 0.9);
+      if (!data.startsWith("data:image/webp")) data = c.toDataURL("image/png");
+      if (data.length > 120000) data = c.toDataURL("image/jpeg", 0.85);
+      if (data.length > 120000) return setMsg({ t: "err", m: "تعذّر تصغير الشعار بما يكفي — جرّب صورة أبسط." });
+      setP({ ...p, brand_logo: data, brand_header: true });
+      setMsg(null);
+    } catch {
+      setMsg({ t: "err", m: "تعذّرت قراءة الصورة — جرّب صورة أخرى." });
+    }
   }
 
   async function testTelegram() {
@@ -329,6 +356,37 @@ export default function SettingsView({ profile }: { profile: any }) {
             <span className="text-sm font-semibold">ذكر قيمة الإيجار السنوي الحالي عند التجديد</span>
           </label>
         </div>
+      </section>
+
+      {/* (v100) هوية المكتب في ترويسة اللوحة */}
+      <section className="bg-white border border-line rounded-2xl p-6 mb-5">
+        <h2 className="font-semibold text-deep text-lg mb-1">🏷️ هوية المكتب في اللوحة</h2>
+        <p className="text-sm text-muted mb-4">شعار مكتبك واسمه أعلى اللوحة بدل «وثيق»، لك ولموظفيك. الاسم يُؤخذ من «اسم المنشأة» في بيانات الفوترة.</p>
+        <div className="flex items-center gap-4 flex-wrap">
+          <div className="w-16 h-16 rounded-xl border border-line bg-paper grid place-items-center overflow-hidden shrink-0">
+            {p.brand_logo
+              // eslint-disable-next-line @next/next/no-img-element
+              ? <img src={p.brand_logo} alt="شعار المكتب" className="w-full h-full object-contain" />
+              : <span className="text-xs text-muted">بلا شعار</span>}
+          </div>
+          <div className="flex gap-2 flex-wrap">
+            <label className="btn btn-ghost text-sm cursor-pointer">
+              {p.brand_logo ? "تغيير الشعار" : "رفع الشعار"}
+              <input type="file" accept="image/png,image/jpeg,image/webp" className="hidden"
+                onChange={(e) => { pickLogo(e.target.files?.[0]); e.target.value = ""; }} />
+            </label>
+            {p.brand_logo && (
+              <button type="button" className="btn btn-ghost text-sm text-late" onClick={() => setP({ ...p, brand_logo: null })}>حذف الشعار</button>
+            )}
+          </div>
+        </div>
+        <label className="flex items-center gap-2 mt-4 text-sm">
+          <input type="checkbox" checked={!!p.brand_header} onChange={(e) => setP({ ...p, brand_header: e.target.checked })} />
+          <span>اعرض اسم مكتبي وشعاره أعلى اللوحة</span>
+        </label>
+        {p.brand_header && !String(p.billing_name || p.org_name || "").trim() && (
+          <span className="block text-xs text-late mt-2">اكتب «اسم المنشأة» في بيانات الفوترة تحت — هو الاسم اللي يظهر.</span>
+        )}
       </section>
 
       {/* بيانات الفوترة */}
