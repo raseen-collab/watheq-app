@@ -48,7 +48,7 @@ export default function OnboardingPage() {
   async function joinByCode() {
     const supabase = createClient();
     const code = inviteCode.trim().toUpperCase();
-    if (code.length < 6) { setInviteMsg("أدخل الرمز كما وصلك — ٨ أحرف وأرقام."); return; }
+    if (code.length < 6) { setInviteMsg("أدخل الرمز كما وصلك — 8 أحرف وأرقام."); return; }
     setSaving(true); setInviteMsg(null);
     const { data, error } = await supabase.rpc("watheq_redeem_invite", { invite_code: code });
     setSaving(false);
@@ -61,7 +61,7 @@ export default function OnboardingPage() {
   const [error, setError] = useState<string | null>(null);
 
   /**
-   * تطبيع رقم الجوال قبل التحقق: كثيرون يكتبونه بالأرقام العربية (٠٥…)
+   * تطبيع رقم الجوال قبل التحقق: كثيرون يكتبونه بالأرقام العربية (05…)
    * أو بمسافات وشرطات أو بصيغة +966. كلها تُقبل وتُخزَّن بصيغة واحدة
    * 05xxxxxxxx حتى تعمل روابط واتساب (waNumber) وتظهر موحّدة في الفواتير.
    */
@@ -133,7 +133,7 @@ export default function OnboardingPage() {
 
   const placeholder =
     type === "hoa_manager" ? "جمعية ملاك عمارة النرجس"
-    : type === "landlord" ? "مكتب اليمامة لإدارة الأملاك"
+    : type === "landlord" ? "مكتب اليمامة — أو اسمك إن كنت تدير بنفسك"
     : type === "marketer" ? "أبو خالد للتسويق العقاري"
     : "اسم منشأتك أو اسمك";
 
@@ -145,7 +145,7 @@ export default function OnboardingPage() {
           <h1 className="font-display text-2xl font-bold text-deep">أهلًا بك في وثيق 🌿</h1>
           <p className="text-muted mt-2">اختر نوع حسابك — ستُهيَّأ لوحة التحكم لتناسبك تمامًا.</p>
           <div className="inline-block mt-3 text-sm bg-[#E6F4EC] text-[#137a50] border border-[#B7DFC7] rounded-full px-4 py-1.5 font-semibold">
-            🎁 تجربة مجانية ٣٠ يومًا — كل المزايا، بلا بطاقة
+            🎁 تجربة مجانية 30 يومًا — كل المزايا، بلا بطاقة
           </div>
         </div>
 
@@ -195,7 +195,7 @@ export default function OnboardingPage() {
         {type && (
           <div className="mt-6 bg-white border border-line rounded-2xl p-5 max-w-xl mx-auto">
             <label className="block text-sm font-semibold mb-2">
-              اسم المنشأة أو الجهة <span className="text-muted font-normal">— اختياري، يظهر في الخطابات</span>
+              {type === "landlord" ? "اسم المكتب أو اسمك" : "اسم المنشأة أو الجهة"} <span className="text-muted font-normal">— اختياري، يظهر في الخطابات</span>
             </label>
             <input className="fld" value={orgName} onChange={(e) => setOrgName(e.target.value)} placeholder={placeholder} />
 
