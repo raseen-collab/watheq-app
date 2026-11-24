@@ -60,8 +60,14 @@ export default async function DashboardLayout({ children }: { children: React.Re
     hoa: productSub(entProfile, "hoa"),
   };
 
+  /* (v100) هوية المكتب أعلى اللوحة — يفعّلها صاحب المكتب من الإعدادات، ويراها موظفوه */
+  const brandName = String((ctx as any).billing_name || (ctx as any).org_name || "").trim();
+  const brand = (ctx as any).brand_header && brandName
+    ? { name: brandName, logo: (ctx as any).brand_logo || null } : null;
+
   return (
     <DashboardShell
+      brand={brand}
       userName={name}
       accountType={accountType}
       showSwitcher={canSwitch(accountType)}
