@@ -124,6 +124,15 @@ function table(store: SandboxStore, name: keyof SandboxStore) {
  * الجداول السبعة، ودالتَي تسجيل الدفعة والتراجع، وترقيم الفواتير.
  */
 export function sandboxClient(store: SandboxStore) {
+  /* (24 نوفمبر 2026) أرقام سندات القبض كما في القاعدة (schema-v80: RC-00001):
+     كانت دفعات التجربة بلا رقم، فينكسر «سند قبض» في أهم لحظة للزائر. */
+  const rcLabel = (n: number) => `RC-${n < 100000 ? String(n).padStart(5, "0") : n}`;
+  let rcSeq = 0;
+  const nextRc = () => rcLabel(++rcSeq);
+  store.payments
+    .filter((x) => Number(x.amount) > 0 && !x.reverses && !x.association_id)
+    .sort((a, b) => String(a.created_at || a.paid_on || "").localeCompare(String(b.created_at || b.paid_on || "")))
+    .forEach((x) => { if (!x.receipt_no) x.receipt_no = nextRc(); });
   /* عكس دفعة بعينها — مشترك بين «عكس» و«تراجع عن آخر دفعة» */
   const reversePay = (payId: string): { data: any; error: any } => {
       const pay = store.payments.find((x) => x.id === payId);
@@ -170,15 +179,17 @@ export function sandboxClient(store: SandboxStore) {
         const completed = Math.floor(pool / rent);
         t.partial_amount = r2(pool - completed * rent);
         t.paid_periods = Math.max(0, (Number(t.paid_periods) || 0) + completed);
+        const payId = `sb_pay_${Math.random().toString(36).slice(2, 10)}`;
+        const receiptNo = nextRc();
         store.payments = [{
-          id: `sb_pay_${Math.random().toString(36).slice(2, 10)}`, tenant_id: t.id, property_id: t.property_id,
+          id: payId, receipt_no: receiptNo, tenant_id: t.id, property_id: t.property_id,
           paid_on: args.p_paid_on || new Date().toISOString().slice(0, 10), amount: args.p_amount,
           method: args.p_method || "transfer", note: args.p_note ?? null, reference: args.p_reference ?? null,
           periods_covered: completed, created_at: new Date().toISOString(),
         }, ...store.payments];
         const prop = store.properties.find((p) => p.id === t.property_id);
         if (prop) prop.collected = (Number(prop.collected) || 0) + Number(args.p_amount || 0);
-        return { data: { paid_periods: t.paid_periods, partial_amount: t.partial_amount, completed }, error: null };
+        return { data: { paid_periods: t.paid_periods, partial_amount: t.partial_amount, completed, payment_id: payId, receipt_no: receiptNo }, error: null };
       }
       /* «تراجع عن آخر دفعة» بمنطق القاعدة (schema-v44/v45). كانت التجربة تُنقص
          العدّاد قسطًا كاملًا وتُبقي الجزئي ولا تكتب في الدفتر — عطل v43 نفسه. */
