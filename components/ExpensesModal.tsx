@@ -360,7 +360,7 @@ function ExpenseForm({ unitWord, busy, onSave, onCancel, payeeHints }: {
       </label>}
 
       <label className="block"><span className="block text-sm font-semibold mb-1">{d.voucher ? "البيان" : "ملاحظة"} <span className="text-muted text-xs font-normal">— {d.voucher ? "يُطبع في السند" : "اختياري"}</span></span>
-        <input className="fld" value={d.note} onChange={(e) => setD({ ...d, note: e.target.value })} placeholder="إصلاح تسريب دورة مياه شقة 12" /></label>
+        <textarea className="fld min-h-[64px] leading-relaxed" rows={2} maxLength={1000} value={d.note} onChange={(e) => setD({ ...d, note: e.target.value })} placeholder="إصلاح تسريب دورة مياه شقة 12 — أو الصق رسالة التحويل للفني" /></label>
 
       {/* أمر صرف مع سند (v74): المبلغ يُسلَّم لشخص يُكتب اسمه يدويًا، ويصدر سند مرقّم للتوقيع */}
       <div className={`rounded-lg border p-3 ${d.voucher ? "border-gold bg-[#FBF1DF]" : "border-line bg-white"}`}>

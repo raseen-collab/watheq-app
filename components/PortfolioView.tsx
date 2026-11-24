@@ -27,6 +27,7 @@ import { alertCount, complianceState, KIND_META, type ComplianceItem } from "@/l
 import ComplianceModal from "@/components/ComplianceModal";
 import { hijriShort } from "@/lib/hijri";
 import ExpensesOverview from "@/components/ExpensesOverview";
+import { parseDocQuery, paymentsFilter, expensesFilter, snippet } from "@/lib/doc-search";
 
 type Tenant = any; type Property = any;
 const PER_MONTH = new Proxy({} as Record<string, number>, { get: (_o, f: string) => f === "daily" ? 30 : f === "weekly" ? 4.33 : 1 / (freqMonths(f) || 1) });
@@ -158,6 +159,39 @@ export default function PortfolioView({ properties, windows, compliance, orgName
   /* توحيد الطرفين (30 سبتمبر 2026): كانت الأرقام العربية تُحوَّل في النص المبحوث وحده،
      و«مني/منى» و«فاطمه/فاطمة» و«احمد/أحمد» لا تتطابق — نفس توحيد صفحة العقار */
   const needle = normalizeSearch(q);
+  /* البحث برقم السند أو نص الحوالة (24 نوفمبر 2026 — طلب مكتب الأولى): استعلام للقاعدة
+     بعد توقّف الكتابة، لأن الدفعات والمصروفات لا تُحمَّل في هذه الصفحة. RLS تحصره في المكتب. */
+  type DocHit = { key: string; kind: "rc" | "pv"; no: string | null; amount: number; date: string; pid: string; who: string; unit: string; snip: string; reversed: boolean };
+  const [docHits, setDocHits] = useState<DocHit[] | null>(null);
+  useEffect(() => {
+    const dq = parseDocQuery(q);
+    const pf = paymentsFilter(dq), ef = expensesFilter(dq);
+    const ids = properties.map((p) => p.id);
+    if ((!pf && !ef) || !ids.length) { setDocHits(null); return; }
+    let live = true;
+    const tm = setTimeout(async () => {
+      const out: DocHit[] = [];
+      const idChunk = ids.slice(0, 300);
+      if (pf) {
+        const { data } = await supabase.from("payments")
+          .select("id, property_id, amount, paid_on, receipt_no, reference, note, payer_name, unit_label, reverses")
+          .in("property_id", idChunk).or(pf).order("paid_on", { ascending: false }).limit(15);
+        (data || []).forEach((x: any) => out.push({ key: "p" + x.id, kind: "rc", no: x.receipt_no, amount: Number(x.amount) || 0, date: x.paid_on,
+          pid: x.property_id, who: x.payer_name || "", unit: x.unit_label || "",
+          snip: dq.text ? snippet([x.reference, x.note].filter(Boolean).join(" · "), dq.text) : "", reversed: !!x.reverses }));
+      }
+      if (ef) {
+        const { data } = await supabase.from("expenses")
+          .select("id, property_id, amount, spent_on, voucher_no, note, payee_name, payee_ref, invoice_no, unit")
+          .in("property_id", idChunk).or(ef).order("spent_on", { ascending: false }).limit(15);
+        (data || []).forEach((x: any) => out.push({ key: "e" + x.id, kind: "pv", no: x.voucher_no, amount: Number(x.amount) || 0, date: x.spent_on,
+          pid: x.property_id, who: x.payee_name || "", unit: x.unit || "",
+          snip: dq.text ? snippet([x.note, x.payee_ref, x.invoice_no].filter(Boolean).join(" · "), dq.text) : "", reversed: false }));
+      }
+      if (live) setDocHits(out);
+    }, 350);
+    return () => { live = false; clearTimeout(tm); };
+  }, [q, properties, supabase]);
   const hits = needle.length >= 2 ? rows.filter(({ p, t }) =>
     [t.name, t.unit, t.phone, t.national_id, t.contract_no, t.elec_account, t.water_account, p.name]
       .some((v) => v && normalizeSearch(v).includes(needle))) : [];
@@ -385,10 +419,10 @@ export default function PortfolioView({ properties, windows, compliance, orgName
       {expOpen && <ExpensesOverview properties={properties as any} onClose={() => setExpOpen(false)} />}
       <div className="bg-white border border-line rounded-2xl p-4 mb-4">
         <input className="fld text-base" value={q} onChange={(e) => setQ(e.target.value)} autoFocus
-          placeholder="ابحث في كل العقارات: اسم المستأجر · الجوال · رقم الهوية · رقم العقد · رقم الوحدة · حساب الكهرباء أو الماء" />
+          placeholder="ابحث في كل العقارات: اسم المستأجر · الجوال · رقم الهوية · رقم العقد · رقم الوحدة · رقم السند · مرجع الحوالة" />
         {needle.length >= 2 && (
           <div className="mt-3">
-            {hits.length === 0 ? <p className="text-sm text-muted">لا نتائج لـ«{q}».</p> : (
+            {hits.length === 0 ? (!docHits?.length && <p className="text-sm text-muted">لا نتائج لـ«{q}».</p>) : (
               <div className="space-y-1.5">
                 {cut("hits", hits).map(({ p, t, st }) => (
                   <Item key={t.id} p={p} t={t} st={st}
@@ -398,6 +432,30 @@ export default function PortfolioView({ properties, windows, compliance, orgName
                 <More k="hits" n={hits.length} />
               </div>
             )}
+          </div>
+        )}
+        {!!docHits?.length && (
+          <div className="mt-3" data-testid="doc-hits">
+            <div className="text-xs text-muted mb-1.5">السندات ({docHits.length}{docHits.length >= 15 ? "+" : ""})</div>
+            <div className="space-y-1.5">
+              {docHits.map((h) => {
+                const p = properties.find((x) => x.id === h.pid);
+                return (
+                  <div key={h.key} className="flex items-center justify-between gap-3 border border-line rounded-lg px-3 py-2 text-sm">
+                    <div className="min-w-0">
+                      <div className="font-semibold text-deep truncate">
+                        {h.kind === "rc" ? "🧾 سند قبض" : "📤 سند صرف"} {h.no ? <span dir="ltr" className="font-mono">{h.no}</span> : <span className="text-muted font-normal">(بلا رقم)</span>}
+                        <span className="text-muted font-normal text-xs"> · {sar(h.amount)} ريال · {arDate(h.date)}</span>
+                        {h.reversed && <span className="text-[11px] text-late font-normal"> · عكس</span>}
+                      </div>
+                      <div className="text-[11px] text-muted truncate">{[h.who, h.unit, p?.name].filter(Boolean).join(" · ")}</div>
+                      {h.snip && <div className="text-[11px] text-ink/70 truncate">«{h.snip}»</div>}
+                    </div>
+                    {p && <Link className="btn btn-ghost text-xs shrink-0" href={`/dashboard/property?p=${p.id}${h.unit ? `&q=${encodeURIComponent(h.unit)}` : ""}`}>فتح</Link>}
+                  </div>
+                );
+              })}
+            </div>
           </div>
         )}
       </div>

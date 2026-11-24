@@ -3415,11 +3415,17 @@ function PaymentModal({ tenant, unitWord, onClose, onSubmit, st, recent = null, 
 
       <div className="grid grid-cols-2 gap-3 mt-3">
         <Field label="مرجع الحوالة" hint="آخر أرقام العملية — لمطابقة كشف البنك">
-          <input className="fld" dir="ltr" value={reference} onChange={(e) => setReference(e.target.value)} placeholder="…4417" />
+          <input className="fld" dir="ltr" value={reference} maxLength={200} onChange={(e) => setReference(e.target.value)} placeholder="…4417" />
         </Field>
-        <Field label="ملاحظة" hint={tgt === "carried" ? "سداد الدين يُحفظ بملاحظة «سداد دين مرحَّل»" : tgt === "both" ? "تُحفظ على جزء الأقساط" : "اختياري"}>
-          <input className="fld" value={note} onChange={(e) => setNote(e.target.value)} placeholder="سداد شهر رجب" />
+      </div>
+      {/* (24 نوفمبر 2026 — طلب مكتب الأولى) خانة واسعة: يُلصق فيها نص رسالة التحويل من البنك كاملًا،
+          ويُطبع في سند القبض. البحث في «كل العقارات» يجد السند بأي جزء منها. */}
+      <div className="mt-3">
+        <Field label="ملاحظة / نص رسالة التحويل" hint={tgt === "carried" ? "سداد الدين يُحفظ بملاحظة «سداد دين مرحَّل»" : tgt === "both" ? "تُحفظ على جزء الأقساط" : "اختياري — الصق رسالة البنك كاملة، تظهر في سند القبض"}>
+          <textarea className="fld min-h-[72px] leading-relaxed" rows={3} maxLength={1000} value={note} onChange={(e) => setNote(e.target.value)}
+            placeholder="سداد شهر رجب — أو الصق رسالة التحويل: «حوالة واردة 1,500 ر.س من … مرجع …»" />
         </Field>
+        {note.length > 800 && <div className="text-[11px] text-muted mt-1 tabular-nums">{note.length} / 1000</div>}
       </div>
 
       {tgt && tgt !== "rent" && entered > 0 && (
@@ -3703,7 +3709,7 @@ function HistoryModal({ data, unitWord, onClose, canEdit = true, onChanged, db, 
     setBusy(true);
     const { data: res, error } = await supabase.rpc("watheq_edit_payment", {
       p_payment: id, p_amount: amt, p_method: eMethod, p_paid_on: nd,
-      p_reference: eRef.trim() || null, p_note: eNote.trim().slice(0, 500) || null });
+      p_reference: eRef.trim() || null, p_note: eNote.trim().slice(0, 1000) || null });
     setBusy(false);
     if (error) {
       const m = String(error.message || "");
@@ -3823,7 +3829,7 @@ function HistoryModal({ data, unitWord, onClose, canEdit = true, onChanged, db, 
                       تاريخ وصول المال أعلاه، ولحظة إدخاله هنا للتدقيق. */}
                   <td className="p-2 tabular-nums text-xs" dir="ltr">
                     {editing === r.id
-                      ? <input className="fld !py-0.5 !text-xs !w-24" dir="ltr" value={eRef} onChange={(e) => setERef(e.target.value)} placeholder="المرجع" />
+                      ? <input className="fld !py-0.5 !text-xs !w-24" dir="ltr" value={eRef} maxLength={200} onChange={(e) => setERef(e.target.value)} placeholder="المرجع" />
                       : (r.reference || "—")}
                   </td>
                   <td className="p-2 text-muted">{r.periods_covered || "—"}</td>
@@ -3839,7 +3845,7 @@ function HistoryModal({ data, unitWord, onClose, canEdit = true, onChanged, db, 
                   </td>
                   {/* العكس يبقى ظاهرًا هنا (سجلّ تدقيق للمكتب) — بلا المعرّف الخام */}
                   <td className="p-2 text-muted text-xs">{editing === r.id
-                    ? <input className="fld !py-0.5 !text-xs !w-36" value={eNote} maxLength={500} onChange={(e) => setENote(e.target.value)} placeholder="ملاحظة" />
+                    ? <textarea className="fld !py-0.5 !text-xs !w-48 leading-snug" rows={3} value={eNote} maxLength={1000} onChange={(e) => setENote(e.target.value)} placeholder="ملاحظة / نص الحوالة" />
                     : r.note ? String(r.note).replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, "").replace(/\s*—\s*$/, "") : "—"}</td>
                   {canEdit && (
                     /* عمود الأزرار مثبّت يسارًا: في نافذة ضيقة كان «حفظ» يقع خارج الشاشة (17 نوفمبر) */
