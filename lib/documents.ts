@@ -4037,7 +4037,7 @@ export function receiptNoteText(note?: string | null): string {
     .replace(/\s*[—-]\s*$/, "")
     .replace(/[ \t]+/g, " ")
     .trim()
-    .slice(0, 500);
+    .slice(0, 1000);
 }
 
 export function receiptRowsHTML(pay: ReceiptPayment, t: ReceiptTenant, p: ReceiptProperty, who: string): string {

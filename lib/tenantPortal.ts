@@ -350,7 +350,7 @@ export function renderTenantReceiptPage(d: TenantReceiptData, opts: { nonce: str
     : x.applies_to === "past_debt" ? "سداد متأخرات مستأجر سابق"
     : `أجرة ${ul} رقم (${unit})${n > 0 ? ` — ${n === 1 ? "دفعة واحدة" : n === 2 ? "دفعتان" : `${n} دفعات`} (${freqLabel(t.payment_frequency)})` : " — دفعة جزئية"}`;
   const hij = hDate(x.paid_on);
-  const note = String(x.note || "").replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, "").replace(/\s*[—-]\s*$/, "").trim().slice(0, 500);
+  const note = String(x.note || "").replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, "").replace(/\s*[—-]\s*$/, "").trim().slice(0, 1000);
   const body = `
 <p class="noprint" style="margin:0 0 4px"><a href="${opts.base}">→ العودة إلى صفحتك</a></p>
 <section class="card" style="padding:20px;position:relative">
