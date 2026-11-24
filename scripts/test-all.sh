@@ -15,6 +15,8 @@ npx esbuild lib/ads.ts          --bundle --format=cjs --platform=node --alias:@=
 npx esbuild lib/ads.ts --bundle --format=cjs --platform=node --alias:@=. --outfile=/tmp/b/ads.js
 npx esbuild lib/backup-crypto.ts --bundle --format=cjs --platform=node --alias:@=. --outfile=/tmp/b/backupCrypto.js
 npx esbuild lib/backup.ts --bundle --format=cjs --platform=node --alias:@=. --external:@supabase/supabase-js --outfile=/tmp/b/backup.js
+npx esbuild lib/backup-photos.ts --bundle --format=cjs --platform=node --alias:@=. --external:@supabase/supabase-js --outfile=/tmp/b/backupPhotos.js
+npx esbuild lib/backup-crypto.ts --bundle --format=cjs --platform=node --alias:@=. --outfile=/tmp/b/backupCryptoP.js
 npx esbuild lib/backupReminder.ts --bundle --format=cjs --platform=node --alias:@=. --outfile=/tmp/b/backupReminder.js
 npx esbuild lib/clock-diag.ts --bundle --format=cjs --platform=node --alias:@=. --outfile=/tmp/b/clock-diag.js
 npx esbuild lib/collection.ts --bundle --format=cjs --platform=node --alias:@=. --outfile=/tmp/b/collection.js
