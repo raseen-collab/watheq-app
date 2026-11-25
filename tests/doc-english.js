@@ -67,16 +67,15 @@ const pv = { name: "مركز الزهراء", address: null, city: "جدة", man
 const iss = { billing_name: "مكتب الأولى", vat_number: "310000000000003", cr_number: "7018004502" };
 const inv = D.invoiceHTML(tn, pv, { invoice_no: "INV-2026-0007", amount: 10000, due_date: "2026-07-01", period_label: "الدفعة 3 من 4" }, iss);
 const iEn = enPart(inv), iAr = arPart(inv);
-t("invoice: both parts", iEn && iAr && iAr.includes("فاتورة ضريبية مبسطة"));
-t("invoice en: tax title + period + freq", iEn.includes("Simplified tax invoice") && iEn.includes("Instalment 3 of 4") && iEn.includes("Every 3 months"));
+t("invoice: both parts", iEn && iAr && iAr.includes("مطالبة بالأجرة"));   // (25 نوفمبر) المسجَّل: مطالبة لا ضريبية
+t("invoice en: tax title + period + freq", iEn.includes("Rent payment request") && iEn.includes("Instalment 3 of 4") && iEn.includes("Every 3 months"));
 t("invoice en: VAT split 10000 + 1500 = 11500", iEn.includes("SAR 11,500") && iEn.includes(">1,500<") && iEn.includes(">10,000<"));
 t("invoice: same totals in both", iAr.includes("11,500") && iAr.includes("1,500"));
-t("invoice en: QR with distinct ids", iEn.includes('id="zatca-qr-en"') && iAr.includes('id="zatca-qr"') && (inv.match(/qrcode\.min\.js/g) || []).length === 1);
-t("invoice: QR payloads identical", (() => { const a = /id="zatca-tlv"[^>]*>([^<]+)</.exec(inv), b = /id="zatca-tlv-en"[^>]*>([^<]+)</.exec(inv); return a && b && a[1] === b[1]; })());
+t("invoice: no QR on payment requests (both parts)", !inv.includes("zatca-qr") && iEn.includes("not a tax invoice"));
 t("invoice en: Arabic-is-binding note", iEn.includes("must be issued in Arabic"));
 t("invoice en: VAT no + CR", iEn.includes("310000000000003") && iEn.includes("7018004502"));
 const invV = enPart(D.invoiceHTML(tn, pv, { invoice_no: "INV-1", amount: 10000, due_date: "2026-07-01", period_label: "الدفعة 3 من 4", status: "void", issue_date: "2026-06-01" }, iss));
-t("invoice en: void → no QR, void banner", invV.includes("VOID") && !invV.includes("zatca-qr-en") && invV.includes("Void invoice"));
+t("invoice en: void → no QR, void banner", invV.includes("VOID") && !invV.includes("zatca-qr-en") && invV.includes("Void payment request"));
 const invN = enPart(D.invoiceHTML({ ...tn, unit_type: "apartment" }, { ...pv, property_type: "residential" }, { invoice_no: "INV-2", amount: 3000, due_date: "2026-07-01", period_label: "الدفعة 1 من 12" }, { billing_name: "مكتب" }));
 t("invoice en: residential apartment no VAT → plain invoice", invN.includes("Rent invoice") && !invN.includes("VAT (") && invN.includes("Apartment") && invN.includes("SAR 3,000"));
 const invX = enPart(D.invoiceHTML(tn, pv, { invoice_no: "INV-3", amount: 10000, due_date: "2026-07-01", period_label: "الدفعة 3 من 4" }, { billing_name: "مكتب" }));

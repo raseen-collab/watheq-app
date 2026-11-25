@@ -56,19 +56,21 @@ const base = { invoice_no: "INV-2026-0007", amount: 11500, due_date: "2026-11-01
 const qrOf = (html) => { const m = /id="zatca-tlv"[^>]*>([A-Za-z0-9+/=]+)</.exec(html); return m ? E.decodeZatcaTlv(m[1]) : null; };
 
 let h = D.invoiceHTML(T, P, { ...base, seller_mode: "office", seller_name: "مكتب س", seller_vat: "300000000000003", seller_cr: "1010", seller_address: "الرياض، العليا" }, { billing_phone: "0500000000" });
-t("title simplified tax invoice", h.includes("فاتورة ضريبية مبسطة"));
+/* (25 نوفمبر 2026 — قرار عبيد) المورّد المسجَّل: «مطالبة» لا «فاتورة ضريبية»، بلا QR (المرحلة الثانية: الفاتورة الضريبية من نظامه المربوط) */
+t("registered seller → payment request title", h.includes("<h1>مطالبة بالأجرة</h1>") && !h.includes("فاتورة ضريبية مبسطة"));
+t("claim note: not a tax invoice", h.includes("ليست فاتورة ضريبية") && h.includes("منصة «فاتورة»"));
 t("seller address printed", h.includes("الرياض، العليا"));
 t("quantity column", h.includes("<th>الكمية</th>") && h.includes("<td>1</td>"));
 t("issue time printed", /الساعة <span dir="ltr">/.test(h));
 let q = qrOf(h);
-t("QR seller/vat/total/vat", q && q[0] === "مكتب س" && q[1] === "300000000000003" && q[3] === "11500.00" && q[4] === "1500.00");
-t("QR timestamp = created_at", q && q[2] === "2026-11-22T06:30:00Z");
+t("claim: no QR", q === null && !h.includes("zatca-tlv"));
+t("claim: seller VAT still printed", h.includes("300000000000003") && h.includes("11,500"));
 
 /* المالك مؤجّرًا: اسمه ورقمه، «نيابةً عن المورّد»، ولا رقم المكتب ولا جواله */
 h = D.invoiceHTML(T, P, { ...base, seller_mode: "owner", seller_name: "فهد العتيبي", seller_vat: "311111111111113", seller_address: "جدة" },
   { billing_name: "مكتب س", vat_number: "300000000000003", billing_phone: "0500000000" });
 q = qrOf(h);
-t("owner: QR owner name+vat", q && q[0] === "فهد العتيبي" && q[1] === "311111111111113");
+t("owner: owner name+vat printed, no QR", q === null && h.includes("فهد العتيبي") && h.includes("311111111111113"));
 t("owner: on behalf line", h.includes("نيابةً عن المورّد"));
 t("owner: office VAT absent", !h.includes("300000000000003"));
 t("owner: office phone absent", !h.includes("0500000000"));
@@ -92,11 +94,11 @@ t("legacy reprint keeps tax title + copy note", h.includes("<h1>فاتورة ض�
 /* الإشعار الدائن: العنوان، المرجع، السبب، QR بنفس المبالغ */
 h = D.invoiceHTML(T, P, { ...base, invoice_no: "CN-2026-0008", doc_type: "credit_note", ref_invoice_no: "INV-2026-0007", ref_issue_date: "2026-11-20",
   reason: "خطأ في المبلغ", seller_mode: "office", seller_name: "مكتب س", seller_vat: "300000000000003", seller_address: "الرياض" }, {});
-t("CN title", h.includes("إشعار دائن لفاتورة ضريبية مبسطة"));
+t("CN title (claim cancellation)", h.includes("إلغاء مطالبة"));
 t("CN ref", h.includes("INV-2026-0007"));
 t("CN reason", h.includes("خطأ في المبلغ"));
 q = qrOf(h);
-t("CN QR present (simplified notes need QR)", q && q[3] === "11500.00" && q[4] === "1500.00");
+t("CN: no QR", q === null);
 t("CN no due-date column", !h.includes("<th>تاريخ الاستحقاق</th>"));
 
 /* فاتورة ملغاة بإشعار: تذكر رقم الإشعار ولا QR */
@@ -114,19 +116,19 @@ t("residential: plain title", h.includes("<h1>فاتورة أجرة</h1>"));
 const stdSnap = { seller_mode: "office", seller_name: "مكتب س", seller_vat: "300000000000003", seller_address: "الرياض",
   invoice_kind: "standard", buyer_vat: "311111111111113", buyer_address: "جدة، التحلية", payment_means: "transfer" };
 h = D.invoiceHTML(T, P, { ...base, ...stdSnap }, {});
-t("std title 'فاتورة ضريبية' (not مبسطة)", h.includes("<h1>فاتورة ضريبية — أجرة</h1>") && !h.includes("فاتورة ضريبية مبسطة"));
+t("std: payment request title too", h.includes("<h1>مطالبة بالأجرة</h1>") && !h.includes("<h1>فاتورة ضريبية"));
 t("std buyer vat", h.includes("311111111111113"));
 t("std buyer address", h.includes("جدة، التحلية"));
 t("std per-line VAT rate + amount", h.includes("<th>نسبة الضريبة</th>") && h.includes("<td>15%</td>") && h.includes("<td>1,500</td>"));
 t("std line total incl VAT", h.includes("<td>11,500</td>"));
 t("std payment means", h.includes("وسيلة الدفع: <b>تحويل بنكي</b>"));
-t("std English title", h.includes("Tax invoice — rent") && h.includes("Bank transfer"));
+t("std English title", h.includes("Rent payment request") && h.includes("Bank transfer"));
 /* العنوان الفارغ يُكمَل بعنوان الوحدة والعقار */
 h = D.invoiceHTML(T, { ...P, address: "طريق الملك فهد", city: "الرياض" }, { ...base, ...stdSnap, buyer_address: null }, {});
 t("std buyer address fallback to unit", h.includes("معرض 2، معارض، طريق الملك فهد، الرياض"));
 /* إشعار دائن لقياسية */
 h = D.invoiceHTML(T, P, { ...base, ...stdSnap, invoice_no: "CN-2026-0010", doc_type: "credit_note", ref_invoice_no: "INV-2026-0009", reason: "خطأ" }, {});
-t("std CN title", h.includes("إشعار دائن لفاتورة ضريبية") && !h.includes("مبسطة"));
+t("std CN title", h.includes("إلغاء مطالبة") && !h.includes("مبسطة"));
 /* قياسية لكن الضريبة غير مفعّلة (سكني): ليست ضريبية أصلًا */
 h = D.invoiceHTML({ ...T, unit_type: "apartment" }, { ...P, property_type: "residential", vat_enabled: false }, { ...base, ...stdSnap, vat_snapshot: false }, {});
 t("std kind but VAT off → plain", h.includes("<h1>فاتورة أجرة</h1>") && !h.includes("311111111111113"));
