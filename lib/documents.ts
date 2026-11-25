@@ -1189,9 +1189,14 @@ export function invoiceHTML(t: Tenant, p: Property, inv: InvoiceDoc, issuer: Iss
   const issueDay = inv.issue_date || today();
   /* وقت الإصدار: من created_at المحفوظ، أو لحظة الإصدار الأولى (بلا issue_date) */
   const issueTime = inv.created_at ? riyadhTime(inv.created_at) : !reprint ? riyadhTime() : "";
-  const taxWord = std ? "فاتورة ضريبية" : "فاتورة ضريبية مبسطة";
-  const kindAr = isCN ? (isTax ? `إشعار دائن ل${taxWord}` : "إشعار دائن") : voided ? "فاتورة ملغاة" : isTax ? taxWord : "فاتورة";
-  const h1Ar = isCN ? kindAr : isTax || snapOnNoVatNo ? `${isTax ? taxWord : "فاتورة ضريبية مبسطة"} — أجرة` : "فاتورة أجرة";
+  /* (25 نوفمبر 2026 — قرار عبيد) المرحلة الثانية: كل مسجَّل في الضريبة ملزم بالربط مع منصة «فاتورة»
+     (الموجة 25 حتى 1 فبراير 2027)، ووثيق لا يربط. فللمورّد المسجَّل يُصدر وثيق «مطالبة» لا «فاتورة
+     ضريبية»، والفاتورة الضريبية تُصدر من نظامه المربوط. غير المسجَّل كما كان («فاتورة»). بلا رمز QR. */
+  const taxWord = "مطالبة";
+  const kindAr = isCN ? (isTax ? "إلغاء مطالبة" : "إشعار دائن") : voided ? (isTax ? "مطالبة ملغاة" : "فاتورة ملغاة") : isTax ? taxWord : "فاتورة";
+  const h1Ar = isCN ? kindAr : isTax ? "مطالبة بالأجرة" : snapOnNoVatNo ? "فاتورة ضريبية مبسطة — أجرة" : "فاتورة أجرة";
+  const claimNoteAr = isTax && !isCN && !voided ? `<div class="note"><b>مطالبة بمبلغ مستحق — ليست فاتورة ضريبية.</b> الفاتورة الضريبية يُصدرها ${escH(who)} من نظام الفوترة الإلكترونية المربوط بمنصة «فاتورة» لدى هيئة الزكاة والضريبة والجمارك.</div>` : "";
+  const claimNoteEn = isTax && !isCN && !voided ? `<div class="note"><b>Payment request — not a tax invoice.</b> The tax invoice is issued by <span dir="auto">${escH(who)}</span> from its e-invoicing system integrated with ZATCA's FATOORA platform.</div>` : "";
   const vatNoWarn = v.enabled && !vatNoOk && !snapOnNoVatNo && !voided && !snapOff;
   const body = `
 ${header(kindAr, inv.invoice_no, iss, issueDay)}
@@ -1264,7 +1269,7 @@ ${v.enabled ? `<table style="max-width:340px;margin-inline-start:auto">
 <div class="due"><span class="l">${isCN ? "إجمالي الإشعار الدائن" : "الإجمالي المستحق"}${v.enabled ? " (شامل الضريبة)" : ""}</span><span class="v">${sar(x.total)} ريال</span></div>
 ${pm && !isCN ? `<div class="sub" style="margin-top:6px">وسيلة الدفع: <b>${PAYMENT_MEANS[pm]}</b></div>` : ""}
 
-${isTax && !voided ? zatcaQrBlock(who, S.vat!, x.total, x.vat, inv.created_at) : ""}
+${claimNoteAr}
 
 ${snapOnNoVatNo && !voided ? `<div class="note">
   <b>نسخة من فاتورة صدرت ضريبية:</b> الرقم الضريبي ${S.vat ? "المحفوظ غير صحيح" : "غير محفوظ"}، فلا يُرسم رمز الاستجابة السريعة في هذه النسخة.
@@ -1289,12 +1294,12 @@ ${isTax && !voided ? `<div class="note">
 ${footer(iss)}`;
   /* النسخة الإنجليزية من القيم نفسها — لا تُعاد الحسابات */
   const ulEn = unitWordEn((t as any).unit_type, p.property_type);
-  const taxWordEn = std ? "Tax invoice" : "Simplified tax invoice";
-  const titleEn = isCN ? (isTax ? `Credit note — ${taxWordEn.toLowerCase()}` : "Credit note") : voided ? "Void invoice" : isTax ? taxWordEn : "Invoice";
+  const taxWordEn = "Payment request";
+  const titleEn = isCN ? (isTax ? "Payment request cancellation" : "Credit note") : voided ? (isTax ? "Void payment request" : "Void invoice") : isTax ? taxWordEn : "Invoice";
   const enInner = `
 ${headerEn(titleEn, inv.invoice_no, iss, issueDay)}
 ${voided ? `<div style="border:3px solid #a5322c;color:#a5322c;text-align:center;font-weight:800;font-size:1.4rem;padding:10px;margin:10px 0;border-radius:10px;letter-spacing:.5px">VOID — not valid and not payable${inv.credit_note_no ? `<div style="font-size:.85rem;font-weight:600;margin-top:4px">Cancelled by credit note <span dir="ltr">${inv.credit_note_no}</span></div>` : ""}</div>` : ""}
-<h1>${isCN ? titleEn : isTax || snapOnNoVatNo ? `${isTax ? taxWordEn : "Simplified tax invoice"} — rent` : "Rent invoice"}</h1>
+<h1>${isCN ? titleEn : isTax ? "Rent payment request" : snapOnNoVatNo ? "Simplified tax invoice — rent" : "Rent invoice"}</h1>
 <div class="sub">${periodLabelEn(inv.period_label)} · ${freqEn(t.payment_frequency)}</div>
 ${isCN ? `<div class="note" style="border-inline-start-color:#B8791F">
   <div><b>Original invoice:</b> <span dir="ltr">${inv.ref_invoice_no || "—"}</span>${inv.ref_issue_date ? ` — ${enDate(inv.ref_issue_date)}` : ""}</div>
@@ -1362,7 +1367,7 @@ ${v.enabled ? `<table style="max-width:340px;margin-inline-start:auto">
 <div class="due"><span class="l">${isCN ? "Credit note total" : "Total due"}${v.enabled ? " (incl. VAT)" : ""}</span><span class="v">SAR ${sar(x.total)}</span></div>
 ${pm && !isCN ? `<div class="sub" style="margin-top:6px">Payment means: <b>${PAYMENT_MEANS_EN[pm]}</b></div>` : ""}
 
-${isTax && !voided ? zatcaQrBlock(who, S.vat!, x.total, x.vat, inv.created_at, "-en") : ""}
+${claimNoteEn}
 ${isTax && !voided ? `<div class="note">Tax invoices in Saudi Arabia must be issued in Arabic: the Arabic version of this document (same number) is the binding one; this English copy is for reference.</div>` : ""}
 
 ${snapOnNoVatNo && !voided ? `<div class="note"><b>Copy of a document issued as a tax invoice:</b> no valid VAT number is stored, so the QR code is not drawn on this copy.</div>` : ""}
@@ -1424,9 +1429,12 @@ export function feeInvoiceHTML(p: Property, inv: FeeInvoiceDoc, issuer: Issuer =
   const issueDay = inv.issue_date || today();
   const issueTime = inv.created_at ? riyadhTime(inv.created_at) : !inv.issue_date ? riyadhTime() : "";
   const periodTxt = inv.period_from && inv.period_to ? feePeriodLabel(inv.period_from, inv.period_to) : inv.period_label || "";
-  const taxWord = std ? "فاتورة ضريبية" : "فاتورة ضريبية مبسطة";
-  const kindAr = isCN ? (isTax ? `إشعار دائن ل${taxWord}` : "إشعار دائن") : voided ? "فاتورة ملغاة" : isTax ? taxWord : "فاتورة";
-  const h1Ar = isCN ? kindAr : `${isTax ? taxWord : "فاتورة"} — أتعاب إدارة الأملاك`;
+  /* (25 نوفمبر 2026) المكتب المسجَّل في الضريبة: «مطالبة» بالأتعاب — الفاتورة الضريبية من نظامه المربوط بـ«فاتورة» */
+  const taxWord = "مطالبة";
+  const kindAr = isCN ? (isTax ? "إلغاء مطالبة" : "إشعار دائن") : voided ? (isTax ? "مطالبة ملغاة" : "فاتورة ملغاة") : isTax ? taxWord : "فاتورة";
+  const h1Ar = isCN ? kindAr : `${isTax ? "مطالبة" : "فاتورة"} — أتعاب إدارة الأملاك`;
+  const claimNoteAr = isTax && !isCN && !voided ? `<div class="note"><b>مطالبة بمبلغ مستحق — ليست فاتورة ضريبية.</b> الفاتورة الضريبية يُصدرها ${escH(who)} من نظام الفوترة الإلكترونية المربوط بمنصة «فاتورة» لدى هيئة الزكاة والضريبة والجمارك.</div>` : "";
+  const claimNoteEn = isTax && !isCN && !voided ? `<div class="note"><b>Payment request — not a tax invoice.</b> The tax invoice is issued by <span dir="auto">${escH(who)}</span> from its e-invoicing system integrated with ZATCA's FATOORA platform.</div>` : "";
   const basisTxt = c.mode === "pct"
     ? `${inv.fee_pct}% من صافي المحصَّل في الفترة (${sar(Number(inv.fee_basis) || 0)} ريال)`
     : `مبلغ ثابت ${sar(Number(inv.fee_fixed) || 0)} ريال × ${inv.fee_times || 1}`;
@@ -1485,7 +1493,7 @@ ${vatOn ? `<table style="max-width:340px;margin-inline-start:auto">
 <div class="due"><span class="l">${isCN ? "إجمالي الإشعار الدائن" : "إجمالي الأتعاب"}${vatOn ? " (شامل الضريبة)" : ""}</span><span class="v">${sar(x.total)} ريال</span></div>
 ${pm && !isCN ? `<div class="sub" style="margin-top:6px">وسيلة السداد: <b>${FEE_PAYMENT_MEANS[pm]}</b>${pm === "deduction" ? ` — تُخصم من المحصَّل قبل تحويل صافي المالك` : ""}</div>` : ""}
 
-${isTax && !voided ? zatcaQrBlock(who, S.vat!, x.total, x.vat, inv.created_at) : ""}
+${claimNoteAr}
 
 <div class="note">
   <b>كيف حُسبت:</b> ${explain.map((l) => `<div>• ${l}</div>`).join("")}
@@ -1501,13 +1509,13 @@ ${isTax && !voided ? `<div class="note">
 </div>
 ${footer(iss)}`;
 
-  const taxWordEn = std ? "Tax invoice" : "Simplified tax invoice";
-  const titleEn = isCN ? (isTax ? `Credit note — ${taxWordEn.toLowerCase()}` : "Credit note") : voided ? "Void invoice" : isTax ? taxWordEn : "Invoice";
+  const taxWordEn = "Payment request";
+  const titleEn = isCN ? (isTax ? "Payment request cancellation" : "Credit note") : voided ? (isTax ? "Void payment request" : "Void invoice") : isTax ? taxWordEn : "Invoice";
   const basisEn = c.mode === "pct" ? `${inv.fee_pct}% of net collections for the period (SAR ${sar(Number(inv.fee_basis) || 0)})` : `Fixed fee SAR ${sar(Number(inv.fee_fixed) || 0)} × ${inv.fee_times || 1}`;
   const enInner = `
 ${headerEn(titleEn, inv.invoice_no, iss, issueDay)}
 ${voided ? `<div style="border:3px solid #a5322c;color:#a5322c;text-align:center;font-weight:800;font-size:1.4rem;padding:10px;margin:10px 0;border-radius:10px;letter-spacing:.5px">VOID — not valid</div>` : ""}
-<h1>${isCN ? titleEn : `${isTax ? taxWordEn : "Invoice"} — property management fee`}</h1>
+<h1>${isCN ? titleEn : `${isTax ? "Payment request" : "Invoice"} — property management fee`}</h1>
 <div class="sub"><span dir="auto">${periodTxt}</span> · <span dir="auto">${propName}</span></div>
 ${isCN ? `<div class="note" style="border-inline-start-color:#B8791F">
   <div><b>Original invoice:</b> <span dir="ltr">${inv.ref_invoice_no || "—"}</span>${inv.ref_issue_date ? ` — ${enDate(inv.ref_issue_date)}` : ""}</div>
@@ -1540,7 +1548,7 @@ ${isCN ? `<div class="note" style="border-inline-start-color:#B8791F">
 </table>
 <div class="due"><span class="l">${isCN ? "Credit note total" : "Total"}${vatOn ? " (incl. VAT)" : ""}</span><span class="v">SAR ${sar(x.total)}</span></div>
 ${pm && !isCN ? `<div class="sub" style="margin-top:6px">Payment means: <b>${FEE_PAYMENT_MEANS_EN[pm]}</b></div>` : ""}
-${isTax && !voided ? zatcaQrBlock(who, S.vat!, x.total, x.vat, inv.created_at, "-en") : ""}
+${claimNoteEn}
 <div class="note">Management fees are a standard-rated supply (15%) even where the rent itself is VAT-exempt residential rent.</div>
 <div class="sign">
   <div>Supplier: <span dir="auto">${who}</span><br><br>Signature: ________________</div>
