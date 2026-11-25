@@ -277,14 +277,16 @@ function LoginInner() {
             <div>
               <label htmlFor="login-pass" className="block text-sm font-semibold mb-1">كلمة المرور</label>
               <div className="relative">
-                <input id="login-pass" className="fld pe-14" type={showPass ? "text" : "password"} dir="ltr"
+                <input id="login-pass" className="fld !pr-16" type={showPass ? "text" : "password"} dir="ltr"
                   autoComplete={mode === "signup" ? "new-password" : "current-password"}
                   value={password} onChange={(e) => setPassword(e.target.value)}
                   placeholder={mode === "signup" ? "6 أحرف على الأقل" : ""} required minLength={6} />
+                {/* (25 نوفمبر 2026) الحقل dir=ltr داخل صفحة RTL: «end/pe» تنقلب بينهما فيغطي الزر النقاط —
+                    الآن مواضع فيزيائية: الزر يمين والمسافة يمين. */}
                 {/* إظهار كلمة المرور: أخطاء الكتابة على الجوال أكثر سبب لـ«بيانات الدخول غير صحيحة» */}
                 <button type="button" onClick={() => setShowPass((v) => !v)} aria-pressed={showPass}
                   aria-label={showPass ? "إخفاء كلمة المرور" : "إظهار كلمة المرور"}
-                  className="absolute inset-y-0 end-0 min-w-[44px] px-2 text-xs font-semibold text-muted hover:text-deep">
+                  className="absolute inset-y-0 right-0 min-w-[56px] px-2 text-xs font-semibold text-muted hover:text-deep">
                   {showPass ? "إخفاء" : "إظهار"}</button>
               </div>
               {mode === "signin" && (
