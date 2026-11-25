@@ -11,12 +11,12 @@ import { parseHijriInput } from "./hijri";
 // العمود التاسع «الدفعات المسدّدة» اختياري: بدونه يُعدّ العقد لم يُسدَّد منه شيء —
 // وهذا كارثة لمكتب ينقل عقودًا قائمة (عقد من يناير يُرفع في سبتمبر = 8 «متأخرات» وهمية).
 // القوالب القديمة بثمانية أعمدة تبقى تعمل: الغائب = 0.
-export const HEADERS = ["اسم المستأجر", "رقم الوحدة", "قيمة الدفعة", "دورة السداد", "بداية العقد", "عدد الدفعات", "الجوال", "رقم الهوية", "الدفعات المسدّدة", "العقار", "حساب الكهرباء", "حساب الماء", "رقم العقد", "نوع الوحدة", "الغرف", "دورات المياه", "المكيفات", "أول استحقاق", "الضريبة", "التقويم", "مدة العقد (أشهر)", "دين مرحَّل", "جوال إضافي", "اللغة"];
+export const HEADERS = ["اسم المستأجر", "رقم الوحدة", "قيمة الدفعة", "دورة السداد", "بداية العقد", "عدد الدفعات", "الجوال", "رقم الهوية", "الدفعات المسدّدة", "العقار", "حساب الكهرباء", "حساب الماء", "رقم العقد", "نوع الوحدة", "الغرف", "دورات المياه", "المكيفات", "أول استحقاق", "الضريبة", "التقويم", "مدة العقد (أشهر)", "دين مرحَّل", "جوال إضافي", "اللغة", "القسط الأخير"];
 // عمود عاشر اختياري «العقار»: ملف واحد لكل المحفظة بدل ملف لكل عقار — مكتب بـ40
 // عقارًا لا يرفع 40 مرة. الاسم يجب أن يطابق عقارًا موجودًا؛ الصف الفارغ يذهب للعقار المختار.
 
 /** مفاتيح الحقول بترتيب HEADERS نفسه — الترتيب هو القراءة الموضعية للقوالب القديمة */
-export const FIELDS = ["name", "unit", "rent", "freq", "start", "periods", "phone", "nid", "paid", "prop", "elec", "water", "contract_no", "unit_type", "rooms", "baths", "acs", "first_due", "vat", "calendar", "months", "carried", "phone2", "lang"] as const;
+export const FIELDS = ["name", "unit", "rent", "freq", "start", "periods", "phone", "nid", "paid", "prop", "elec", "water", "contract_no", "unit_type", "rooms", "baths", "acs", "first_due", "vat", "calendar", "months", "carried", "phone2", "lang", "last"] as const;
 export type Field = typeof FIELDS[number];
 
 /** عمود الملاحظة في القالب — يحمل علامة «مثال» ولا يُستورد */
@@ -36,6 +36,8 @@ export type Row = {
   unit_type?: string; rooms?: number; baths?: number; acs?: number; first_due?: string; vat_mode?: string; carried_debt?: number;
   /** (20 أكتوبر 2026) جزء مدفوع من الدفعة التالية قبل وثيق — رصيد افتتاحي لا نقد في الدفتر */
   partial_amount?: number;
+  /** (v101) القسط الأخير إن اختلف — من عمود صريح، أو محسوب من الإجمالي حين يُقرَّب القسط */
+  last_installment?: number;
   prop_name?: string;
   prop_id?: string;
   _error?: string;
@@ -277,6 +279,8 @@ const SYNONYMS: Record<Field, string[]> = {
   calendar: ["التقويم", "calendar"],
   months: ["مدة العقد (أشهر)", "مدة العقد بالأشهر", "مدة العقد", "المدة بالأشهر", "عدد الأشهر", "عدد الشهور", "مدة الإيجار", "مدة العقد بالشهور"],
   carried: ["دين مرحَّل", "الدين المرحل", "رصيد سابق", "متأخرات سابقة"],
+  /* (v101) القسط الأخير المختلف — عقود إيجار المقرَّبة (1,667 × 11 + 1,663) */
+  last: ["القسط الأخير", "الدفعة الأخيرة", "قيمة الدفعة الأخيرة", "قيمة القسط الأخير", "last installment"],
   /* (v85) الرقم الثاني للمستأجر */
   lang: ["اللغة", "لغة الرسائل", "لغة المراسلة", "لغة المستأجر", "language", "lang"],
   phone2: ["جوال إضافي", "جوال اضافي", "الجوال الإضافي", "جوال 2", "جوال ٢", "الجوال الثاني", "جوال ثاني", "رقم إضافي", "رقم اضافي", "رقم آخر", "جوال آخر", "هاتف إضافي", "phone2", "phone 2", "mobile2", "second phone"],
@@ -646,6 +650,25 @@ export function parseGrid(grid: string[][], properties: Prop[], todayIso: string
           : `الدفعة = الشهري ${fmtN(rentN)} × 12 ÷ ${per} = ${fmtN(rentPay)}`);
       if (Math.abs(exact - rentPay) > 1e-9) notes.push("مقرَّبة لأقرب ريال");
     }
+    /* (25 نوفمبر 2026) القسط الأخير المختلف:
+       ١) عمود «القسط الأخير» صريح ⇒ يُعتمد.
+       ٢) وإلا: الإيجار مكتوب سنويًّا/شهريًّا والقسط مقرَّب ⇒ الأخير يأخذ الفرق حتى يطابق
+          مجموع الأقساط إجمالي العقد بالهللة: 20,000 سنوي شهري = 1,666.67 × 11 + 1,666.63.
+          كان المجموع 20,000.04 فيبقى على المستأجر 4 هللات لا وجود لها في آخر قسط. */
+    const lastTxt = g("last");
+    const lastCol = lastTxt ? parseNum(lastTxt) : NaN;
+    let lastInst: number | undefined;
+    if (lastTxt && lastCol > 0 && pr && pr >= 2) lastInst = round2(lastCol);
+    else if (!lastTxt && rentN > 0 && rentBasis !== "payment" && FREQ_LOOKUP[fk] && pr && pr >= 2 && rentPay > 0) {
+      const per = PER_YEAR(frequency) || 12;
+      const total = round2((rentBasis === "annual" ? rentN : rentN * 12) * pr / per);
+      const l = round2(total - (pr - 1) * rentPay);
+      if (l > 0 && Math.abs(l - rentPay) >= 0.005 && Math.abs(l - rentPay) < rentPay * 0.5) {
+        lastInst = l;
+        notes.push(`القسط الأخير ${fmtN(l)} — حتى يطابق مجموع الأقساط الإجمالي ${fmtN(total)} (${pr - 1} × ${fmtN(rentPay)} + ${fmtN(l)})`);
+      }
+    }
+    if (lastInst !== undefined && Math.abs(lastInst - rentPay) < 0.005) lastInst = undefined;
     const paidN = paid ? parseNum(paid) : 0;
     /* المسدَّد مبلغًا: الدفعات الكاملة تُعدّ، والباقي جزئي يُنبَّه عليه — لا يُقرَّب لدفعة كاملة
        (التقريب للأعلى يخفي متأخرات حقيقية، وللأسفل يُسقط مالًا دُفع) */
@@ -654,6 +677,12 @@ export function parseGrid(grid: string[][], properties: Prop[], todayIso: string
       const amt = isNaN(paidN) ? 0 : Math.max(0, paidN);
       pd = rentPay > 0 ? Math.floor(amt / rentPay + 1e-9) : 0;
       paidRem = rentPay > 0 ? round2(amt - pd * rentPay) : 0;
+      /* القسط الأخير بقيمته: لا يكتمل إلا بمبلغه، ولا يكتمل بأقل منه */
+      if (lastInst !== undefined && pr && pd >= pr - 1) {
+        const before = round2(amt - (pr - 1) * rentPay);
+        if (before + 0.005 >= lastInst) { pd = pr + Math.floor(round2(before - lastInst) / rentPay + 1e-9); paidRem = round2(before - lastInst - (pd - pr) * rentPay); }
+        else { pd = pr - 1; paidRem = before; }
+      }
       if (paidRem < 0.01) paidRem = 0;
       if (amt > 0 && rentPay > 0)
         notes.push(`المسدَّد ${fmtN(amt)} = ${pd} ${pd === 1 ? "دفعة كاملة" : "دفعات كاملة"}`
@@ -680,6 +709,7 @@ export function parseGrid(grid: string[][], properties: Prop[], todayIso: string
     else if (paid && paidBasis === "count" && !intOk(paidN)) err = `«الدفعات المسدّدة» غير مفهومة: «${paid}» — اكتب رقمًا صحيحًا مثل 8`;
     else if (monthsTxt && isNaN(monthsN)) err = `«مدة العقد» غير مفهومة: «${monthsTxt}» — اكتب عدد الأشهر مثل 12`;
     else if (carriedTxt && isNaN(carriedN)) err = `«دين مرحَّل» غير مفهوم: «${carriedTxt}» — اكتب المبلغ رقمًا`;
+    else if (lastTxt && !(lastCol > 0)) err = `«القسط الأخير» غير مفهوم: «${lastTxt}» — اكتب المبلغ رقمًا أو اتركه فارغًا`;
     else if (firstDueTxt && !(fd && isRealDate(fd))) err = `«أول استحقاق» غير مفهوم: ${firstDueTxt}`;
     else if (pr && paidBasis === "amount" && (pd > pr || (pd === pr && paidRem > 0)))
       err = `المبلغ المسدَّد ${fmtN(paidN)} أكثر من قيمة العقد كله (${pr} × ${fmtN(rentPay)}) — تأكّد من عمود المبلغ وأساسه`;
@@ -727,6 +757,7 @@ export function parseGrid(grid: string[][], properties: Prop[], todayIso: string
       vat_mode,
       carried_debt: carriedTxt ? Math.max(0, isNaN(carriedN) ? 0 : carriedN) : undefined,
       partial_amount: paidRem > 0 ? paidRem : undefined,
+      last_installment: lastInst,
       prop_name: propName || undefined, prop_id: target?.id,
       _error: err || undefined,
       /* بيانات المكاتب: 11% من العقود أُدخلت ببداية مستقبلية وعدّاد صفر — «موعد

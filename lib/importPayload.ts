@@ -38,6 +38,8 @@ export function tenantInsertRow(r: Row, pid: string, o: ImportOpts): TenantInser
       ? derivedEndDate(r.contract_start, r.payment_frequency, r.contract_periods, null, r.calendar === "hijri" ? "hijri" : "gregorian")
       : null,
     paid_periods: r.paid_periods || 0,
+    /* (v101) القسط الأخير المختلف — مفتاح ثابت لكل الصفوف (null حين لا يختلف) */
+    last_installment: r.last_installment && r.last_installment > 0 ? r.last_installment : null,
     /* (20 أكتوبر 2026) الجزئي المدفوع قبل وثيق رصيد افتتاحي — لا يُسجَّل نقدًا بتاريخ اليوم */
     partial_amount: r.partial_amount && r.partial_amount > 0 ? r.partial_amount : 0,
     /* يوم المرساة كالإدخال اليدوي: من «أول استحقاق» إن وُجد، وإلا من البداية */
@@ -61,7 +63,7 @@ export function tenantInsertRow(r: Row, pid: string, o: ImportOpts): TenantInser
   if (r._vacant) Object.assign(row, {
     name: "شاغرة", status: "vacated", move_out_date: o.today, contract_start: null, contract_end: null,
     payment_frequency: "monthly", billing_anchor_day: null, rent_amount: 0, paid_periods: 0, partial_amount: 0,
-    first_due: null, contract_periods: null,
+    first_due: null, contract_periods: null, last_installment: null,
     /* الدين المرحَّل يبقى كما في الملف: دين مستأجر سابق على وحدة صارت شاغرة لا يُمسح بصمت */
   });
   return row;
