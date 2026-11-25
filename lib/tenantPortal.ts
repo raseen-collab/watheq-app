@@ -9,7 +9,7 @@ import { esc, money, gDate, hDate, addDaysIso, methodAr, riyadhDay, frame, topBa
 import { REQUEST_CATEGORIES, TENANT_REQUEST_STATUS_AR, requestCatAr, requestLocAr, amountInWordsAr } from "./hoaMoney";
 import { contractState, splitVat, unitVatApplies, freqLabel } from "./contracts";
 import { statusWindows } from "./contract-state";
-import { visiblePayments } from "./documents";
+import { visiblePayments, brandInkOf, brandLogoOf } from "./documents";
 import { unitLabel, unitWordFor } from "./domain";
 import { waNumber } from "./utils";
 import { enDate, unitWordEn } from "./docEn";
@@ -351,12 +351,16 @@ export function renderTenantReceiptPage(d: TenantReceiptData, opts: { nonce: str
     : `أجرة ${ul} رقم (${unit})${n > 0 ? ` — ${n === 1 ? "دفعة واحدة" : n === 2 ? "دفعتان" : `${n} دفعات`} (${freqLabel(t.payment_frequency)})` : " — دفعة جزئية"}`;
   const hij = hDate(x.paid_on);
   const note = String(x.note || "").replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, "").replace(/\s*[—-]\s*$/, "").trim().slice(0, 1000);
+  /* (v104) هوية المكتب: لونه في الخط والعنوان، وشعاره بجانب «سند قبض» */
+  const bc = brandInkOf(o) || "#0E3A37";
+  const logo = brandLogoOf(o);
   const body = `
 <p class="noprint" style="margin:0 0 4px"><a href="${opts.base}">→ العودة إلى صفحتك</a></p>
 <section class="card" style="padding:20px;position:relative">
   ${reversed ? `<div role="status" style="border:2px solid #A5322C;color:#A5322C;border-radius:10px;padding:8px 12px;margin-bottom:12px;font-weight:700;text-align:center">سند معكوس — أُلغيت هذه الدفعة${x.reversed_on ? ` بتاريخ ${gDate(riyadhDay(x.reversed_on))}` : ""} ولا يُعتدّ بها</div>` : ""}
-  <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;border-bottom:2px solid #0E3A37;padding-bottom:10px">
-    <div style="min-width:0"><div style="font-size:20px;font-weight:700;color:#0E3A37">سند قبض</div>
+  <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;border-bottom:2px solid ${bc};padding-bottom:10px">
+    ${logo ? `<img src="${logo}" alt="" style="height:52px;max-width:120px;object-fit:contain;flex:none">` : ""}
+    <div style="min-width:0;flex:1"><div style="font-size:20px;font-weight:700;color:${bc}">سند قبض</div>
       <div class="muted">${esc(org || "إدارة الأملاك")}</div>${o.cr_number ? `<div class="muted" style="font-size:11.5px">س.ت ${esc(o.cr_number)}</div>` : ""}</div>
     <div style="text-align:left;flex:none"><div class="muted">رقم السند</div><b dir="ltr" style="font-family:monospace;white-space:nowrap">${esc(no)}</b></div>
   </div>

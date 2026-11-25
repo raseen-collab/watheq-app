@@ -365,6 +365,38 @@ const daysBetween = (a: Date, b: Date) =>
  * الحالة الكاملة للعقد — مستنتجة بالكامل.
  * كل ما يحتاجه: تاريخ البداية + الدورة + القيمة + عدد الفترات المسدّدة + السداد الجزئي.
  */
+/**
+ * (24 نوفمبر 2026) القسط الأخير المختلف — عقود إيجار تقسّم الإجمالي على أقساط
+ * متساوية مقرَّبة ويأخذ الأخير الكسر: 20,000 سنويًّا شهريًّا = 1,667 × 11 + 1,663.
+ * last_installment فارغ = كل الأقساط بقيمة rent_amount (السلوك السابق كما هو).
+ * يُطبَّق فقط حين تكون مدة العقد معروفة (contract_periods > 1).
+ */
+export function lastInstallmentOf(t: { rent_amount?: number | string | null; contract_periods?: number | null; last_installment?: number | string | null }): number | null {
+  const v = Number(t.last_installment);
+  const n = Number(t.contract_periods) || 0;
+  const rent = Number(t.rent_amount) || 0;
+  if (!(v > 0) || n < 2 || rent <= 0 || Math.abs(v - rent) < 0.005) return null;
+  return Math.round(v * 100) / 100;
+}
+/** قيمة القسط رقم i (يبدأ من 0) */
+export function installmentAt(t: { rent_amount?: number | string | null; contract_periods?: number | null; last_installment?: number | string | null }, i: number): number {
+  const rent = Number(t.rent_amount) || 0;
+  const last = lastInstallmentOf(t);
+  return last !== null && i === (Number(t.contract_periods) || 0) - 1 ? last : rent;
+}
+/** مجموع أول n قسطًا */
+export function installmentsSum(t: { rent_amount?: number | string | null; contract_periods?: number | null; last_installment?: number | string | null }, n: number): number {
+  const rent = Number(t.rent_amount) || 0;
+  const k = Math.max(0, Math.floor(Number(n) || 0));
+  const last = lastInstallmentOf(t);
+  const total = Number(t.contract_periods) || 0;
+  return Math.round((k * rent + (last !== null && k >= total ? last - rent : 0)) * 100) / 100;
+}
+/** المسدَّد من العقد بالمال: الأقساط المسدَّدة كاملة + الجزئي */
+export function paidValue(t: { rent_amount?: number | string | null; contract_periods?: number | null; last_installment?: number | string | null; paid_periods?: number | null; partial_amount?: number | string | null }): number {
+  return Math.round((installmentsSum(t, Math.max(0, Number(t.paid_periods) || 0)) + Math.max(0, Number(t.partial_amount) || 0)) * 100) / 100;
+}
+
 export function contractState(t: {
   contract_start?: string | null;
   contract_end?: string | null;
@@ -379,6 +411,8 @@ export function contractState(t: {
   calendar?: string | null; first_due?: string | null; carried_debt?: number | null;
   /** (schema-v79) الوحدة ضمن عقد وحدة أخرى: المبلغ والدفعات على الرئيسية */
   covered_by?: string | null;
+  /** (schema-v101) القسط الأخير المختلف */
+  last_installment?: number | null;
 }, opts: { graceDays?: number | null; soonDays?: number | null; imminentDays?: number | null; expiringDays?: number | null } = {}): ContractState {
   const anchor = anchorOf(t);
   // الوحدة المُخلاة تتوقّف عن تراكم المتأخرات من تاريخ الإخلاء — لا تبقى "متأخرة" للأبد
@@ -494,8 +528,9 @@ export function contractState(t: {
   const due = Math.min(dueRaw, totalPeriods);
   const dueStrict = Math.min(dueStrictRaw, totalPeriods);
   const unpaid = Math.max(0, due - paid);
-  const grossDue = unpaid * rent;
-  const amountDue = Math.max(0, grossDue - partial);
+  /* القسط الأخير المختلف: إن كان ضمن المستحق غير المسدَّد يُحسب بقيمته (installmentsSum) */
+  const grossDue = r2(installmentsSum({ ...t, contract_periods: totalPeriods }, Math.max(due, paid)) - installmentsSum({ ...t, contract_periods: totalPeriods }, paid));
+  const amountDue = Math.max(0, r2(grossDue - partial));
   const hasPartial = partial > 0;
   const partialPct = rent ? Math.round((partial / rent) * 100) : 0;
 
@@ -536,11 +571,13 @@ export function contractState(t: {
   if (unpaid > 0) {
     status = "late";
     /* (30 سبتمبر 2026) الجزئي لا يُخفي أقساطًا كاملة متأخرة خلفه */
+    /* (24 نوفمبر — التقييم الثاني) العدد بقاعدة العربية: دفعتان، 3–10 دفعات، 11+ دفعة — كان «2 دفعات» */
+    const n = unpaid === 2 ? "دفعتين" : unpaid >= 3 && unpaid <= 10 ? `${unpaid} دفعات` : `${unpaid} دفعة`;
     statusLabel = hasPartial && unpaid > 1
-      ? `متأخر ${unpaid} دفعات (إحداها مسدَّدة جزئيًّا) — متبقٍ ${Math.round(amountDue).toLocaleString("en-US")}`
+      ? `متأخر ${n} (${unpaid === 2 ? "إحداهما" : "إحداها"} مسدَّدة جزئيًّا) — متبقٍ ${Math.round(amountDue).toLocaleString("en-US")}`
       : hasPartial
       ? `سداد جزئي — متبقٍ ${Math.round(amountDue).toLocaleString("en-US")}`
-      : unpaid === 1 ? "متأخر دفعة واحدة" : `متأخر ${unpaid} دفعات`;
+      : unpaid === 1 ? "متأخر دفعة واحدة" : `متأخر ${n}`;
   } else if (inGrace) {
     status = "soon";
     statusLabel = graceDaysLeft > 0 ? `فترة سماح — ${graceDaysLeft} يوم` : "فترة سماح";
@@ -634,6 +671,7 @@ export function buildSchedule(t: {
   contract_periods?: number | null;
   partial_amount?: number | null;
   billing_anchor_day?: number | null; calendar?: string | null; first_due?: string | null;
+  last_installment?: number | null;
 }) {
   const schedStart = scheduleStart(t);
   if (!schedStart) return [];
@@ -658,11 +696,12 @@ export function buildSchedule(t: {
     const isDue = date < today;
     // أول دفعة غير مسدّدة هي التي يقع عليها السداد الجزئي
     const isPartialRow = !isPaid && i === paid && partial > 0;
+    const amt = installmentAt({ ...t, contract_periods: total }, i);
     return {
       n: i + 1,
       date: isoDate(date),
-      amount: rent,
-      paidAmount: isPaid ? rent : isPartialRow ? partial : 0,
+      amount: amt,
+      paidAmount: isPaid ? amt : isPartialRow ? Math.min(partial, amt) : 0,
       status: isPaid ? ("paid" as const)
         : isPartialRow ? ("partial" as const)
         : isDue ? ("late" as const)
@@ -838,6 +877,8 @@ export function applyPayment(t: {
   rent_amount?: number | null;
   paid_periods?: number | null;
   partial_amount?: number | null;
+  contract_periods?: number | null;
+  last_installment?: number | null;
 }, received: number): { paid_periods: number; partial_amount: number; completed: number } {
   const rent = Number(t.rent_amount) || 0;
   const paid = Math.max(0, Number(t.paid_periods) || 0);
@@ -845,6 +886,17 @@ export function applyPayment(t: {
   const amount = Math.max(0, Number(received) || 0);
 
   if (rent <= 0) return { paid_periods: paid, partial_amount: 0, completed: 0 };
+
+  /* القسط الأخير المختلف: نكمل قسطًا قسطًا بقيمة كل قسط — الأخير بقيمته */
+  if (lastInstallmentOf(t) !== null) {
+    let pool = Math.round((partial + amount) * 100) / 100, k = paid, done = 0;
+    for (let guard = 0; guard < 10000; guard++) {
+      const need = installmentAt(t, k);
+      if (pool + 0.005 < need) break;
+      pool = Math.round((pool - need) * 100) / 100; k++; done++;
+    }
+    return { paid_periods: k, partial_amount: pool, completed: done };
+  }
 
   const pool = partial + amount;
   const completed = Math.floor(pool / rent);

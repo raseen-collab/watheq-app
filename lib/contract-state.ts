@@ -1,4 +1,4 @@
-import { isVacant, withVat, expiringWindowDays, addPeriods, parseDate, isoDate, defaultTermPeriods, splitVat, type Frequency, type ContractCalendar, type VatSettings } from "./contracts";
+import { isVacant, withVat, expiringWindowDays, addPeriods, parseDate, isoDate, defaultTermPeriods, splitVat, installmentsSum, type Frequency, type ContractCalendar, type VatSettings } from "./contracts";
 /** ============================================================
  *  وثيق — تسميات وألوان حالات العقد (طبقة عرض فقط)
  *  الحساب الفعلي يتم في lib/contracts.ts (نفس مصدر لوحة التحكّم).
@@ -273,11 +273,12 @@ export function firstDueOutOfRange(start?: string | null, firstDue?: string | nu
  * ومعه المتبقي شاملًا الضريبة للعرض حين تكون مضافة.
  */
 export function contractRemaining(t: { rent_amount?: number | null; contract_periods?: number | null; payment_frequency?: string | null;
-  paid_periods?: number | null; partial_amount?: number | null }, vat?: VatSettings | null) {
-  const rent = Math.max(0, Number(t.rent_amount) || 0);
+  paid_periods?: number | null; partial_amount?: number | null; last_installment?: number | null }, vat?: VatSettings | null) {
   const periods = Number(t.contract_periods) > 0 ? Number(t.contract_periods) : defaultTermPeriods((t.payment_frequency || "monthly") as Frequency) || 12;
-  const total = r2(periods * rent);
-  const paid = r2(Math.max(0, Number(t.paid_periods) || 0) * rent + Math.max(0, Number(t.partial_amount) || 0));
+  /* القسط الأخير المختلف داخل في الإجمالي والمسدَّد (installmentsSum) */
+  const tt = { ...t, contract_periods: periods };
+  const total = r2(installmentsSum(tt, periods));
+  const paid = r2(installmentsSum(tt, Math.max(0, Number(t.paid_periods) || 0)) + Math.max(0, Number(t.partial_amount) || 0));
   const remaining = r2(total - paid);
   const exclusive = !!vat?.enabled && vat?.inclusive === false;
   return { periods, total, paid, remaining, overpaid: remaining < 0 ? -remaining : 0,

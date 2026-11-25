@@ -23,6 +23,8 @@ export type OfficeContext = EntProfile & {
   /** (v100) هوية المكتب في ترويسة اللوحة */
   brand_logo?: string | null;
   brand_header?: boolean | null;
+  /** (v104) لون المكتب على المستندات */
+  brand_color?: string | null;
   due_soon_days?: number | null;
   due_imminent_days?: number | null;
   expiring_days?: number | null;
@@ -32,7 +34,7 @@ export type OfficeContext = EntProfile & {
   transientError?: string;
 };
 
-const OWN_COLS = "account_type, plan, trial_ends_at, subscribed_until, org_name, full_name, billing_name, vat_number, cr_number, billing_phone, due_soon_days, due_imminent_days, expiring_days";
+const OWN_COLS = "account_type, plan, trial_ends_at, subscribed_until, org_name, full_name, billing_name, vat_number, cr_number, billing_phone, brand_logo, brand_color, due_soon_days, due_imminent_days, expiring_days";
 
 export async function getOfficeContext(supabase: any, userId: string): Promise<OfficeContext> {
   let transient: string | undefined;

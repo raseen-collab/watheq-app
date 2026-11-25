@@ -51,3 +51,14 @@ export function trialDaysLeft(endsAt?: string | null): number | null {
   const ms = new Date(endsAt).getTime() - Date.now();
   return Math.max(0, Math.ceil(ms / 86400000));
 }
+
+/**
+ * (24 نوفمبر 2026 — التقييم الثاني) «فيلا فيلا 2»: رقم الوحدة نفسه يبدأ أحيانًا بنوعها
+ * (مكتوب «فيلا 2» أو «محل 3» في الإكسل). لا نكرر الكلمة.
+ */
+export function withUnitWord(word: string, unit?: string | null): string {
+  const u = String(unit ?? "").trim();
+  if (!u) return `${word} —`;
+  const w = String(word || "").trim();
+  return w && (u === w || u.startsWith(w + " ") || u.startsWith("ال" + w)) ? u : `${w} ${u}`.trim();
+}

@@ -1,4 +1,4 @@
-import { contractState, buildSchedule, freqLabel, splitVat, settleDeposit, vacancyDays, isVacant, unitVatApplies, expectedNext12 } from "./contracts";
+import { contractState, buildSchedule, freqLabel, splitVat, settleDeposit, vacancyDays, isVacant, unitVatApplies, expectedNext12, lastInstallmentOf, paidValue } from "./contracts";
 import { complianceState, brokerageEnd, expectedCommission, UI_LEGAL, LEGAL_DISCLAIMER, DEFAULT_COMMISSION_PCT, type ComplianceItem } from "./compliance";
 import { KIND_META as L_KIND, OFFER_LABEL, STATUS_META, freshness, pricePerMeter, shortDesc, sortListings, summarize, STALE_DAYS, type Listing } from "./listings";
 import { ownerNet, feeSpecOf, feeTimes, feeLabel, feeVatRateOf, type FeeSpec, sumByCategory, catLabel, sumAllExpenses, sumDue, isBillable, PAID_BY, type ExpenseRow } from "./expenses";
@@ -274,6 +274,9 @@ const payMethod = (x: { method?: string | null; amount?: number | null }) =>
 type Issuer = { billing_name?: string | null; org_name?: string | null; vat_number?: string | null; cr_number?: string | null; billing_phone?: string | null;
   /** (v95) عنوان المنشأة — حقل إلزامي في الفاتورة الضريبية المبسطة */
   billing_address?: string | null;
+  /** (v100/v104) هوية المكتب على المستندات: الشعار (data URL) واللون (#RRGGBB) */
+  brand_logo?: string | null;
+  brand_color?: string | null;
   /** true لأي حساب بلا باقة مدفوعة — يُضاف سطر «أُنشئ عبر وثيق» في التذييل فقط.
    *  المستند صالح للاستعمال كاملًا، بلا علامة مائية ولا تقييد. */
   trial?: boolean | null;
@@ -665,13 +668,66 @@ const issuerName = (i?: Issuer | null): string =>
  * يُسجَّل اسم بعد تبقى ترويسة وثيق كما كانت — فلا يخرج مستند بلا هوية.
  * وفاتورة الاشتراك تُستثنى: مُصدِرها وثيق فعلًا (تُستدعى بلا issuer).
  */
+/**
+ * (25 نوفمبر 2026 — طلب «الأولى») هوية المكتب على كل مستند: شعاره ولونه.
+ *  - الشعار: إن رفعه المكتب يحلّ محلّ الختم، على بطاقة بيضاء (شعار داكن على ترويسة
+ *    داكنة كان سيختفي). بلا شعار يبقى الختم بأول حرف من اسم المكتب.
+ *  - اللون: لون الترويسة وصندوق المستحق والعناوين وزرّ الطباعة. بلا لون = لون وثيق.
+ *    لون فاتح يقلب نص الترويسة داكنًا فيبقى مقروءًا.
+ * القيمتان تُتحقَّقان هنا أيضًا (لا نثق بأي مصدر): لون #RRGGBB فقط، وشعار data:image
+ * png/jpeg/webp فقط — فلا svg ولا رابط خارجي (سياسة المستند لا تسمح إلا بـ data:).
+ */
+export const brandColorOf = (issuer?: any): string | null => {
+  const c = String(issuer?.brand_color || "").trim();
+  return /^#[0-9a-fA-F]{6}$/.test(c) ? c.toUpperCase() : null;
+};
+export const brandLogoOf = (issuer?: any): string | null => {
+  const l = String(issuer?.brand_logo || "");
+  return l.length <= 120000 && /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(l) ? l : null;
+};
+const hexMix = (a: string, b: string, t: number) => {
+  const pa = [1, 3, 5].map((i) => parseInt(a.slice(i, i + 2), 16)), pb = [1, 3, 5].map((i) => parseInt(b.slice(i, i + 2), 16));
+  return "#" + pa.map((x, i) => Math.round(x + (pb[i] - x) * t).toString(16).padStart(2, "0")).join("").toUpperCase();
+};
+const luminance = (c: string) => {
+  const [r, g, b] = [1, 3, 5].map((i) => { const v = parseInt(c.slice(i, i + 2), 16) / 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; });
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+};
+export const brandCss = (issuer?: any): string => {
+  const c = brandColorOf(issuer);
+  const logo = brandLogoOf(issuer);
+  let css = logo ? `.hd .logo{display:inline-block;vertical-align:middle;margin-inline-end:11px;background:#fff;border-radius:10px;padding:4px 6px;height:48px;max-width:130px;object-fit:contain}` : "";
+  if (c) {
+    const light = luminance(c) > 0.4;
+    const ink = light ? "#0B211F" : "#FFFFFF";
+    const soft = light ? hexMix(c, "#000000", 0.55) : hexMix(c, "#FFFFFF", 0.7);
+    const dark = light ? hexMix(c, "#000000", 0.15) : hexMix(c, "#000000", 0.3);
+    /* العناوين على ورق أبيض: لون فاتح لا يُقرأ — نغمّقه */
+    const head = light ? hexMix(c, "#000000", 0.55) : c;
+    css += `.hd,.due,.noprint .a{background:${c}}.hd,.due{color:${ink}}.hd .meta,.due .l{color:${soft}}`
+      + `.seal{background:${dark};color:${ink};box-shadow:inset 0 0 0 2px ${soft}55}`
+      + (light ? `.hd .meta b,.due .v{color:${ink}}.noprint .a{color:${ink}}` : "")
+      + `h1,h2,.tot .v,.noprint .b{color:${head}}`;
+  }
+  return css ? `<style>${css}</style>` : "";
+};
+/** لون المكتب مقروءًا على ورق أبيض (يُغمَّق إن كان فاتحًا) — للعناوين خارج الترويسة */
+export const brandInkOf = (issuer?: any): string | null => {
+  const c = brandColorOf(issuer);
+  return c ? (luminance(c) > 0.4 ? hexMix(c, "#000000", 0.55) : c) : null;
+};
+const brandMark = (issuer: any, seal: string) => {
+  const logo = brandLogoOf(issuer);
+  return logo ? `<img class="logo" src="${logo}" alt="">` : `<div class="seal">${escH(seal)}</div>`;
+};
+
 const header = (docTitle: string, docNo: string, issuer?: Issuer | null, date?: string | null) => {
   const name = issuerName(issuer);
   /* الختم حرف واحد: «مكتب تميز» → «ت» لا «م» */
   const seal = name ? (name.replace(/^(مكتب|شركة|مؤسسة|وكالة)\s+/, "").trim()[0] || name[0]) : "و";
-  return `
+  return `${name ? brandCss(issuer) : ""}
 <div class="hd">
-  <div class="lg"><div class="seal">${escH(seal)}</div><div><div class="t">${escH(name || "وثيق")}</div></div></div>
+  <div class="lg">${name ? brandMark(issuer, seal) : `<div class="seal">${escH(seal)}</div>`}<div><div class="t">${escH(name || "وثيق")}</div></div></div>
   <div class="meta">${docTitle}<b>${docNo}</b>التاريخ: ${arDate(date || today())}</div>
 </div>`;
 };
@@ -708,9 +764,9 @@ const footer = (issuer?: Issuer | null) => {
 const headerEn = (docTitle: string, docNo: string, issuer?: Issuer | null, date?: string | null) => {
   const name = issuerName(issuer);
   const seal = name ? (name.replace(/^(مكتب|شركة|مؤسسة|وكالة)\s+/, "").trim()[0] || name[0]) : "W";
-  return `
+  return `${name ? brandCss(issuer) : ""}
 <div class="hd">
-  <div class="lg"><div class="seal">${escH(seal)}</div><div><div class="t">${escH(name || "Watheq")}</div></div></div>
+  <div class="lg">${name ? brandMark(issuer, seal) : `<div class="seal">${escH(seal)}</div>`}<div><div class="t">${escH(name || "Watheq")}</div></div></div>
   <div class="meta">${docTitle}<b dir="auto">${docNo}</b>Date: ${enDate(date || today())}</div>
 </div>`;
 };
@@ -753,12 +809,14 @@ export function statementHTML(t: Tenant, p: Property, issuer: Issuer = {}, payme
   const grossPay = (r: any) => (v.enabled && !v.inclusive && (!r.applies_to || r.applies_to === "rent"))
     ? splitVat(Number(r.amount) || 0, v).total : (Number(r.amount) || 0);
   const unit = splitVat(Number(t.rent_amount) || 0, v);      // تفصيل الدفعة الواحدة
-  const totalContract = unit.total * rows.length;
+  /* (v101) القسط الأخير المختلف: الفرق عن القسط المعتاد يُضاف للإجمالي والمسدَّد */
+  const lastAdj = (() => { const l = lastInstallmentOf({ ...t, contract_periods: rows.length || t.contract_periods }); return l === null ? 0 : splitVat(l - (Number(t.rent_amount) || 0), v).total; })();
+  const totalContract = Math.round((unit.total * rows.length + lastAdj) * 100) / 100;
   /* (30 سبتمبر 2026) السداد الجزئي بالضريبة كبقية الأرقام: في «غير شاملة» كان
      يُطبع قبل الضريبة (5,000) بجوار دفعات شاملة (11,500)، و«المسدَّد» لا يشمله
      أصلًا — فالمسدَّد + المتأخر لا يساوي قيمة ما حلّ. */
   const partialIncl = st.hasPartial ? splitVat(Number(st.partial) || 0, v).total : 0;
-  const totalPaid = Math.round((st.paid * unit.total + partialIncl) * 100) / 100;
+  const totalPaid = Math.round((st.paid * unit.total + (rows.length && st.paid >= rows.length ? lastAdj : 0) + partialIncl) * 100) / 100;
   const dueSplit = splitVat(st.amountDue, v);                 // تفصيل الرصيد المستحق
   /* حالة صفّ الجدول من contractState لا من buildSchedule: الجدول كان يَسِم قسطًا
      حلّ اليوم (داخل فترة السماح) «متأخرة» والمربّع فوقه يقول «0 متأخرة». القسط
@@ -769,6 +827,13 @@ export function statementHTML(t: Tenant, p: Property, issuer: Issuer = {}, payme
      كشفًا لا يذكر 4,500 عليه. الآن سطرٌ ظاهر، ويدخل الرصيد الإجمالي. */
   const carried = Math.max(0, Number((t as any).carried_debt) || 0);
   const balance = Math.round((dueIncl(st, v) + carried) * 100) / 100;
+  /* (24 نوفمبر 2026 — فحص محاسبي) «مسدَّد قبل بدء التسجيل»: العقد المرفوع من إكسل بدفعات سُدّدت
+     يُحسب مسدَّدًا ولا سندات لها، فلا يطابق «إجمالي المستلم» «المسدَّد» ويسأل المحاسب أين الفرق.
+     الفرق يُذكر سطرًا صريحًا ولا يدخل المستلم. الدفعات هنا دفعات المدة الحالية (term_started_at). */
+  const rentReceived = Math.round(payments.filter((r: any) => !r.applies_to || r.applies_to === "rent")
+    .reduce((a, r) => a + grossPay(r), 0) * 100) / 100;
+  const opening = Math.round((totalPaid - rentReceived) * 100) / 100;
+  const openingRow = opening > 0.5;
 
   const body = `
 ${header(mode === "full" ? "كشف حساب شامل" : "كشف حساب مختصر", `${t.name}`, issuer)}
@@ -890,19 +955,21 @@ ${shownPays.length ? `
       <td>${r.paid_on ? arDate(r.paid_on) : "—"}</td>
       <td>${sar(grossPay(r))}</td>
       <td>${payMethod(r)}</td>
-      <td>${[r.receipt_no ? `<span dir="ltr" style="font-family:monospace">سند ${escH(r.receipt_no)}</span>` : "", r.note ? escH(r.note) : ""].filter(Boolean).join(" · ") || "—"}</td>
+      <td>${[r.receipt_no ? `<span dir="ltr" style="font-family:monospace">سند ${escH(r.receipt_no)}</span>` : "", r.applies_to === "carried" ? "سداد دين مرحَّل" : r.applies_to === "past_debt" ? "سداد دين سابق" : "", r.note ? escH(r.note) : ""].filter(Boolean).join(" · ") || "—"}</td>
     </tr>`).join("")}
     <tr style="background:#F3EEE2;font-weight:700">
       <td colspan="2">إجمالي المستلم</td>
       <td>${sar(payments.reduce((a, r) => a + grossPay(r), 0))}</td>
       <td colspan="2">${countAr(shownPays.length, "عملية")}</td>
     </tr>
+    ${openingRow ? `<tr><td colspan="2">مسدَّد قبل بدء التسجيل في المنصة (رصيد افتتاحي)</td><td>${sar(opening)}</td><td colspan="2">بلا سندات — أُدخل عددَ دفعات مسدَّدة</td></tr>
+    <tr style="font-weight:700"><td colspan="2">إجمالي المسدَّد من العقد</td><td>${sar(totalPaid)}</td><td colspan="2">يطابق «المسدَّد» أعلاه</td></tr>` : ""}
   </tbody>
 </table>
 <div class="note" style="border-inline-start-color:#1E9E6A;background:#E6F4EC;color:#137a50">
   هذا الجدول مستخرج من سجل المدفوعات الموثّق في المنصة بتواريخه وطرق سداده، ويصلح للمطابقة مع سجلاتكم.
 </div>` : `
-<div class="note">لا توجد مدفوعات موثّقة في سجل المنصة لهذا العقد حتى تاريخه. الأرصدة أعلاه مستنتجة من دورة العقد وعدد الدفعات المسجّلة.</div>`}
+<div class="note">لا توجد مدفوعات موثّقة في سجل المنصة لهذا العقد حتى تاريخه. الأرصدة أعلاه مستنتجة من دورة العقد وعدد الدفعات المسجّلة.${openingRow ? ` المسدَّد (${sar(opening)} ريال) سُدّد قبل بدء التسجيل في المنصة (رصيد افتتاحي).` : ""}</div>`}
 
 <div class="note">كشف استرشادي صادر آليًّا من بيانات العقد المسجّلة. يُرجى مطابقته مع سجلاتكم، وإشعارنا بأي فرق.</div>
 
@@ -1030,13 +1097,15 @@ ${shownPays.length ? `
       <td>${r.paid_on ? enDate(r.paid_on) : "—"}</td>
       <td>${sar(grossPay(r))}</td>
       <td>${Number(r.amount) < 0 ? "Correction" : methodEn(r.method)}</td>
-      <td>${[r.receipt_no ? `<span dir="ltr" style="font-family:monospace">Receipt ${escH(r.receipt_no)}</span>` : "", r._adjust ? "Correction to a previously recorded payment" : r.note ? `<span dir="auto">${escH(r.note)}</span>` : ""].filter(Boolean).join(" · ") || "—"}</td>
+      <td>${[r.receipt_no ? `<span dir="ltr" style="font-family:monospace">Receipt ${escH(r.receipt_no)}</span>` : "", r.applies_to === "carried" ? "Carried-debt payment" : r.applies_to === "past_debt" ? "Previous-debt payment" : "", r._adjust ? "Correction to a previously recorded payment" : r.note ? `<span dir="auto">${escH(r.note)}</span>` : ""].filter(Boolean).join(" · ") || "—"}</td>
     </tr>`).join("")}
     <tr style="background:#F3EEE2;font-weight:700">
       <td colspan="2">Total received</td>
       <td>${sar(payments.reduce((a, r) => a + grossPay(r), 0))}</td>
       <td colspan="2">${shownPays.length} ${shownPays.length === 1 ? "transaction" : "transactions"}</td>
     </tr>
+    ${openingRow ? `<tr><td colspan="2">Paid before recording started on the platform (opening balance)</td><td>${sar(opening)}</td><td colspan="2">No receipts — entered as instalments already paid</td></tr>
+    <tr style="font-weight:700"><td colspan="2">Total paid on this contract</td><td>${sar(totalPaid)}</td><td colspan="2">Matches “Paid” above</td></tr>` : ""}
   </tbody>
 </table>
 <div class="note" style="border-inline-start-color:#1E9E6A;background:#E6F4EC;color:#137a50">
@@ -1206,8 +1275,7 @@ ${vatNoWarn ? `<div class="note" style="border-inline-start-color:#D0453F;backgr
 </div>` : ""}
 
 ${isCN ? "" : `<div class="note">
-  ${isTax ? "" : "فاتورة صادرة عن المؤجّر لغرض التوثيق بين الطرفين. "}السداد يتم مباشرةً للمؤجّر بالوسيلة المتفق عليها —
-  منصة وثيق لا تستلم ولا تحوّل أي مبالغ.
+  ${isTax ? "" : "فاتورة صادرة عن المؤجّر لغرض التوثيق بين الطرفين. "}السداد يتم مباشرةً للمؤجّر بالوسيلة المتفق عليها.
 </div>`}
 ${isTax && !voided ? `<div class="note">
   <b>عن الفوترة الإلكترونية:</b> ${isCN ? "إشعار دائن" : taxWord} برمز الاستجابة السريعة وفق متطلبات المرحلة الأولى (الإصدار) من الفوترة الإلكترونية.
@@ -1303,8 +1371,7 @@ ${vatNoWarn ? `<div class="note" style="border-inline-start-color:#D0453F;backgr
 </div>` : ""}
 
 ${isCN ? "" : `<div class="note">
-  ${isTax ? "" : "Invoice issued by the lessor as a record between the parties. "}Payment is made directly to the lessor by the agreed method —
-  the Watheq platform does not receive or transfer any funds.
+  ${isTax ? "" : "Invoice issued by the lessor as a record between the parties. "}Payment is made directly to the lessor by the agreed method.
 </div>`}
 
 <div class="sign">
@@ -2933,7 +3000,7 @@ export function ownerReportHTML(
     for (const t of (p.tenants || []) as any[]) {
       const rent = Number(t.rent_amount) || 0;
       if (rent <= 0 || isVacant(t)) continue;
-      const counted = (Number(t.paid_periods) || 0) * rent + (Number(t.partial_amount) || 0);
+      const counted = paidValue(t);
       const gap = Math.round((counted - (extra.termRentPaid[t.id] || 0)) * 100) / 100;
       if (gap > 0.5) { openingUnits++; openingAmount += gap; }
     }
@@ -3817,6 +3884,29 @@ ${F ? `<div class="box" style="margin-top:16px">
  * في تقرير المالك. تُمرَّر دفعات العقار كلها (لا دفعات الفترة) مع وحداته.
  * المقارنة نصّية: PostgREST يُرجع الطوابع بصيغة واحدة، فتبقى دقة الميكروثانية.
  */
+/**
+ * (24 نوفمبر 2026) مطابقة التحصيل لكل ساكن — ورقة في التصدير يطلبها المحاسب:
+ *   المسدَّد حسب العقد = الدفعات المسدَّدة × القسط + الجزئي
+ *   المستلم بسندات      = أقساط الإيجار المسجّلة في مدته (termRentPaidOf)
+ *   رصيد افتتاحي        = الفرق إن كان موجبًا (سُدّد قبل التسجيل في المنصة)
+ *   مستلم يزيد          = الفرق إن كان سالبًا — يستحق المراجعة (تعديل يدوي للعدّاد غالبًا)
+ * المبالغ قبل الضريبة كما في «قيمة الدفعة»، مثل تقرير المالك.
+ */
+export function collectionRecon(
+  tenants: { id: string; rent_amount?: number | string | null; paid_periods?: number | null; partial_amount?: number | string | null; term_started_at?: string | null }[],
+  payments: { tenant_id?: string | null; amount: number | string; applies_to?: string | null; created_at?: string | null }[],
+): Record<string, { counted: number; received: number; opening: number; excess: number }> {
+  const got = termRentPaidOf(tenants, payments);
+  const out: Record<string, { counted: number; received: number; opening: number; excess: number }> = {};
+  for (const t of tenants || []) {
+    const counted = paidValue(t as any);
+    const received = got[t.id] || 0;
+    const d = Math.round((counted - received) * 100) / 100;
+    out[t.id] = { counted, received, opening: d > 0.5 ? d : 0, excess: d < -0.5 ? -d : 0 };
+  }
+  return out;
+}
+
 export function termRentPaidOf(
   tenants: { id: string; term_started_at?: string | null }[],
   payments: { tenant_id?: string | null; amount: number | string; applies_to?: string | null; created_at?: string | null }[],
@@ -3986,7 +4076,7 @@ ${header(title, r.doc_no || "—", issuer, r.entry_on)}
   ${r.note ? `<div class="r"><span>ملاحظة</span><span style="overflow-wrap:anywhere">${r.note}</span></div>` : ""}
 </div>
 
-<div class="note">مبلغ أمانة — ليس إيجارًا ولا يُحتسب من الأجرة${isDepositKind(r.kind) ? "" : "، ويُسدَّد به المستحق لجهة الخدمة"}. منصة وثيق لا تستلم ولا تحوّل أي مبالغ.</div>
+<div class="note">مبلغ أمانة — ليس إيجارًا ولا يُحتسب من الأجرة${isDepositKind(r.kind) ? "" : "، ويُسدَّد به المستحق لجهة الخدمة"}.</div>
 
 <div class="sign">
   ${incoming
@@ -4072,7 +4162,7 @@ ${reversed ? `<div style="border:3px solid #a5322c;color:#a5322c;text-align:cent
 
 <div class="box" style="margin-top:10px">${receiptRowsHTML(pay, t, p, who)}</div>
 
-<div class="note">سند استلام مبلغ صادر عن ${who} للتوثيق بين الطرفين، ولا يُعدّ إبراءً عمّا سواه من مستحقات. منصة وثيق لا تستلم ولا تحوّل أي مبالغ.</div>
+<div class="note">سند استلام مبلغ صادر عن ${who} للتوثيق بين الطرفين، ولا يُعدّ إبراءً عمّا سواه من مستحقات.</div>
 
 <div class="sign">
   <div>عن ${who}<br><br>التوقيع والختم: ________________</div>
@@ -4114,7 +4204,7 @@ ${reversed ? `<div style="border:3px solid #a5322c;color:#a5322c;text-align:cent
   <div class="r"><span>Received by</span><span dir="auto">${who}</span></div>
 </div>
 
-<div class="note">Receipt of payment issued by <span dir="auto">${who}</span> as a record between the parties; it is not a release from any other dues. The Watheq platform does not receive or transfer any funds.</div>
+<div class="note">Receipt of payment issued by <span dir="auto">${who}</span> as a record between the parties; it is not a release from any other dues.</div>
 
 <div class="sign">
   <div>For <span dir="auto">${who}</span><br><br>Signature &amp; stamp: ________________</div>

@@ -127,8 +127,13 @@ export async function listBucket(db: SupabaseClient, bucket: string): Promise<So
 export async function loadManifest(db: SupabaseClient, bucket: string, key: Buffer): Promise<Manifest> {
   const { data, error } = await db.storage.from(bucket).download(MANIFEST_PATH);
   if (error || !data) {
-    if (error && !/not found|does not exist|404|Object not found/i.test(String(error.message || (error as any).statusCode || ""))) {
-      throw new Error(`قراءة سجل الصور: ${error.message}`);
+    /* (25 نوفمبر — Sentry WATHEQ-APP-8) في أول تشغيل يرجع Storage خطأً رسالته «{}» بلا «not found»،
+       فكانت المرآة تتوقف قبل أن تبدأ. لا نخمّن من نص الخطأ: نسأل الدلو هل السجل موجود فعلًا —
+       غير موجود ⇒ سجل فارغ (أول تشغيل)، موجود ولم يُقرأ ⇒ خطأ حقيقي يتوقف عنده. */
+    const { data: list, error: le } = await db.storage.from(bucket).list(MIRROR_PREFIX, { search: "manifest.wqph", limit: 10 });
+    if (le) throw new Error(`قراءة سجل الصور: ${le.message || JSON.stringify(le)}`);
+    if ((list || []).some((e) => e.name === "manifest.wqph")) {
+      throw new Error(`قراءة سجل الصور: ${(error as any)?.message || JSON.stringify(error) || "فارغ"}`);
     }
     return emptyManifest();
   }

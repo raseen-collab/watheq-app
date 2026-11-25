@@ -195,7 +195,7 @@ export function sandboxClient(store: SandboxStore) {
       if (prop) prop.collected = (Number(prop.collected) || 0) - amt;
       return { data: { ...out, payment_id: id }, error: null };
   };
-  return {
+  const api: any = {
     from: (name: string) => table(store, name as keyof SandboxStore),
     auth: { getUser: async () => ({ data: { user: { id: "demo-user" } } }) },
     rpc: async (fn: string, args: any = {}) => {
@@ -381,7 +381,29 @@ export function sandboxClient(store: SandboxStore) {
         return { data: at, error: null };
       }
       if (fn === "watheq_my_office") return { data: [{ office: "demo-user", role: "owner", perms: {} }], error: null };
+      /* (v102) نقل دفعة بين الأقساط والدين المرحَّل — عكس ثم تسجيل بنفس منطق القاعدة،
+         ويُتحقق من الدين قبل العكس لأن التجربة بلا معاملات تتراجع */
+      if (fn === "watheq_reclassify_payment") {
+        const pay = store.payments.find((x) => x.id === args.p_payment);
+        if (!pay) return { data: null, error: { message: "الدفعة غير موجودة" } };
+        const from = pay.applies_to || "rent", to = args.p_to;
+        if (!["rent", "carried"].includes(to) || from === to || !(Number(pay.amount) > 0) || pay.past_tenancy_id)
+          return { data: null, error: { message: "تُنقل دفعات الإيجار والدين المرحَّل للوحدة الحالية فقط" } };
+        const t = store.tenants.find((x) => x.id === pay.tenant_id);
+        if (to === "carried" && Number(pay.amount) > (Number(t?.carried_debt) || 0) + 0.005)
+          return { data: null, error: { message: "المبلغ أكبر من الدين المرحَّل" } };
+        const rev = reversePay(pay.id);
+        if (rev.error) return rev;
+        const rec = to === "carried"
+          ? await api.rpc("watheq_record_carried_payment", { p_tenant: pay.tenant_id, p_amount: pay.amount, p_paid_on: pay.paid_on, p_method: pay.method, p_reference: pay.reference })
+          : await api.rpc("watheq_record_payment", { p_tenant: pay.tenant_id, p_amount: pay.amount, p_paid_on: pay.paid_on, p_method: pay.method, p_reference: pay.reference });
+        if (rec.error) return rec;
+        const np = store.payments[0];
+        np.note = [to === "carried" ? "سداد دين مرحَّل" : "", `منقولة من ${from === "rent" ? "الأقساط" : "الدين المرحَّل"}`].filter(Boolean).join(" — ");
+        return { data: { payment_id: np.id, from, to }, error: null };
+      }
       return { data: null, error: null };
     },
-  } as any;
+  };
+  return api;
 }
