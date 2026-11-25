@@ -157,9 +157,11 @@ export default function CollectionStatementModal({ properties, issuer, onClose, 
         {rangeKey === "c" && (
           <div className="grid grid-cols-2 gap-2 mb-3">
             <label className="block"><span className="text-[11px] text-muted">من</span>
-              <input type="date" className="fld" value={from} onChange={(e) => setFrom(e.target.value)} /></label>
+              <input type="date" className="fld" value={from} onChange={(e) => setFrom(e.target.value)} />
+              {from && <span className="block text-[11px] text-muted mt-0.5">{arDate(from)}</span>}</label>
             <label className="block"><span className="text-[11px] text-muted">إلى</span>
-              <input type="date" className="fld" value={to} onChange={(e) => setTo(e.target.value)} /></label>
+              <input type="date" className="fld" value={to} onChange={(e) => setTo(e.target.value)} />
+              {to && <span className="block text-[11px] text-muted mt-0.5">{arDate(to)}</span>}</label>
           </div>
         )}
 

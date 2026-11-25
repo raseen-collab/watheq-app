@@ -1,4 +1,5 @@
 "use client";
+import { withUnitWord } from "@/lib/domain";
 import { friendlyError } from "@/lib/friendlyError";
 // ============================================================
 // وثيق — نظرة عامة على المحفظة: كل العقارات في صفحة واحدة
@@ -268,10 +269,10 @@ export default function PortfolioView({ properties, windows, compliance, orgName
   };
 
   const Item = ({ p, t, st, note, tone }: { p: Property; t: Tenant; st: any; note: string; tone?: "late" | "due" | "exp" }) => (
-    <div className="flex items-center justify-between gap-3 bg-white text-deep border border-line rounded-lg px-3 py-2 text-sm">
-      <div className="min-w-0">
-        <div className="font-semibold truncate text-deep">{t.name || <span className="text-muted font-normal">(بلا اسم مستأجر)</span>} <span className="text-muted font-normal text-xs">· {UNIT_AR[p.property_type] || "وحدة"} {t.unit || "—"} · {p.name}</span></div>
-        <div className={`text-[11px] ${tone === "late" ? "text-late font-semibold" : tone === "due" ? "text-[#9A4B00]" : tone === "exp" ? "text-[#991B1B]" : "text-muted"}`}>{note}</div>
+    <div className="flex items-center justify-between gap-3 bg-white text-deep border border-line rounded-lg px-3 py-2 text-sm min-w-0">
+      <div className="min-w-0 flex-1">
+        <div className="font-semibold truncate text-deep">{t.name || <span className="text-muted font-normal">(بلا اسم مستأجر)</span>} <span className="text-muted font-normal text-xs">· {withUnitWord(UNIT_AR[p.property_type] || "وحدة", t.unit)} · {p.name}</span></div>
+        <div className={`text-[11px] truncate ${tone === "late" ? "text-late font-semibold" : tone === "due" ? "text-[#9A4B00]" : tone === "exp" ? "text-[#991B1B]" : "text-muted"}`}>{note}</div>
       </div>
       <div className="flex gap-1.5 shrink-0">
         {tone !== "exp" && t.phone && <a className="btn btn-wa text-xs px-2.5" href={remind(p, t, st)} target="_blank" rel="noreferrer" title="تذكير واتساب">💬</a>}
@@ -285,6 +286,48 @@ export default function PortfolioView({ properties, windows, compliance, orgName
   return (
     <div>
       {/* ═══ البحث الشامل ═══ */}
+      <div className="bg-white border border-line rounded-2xl p-4 mb-4">
+        <input className="fld text-base" value={q} onChange={(e) => setQ(e.target.value)} autoFocus
+          placeholder="ابحث في كل العقارات: اسم المستأجر · الجوال · رقم الهوية · رقم العقد · رقم الوحدة · رقم السند · مرجع الحوالة" />
+        {needle.length >= 2 && (
+          <div className="mt-3">
+            {hits.length === 0 ? (!docHits?.length && <p className="text-sm text-muted">لا نتائج لـ«{q}». جرّب جزءًا من الاسم، أو آخر 4 أرقام من الجوال، أو رقم السند (مثل 34).</p>) : (
+              <div className="space-y-1.5">
+                {cut("hits", hits).map(({ p, t, st }) => (
+                  <Item key={t.id} p={p} t={t} st={st}
+                    note={`${st.statusLabel}${t.phone ? ` · ${t.phone}` : ""}${t.national_id ? ` · هوية ${t.national_id}` : ""}${t.contract_no ? ` · عقد ${t.contract_no}` : ""}`}
+                    tone={st.status === "late" ? "late" : undefined} />
+                ))}
+                <More k="hits" n={hits.length} />
+              </div>
+            )}
+          </div>
+        )}
+        {!!docHits?.length && (
+          <div className="mt-3" data-testid="doc-hits">
+            <div className="text-xs text-muted mb-1.5">السندات ({docHits.length}{docHits.length >= 15 ? "+" : ""})</div>
+            <div className="space-y-1.5">
+              {docHits.map((h) => {
+                const p = properties.find((x) => x.id === h.pid);
+                return (
+                  <div key={h.key} className="flex items-center justify-between gap-3 border border-line rounded-lg px-3 py-2 text-sm">
+                    <div className="min-w-0">
+                      <div className="font-semibold text-deep truncate">
+                        {h.kind === "rc" ? "🧾 سند قبض" : "📤 سند صرف"} {h.no ? <span dir="ltr" className="font-mono">{h.no}</span> : <span className="text-muted font-normal">(بلا رقم)</span>}
+                        <span className="text-muted font-normal text-xs"> · {sar(h.amount)} ريال · {arDate(h.date)}</span>
+                        {h.reversed && <span className="text-[11px] text-late font-normal"> · عكس</span>}
+                      </div>
+                      <div className="text-[11px] text-muted truncate">{[h.who, h.unit, p?.name].filter(Boolean).join(" · ")}</div>
+                      {h.snip && <div className="text-[11px] text-ink/70 truncate">«{h.snip}»</div>}
+                    </div>
+                    {p && <OpenBtn pid={p.id} q={h.unit || undefined} className="btn btn-ghost text-xs shrink-0" />}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </div>
       <div className="flex justify-end mb-3">
         <button className="btn btn-ghost text-sm" onClick={() => (demo ? demoJoin() : setExpOpen(true))}
           title="كل مصروفات المكتب بفلترة على المالك والفترة — جاهزة للطباعة">💸 مصروفات كل العقارات</button>
@@ -358,7 +401,7 @@ export default function PortfolioView({ properties, windows, compliance, orgName
                   onChange={(e) => { setPickDate(e.target.value); setDayOpen(e.target.value ? "custom" : null); }} />
                 {pickDate && <div className="text-[11px] text-muted mt-1">{pickPays === null ? (pickErr ? <span className="text-late">{pickErr}</span> : "…")
                   : <button type="button" className="underline underline-offset-2" onClick={() => setDayOpen(pickOn ? null : "custom")}>
-                      <b className="text-[#137a50] tabular-nums">{sar(Math.round(sum(pickPays)))} ريال</b> · {cnt(pickPays) ? `${cnt(pickPays)} ${cnt(pickPays) === 1 ? "دفعة" : "دفعات"}` : "لا دفعات"} · {hijriShort(pickDate)}</button>}</div>}
+                      <b className="text-[#137a50] tabular-nums">{sar(Math.round(sum(pickPays)))} ريال</b> · {cnt(pickPays) ? `${cnt(pickPays)} ${cnt(pickPays) === 1 ? "دفعة" : "دفعات"}` : "لا دفعات"} · {arDate(pickDate)} ({hijriShort(pickDate)})</button>}</div>}
               </div>
             </div>
             {dayOpen && !loading && (
@@ -372,7 +415,7 @@ export default function PortfolioView({ properties, windows, compliance, orgName
                         <div key={x.id} className="flex items-center justify-between gap-3 px-3 py-2 text-sm">
                           <div className="min-w-0">
                             <div className="font-medium truncate">{w ? w.t.name : (x.payer_name ? `${x.payer_name} (سابق)` : "مستأجر سابق")}</div>
-                            <div className="text-[11px] text-muted truncate">{w ? `${w.p.name} · ${UNIT_AR[w.p.property_type] || "وحدة"} ${w.t.unit || "—"}` : (x.unit_label ? `وحدة ${x.unit_label}` : "")}{x.method && METHOD[x.method] ? ` · ${METHOD[x.method]}` : ""}{x.applies_to === "carried" ? " · سداد دين مرحَّل" : x.applies_to === "past_debt" ? " · سداد دين سابق" : ""}{openRev.has(String(x.id)) ? " · معكوسة" : ""}</div>
+                            <div className="text-[11px] text-muted truncate">{w ? `${w.p.name} · ${withUnitWord(UNIT_AR[w.p.property_type] || "وحدة", w.t.unit)}` : (x.unit_label ? `وحدة ${x.unit_label}` : "")}{x.method && METHOD[x.method] ? ` · ${METHOD[x.method]}` : ""}{x.applies_to === "carried" ? " · سداد دين مرحَّل" : x.applies_to === "past_debt" ? " · سداد دين سابق" : ""}{openRev.has(String(x.id)) ? " · معكوسة" : ""}</div>
                           </div>
                           <div className={`tabular-nums font-semibold whitespace-nowrap ${amt < 0 ? "text-late" : "text-[#137a50]"}`}>
                             {amt < 0 ? `تراجع ${sar(Math.round(-amt))}` : sar(Math.round(amt))}</div>
@@ -430,48 +473,6 @@ export default function PortfolioView({ properties, windows, compliance, orgName
       )}
 
       {expOpen && <ExpensesOverview properties={properties as any} onClose={() => setExpOpen(false)} />}
-      <div className="bg-white border border-line rounded-2xl p-4 mb-4">
-        <input className="fld text-base" value={q} onChange={(e) => setQ(e.target.value)} autoFocus
-          placeholder="ابحث في كل العقارات: اسم المستأجر · الجوال · رقم الهوية · رقم العقد · رقم الوحدة · رقم السند · مرجع الحوالة" />
-        {needle.length >= 2 && (
-          <div className="mt-3">
-            {hits.length === 0 ? (!docHits?.length && <p className="text-sm text-muted">لا نتائج لـ«{q}».</p>) : (
-              <div className="space-y-1.5">
-                {cut("hits", hits).map(({ p, t, st }) => (
-                  <Item key={t.id} p={p} t={t} st={st}
-                    note={`${st.statusLabel}${t.phone ? ` · ${t.phone}` : ""}${t.national_id ? ` · هوية ${t.national_id}` : ""}${t.contract_no ? ` · عقد ${t.contract_no}` : ""}`}
-                    tone={st.status === "late" ? "late" : undefined} />
-                ))}
-                <More k="hits" n={hits.length} />
-              </div>
-            )}
-          </div>
-        )}
-        {!!docHits?.length && (
-          <div className="mt-3" data-testid="doc-hits">
-            <div className="text-xs text-muted mb-1.5">السندات ({docHits.length}{docHits.length >= 15 ? "+" : ""})</div>
-            <div className="space-y-1.5">
-              {docHits.map((h) => {
-                const p = properties.find((x) => x.id === h.pid);
-                return (
-                  <div key={h.key} className="flex items-center justify-between gap-3 border border-line rounded-lg px-3 py-2 text-sm">
-                    <div className="min-w-0">
-                      <div className="font-semibold text-deep truncate">
-                        {h.kind === "rc" ? "🧾 سند قبض" : "📤 سند صرف"} {h.no ? <span dir="ltr" className="font-mono">{h.no}</span> : <span className="text-muted font-normal">(بلا رقم)</span>}
-                        <span className="text-muted font-normal text-xs"> · {sar(h.amount)} ريال · {arDate(h.date)}</span>
-                        {h.reversed && <span className="text-[11px] text-late font-normal"> · عكس</span>}
-                      </div>
-                      <div className="text-[11px] text-muted truncate">{[h.who, h.unit, p?.name].filter(Boolean).join(" · ")}</div>
-                      {h.snip && <div className="text-[11px] text-ink/70 truncate">«{h.snip}»</div>}
-                    </div>
-                    {p && <OpenBtn pid={p.id} q={h.unit || undefined} className="btn btn-ghost text-xs shrink-0" />}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
-      </div>
 
       {/* ═══ أرقام المحفظة ═══ */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
@@ -479,7 +480,9 @@ export default function PortfolioView({ properties, windows, compliance, orgName
           { v: `${properties.length}`, l: "عقار", s: `${totals.units} وحدة · ${totals.units ? Math.round(((totals.units - totals.vacant) / totals.units) * 100) : 0}% إشغال` },
           { v: sar(totals.overdue), l: "ريال متأخر", s: `${totals.late} متأخر · ${totals.partial} جزئي`, tone: totals.overdue ? "bad" : "" },
           { v: `${totals.due + totals.soon}`, l: `تستحق خلال ${daysAr(windows.soon)}`, s: `${totals.due} مستحق · ${totals.soon} قريب`, tone: totals.due ? "warn" : "" },
-          { v: collectedTotal === null ? "…" : sar(Math.round(collectedTotal)), l: "محصَّل هذا الشهر", s: `المتوقع شهريًّا ${sar(Math.round(totals.monthly))}`, tone: "good" },
+          /* كانت «محصَّل هذا الشهر» مكررة من الخلية فوق، وتبدو أكبر من «المتوقع شهريًّا» بلا تفسير
+             (المحصَّل يشمل متأخرات سابقة ودفعات ربعية وسنوية). مكانها العقود القريبة من الانتهاء. */
+          { v: `${totals.expiring}`, l: `عقود تنتهي خلال ${daysAr(windows.expiring)}`, s: `المتوقع شهريًّا ${sar(Math.round(totals.monthly))} ريال`, tone: totals.expiring ? "warn" : "" },
         ].map((c) => (
           <div key={c.l} className="bg-white border border-line rounded-2xl p-4">
             <div className={`text-2xl font-bold tabular-nums ${c.tone === "bad" ? "text-late" : c.tone === "warn" ? "text-[#9A4B00]" : c.tone === "good" ? "text-[#137a50]" : "text-deep"}`}>{c.v}</div>
@@ -493,10 +496,10 @@ export default function PortfolioView({ properties, windows, compliance, orgName
       <div className="bg-deep text-[#EAF1EE] rounded-2xl p-5 mb-4">
         <div className="font-display font-bold text-goldSoft mb-3">يحتاج إجراء — من كل العقارات</div>
         {!late.length && !due.length && !expiring.length && !vacant.length ? <p className="text-sm opacity-80">لا شيء عاجل في المحفظة كلها.</p> : (
-          <div className="grid lg:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 [&>*]:min-w-0">
             {late.length > 0 && <div><div className="text-xs opacity-80 mb-1.5">🔴 متأخرون ({late.length}) — {sar(totals.overdue)} ريال</div><div className="space-y-1.5">{cut("late", late).map(({ p, t, st }) => <Item key={t.id} p={p} t={t} st={st} tone="late" note={`${st.statusLabel} · ${sar(dueWithVat(st, t, p))} ريال`} />)}<More k="late" n={late.length} /></div></div>}
-            {due.length > 0 && <div><div className="text-xs opacity-80 mb-1.5">🟠 مستحق خلال {daysAr(windows.imminent)} ({due.length})</div><div className="space-y-1.5">{cut("due", due).map(({ p, t, st }) => <Item key={t.id} p={p} t={t} st={st} tone="due" note={`${st.statusLabel} · ${st.nextDueDate} (${hijriShort(st.nextDueDate || "")})`} />)}<More k="due" n={due.length} /></div></div>}
-            {expiring.length > 0 && <div><div className="text-xs opacity-80 mb-1.5">⏳ عقود انتهت أو تنتهي خلال {daysAr(windows.expiring)} — جدّدها أو سجّل الإخلاء ({expiring.length})</div><div className="space-y-1.5">{cut("exp", expiring).map(({ p, t, st }) => <Item key={t.id} p={p} t={t} st={st} tone="exp" note={(st.daysToEnd ?? 0) < 0 ? `انتهى ${st.endDate} (منذ ${daysAr(-(st.daysToEnd ?? 0))}) ولم يُجدَّد` : `ينتهي ${st.endDate} (بعد ${daysAr(st.daysToEnd)})`} />)}<More k="exp" n={expiring.length} /></div></div>}
+            {due.length > 0 && <div><div className="text-xs opacity-80 mb-1.5">🟠 مستحق خلال {daysAr(windows.imminent)} ({due.length})</div><div className="space-y-1.5">{cut("due", due).map(({ p, t, st }) => <Item key={t.id} p={p} t={t} st={st} tone="due" note={`${st.statusLabel} · ${st.nextDueDate ? `${arDate(st.nextDueDate)} (${hijriShort(st.nextDueDate)})` : "—"}`} />)}<More k="due" n={due.length} /></div></div>}
+            {expiring.length > 0 && <div><div className="text-xs opacity-80 mb-1.5">⏳ عقود انتهت أو تنتهي خلال {daysAr(windows.expiring)} — جدّدها أو سجّل الإخلاء ({expiring.length})</div><div className="space-y-1.5">{cut("exp", expiring).map(({ p, t, st }) => <Item key={t.id} p={p} t={t} st={st} tone="exp" note={(st.daysToEnd ?? 0) < 0 ? `انتهى ${st.endDate ? arDate(st.endDate) : "—"} (منذ ${daysAr(-(st.daysToEnd ?? 0))}) ولم يُجدَّد` : `ينتهي ${st.endDate ? arDate(st.endDate) : "—"} (بعد ${daysAr(st.daysToEnd)})`} />)}<More k="exp" n={expiring.length} /></div></div>}
             {vacant.length > 0 && <div><div className="text-xs opacity-80 mb-1.5">⚪ شاغرة ({vacant.length})</div><div className="space-y-1.5">{cut("vac", vacant).map(({ p, t, st }) => <Item key={t.id} p={p} t={t} st={st} note={t.move_out_date ? `شاغرة منذ ${arDate(t.move_out_date)}` : "شاغرة"} />)}<More k="vac" n={vacant.length} /></div></div>}
           </div>
         )}

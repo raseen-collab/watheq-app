@@ -81,10 +81,12 @@ export default function FloatingMenu({ isAdmin, signedIn }: { isAdmin: boolean; 
         </>
       )}
       <button type="button" onClick={() => setOpen((v) => !v)}
-        aria-label="مساعدة وأدوات" aria-expanded={open} title="مساعدة وأدوات"
+        aria-label="أدوات: المساعدة والمستشار والوضع الليلي" aria-expanded={open} title="أدوات: المساعدة والمستشار والوضع الليلي"
         className="bg-deep text-goldSoft rounded-full shadow-lg border border-goldSoft/30 w-12 h-12 grid place-items-center text-lg font-bold">
         {/* (24 نوفمبر 2026 — تقييم P2-8) كان ترسًا: يُقرأ «إعدادات» فلا يُتوقَّع أن المساعدة خلفه، وتكرّر مع «الإعدادات» */}
-        {open ? <Icon name="close" size={20} /> : <span aria-hidden="true">؟</span>}
+        {/* (التقييم الثاني) «؟» كان يوحي بالمساعدة وحدها وخلفه الوضع الليلي والمستشار — المساعدة لها
+            زرّ ظاهر في الشريط، وهذا قائمة أدوات فرمزها ⋯ */}
+        {open ? <Icon name="close" size={20} /> : <span aria-hidden="true">⋯</span>}
       </button>
     </div>
   );

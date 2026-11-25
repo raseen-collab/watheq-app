@@ -122,6 +122,15 @@ export default function HelpAssistant() {
     window.addEventListener("watheq:help", h);
     return () => window.removeEventListener("watheq:help", h);
   }, []);
+  /* (24 نوفمبر — التقييم الثاني) Esc يغلق اللوحة كبقية النوافذ، ويرجع التركيز لما فُتحت منه */
+  const opener = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    if (!open) return;
+    opener.current = (document.activeElement as HTMLElement) || null;
+    const k = (e: KeyboardEvent) => { if (e.key === "Escape") { setOpen(false); opener.current?.focus?.(); } };
+    window.addEventListener("keydown", k);
+    return () => window.removeEventListener("keydown", k);
+  }, [open]);
 
   if (!open) return null;
 
@@ -135,7 +144,7 @@ export default function HelpAssistant() {
           <div className="font-display font-bold text-goldSoft text-sm">مساعد وثيق</div>
           <div className="text-[11px] opacity-75">اسأل عن أي شيء في المنصة</div>
         </div>
-        <button className="text-sm opacity-80 hover:opacity-100" onClick={() => setOpen(false)} aria-label="إغلاق">✕</button>
+        <button className="text-sm opacity-80 hover:opacity-100 min-w-[44px] min-h-[44px] -m-2 grid place-items-center" onClick={() => setOpen(false)} aria-label="إغلاق المساعدة">✕</button>
       </div>
 
       <div className="flex-1 overflow-y-auto px-3 py-3 space-y-3">

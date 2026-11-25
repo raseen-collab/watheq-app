@@ -70,6 +70,16 @@ export default function DemoGuide({ onEvent }: { onEvent: (event: string) => voi
     return () => { document.body.classList.remove("wq-guide-open"); };
   }, [open, ready]);
 
+  /* (التقييم الثاني) الشارة المطويّة كانت تغطي محتوى البطاقات أثناء التمرير — تختفي وأنت تمرّر وتعود حين تتوقف */
+  const [scrolling, setScrolling] = useState(false);
+  useEffect(() => {
+    if (open) return;
+    let tm: any;
+    const on = () => { setScrolling(true); clearTimeout(tm); tm = setTimeout(() => setScrolling(false), 900); };
+    window.addEventListener("scroll", on, { passive: true });
+    return () => { window.removeEventListener("scroll", on); clearTimeout(tm); };
+  }, [open]);
+
   const go = (n: number) => { const c = Math.max(0, Math.min(STEPS.length - 1, n)); setStep(c); save(c); };
   const finish = () => { setOpen(false); save("done"); };
   const act = (a: Step["action"]) => {
@@ -85,6 +95,7 @@ export default function DemoGuide({ onEvent }: { onEvent: (event: string) => voi
   if (!open) {
     return (
       <button type="button" onClick={() => setOpen(true)}
+        style={{ opacity: scrolling ? 0 : 1, pointerEvents: scrolling ? "none" : undefined, transition: "opacity .2s" }}
         className="fixed z-40 start-3 bottom-[calc(4.5rem+env(safe-area-inset-bottom,0px))] sm:bottom-24 bg-gold text-white rounded-full shadow-lg px-3.5 py-2 min-h-[44px] text-xs font-semibold">
         🧭 دليل التجربة {step + 1}/{STEPS.length}
       </button>
@@ -96,14 +107,14 @@ export default function DemoGuide({ onEvent }: { onEvent: (event: string) => voi
       <div className="flex items-center justify-between mb-2">
         <span className="text-[11px] font-bold text-goldInk">🧭 دليل التجربة · {step + 1} من {STEPS.length}</span>
         <div className="flex gap-1">
-          <button className="text-muted text-xs px-2" onClick={() => setOpen(false)} title="طيّ">▁</button>
+          <button className="text-muted text-xs min-w-[44px] min-h-[44px] grid place-items-center -m-2" onClick={() => setOpen(false)} title="طيّ الدليل" aria-label="طيّ الدليل">▁</button>
           <button className="text-muted text-sm min-w-[44px] min-h-[44px] grid place-items-center -m-2" onClick={finish} title="إنهاء الدليل" aria-label="إنهاء الدليل">✕</button>
         </div>
       </div>
       <div className="h-1 bg-paper rounded-full mb-3 overflow-hidden">
         <div className="h-full bg-gold transition-all" style={{ width: `${((step + 1) / STEPS.length) * 100}%` }} />
       </div>
-      <h4 className="font-display font-bold text-deep mb-1">{s.title}</h4>
+      <p className="font-display font-bold text-deep mb-1">{s.title}</p>
       <p className="text-sm text-ink leading-relaxed mb-3">{s.body}</p>
       <div className="flex gap-2">
         {s.action?.href ? (

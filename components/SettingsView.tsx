@@ -80,6 +80,8 @@ export default function SettingsView({ profile }: { profile: any }) {
       /* (v100) هوية المكتب في ترويسة اللوحة */
       brand_logo: p.brand_logo || null,
       brand_header: !!p.brand_header,
+      /* (v104) لون المكتب على المستندات — #RRGGBB أو بلا لون (لون وثيق) */
+      brand_color: /^#[0-9a-fA-F]{6}$/.test(String(p.brand_color || "")) ? String(p.brand_color).toUpperCase() : null,
     };
 
     /**
@@ -106,7 +108,7 @@ export default function SettingsView({ profile }: { profile: any }) {
     }
     setSaving(false);
     if (error) { setMsg({ t: "err", m: friendlyError(error.message) }); return; }
-    const AR: Record<string, string> = { brand_logo: "شعار المكتب", brand_header: "إظهار هوية المكتب", default_calendar: "التقويم الافتراضي", billing_address: "عنوان المنشأة", payment_means: "وسيلة الدفع" };
+    const AR: Record<string, string> = { brand_color: "لون المكتب", brand_logo: "شعار المكتب", brand_header: "إظهار هوية المكتب", default_calendar: "التقويم الافتراضي", billing_address: "عنوان المنشأة", payment_means: "وسيلة الدفع" };
     setMsg(skipped.length
       ? { t: "ok", m: `تم الحفظ — عدا ${skipped.map((c) => AR[c] || c).join("، ")}: يحتاج تحديثًا في قاعدة البيانات، أخبر الدعم.` }
       : { t: "ok", m: "تم الحفظ." });
@@ -360,8 +362,8 @@ export default function SettingsView({ profile }: { profile: any }) {
 
       {/* (v100) هوية المكتب في ترويسة اللوحة */}
       <section className="bg-white border border-line rounded-2xl p-6 mb-5">
-        <h2 className="font-semibold text-deep text-lg mb-1">🏷️ هوية المكتب في اللوحة</h2>
-        <p className="text-sm text-muted mb-4">شعار مكتبك واسمه أعلى اللوحة بدل «وثيق»، لك ولموظفيك. الاسم يُؤخذ من «اسم المنشأة» في بيانات الفوترة.</p>
+        <h2 className="font-semibold text-deep text-lg mb-1">🏷️ هوية المكتب</h2>
+        <p className="text-sm text-muted mb-4">شعار مكتبك ولونه على كل مستند تُصدره: سندات القبض والفواتير وكشوف الحساب وتقارير المالك. بلا شعار يظهر أول حرف من اسم مكتبك. الاسم يُؤخذ من «اسم المنشأة» في بيانات الفوترة.</p>
         <div className="flex items-center gap-4 flex-wrap">
           <div className="w-16 h-16 rounded-xl border border-line bg-paper grid place-items-center overflow-hidden shrink-0">
             {p.brand_logo
@@ -378,6 +380,42 @@ export default function SettingsView({ profile }: { profile: any }) {
             {p.brand_logo && (
               <button type="button" className="btn btn-ghost text-sm text-late" onClick={() => setP({ ...p, brand_logo: null })}>حذف الشعار</button>
             )}
+          </div>
+        </div>
+        {/* (v104) لون المكتب */}
+        <div className="mt-5">
+          <span className="block text-sm font-semibold mb-2">لون المستندات</span>
+          <div className="flex items-center gap-2 flex-wrap">
+            {[["", "وثيق (الافتراضي)", "#0E3A37"], ["#081B3C", "كحلي", ""], ["#1E3A8A", "أزرق", ""], ["#7A1F2B", "عنابي", ""],
+              ["#14532D", "أخضر", ""], ["#3F3F46", "رمادي", ""], ["#7C2D12", "بنّي", ""]].map(([v, l, show]) => {
+              const on = (p.brand_color || "").toUpperCase() === v;
+              return (
+                <button key={v || "def"} type="button" title={l} aria-label={`لون ${l}`} aria-pressed={on}
+                  onClick={() => setP({ ...p, brand_color: v || null })}
+                  className={`w-11 h-11 rounded-full border-2 ${on ? "border-gold ring-2 ring-gold/40" : "border-line"}`}
+                  style={{ background: v || show }} />
+              );
+            })}
+            <label className="flex items-center gap-1.5 text-sm text-muted ms-1 min-h-[44px]">
+              لون آخر
+              <input type="color" className="w-11 h-11 rounded border border-line bg-white cursor-pointer"
+                value={/^#[0-9a-fA-F]{6}$/.test(String(p.brand_color || "")) ? p.brand_color : "#0E3A37"}
+                onChange={(e) => setP({ ...p, brand_color: e.target.value.toUpperCase() })} />
+            </label>
+          </div>
+          {/* معاينة الترويسة كما تظهر في المستند */}
+          <div className="mt-3 rounded-xl px-4 py-3 flex items-center gap-3" aria-label="معاينة ترويسة المستند"
+            style={{ background: /^#[0-9a-fA-F]{6}$/.test(String(p.brand_color || "")) ? p.brand_color : "#0E3A37",
+              color: (() => { const c = String(p.brand_color || "#0E3A37"); if (!/^#[0-9a-fA-F]{6}$/.test(c)) return "#fff";
+                const [r, g, b] = [1, 3, 5].map((i) => parseInt(c.slice(i, i + 2), 16)); return (0.299 * r + 0.587 * g + 0.114 * b) > 160 ? "#0B211F" : "#fff"; })() }}>
+            {p.brand_logo
+              // eslint-disable-next-line @next/next/no-img-element
+              ? <img src={p.brand_logo} alt="" className="h-10 max-w-[110px] object-contain bg-white rounded-lg px-1.5 py-1" />
+              : <span className="w-10 h-10 rounded-lg grid place-items-center font-bold bg-black/20">
+                  {(String(p.billing_name || p.org_name || "و").replace(/^(مكتب|شركة|مؤسسة|وكالة)\s+/, "").trim()[0]) || "و"}
+                </span>}
+            <span className="font-bold truncate">{String(p.billing_name || p.org_name || "اسم مكتبك").trim()}</span>
+            <span className="ms-auto text-xs opacity-80 shrink-0">سند قبض</span>
           </div>
         </div>
         <label className="flex items-center gap-2 mt-4 text-sm">

@@ -1,4 +1,5 @@
 "use client";
+import { withUnitWord } from "@/lib/domain";
 import { wqConfirm } from "@/lib/confirm";
 import { friendlyError, systemGap } from "@/lib/friendlyError";
 import { LIMIT_MSG, atLimit, type LimitsWire } from "@/lib/entitlements";
@@ -22,7 +23,7 @@ import { endNoticeText, endNoticeTextEn, meterNoticeText, meterNoticeTextEn, not
 import { pickMsg, normLang, suggestLang, MSG_LANGS, langLabel, type MsgLang } from "@/lib/msg-lang";
 import { unitWordEn } from "@/lib/docEn";
 import { contractState, expectedNext12, buildSchedule, FREQUENCIES, freqLabel, freqShort, freqMonths, periodsPerYear, customMonths, normalizeFreq, derivedEndDate, renewContract, needsRenewal, applyPayment, splitVat, isCommercial, isVacant, settleDeposit, unitVatApplies,
-  vacancyDays, TURNOVER_CHECKLIST, defaultTermPeriods, parseDate, dueWithVat, rentWithVat, withVat, unitVat, firstDueGap, type Frequency } from "@/lib/contracts";
+  vacancyDays, TURNOVER_CHECKLIST, defaultTermPeriods, parseDate, dueWithVat, rentWithVat, withVat, unitVat, firstDueGap, installmentAt, type Frequency } from "@/lib/contracts";
 import { PROPERTY_TYPES, typeLabel, unitLabel, typeIcon, unitWordFor } from "@/lib/domain";
 import { statementHTML, invoiceHTML, propertyStatementHTML, moveOutSettlementHTML, quotationHTML, ownerReportHTML, ownerReportFinance, feeInvoiceHTML, receiptHTML, DEFAULT_CHARGES, openDoc, type ChargeRow, type OwnerReportPayment } from "@/lib/documents";
 import { feeInvoiceCalc, feeInvoiceGaps, feeInvoiceExplain, feePeriodLabel } from "@/lib/fee-invoice";
@@ -71,6 +72,8 @@ type Tenant = {
   elec_notice_name?: string | null; elec_notice_account?: string | null;
   contract_no?: string | null; calendar?: string | null; first_due?: string | null; vat_mode?: string | null;
   carried_debt?: number | null; carried_debt_note?: string | null;
+  /** (v101) القسط الأخير المختلف */
+  last_installment?: number | null;
   unit_type?: string | null; rooms?: number | null; baths?: number | null; acs?: number | null;
   meter_water_in?: string | null; meter_water_out?: string | null;
   turnover_checklist?: { label: string; done?: boolean; note?: string | null }[] | null;
@@ -1124,6 +1127,9 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       contract_start: d.contract_start || null,
       payment_frequency: freq,
       contract_periods: periods,
+      /* (v101) القسط الأخير المختلف: يُحفظ فقط إن اختلف عن القسط والمدة ≥ 2 */
+      last_installment: (() => { const l = Math.round((Number(d.last_installment) || 0) * 100) / 100; const r = Number(d.rent_amount) || 0;
+        return l > 0 && (Number(periods) || 0) >= 2 && Math.abs(l - r) >= 0.005 ? l : null; })(),
       /**
        * نهاية العقد تُحسب بتقويم العقد نفسه.
        *
@@ -2169,16 +2175,19 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
   return (
     <div>
       {toast && (
-        <div className={`fixed top-5 left-1/2 -translate-x-1/2 z-[70] rounded-xl px-4 py-3 text-sm font-semibold shadow-lg border flex items-center ${
+        /* (التقييم الثاني) على الجوال كان الإشعار ينكسر لأربعة أسطر فوق رأس الصفحة —
+            صار شريطًا بعرض الشاشة أسفلها، وأزراره (السند، تراجع) في متناول الإبهام */
+        <div role="status" aria-live="polite" className={`fixed z-[70] rounded-xl px-4 py-3 text-sm font-semibold shadow-lg border flex flex-wrap items-center gap-y-1
+          max-sm:inset-x-2 max-sm:bottom-[calc(0.75rem+env(safe-area-inset-bottom,0px))] sm:top-5 sm:left-1/2 sm:-translate-x-1/2 ${
           toast.k === "ok" ? "bg-[#E6F4EC] text-[#137a50] border-[#B7DFC7]" : "bg-[#FBE9E7] text-[#a5322c] border-[#F5C6C2]"}`}>
           <span>{toast.m}</span>
           {toast.extra && (
             <button type="button" onClick={() => { const r = toast.extra!.run; setToast(null); r(); }}
-              className="ms-3 underline underline-offset-4 font-bold">{toast.extra.label}</button>
+              className="ms-3 underline underline-offset-4 font-bold max-sm:min-h-[44px] px-1">{toast.extra.label}</button>
           )}
           {toast.undo && (
             <button type="button" onClick={() => { const u = toast.undo!; setToast(null); u(); }}
-              className="ms-3 underline underline-offset-4 font-bold">تراجع</button>
+              className="ms-3 underline underline-offset-4 font-bold max-sm:min-h-[44px] px-1">تراجع</button>
           )}
         </div>
       )}
@@ -2202,7 +2211,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
 
         <div className="bg-deep text-[#EAF1EE] rounded-2xl p-4 mb-5 flex flex-wrap items-center gap-x-6 gap-y-3">
           <button type="button" onClick={() => setPfOpen((o) => !o)} aria-expanded={pfOpen}
-            className="sm:pointer-events-none flex w-full sm:w-auto items-center justify-between gap-3 text-right min-h-[28px]">
+            className="sm:pointer-events-none flex w-full sm:w-auto items-center justify-between gap-3 text-right min-h-[44px] sm:min-h-[28px]">
             <span className="font-display font-bold text-sm text-goldSoft">محفظتك · {plural(items.length, "عقار واحد", "عقاران", "عقارات", "عقارًا")}</span>
             <span className="sm:hidden flex items-center gap-2 text-xs">
               {portfolio.overdue > 0 ? <span className="text-[#F3B6AE] font-bold tabular-nums">{sar(portfolio.overdue)} متأخر</span> : <span className="text-[#C9DAD5]">لا متأخرات</span>}
@@ -2227,7 +2236,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
           )}
           {portfolio.expiring > 0 && <PortfolioStat v={String(portfolio.expiring)} l="عقود للتجديد أو الإخلاء" />}
           {portfolio.overdue === 0 && (portfolio.due + portfolio.soon) === 0 && portfolio.expiring === 0 && (
-            <div className="text-xs text-[#9FB8B3]">لا متأخرات ولا استحقاقات قريبة ✓</div>
+            <div className="text-xs text-[#C9D8D4]">لا متأخرات ولا استحقاقات قريبة ✓</div>
           )}
           <PortfolioStat v={`${occupancyPct}%`} l={`إشغال (${portfolio.vacant === 0 ? "لا شاغر" : plural(portfolio.vacant, "وحدة شاغرة", "وحدتان شاغرتان", "شاغرة", "شاغرة")})`} tone={portfolio.vacant ? "warn" : undefined} />
           </div>
@@ -2349,14 +2358,25 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                     <span className="block text-xs opacity-80 truncate">{dueTasks.slice(0, 2).map((n) => n.text).join(" · ")}</span>
                   </Row>
                 )}
+                {/* (24 نوفمبر — التقييم الثاني) طلب نقل العداد كان تحذيرًا برتقاليًّا في كل بطاقة (21 من 24) —
+                    مهمة واحدة لا تحذير لكل صف: سطر هنا، ونقطة صغيرة في البطاقة */}
+                {(() => {
+                  const n = tenants.filter((t) => meterNoticeDue(t) && !meterNoticeValid(t)).length;
+                  return n > 0 ? (
+                    <Row tone="plain" icon="⚡">
+                      {plural(n, "وحدة واحدة", "وحدتان", "وحدات", "وحدة")} لم يُرسَل لمستأجرها طلب نقل عداد الكهرباء باسمه
+                      <span className="block text-xs opacity-80">من ⋯ في الوحدة ← «✉️ مراسلة» ← «إشعار تسجيل عداد الكهرباء»</span>
+                    </Row>
+                  ) : null;
+                })()}
                 {(arrears.litigation > 0 || arrears.carried > 0 || vacantArrears > 0) && (
                   <div className="flex flex-wrap gap-2 pt-1">
                     {arrears.litigation > 0 && (
-                      <button type="button" onClick={() => goList("litigation")} className="text-xs px-3 py-2 min-h-[44px] rounded-full border bg-white border-line text-[#475569]">
+                      <button type="button" onClick={() => goList("litigation")} title="عقود رُفعت لمحكمة التنفيذ — الإشعارات الودّية متوقفة عنها" className="text-xs px-3 py-2 min-h-[44px] rounded-full border bg-white border-line text-[#475569]">
                         تحت التنفيذ <b className="tabular-nums">{sar(arrears.litigation)}</b> · {plural(arrears.litigationCount, "وحدة واحدة", "وحدتان", "وحدات", "وحدة")}</button>
                     )}
                     {arrears.carried > 0 && (
-                      <button type="button" onClick={() => setDebtOpen(true)} className="text-xs px-3 py-2 min-h-[44px] rounded-full border bg-white border-line text-[#9A4B00]">
+                      <button type="button" onClick={() => setDebtOpen(true)} title="مبالغ باقية من عقد سابق أو مستأجر سابق — خارج دفعات العقد الحالي" className="text-xs px-3 py-2 min-h-[44px] rounded-full border bg-white border-line text-[#9A4B00]">
                         دين مُرحَّل <b className="tabular-nums">{sar(arrears.carried)}</b> · {plural(arrears.carriedCount, "وحدة واحدة", "وحدتان", "وحدات", "وحدة")}</button>
                     )}
                     {vacantArrears > 0 && (
@@ -2686,7 +2706,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                               {t.contract_no && <div className="text-[11px] text-muted" dir="ltr">عقد {t.contract_no}</div>}
                               {key !== "vacant" && <MeterLine t={t} onSend={meterNoticeDue(t) ? () => { void sendMeterNotice(t); } : undefined} />}
                             </td>
-                            <td className={`px-3 ${cellY} whitespace-nowrap tabular-nums ${key === "vacant" ? "text-muted/70" : "text-muted"}`}>{t.covered_by && key !== "vacant" ? <span title="المبلغ والدفعات مسجّلة على الوحدة الرئيسية">ضمن عقد {coverLead(t)?.unit || "—"}</span> : key === "vacant" && !(Number(t.rent_amount) > 0) ? <span title="أدخله من «تعديل البيانات» ليظهر في عرض السعر وحساب الشغور">— <div className="text-[10px]">الإيجار المطلوب لم يُحدَّد</div></span> : <>{sar(t.rent_amount)} / {freqShort(t.payment_frequency)}{key === "vacant" && <div className="text-[10px]">الإيجار المطلوب</div>}</>}</td>
+                            <td className={`px-3 ${cellY} whitespace-nowrap tabular-nums ${key === "vacant" ? "text-muted italic" : "text-muted"}`}>{t.covered_by && key !== "vacant" ? <span title="المبلغ والدفعات مسجّلة على الوحدة الرئيسية">ضمن عقد {coverLead(t)?.unit || "—"}</span> : key === "vacant" && !(Number(t.rent_amount) > 0) ? <span title="أدخله من «تعديل البيانات» ليظهر في عرض السعر وحساب الشغور">— <div className="text-[10px]">الإيجار المطلوب لم يُحدَّد</div></span> : <>{sar(t.rent_amount)} / {freqShort(t.payment_frequency)}{key === "vacant" && <div className="text-[10px]">الإيجار المطلوب</div>}</>}</td>
                             <td className={`px-3 ${cellY} whitespace-nowrap tabular-nums`}>
                               {key === "vacant" ? <span className="text-muted">—</span>
                               : st.fullyPaid && st.endDate ? (<>
@@ -2748,14 +2768,16 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                                 <RowMenu items={[
                                   /* ثلاث مجموعات بترتيب الاستعمال لا بترتيب البناء:
                                      ما يُطبع · ما يُرسل · ما يغيّر العقد. */
-                                  { sep: "📄 مستندات" } as any,
+                                  /* نفس أقسام قائمة الجوال حرفيًّا (التقييم الثاني) */
+                                  { sep: "💰 التحصيل والمدفوعات" } as any,
+                                  { label: "🧾 سجل المدفوعات وتصحيحها", run: () => openHistory(t) },
+                                  ...(!isVacant(t) && !t.covered_by && (Number(t.paid_periods) > 0 || Number(t.partial_amount) > 0) ? [{ label: "🧾 سند قبض آخر دفعة", run: () => { void openReceipt(t); } }] : []),
+                                  { sep: "📄 كشوف ومطبوعات" } as any,
                                   { label: "كشف حساب شامل", run: () => openStatement(t, "full") },
                                   { label: "كشف حساب مختصر", run: () => openStatement(t, "brief") },
                                   ...(may("issue_invoices") && !t.covered_by ? [{ label: "فاتورة", run: () => openInvoice(t) }] : []),
                                   { label: "سجل الفواتير", run: () => setInvoicesFor(t) },
                                   { label: "جدول الدفعات", run: () => setSchedule(t) },
-                                  { label: "سجل المدفوعات", run: () => openHistory(t) },
-                                  ...(!isVacant(t) && !t.covered_by && (Number(t.paid_periods) > 0 || Number(t.partial_amount) > 0) ? [{ label: "🧾 سند قبض آخر دفعة", run: () => { void openReceipt(t); } }] : []),
                                   ...(canTrust && !t.covered_by ? [{ label: "🛡️ التأمين والفواتير المشتركة", run: () => setTrustFor({ tenantId: t.id }) }] : []),
                                   ...(isVacant(t) ? [{ label: "مخالصة الإخلاء", run: () => openSettlement(t) }] : []),
 
@@ -2827,7 +2849,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                         {/* الجوال يرى ما يميّز الوحدة؛ والتفاصيل الثانوية (الغرف
                             ورقم العقد) تظهر على الشاشة الأوسع. سطر واحد مكتظّ
                             بسبعة أرقام لا يُقرأ على الجوال — فلا يُقرأ منه شيء. */}
-                        {t.unit_type ? UNIT_TYPES[t.unit_type] || ul : ul} {t.unit || "—"} · {sar(t.rent_amount)} ريال / {freqShort(t.payment_frequency)}
+                        {withUnitWord(t.unit_type ? UNIT_TYPES[t.unit_type] || ul : ul, t.unit)} · {sar(t.rent_amount)} ريال / {freqShort(t.payment_frequency)}
                         {(t.rooms || t.baths || t.acs) ? <span className="text-[11px] hidden sm:inline"> · {[t.rooms ? `${t.rooms} غرف` : "", t.baths ? `${t.baths} دورات مياه` : "", t.acs ? `${t.acs} مكيف` : ""].filter(Boolean).join(" · ")}</span> : null}
                         {t.contract_no && <span className="hidden sm:inline"> · عقد <span dir="ltr">{t.contract_no}</span></span>}
                         {msgCount[t.id] > 0 && <span className="ms-1 text-[10px] bg-deep text-goldSoft rounded-full px-1.5 py-0.5" title="رسائل الفريق على هذه الوحدة">💬 {msgCount[t.id]}</span>}
@@ -2954,22 +2976,24 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                   <RowMenu
                     items={[
                       /* على الجوال: ما خرج من البطاقة يعيش هنا أولًا — لا يضيع إجراء */
-                      ...(key !== "vacant" && key !== "litigation" && (canPay || canCollect || canRemind || tel) ? [{ sep: "💰 تحصيل" } as any] : []),
+                      /* (24 نوفمبر — التقييم الثاني) «سجل المدفوعات» وتصحيح الدفعة كان تحت «مستندات» فلا يُتوقَّع:
+                         صار مع التحصيل، والقسم يظهر دائمًا لأن السجل يخصّ الشاغرة أيضًا */
+                      { sep: "💰 التحصيل والمدفوعات" } as any,
                       ...(key !== "vacant" && key !== "litigation" && canCollect ? [{ label: "💰 تسجيل دفعة", run: () => setPaying(t) }] : []),
                       ...(key !== "vacant" && key !== "litigation" && canRemind ? [{ label: "💬 تذكير واتساب", run: () => openExternal(remindLink(t)) }] : []),
                       ...(tel && key !== "vacant" ? [{ label: "📞 اتصال", run: () => { window.location.href = tel; } }] : []),
                       /* (v85) جوال إضافي: تذكير واتصال بالرقم الثاني — الأول يبقى الأساسي للتذكير الجماعي */
                       ...(t.phone2 && key !== "vacant" && key !== "litigation" && canRemind ? [{ label: `💬 تذكير للجوال الإضافي (${t.phone2})`, run: () => openExternal(remindLink(t, t.phone2)) }] : []),
                       ...(t.phone2 && key !== "vacant" ? [{ label: `📞 اتصال بالجوال الإضافي (${t.phone2})`, run: () => { window.location.href = `tel:${String(t.phone2).replace(/[^0-9+]/g, "")}`; } }] : []),
+                      { label: "🧾 سجل المدفوعات وتصحيحها", run: () => openHistory(t) },
+                      ...(!isVacant(t) && !t.covered_by && (Number(t.paid_periods) > 0 || Number(t.partial_amount) > 0) ? [{ label: "🧾 سند قبض آخر دفعة", run: () => { void openReceipt(t); } }] : []),
 /* نفس ترتيب الجدول حرفيًّا: المستخدم لا يتعلّم قائمتين */
-                      { sep: "📄 مستندات" } as any,
+                      { sep: "📄 كشوف ومطبوعات" } as any,
                       { label: "كشف حساب شامل", run: () => openStatement(t, "full") },
                       { label: "كشف حساب مختصر", run: () => openStatement(t, "brief") },
                       ...(may("issue_invoices") && !t.covered_by ? [{ label: "فاتورة", run: () => openInvoice(t) }] : []),
                       { label: "سجل الفواتير", run: () => setInvoicesFor(t) },
                       { label: "جدول الدفعات", run: () => setSchedule(t) },
-                      { label: "سجل المدفوعات", run: () => openHistory(t) },
-                      ...(!isVacant(t) && !t.covered_by && (Number(t.paid_periods) > 0 || Number(t.partial_amount) > 0) ? [{ label: "🧾 سند قبض آخر دفعة", run: () => { void openReceipt(t); } }] : []),
                       ...(canTrust && !t.covered_by ? [{ label: "🛡️ التأمين والفواتير المشتركة", run: () => setTrustFor({ tenantId: t.id }) }] : []),
                       ...(isVacant(t) ? [{ label: "مخالصة الإخلاء", run: () => openSettlement(t) }] : []),
 
@@ -3031,7 +3055,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                 return (
                   <div key={n.id} className={`flex items-start gap-2.5 py-2.5 border-b border-dashed border-line last:border-0 text-sm ${n.done_at ? "opacity-55" : ""}`}>
                     {/* مساحة لمس 44px حول المربع الصغير (30 سبتمبر 2026) */}
-                    <button className="-m-3 p-3 shrink-0 grid place-items-center" aria-label={n.done_at ? "إعادة فتح المهمة" : "تعليم المهمة كمنجزة"}
+                    <button className="-m-3 p-3 min-w-[44px] min-h-[44px] shrink-0 grid place-items-center" aria-label={n.done_at ? "إعادة فتح المهمة" : "تعليم المهمة كمنجزة"}
                       title={n.done_at ? "إعادة فتح" : "تمّت"} onClick={() => toggleNote(n)}>
                       <span className={`mt-0.5 w-4 h-4 rounded border grid place-items-center text-[10px] ${n.done_at ? "bg-[#137a50] border-[#137a50] text-white" : "border-line hover:border-deep"}`}>{n.done_at ? "✓" : ""}</span>
                     </button>
@@ -3048,7 +3072,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                       {n.text}
                     </span>
                     {/* كان «حذف» نصًّا صغيرًا يحذف بنقرة بلا سؤال — ملاصق للنص فيُلمس خطأً (30 سبتمبر 2026) */}
-                    <button className="text-muted opacity-70 hover:opacity-100 hover:text-late text-xs min-h-[44px] min-w-[44px] -my-2.5 px-2 shrink-0"
+                    <button className="text-muted hover:text-late text-xs min-h-[44px] min-w-[44px] -my-2.5 px-2 shrink-0"
                       aria-label={`حذف الملاحظة: ${n.text.slice(0, 40)}`}
                       onClick={async () => { if ((await wqConfirm(`حذف هذه الملاحظة نهائيًّا؟\n\n«${n.text.slice(0, 120)}»`))) deleteNote(n.id); }}>حذف</button>
                   </div>
@@ -3248,9 +3272,10 @@ function MeterLine({ t, onSend }: { t: Tenant; onSend?: () => void }) {
       <span>⚡ عداد <bdi dir="ltr" className="tabular-nums">{acc}</bdi></span>
       {sent
         ? <span className="text-[#137a50]">· أُشعر بالتسجيل {arDate(sent)}{Number(t.elec_notice_count) === 2 ? " (مرتان)" : Number(t.elec_notice_count) > 2 ? ` (${t.elec_notice_count} مرات)` : ""}</span>
-        : <span className="text-[#9A4B00]">· لم يُرسَل للمستأجر طلب نقل العداد باسمه</span>}
+        : <><span className="text-[#9A4B00] hidden sm:inline">· لم يُرسَل للمستأجر طلب نقل العداد باسمه</span>
+            <span className="sm:hidden inline-block w-2 h-2 rounded-full bg-[#C2760C]" role="img" aria-label="لم يُرسَل طلب نقل العداد" title="لم يُرسَل طلب نقل العداد" /></>}
       {onSend && (
-        <button type="button" className="underline text-deep font-semibold hover:text-gold" onClick={onSend}
+        <button type="button" className="underline text-deep font-semibold hover:text-gold max-sm:!hidden" onClick={onSend}
           title="رسالة واتساب للمستأجر برقم الحساب وطلب تسجيل العداد باسمه لدى شركة الكهرباء">
           {sent ? "أعد الإشعار" : "أرسل إشعار التسجيل"}
         </button>
@@ -3293,7 +3318,7 @@ function PaymentModal({ tenant, unitWord, onClose, onSubmit, st, recent = null, 
 }) {
   const rent = Number(tenant.rent_amount) || 0;
   const already = Number(tenant.partial_amount) || 0;
-  const remaining = Math.max(0, rent - already);
+  const remaining = Math.max(0, (rent > 0 ? installmentAt(tenant as any, Number(tenant.paid_periods) || 0) : 0) - already);   // (v101) القسط الأخير بقيمته
   /* (جولة 4) المتبقي من قيمة العقد كله بوحدة التسجيل — حادثة 8,299 بدل 1,700 على عقد 10,000 */
   const rem = contractRemaining(tenant, vat);
   /* عقد مسدَّد بالكامل: لا نقترح مبلغًا — كان الحقل يُملأ بدفعة كاملة لا وجود لها */
@@ -3318,8 +3343,10 @@ function PaymentModal({ tenant, unitWord, onClose, onSubmit, st, recent = null, 
   /** ما يذهب للأقساط — كل حسابات المعاينة والحرّاس عليه */
   const amt = tgt === "carried" ? 0 : Math.round((entered - toCarried) * 100) / 100;
   const pool = already + amt;
-  const completed = rent > 0 ? Math.floor(pool / rent) : 0;
-  const leftover = rent > 0 ? +(pool - completed * rent).toFixed(2) : 0;
+  /* (v101) المعاينة بنفس تقسيم القاعدة — القسط الأخير المختلف يُحترم */
+  const _ap = applyPayment({ ...(tenant as any), rent_amount: rent, partial_amount: already }, amt);
+  const completed = rent > 0 ? _ap.completed : 0;
+  const leftover = rent > 0 ? _ap.partial_amount : 0;
   /* المبلغ يقع على أقدم دفعة غير مسدَّدة أولًا — كانت المعاينة تقول «ستكتمل دفعة»
      و«جزئي على الدفعة التالية» كأن المستأجر منتظم، وعليه ثلاث متأخرة. */
   const lateN = Math.max(0, Number(st?.unpaid) || 0);
@@ -3474,7 +3501,8 @@ function PaymentModal({ tenant, unitWord, onClose, onSubmit, st, recent = null, 
             <div>العقد مسدَّد بالكامل — المبلغ كله (<b>{sar(amt)} ريال</b>) زيادة على قيمة العقد.</div>
           ) : (<>
           {lateN > 0 && <div>يُطبَّق على أقدم دفعة متأخرة أولًا{st?.nextDueDate ? <> (المستحقة <span className="whitespace-nowrap">{arDate(st.nextDueDate)}</span>)</> : null}.</div>}
-          {completed > 0 && <div>ستكتمل <b>{countAr(completed, "دفعة واحدة", "دفعتان", "دفعات", "دفعة")}</b>{lateN > 0 ? (completed >= lateN ? " — وتُغطّى كل المتأخرات" : ` — ويبقى متأخرًا ${countAr(lateN - completed, "دفعة واحدة", "دفعتان", "دفعات", "دفعة")}`) : ""}.</div>}
+          {/* (التقييم الثاني) كانت تقول «ستكتمل 33 دفعة» لعقد بقي منه 12 — العدد لا يتجاوز ما بقي من العقد */}
+          {completed > 0 && <div>ستكتمل <b>{countAr(rent > 0 && overAll > 0 ? Math.min(completed, Math.ceil(rem.remaining / rent - 1e-9)) : completed, "دفعة واحدة", "دفعتان", "دفعات", "دفعة")}</b>{overAll > 0 ? " — كل ما بقي من العقد" : ""}{lateN > 0 ? (completed >= lateN ? " — وتُغطّى كل المتأخرات" : ` — ويبقى متأخرًا ${countAr(lateN - completed, "دفعة واحدة", "دفعتان", "دفعات", "دفعة")}`) : ""}.</div>}
           {overAll > 0
             ? <div>ويزيد <b>{sar(overAll)} ريال</b> على المتبقي من العقد كله ({sar(rem.remaining)}) — لا دفعة بعدها في هذا العقد.</div>
             : <>
@@ -3788,6 +3816,27 @@ function HistoryModal({ data, unitWord, onClose, canEdit = true, onChanged, db, 
   }
 
 
+  /**
+   * (v102 — فحص المحاسب) دفعة صُنّفت خطأً بين «قسط» و«سداد دين مرحَّل»: كانت تحتاج عكسًا ثم
+   * إعادة تسجيل يدويًّا. خطوة واحدة ذرّية: عكس ظاهر في السجل + الدفعة نفسها بتاريخها ومرجعها
+   * تحت التصنيف الصحيح بسند جديد. إن فشل الجزء الثاني (المبلغ أكبر من الدين) لا يحدث شيء.
+   */
+  async function reclassify(r: any, to: "rent" | "carried") {
+    const toAr = to === "carried" ? "سداد الدين المرحَّل" : "أقساط الإيجار";
+    if (!(await wqConfirm(`نقل ${sar(Number(r.amount))} ريال (${arDate(r.paid_on)}) إلى «${toAr}»؟\n\n`
+      + (to === "carried"
+        ? `• يُعكس القسط ويعود مستحقًّا، ويُخصم المبلغ من الدين المرحَّل (${sar(Number((tenant as any).carried_debt) || 0)} ريال).\n`
+        : `• يعود المبلغ إلى الدين المرحَّل، ويُحسب على الأقساط (أقدم قسط غير مسدَّد أولًا).\n`)
+      + `• يبقى الأصل وصفّ عكسه في السجل، وتصدر للدفعة سند جديد بالتاريخ والمرجع نفسيهما.`))) return;
+    setBusy(true); setErr(null); setInfo(null);
+    const { error } = await supabase.rpc("watheq_reclassify_payment", { p_payment: r.id, p_to: to });
+    setBusy(false); setMoving(null);
+    if (error) { setErr(rpcErr(error, systemGap("PropertyView:reclassify"))); return; }
+    await reload();
+    setInfo(`نُقلت إلى «${toAr}» — الأصل وعكسه باقيان في السجل للتدقيق.`);
+    onChanged?.();
+  }
+
   const total = rows.reduce((s, r) => s + (Number(r.amount) || 0), 0);
   /* (11 أكتوبر 2026 — مكتب التميز) الدفعة المعكوسة تبقى في السجل للتدقيق، وكان
      زرّ «اعكسها» يظهر عليها فيرد الخادم «سبق عكس هذه الدفعة» ويظنّ المكتب أنها
@@ -3800,7 +3849,7 @@ function HistoryModal({ data, unitWord, onClose, canEdit = true, onChanged, db, 
       {err && <div className="bg-[#FBE9E7] border border-[#F5C6C2] text-[#a5322c] rounded-xl p-2.5 text-xs mb-3">{err}</div>}
       {info && <div className="bg-[#E6F4EC] border border-[#B7DFC7] text-[#137a50] rounded-xl p-2.5 text-xs mb-3">{info}</div>}
       {canEdit && rows.some((r) => Number(r.amount) > 0) && (
-        <p className="text-[11px] text-muted mb-2">«✎ تعديل»: المبلغ والطريقة والتاريخ والمرجع والملاحظة — رقم السند يبقى ويُعاد حساب المتبقي، وكل تعديل يُسجَّل. «⇄ أمانة» لدفعة هي تأمين أو حصة فاتورة لا إيجار. على الجوال اسحب الجدول يمينًا ويسارًا لترى الأزرار.</p>
+        <p className="text-[11px] text-muted mb-2">«✎ تعديل»: المبلغ والطريقة والتاريخ والمرجع والملاحظة — رقم السند يبقى ويُعاد حساب المتبقي، وكل تعديل يُسجَّل. «⇄ أمانة» لدفعة هي تأمين أو حصة فاتورة لا إيجار. على الجوال اسحب جدول السجل يمينًا ويسارًا لترى زرَّي التعديل والأمانة.</p>
       )}
 
       {!rows.length ? (
@@ -3899,13 +3948,20 @@ function HistoryModal({ data, unitWord, onClose, canEdit = true, onChanged, db, 
                             <span className="inline-flex gap-1 ms-1 align-middle">
                               <button className="btn btn-gold text-[10px] px-2 py-0.5" disabled={busy} onClick={() => moveToTrust(r, "deposit_in")}>تأمين</button>
                               <button className="btn btn-gold text-[10px] px-2 py-0.5" disabled={busy} onClick={() => moveToTrust(r, "utility_in")}>حصة فاتورة</button>
+                              {Number((tenant as any).carried_debt) > 0 && (
+                                <button className="btn btn-gold text-[10px] px-2 py-0.5" disabled={busy} onClick={() => reclassify(r, "carried")}
+                                  title="الدفعة سداد للدين المرحَّل لا قسط">دين مرحَّل</button>)}
                               <button className="btn btn-ghost text-[10px] px-1.5 py-0.5" onClick={() => setMoving(null)}>✕</button>
                             </span>
                           ) : (
                             <button className="btn btn-ghost text-[10px] px-2 py-0.5 ms-1" disabled={busy} onClick={() => setMoving(r.id)}
-                              title="الدفعة ليست إيجارًا بل تأمين أو حصة من فاتورة عداد مشترك — تُنقل إلى الأمانات">⇄ أمانة</button>
+                              title="الدفعة ليست قسطًا: تأمين أو حصة فاتورة عداد مشترك أو سداد دين مرحَّل — تُنقل لمكانها الصحيح">⇄ نقل</button>
                           )}
                         </>
+                      )}
+                      {canEdit && editing !== r.id && Number(r.amount) > 0 && !reversedIds.has(String(r.id)) && !r.past_tenancy_id && r.applies_to === "carried" && (
+                        <button className="btn btn-ghost text-[10px] px-2 py-0.5 ms-1" disabled={busy} onClick={() => reclassify(r, "rent")}
+                          title="الدفعة قسط إيجار سُجّلت سدادًا للدين المرحَّل — تُنقل إلى الأقساط">⇄ إلى الأقساط</button>
                       )}
                     </td>
                   )}
@@ -4803,6 +4859,20 @@ function TenantModal({ open, initial, unitWord, error, saving, onClose, onSubmit
             );
           })()}
         </div>
+        {/* (v101) القسط الأخير المختلف — عقود «إيجار» المقرَّبة: 1,667 × 11 + 1,663 */}
+        {(() => {
+          const n = Number(d.contract_periods) || 0; const r = Number(d.rent_amount) || 0; const l = Number(d.last_installment) || 0;
+          if (n < 2 || r <= 0) return null;
+          return (
+            <Field label="القسط الأخير — إن اختلف عن البقية (اختياري)"
+              hint={l > 0 && Math.abs(l - r) >= 0.005
+                ? `${n - 1} × ${sar(r)} + ${sar(l)} = ${sar(Math.round(((n - 1) * r + l) * 100) / 100)} ريال إجمالي المدة`
+                : "اتركه فارغًا إن كانت الأقساط متساوية. مثال إيجار: 20,000 سنويًّا شهريًّا = 1,667 × 11 والأخير 1,663"}>
+              <input className="fld" type="number" min={0} step="0.01" value={d.last_installment ?? ""}
+                onChange={(e) => setD({ ...d, last_installment: e.target.value })} placeholder={String(r)} />
+            </Field>
+          );
+        })()}
         {(startTooLate || fixedNow("late", startISO)) && (
           /* خطأ لا يُتجاوز (حادثة عمرو: 33 مرة) — لا «أعي ذلك»، بل أحد تصحيحين */
           <Advisory tone="late" sig={startISO} answer={adv.late}
@@ -5683,7 +5753,7 @@ function PortfolioStat({ v, l, tone }: { v: string; l: string; tone?: "warn" }) 
   return (
     <div>
       <div className={`font-display font-bold text-lg leading-none ${tone === "warn" ? "text-[#F5A9A4]" : "text-[#EAF1EE]"}`}>{v}</div>
-      <div className="text-[.7rem] text-[#9FB8B3] mt-1">{l}</div>
+      <div className="text-xs text-[#C9D8D4] mt-1">{l}</div>
     </div>
   );
 }

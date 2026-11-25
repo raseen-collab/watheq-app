@@ -4,6 +4,7 @@ import { today } from "@/lib/utils";
 import { customMonths } from "@/lib/contracts";
 import { feeLabel, catLabel as expCatLabel } from "@/lib/expenses";
 import { typeLabel } from "@/lib/domain";
+import { collectionRecon } from "@/lib/documents";
 import { ledgerCatLabel } from "@/lib/office-ledger";
 import { trustKindLabel, isTrustIn, depositBalances, meterBalances } from "@/lib/trust";
 // ============================================================
@@ -273,7 +274,7 @@ export default function ExportData() {
       add("الوحدات والمستأجرون", tenants.map((t) => ({
         "العقار": pName[t.property_id] || "", "الوحدة": t.unit || "", "المستأجر": t.name, "رقم العقد": t.contract_no || "", "الجوال": t.phone || "",
         "رقم الهوية": t.national_id || "", "قيمة الدفعة": t.rent_amount, "الدورة": FREQ_AR[t.payment_frequency] || "",
-        "بداية العقد": t.contract_start || "", "نهاية العقد": t.contract_end || "", "عدد الدفعات": t.contract_periods || "",
+        "بداية العقد": t.contract_start || "", "نهاية العقد": t.contract_end || "", "عدد الدفعات": t.contract_periods || "", "القسط الأخير (إن اختلف)": (t as any).last_installment || "",
         "المسدَّد (دفعات)": t.paid_periods || 0, "مبلغ جزئي": t.partial_amount || 0, "الحالة": STATUS_AR[t.status] || t.status || "نشط",
         "تاريخ الإخلاء": t.move_out_date || "", "التأمين": t.deposit_amount || "", "خصومات التأمين": t.deposit_deductions || "",
         "حساب الكهرباء": t.elec_account || "", "حساب الماء": t.water_account || "",
@@ -293,7 +294,7 @@ export default function ExportData() {
         /* v74: إشعار نقل حساب الكهرباء — كم مرة أُرسل وآخر مرة */
         "إشعارات نقل الكهرباء": Number(t.elec_notice_count) || "", "آخر إشعار كهرباء": String(t.elec_notice_at || "").slice(0, 10),
         "لغة الرسائل": (t as any).msg_lang === "en" ? "English" : (t as any).msg_lang === "both" ? "عربي + English" : "عربي",
-      })), [22, 10, 22, 14, 14, 12, 10, 12, 12, 10, 10, 10, 12, 12, 10, 12, 14, 14, 12, 12, 12, 12, 10, 12, 14, 8, 10, 10, 10, 12, 20, 10, 14, 20, 12]);
+      })), [22, 10, 22, 14, 14, 12, 10, 12, 12, 10, 10, 12, 10, 12, 12, 10, 12, 14, 14, 12, 12, 12, 12, 10, 12, 14, 8, 10, 10, 10, 12, 20, 10, 14, 20, 12]);
 
       /* M1: ورقة «الدفعات» للإيجارات فقط — دفعات الجمعيات في ورقتها (كانت تختلط بلا عقار ولا مستأجر) */
       const rentPays = payments.filter((x: any) => !x.association_id && !x.owner_id);
@@ -312,6 +313,20 @@ export default function ExportData() {
         "الحالة": x.reverses ? "عكس" : rentRev.has(String(x.id)) ? "معكوسة" : "",
         "رقم السند": x.receipt_no || "", "وقت التسجيل": atRiyadh(x.created_at), "سجّلها": who(x.created_by),
       })), [12, 22, 10, 22, 14, 12, 12, 10, 14, 24, 10, 12, 16, 18]);
+
+      /* (24 نوفمبر — فحص محاسبي) لماذا «المسدَّد» أكبر من مجموع السندات؟ لأن العقود المرفوعة
+         بدفعات مسدَّدة لا سندات لها. هذه الورقة تفصل الفرق لكل ساكن: رصيد افتتاحي، أو مستلم يزيد يُراجَع. */
+      const rec = collectionRecon(tenants as any, rentPays as any);
+      add("مطابقة التحصيل", tenants.filter((t) => Number(t.rent_amount) > 0 && (Number(t.paid_periods) || Number(t.partial_amount) || rec[t.id]?.received)).map((t) => {
+        const r = rec[t.id];
+        return {
+          "العقار": pName[t.property_id] || "", "الوحدة": t.unit || "", "المستأجر": t.name, "قيمة الدفعة": t.rent_amount,
+          "المسدَّد (دفعات)": t.paid_periods || 0, "مبلغ جزئي": t.partial_amount || 0,
+          "المسدَّد حسب العقد": r.counted, "المستلم بسندات في المنصة": r.received,
+          "مسدَّد قبل التسجيل (رصيد افتتاحي)": r.opening || "", "مستلم يزيد — راجعه": r.excess || "",
+          "ملاحظة": r.excess ? "السندات أكثر من المسدَّد: تحقق من عدد الدفعات المسدَّدة أو من دفعة سُجّلت قسطًا وهي دين" : "",
+        };
+      }), [22, 10, 22, 12, 12, 12, 16, 18, 20, 18, 50]);
 
       add("المستأجرون السابقون", past.map((x: any) => ({
         "العقار": pName[x.property_id] || "", "الوحدة": x.unit || "", "المستأجر": x.name, "الجوال": x.phone || "",

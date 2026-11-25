@@ -103,7 +103,7 @@ export default function DemoClient() {
                 <h1 className="font-display font-bold text-deep text-xl">نظرة عامة على المحفظة</h1>
                 <p className="text-xs text-muted">كل العقارات في صفحة واحدة — ما يحتاج إجراءً، وبحث في كل المستأجرين والسندات.</p>
               </div>
-              <button type="button" className="btn btn-ghost text-sm min-h-[44px]" onClick={() => setView("property")}>← لوحة العقارات</button>
+              <button type="button" className="btn btn-ghost text-sm min-h-[44px]" onClick={() => setView("property")}>→ لوحة العقارات</button>
             </div>
             <PortfolioView key={ovKey} properties={overviewProps} db={db} demo
               windows={{ soon: 10, imminent: 5, expiring: 60 }} compliance={[]} orgName="مكتب التجربة للأملاك"
