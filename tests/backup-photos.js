@@ -47,7 +47,7 @@ async function main() {
   store["maintenance-photos"]["u2/r9/before/3.jpg"] = { data: img("ccc"), updated: "2026-11-06T09:00:00Z" };
   const blob = (b) => ({ arrayBuffer: async () => b.buffer.slice(b.byteOffset, b.byteOffset + b.length) });
   const db = { storage: { from(bucket) { return {
-    async list(dir, { offset }) {
+    async list(dir, { offset, search } = {}) {
       const s = store[bucket];
       if (s === null) return { data: null, error: { message: "Bucket not found" } };
       if (offset) return { data: [], error: null };
@@ -58,9 +58,10 @@ async function main() {
         if (i < 0) names.set(rest, { name: rest, id: "f", updated_at: s[k].updated, metadata: { size: s[k].data.length, mimetype: "image/jpeg" } });
         else names.set(rest.slice(0, i), { name: rest.slice(0, i), id: null });
       }
-      return { data: [...names.values()], error: null };
+      const all = [...names.values()];
+      return { data: search ? all.filter((e) => e.name.includes(search)) : all, error: null };
     },
-    async download(p) { const s = store[bucket]; return s && s[p] ? { data: blob(s[p].data), error: null } : { data: null, error: { message: "Object not found" } }; },
+    async download(p) { const s = store[bucket]; return s && s[p] ? { data: blob(s[p].data), error: null } : { data: null, error: { message: "{}" } }; },   // (25 نوفمبر) Storage الحقيقي يرجع «{}» للملف المفقود
     async upload(p, buf) { store[bucket][p] = { data: Buffer.from(buf), updated: "now" }; return { error: null }; },
     async remove(ps) { for (const p of ps) delete store[bucket][p]; return { error: null }; },
   }; } } };
@@ -111,7 +112,16 @@ async function main() {
   catch { threw = true; }
   t("مفتاح خاطئ = خطأ صريح", threw);
 
-  console.log(`backup-photos: ${ok} ✓ · ${bad} ✗`);
+    /* سجل موجود لكن تعذّرت قراءته ⇒ خطأ حقيقي يتوقف (لا يبدأ من الصفر ويعيد النسخ) */
+  {
+    const realDl = db.storage.from("backups").download;
+    const bk = db.storage.from;
+    db.storage.from = (b) => { const o = bk(b); if (b === "backups") o.download = async () => ({ data: null, error: { message: "{}" } }); return o; };
+    let threw = false; try { await P.loadManifest(db, "backups", key); } catch (e) { threw = /قراءة سجل الصور/.test(String(e.message)); }
+    t("سجل موجود وتعذّرت قراءته ⇒ يتوقف", threw);
+    db.storage.from = bk; void realDl;
+  }
+console.log(`backup-photos: ${ok} ✓ · ${bad} ✗`);
   process.exit(bad ? 1 : 0);
 }
 main().catch((e) => { console.error(e); process.exit(1); });
