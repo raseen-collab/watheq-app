@@ -45,6 +45,7 @@ function LoginInner() {
   const [mode, setMode] = useState<"signin" | "signup" | "forgot">("signin");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showPass, setShowPass] = useState(false);
   const [name, setName] = useState("");
   const [source, setSource] = useState("");
   /**
@@ -268,16 +269,27 @@ function LoginInner() {
             </div>
           )}
           <div>
-            <label className="block text-sm font-semibold mb-1">البريد الإلكتروني</label>
-            <input className="fld" type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" required />
+            <label htmlFor="login-email" className="block text-sm font-semibold mb-1">البريد الإلكتروني</label>
+            {/* (التقييم الثاني) البريد يُكتب من اليسار — كان يُكتب من اليمين فيتلخبط @ والنقطة */}
+            <input id="login-email" className="fld" type="email" dir="ltr" inputMode="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" required />
           </div>
           {mode !== "forgot" && (
             <div>
-              <label className="block text-sm font-semibold mb-1">كلمة المرور</label>
-              <input className="fld" type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="6 أحرف على الأقل" required minLength={6} />
+              <label htmlFor="login-pass" className="block text-sm font-semibold mb-1">كلمة المرور</label>
+              <div className="relative">
+                <input id="login-pass" className="fld pe-14" type={showPass ? "text" : "password"} dir="ltr"
+                  autoComplete={mode === "signup" ? "new-password" : "current-password"}
+                  value={password} onChange={(e) => setPassword(e.target.value)}
+                  placeholder={mode === "signup" ? "6 أحرف على الأقل" : ""} required minLength={6} />
+                {/* إظهار كلمة المرور: أخطاء الكتابة على الجوال أكثر سبب لـ«بيانات الدخول غير صحيحة» */}
+                <button type="button" onClick={() => setShowPass((v) => !v)} aria-pressed={showPass}
+                  aria-label={showPass ? "إخفاء كلمة المرور" : "إظهار كلمة المرور"}
+                  className="absolute inset-y-0 end-0 min-w-[44px] px-2 text-xs font-semibold text-muted hover:text-deep">
+                  {showPass ? "إخفاء" : "إظهار"}</button>
+              </div>
               {mode === "signin" && (
                 <div className="text-left mt-1">
-                  <button type="button" className="text-xs text-muted hover:text-gold font-semibold"
+                  <button type="button" className="text-xs text-muted hover:text-deep font-semibold inline-flex items-center min-h-[44px] px-1"
                     onClick={() => { setMode("forgot"); setError(null); setInfo(null); }}>
                     نسيت كلمة المرور؟
                   </button>
@@ -314,15 +326,15 @@ function LoginInner() {
 
         <div className="text-center mt-5 text-sm">
           {mode === "signin" ? (
-            <>ما عندك حساب؟ <button className="text-gold font-semibold" onClick={() => { setMode("signup"); setError(null); }}>أنشئ واحدًا</button></>
+            <>ما عندك حساب؟ <button type="button" className="text-goldInk font-semibold underline underline-offset-4 inline-flex items-center min-h-[44px] px-1" onClick={() => { setMode("signup"); setError(null); }}>أنشئ واحدًا</button></>
           ) : mode === "signup" ? (
-            <>لديك حساب؟ <button className="text-gold font-semibold" onClick={() => { setMode("signin"); setError(null); }}>سجّل الدخول</button></>
+            <>لديك حساب؟ <button type="button" className="text-goldInk font-semibold underline underline-offset-4 inline-flex items-center min-h-[44px] px-1" onClick={() => { setMode("signin"); setError(null); }}>سجّل الدخول</button></>
           ) : (
-            <>تذكرتها؟ <button className="text-gold font-semibold" onClick={() => { setMode("signin"); setError(null); setInfo(null); }}>سجّل الدخول</button></>
+            <>تذكرتها؟ <button type="button" className="text-goldInk font-semibold underline underline-offset-4 inline-flex items-center min-h-[44px] px-1" onClick={() => { setMode("signin"); setError(null); setInfo(null); }}>سجّل الدخول</button></>
           )}
         </div>
         <div className="text-center mt-4 pt-4 border-t border-line text-sm">
-          <a href="https://watheqapp.com" className="text-muted hover:text-deep">← العودة إلى موقع وثيق</a>
+          <a href="https://watheqapp.com" className="text-muted hover:text-deep inline-flex items-center min-h-[44px] px-2">→ العودة إلى موقع وثيق</a>
         </div>
       </div>
     </div>
