@@ -43,7 +43,7 @@ export default async function OfficeLedgerPage() {
           <h1 className="font-display font-bold text-deep text-xl">📒 حسابات المكتب</h1>
           <p className="text-xs text-muted">دخل مكتبك (أتعاب، سعي، رسوم توثيق) ومصروفاته وصافيه — منفصل عن حسابات الملّاك.</p>
         </div>
-        <Link href="/dashboard/property" className="btn btn-ghost text-sm">← لوحة العقارات</Link>
+        <Link href="/dashboard/property" className="btn btn-ghost text-sm">→ لوحة العقارات</Link>
       </div>
       <OfficeLedgerView orgName={(office as any)?.org_name || ""} issuer={{ vat_number: (office as any)?.vat_number || null }} />
     </main>
