@@ -992,11 +992,54 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
     };
     if (payload.owner_vat_number && !isValidVatNo(payload.owner_vat_number))
       return notify("err", "الرقم الضريبي للمالك غير صحيح — 15 رقمًا يبدأ بـ3 وينتهي بـ3، أو اتركه فارغًا.");
+    /**
+     * (25 نوفمبر 2026 — مراجعة المدخلات) بيانات المالك مخزّنة مع كل عقار، والمالك الواحد
+     * يجمع عقاراته **بالاسم**. فكان:
+     *  - «عبدالله  السعد» (مسافتان) أو «عبد الله السعد» يصير مالكًا ثانيًا وينقسم كشفه.
+     *  - تغيير جوال المالك أو رقمه الضريبي يلزم تعديله في كل عقار له واحدًا واحدًا.
+     *  - عقار جديد لمالك موجود يبدأ بلا جواله ورقمه.
+     * الآن: المسافات تُوحَّد، والاسم الشبيه بمالك موجود يُسأل عنه، والعقار الجديد يأخذ
+     * بيانات المالك الموجودة، والتعديل يُعرض تطبيقه على بقية عقاراته.
+     */
+    const ownerKey = (x: any) => normalizeSearch(String(x || "")).replace(/\s+/g, "");
+    if (payload.owner_name) {
+      payload.owner_name = payload.owner_name.replace(/\s+/g, " ").trim();
+      const twin = ownerNames.find((n) => n !== payload.owner_name && ownerKey(n) === ownerKey(payload.owner_name));
+      if (twin && await wqConfirm(`يوجد مالك مسجَّل باسم «${twin}».\n\nهل هو نفسه «${payload.owner_name}»؟ إن كان نفسه نكتب الاسم كما هو مسجَّل حتى تجتمع عقاراته في كشف واحد.`)) payload.owner_name = twin;
+    }
+    const sameOwner = payload.owner_name ? items.filter((p) => p.id !== id && String((p as any).owner_name || "").trim() === payload.owner_name) : [];
+    if (sameOwner.length) {
+      const src: any = sameOwner.find((p: any) => p.owner_phone || p.owner_vat_number || p.owner_address) || {};
+      if (!payload.owner_phone && src.owner_phone) payload.owner_phone = src.owner_phone;
+      if (!payload.owner_vat_number && src.owner_vat_number) payload.owner_vat_number = src.owner_vat_number;
+      if (!payload.owner_address && src.owner_address) payload.owner_address = src.owner_address;
+    }
+    /* ما غيّره المستخدم الآن في بيانات المالك (غير الفارغ) — يُعرض على بقية عقاراته */
+    const prevProp: any = id ? items.find((p) => p.id === id) : null;
+    const ownerPatch: Record<string, string> = {};
+    for (const k of ["owner_phone", "owner_vat_number", "owner_address"] as const) {
+      const v = (payload as any)[k];
+      if (v && (!prevProp || String(prevProp[k] || "") !== v)) ownerPatch[k] = v;
+    }
+    const toSync = Object.keys(ownerPatch).length
+      ? sameOwner.filter((p: any) => Object.entries(ownerPatch).some(([k, v]) => String(p[k] || "") !== v)) : [];
+    const syncOwner = async () => {
+      if (!toSync.length) return;
+      const what = [ownerPatch.owner_phone && "الجوال", ownerPatch.owner_vat_number && "الرقم الضريبي", ownerPatch.owner_address && "العنوان"].filter(Boolean).join(" و");
+      if (!(await wqConfirm(`للمالك «${payload.owner_name}» ${toSync.length === 1 ? "عقار آخر" : `${toSync.length} عقارات أخرى`}: ${toSync.map((p) => p.name).slice(0, 4).join("، ")}${toSync.length > 4 ? "…" : ""}.\n\nنحدّث ${what} فيها أيضًا حتى تتطابق؟`))) return;
+      const ids = toSync.map((p) => p.id);
+      const { data: up, error: ue } = await supabase.from("properties").update(ownerPatch).in("id", ids).select("id");
+      if (ue) return notify("err", `حُفظ العقار، لكن تعذّر تحديث بقية عقارات المالك: ${friendlyError(ue)}`);
+      const done = new Set((up || []).map((r: any) => r.id));
+      setItems((cur) => cur.map((p) => (done.has(p.id) ? { ...p, ...ownerPatch } as Property : p)));
+      notify("ok", `حُدّثت بيانات المالك في ${done.size} ${done.size === 1 ? "عقار" : "عقارات"} أخرى.`);
+    };
     if (id) {
       const { data: _u1, error } = await supabase.from("properties").update(payload).eq("id", id).select("id");
       if (error) { console.error("Watheq save error:", error); return notify("err", friendlyError(error)); }
       if (!_u1 || _u1.length === 0) return notify("err", "هذا الإجراء يحتاج صلاحية أعلى — اطلبه من صاحب المكتب.");
       setItems(items.map((p) => (p.id === id ? { ...p, ...payload } as Property : p)));
+      await syncOwner();
     } else {
       const uid = await currentUserId();
       if (!uid) return notify("err", "انتهت الجلسة — أعد تسجيل الدخول ثم حاول مرة أخرى.");
@@ -1005,6 +1048,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       if (error) { console.error("Watheq save error:", error); return notify("err", friendlyError(error)); }
       const next = { ...(data as any), tenants: [], property_notes: [] };
       setItems([next, ...items]); setActiveId(next.id);
+      await syncOwner();
       /* v78: عقار جديد ⇒ الخطوة التالية أمامه مباشرة. كان النموذج يُغلق بلا كلمة،
          فيرى «لا توجد وحدات بعد» ولا يعرف أنه في الخطوة 2 من 3 — مستخدمان
          وقفا عند «عقار · 0 وحدة». */
@@ -1077,7 +1121,10 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
      */
     const unitTxt = String(d.unit || "").trim();
     if (unitTxt) {
-      const clash = active.tenants.find((t) => t.id !== id && String(t.unit || "").trim() === unitTxt && !isVacant(t));
+      /* «شقة 5» و«5» و«٥» و«5 » وحدة واحدة — كانت المقارنة حرفية فتمرّ */
+      const uKey = (x: any) => String(x || "").replace(/[٠-٩]/g, (c) => String("٠١٢٣٤٥٦٧٨٩".indexOf(c)))
+        .replace(/^(شقة|شقه|محل|معرض|مكتب|فيلا|دور|غرفة|وحدة|مستودع)\s*/u, "").replace(/[\s\-_.#]+/g, "").toLowerCase();
+      const clash = active.tenants.find((t) => t.id !== id && uKey(t.unit) === uKey(unitTxt) && !isVacant(t));
       if (clash && !(await wqConfirm(`${ul} ${unitTxt} مشغولة حاليًّا بـ«${clash.name}».\n\nإن كان مستأجرًا جديدًا، سجّل إخلاء السابق أولًا حتى لا تظهر الوحدة مرتين.\n\nمتابعة الإضافة على أي حال؟`))) { setSaving(false); return; }
     }
     /* أشيع خطأ عند النقل من إكسل: كتابة 1447-03-15 في منتقي التاريخ الميلادي.

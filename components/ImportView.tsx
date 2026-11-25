@@ -318,7 +318,7 @@ export default function ImportView({ properties }: { properties: Prop[] }) {
         let part: any[] = payload.slice(i, i + BATCH);
         /* عمود اختياري ناقص في قاعدة مكتبٍ ما: يُحذف من المحاولة ويُعاد الحفظ بدونه —
            لا يسقط الرفع كله لأجله (المبدأ نفسه في حفظ الإعدادات، schema-v41) */
-        const OPTIONAL = ["first_due", "unit_type", "vat_mode", "contract_no", "elec_account", "water_account", "rooms", "baths", "acs", "carried_debt_note"];
+        const OPTIONAL = ["first_due", "unit_type", "vat_mode", "contract_no", "elec_account", "water_account", "rooms", "baths", "acs", "carried_debt_note", "last_installment"];
         let { error } = await supabase.from("tenants").insert(part);
         for (let tries = 0; error && tries < OPTIONAL.length; tries++) {
           const col = OPTIONAL.find((c) => new RegExp(`\\b${c}\\b`).test(error!.message));
