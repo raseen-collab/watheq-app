@@ -157,7 +157,7 @@ export default function PortfolioView({ properties, windows, compliance, orgName
       if (t.litigation) T.litigation++;
       else if (st.status === "late") { isPartialOnly(st) ? T.partial++ : T.late++; T.overdue += dueWithVat(st, t, p); }
       else if (st.status === "soon") { st.soonTier === "near" ? T.soon++ : T.due++; }
-      if (renewalDue(t, st)) T.expiring++;
+      if (renewalDue(t, st) && !t.litigation) T.expiring++;   // (25 نوفمبر) نفس تعريف صفحة العقار
       T.monthly += (Number(t.rent_amount) || 0) * (PER_MONTH[t.payment_frequency || "monthly"] || 1);
     });
     return T;
@@ -213,7 +213,7 @@ export default function PortfolioView({ properties, windows, compliance, orgName
   const late = rows.filter(({ t, st }) => !isVacant(t) && !t.litigation && st.status === "late").sort((a, b) => dueWithVat(b.st, b.t, b.p) - dueWithVat(a.st, a.t, a.p));
   const due = rows.filter(({ t, st }) => !isVacant(t) && st.status === "soon" && st.soonTier !== "near").sort((a, b) => (a.st.daysToNextDue ?? 0) - (b.st.daysToNextDue ?? 0));
   /* المنتهي (أيام سالبة) أولًا ثم الأقرب انتهاءً */
-  const expiring = rows.filter(({ t, st }) => renewalDue(t, st)).sort((a, b) => (a.st.daysToEnd ?? 0) - (b.st.daysToEnd ?? 0));
+  const expiring = rows.filter(({ t, st }) => renewalDue(t, st) && !t.litigation).sort((a, b) => (a.st.daysToEnd ?? 0) - (b.st.daysToEnd ?? 0));
   const vacant = rows.filter(({ t }) => isVacant(t));
 
   const perProperty = properties.map((p) => {
@@ -226,7 +226,7 @@ export default function PortfolioView({ properties, windows, compliance, orgName
          يضمّ وحدات التنفيذ فيخالف الإجمالي فوقه في الصفحة نفسها */
       overdue: occ.reduce((a, r) => a + (!r.t.litigation && r.st.status === "late" ? dueWithVat(r.st, r.t, r.p) : 0), 0),
       due: occ.filter((r) => r.st.status === "soon").length,
-      expiring: occ.filter((r) => renewalDue(r.t, r.st)).length,
+      expiring: occ.filter((r) => renewalDue(r.t, r.st) && !r.t.litigation).length,
       monthly: occ.reduce((a, r) => a + (Number(r.t.rent_amount) || 0) * (PER_MONTH[r.t.payment_frequency || "monthly"] || 1), 0),
       /* عقار بلا دفعات هذا الشهر غائب عن الخريطة: صفر لا «…» (كان يبقى «…» للأبد) */
       collected: monthCollected ? (monthCollected[p.id] ?? 0) : null,
@@ -482,7 +482,7 @@ export default function PortfolioView({ properties, windows, compliance, orgName
           { v: `${totals.due + totals.soon}`, l: `تستحق خلال ${daysAr(windows.soon)}`, s: `${totals.due} مستحق · ${totals.soon} قريب`, tone: totals.due ? "warn" : "" },
           /* كانت «محصَّل هذا الشهر» مكررة من الخلية فوق، وتبدو أكبر من «المتوقع شهريًّا» بلا تفسير
              (المحصَّل يشمل متأخرات سابقة ودفعات ربعية وسنوية). مكانها العقود القريبة من الانتهاء. */
-          { v: `${totals.expiring}`, l: `عقود تنتهي خلال ${daysAr(windows.expiring)}`, s: `المتوقع شهريًّا ${sar(Math.round(totals.monthly))} ريال`, tone: totals.expiring ? "warn" : "" },
+          { v: `${totals.expiring}`, l: `عقود انتهت أو تنتهي خلال ${daysAr(windows.expiring)}`, s: `المتوقع شهريًّا ${sar(Math.round(totals.monthly))} ريال`, tone: totals.expiring ? "warn" : "" },
         ].map((c) => (
           <div key={c.l} className="bg-white border border-line rounded-2xl p-4">
             <div className={`text-2xl font-bold tabular-nums ${c.tone === "bad" ? "text-late" : c.tone === "warn" ? "text-[#9A4B00]" : c.tone === "good" ? "text-[#137a50]" : "text-deep"}`}>{c.v}</div>

@@ -412,6 +412,8 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
   // ---------- أدوات العرض: بحث / تصفية / فرز / إشعار ----------
   const [q, setQ] = useState("");
   const [filter, setFilter] = useState<"all" | RowKey>("all");
+  /* (25 نوفمبر) «اليوم» مطوي على الجوال افتراضيًّا (يُفتح بلمسة)، ومفتوح على الكمبيوتر */
+  const [todayOpen, setTodayOpen] = useState(false);
   /* (22 نوفمبر 2026) «أرقام العقار والعدادات» مطويّة افتراضيًّا — ويُتذكّر اختيار المستخدم */
   const [detailsOpen, setDetailsOpen] = useState(false);
   useEffect(() => { try { if (localStorage.getItem("wq_prop_details") === "1") setDetailsOpen(true); } catch { /* */ } }, []);
@@ -523,7 +525,11 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
     /* (30 سبتمبر 2026) normalizeSearch: الأرقام العربية وى/ي وة/ه والهمزات — كان «055» لا يجد «055» */
     const needle = normalizeSearch(q);
     let out = allRowsForFilter.filter((r) => {
-      if (filter !== "all" && r.key !== filter && !(filter === "soon" && r.key === "due")) return false;
+      /* (25 نوفمبر — تطابق الأرقام) «تجديد» = كل عقد انتهى أو ينتهي خلال النافذة (renewalDue)، حتى لو
+         كان متأخرًا أيضًا — نفس تعريف «نظرة عامة» وشريط المحفظة ولوحة اليوم. كان يعدّ الحالة
+         الطاغية وحدها فيقول «تجديد 2» والنظرة العامة «10». التنفيذ القضائي خارجه في كل مكان. */
+      if (filter === "expiring") { if (!(renewalDue(r.t, r.st) && !r.t.litigation)) return false; }
+      else if (filter !== "all" && r.key !== filter && !(filter === "soon" && r.key === "due")) return false;
       if (!needle) return true;
       // نفس حقول بحث «النظرة العامة» — لا يجد المستأجر في صفحة ويعجز في أخرى
       return [r.t.name, r.t.unit, r.t.phone, r.t.phone2, r.t.contract_no, r.t.national_id, r.t.elec_account, r.t.water_account].filter(Boolean)
@@ -728,7 +734,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
     const head = part > 0
       ? `تسجيل استلام باقي الدفعة الحالية؟\n\n${sar(amt)} ريال${vatNote} = الدفعة ${sar(rent)} − مدفوع منها سابقًا ${sar(part)}`
       : `تسجيل استلام دفعة كاملة؟\n\n${sar(amt)} ريال${vatNote}`;
-    if ((await wqConfirm(`${head}\nمن ${t.name} — ${ul} ${t.unit || "—"} — ${active?.name}\n\nتاريخ السداد: اليوم (${today()})\nلمبلغ أو تاريخ مختلف أو مرجع حوالة استعمل «½ جزئي».\n\n(تُسجَّل باسمك في سجل الحركات المالية)`))) recordPayment(t, amt);
+    if ((await wqConfirm(`${head}\nمن ${t.name} — ${ul} ${t.unit || "—"} — ${active?.name}\n\nتاريخ السداد: اليوم (${today()})\nلمبلغ أو تاريخ مختلف أو مرجع حوالة استعمل «💰 تسجيل دفعة».\n\n(تُسجَّل باسمك في سجل الحركات المالية)`))) recordPayment(t, amt);
   }
 
   useEffect(() => {
@@ -1788,6 +1794,17 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       return;
     }
 
+    /* (25 نوفمبر 2026) غير المسجَّل في الضريبة لا يحصّلها: الضريبة مفعّلة على العقار ورقم المورّد
+       (المكتب، أو المالك إن كانت الفاتورة باسمه) غير صحيح ⇒ لا نُصدر مستندًا فيه سطر ضريبة. */
+    if (unitVatApplies(t, active)) {
+      const ownerSeller = (active as any).rent_seller === "owner";
+      const sellerVat = ownerSeller ? (active as any).owner_vat_number : (issuer as any)?.vat_number;
+      if (!isValidVatNo(sellerVat)) {
+        notify("err", `الضريبة مفعّلة على «${active.name}» لكن ${ownerSeller ? "الرقم الضريبي للمالك" : "رقمك الضريبي"} ${sellerVat ? "غير صحيح" : "غير مسجَّل"} — ومن لم يسجّل في الضريبة لا يحصّلها. `
+          + (ownerSeller ? "أضف رقم المالك الصحيح من إعدادات العقار" : "أضف رقمك الضريبي من الإعدادات ← بيانات الفوترة") + "، أو أطفئ الضريبة من إعدادات العقار إن لم تكن مسجَّلًا.");
+        return;
+      }
+    }
     /* فاتورة ثانية لنفس الدفعة تُصدَر بصمت: المكتب يضغط «فاتورة» مرتين فتخرج
        فاتورتان ضريبيتان برقمين مختلفين لنفس المبلغ ونفس الفترة، ولا شيء ينبّه.
        نسأل قبل الإصدار — والقرار يبقى له، فقد يكون الإصدار الثاني مقصودًا. */
@@ -1844,7 +1861,10 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
     const gaps = taxInvoiceGaps(sellerOf(row, issuer as any, active as any), unitVatApplies(t, active));
     /* (v96) قياسية: ينقصها رقم/عنوان المستأجر أو وسيلة الدفع؟ (العنوان يُكمَل بعنوان الوحدة) */
     if (!gaps.length && row.invoice_kind === "standard" && !row.payment_means) gaps.push("وسيلة الدفع (الإعدادات ← بيانات الفوترة)");
-    if (gaps.length) notify("err", `صدرت ${invoiceNo} — لتكون فاتورة ضريبية${row.invoice_kind === "standard" ? "" : " مبسطة"} كاملة ينقص: ${gaps.join("، ")}.`);
+    /* (25 نوفمبر 2026) للمسجَّل تصدر «مطالبة» لا فاتورة ضريبية — نقول ذلك مرة عند الإصدار */
+    if (isValidVatNo(sellerOf(row, issuer as any, active as any).vat) && unitVatApplies(t, active))
+      notify("ok", `صدرت المطالبة ${invoiceNo}. الفاتورة الضريبية تُصدر من نظام فوترتك المربوط بمنصة «فاتورة» — وثيق غير مربوط بها.`);
+    else if (gaps.length) notify("err", `صدرت ${invoiceNo} — ينقص: ${gaps.join("، ")}.`);
   }
 
   /** تذكير ودّي — يوضّح تفاصيل المطالبة وتاريخ استحقاقها */
@@ -2052,7 +2072,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       if (st.status === "soon") { if (st.soonTier === "near") acc.soon++; else acc.due++; }
       /* القاعدة نفسها لشريحة «تجديد» في صفحة العقار (unitStatus = expiring: يقترب أو انتهى
          ولا متأخر ولا تنفيذ) — كان الشريط يعدّ expiringSoon وحده فيختلف الرقمان (30 سبتمبر 2026) */
-      if (rowKey(t, st) === "expiring") acc.expiring++;
+      if (renewalDue(t, st) && !t.litigation) acc.expiring++;
       acc.monthly += (Number(t.rent_amount) || 0) * PERIODS_PER_MONTH[(t.payment_frequency || "monthly") as Frequency];
     });
     return acc;
@@ -2158,8 +2178,9 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
     ? allRows.filter(({ t }) => [t.name, t.unit, t.phone, t.phone2, t.national_id, t.contract_no, t.elec_account, t.water_account]
         .some((v) => v && normalizeSearch(v).includes(qNeedle)))
     : allRows;
-  const counts = searched.reduce((acc, r) => { acc[r.key] = (acc[r.key] || 0) + 1; return acc; },
+  const counts = searched.reduce((acc, r) => { if (r.key !== "expiring") acc[r.key] = (acc[r.key] || 0) + 1; return acc; },
     {} as Record<RowKey, number>);
+  counts.expiring = searched.filter((r) => renewalDue(r.t, r.st) && !r.t.litigation).length;
   const lateRows = allRows.filter((r) => r.key === "late" || r.key === "partial");
   /* مصدر واحد لكل أرقام المتأخر على هذه الصفحة وفي المستندات */
   const arrears = arrearsOf(allRows.map((r) => ({ ...r, p })) as any[]);
@@ -2272,7 +2293,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
               في سطر ثانوي — فالعين تجد ما يحتاج إجراءً في نظرة. */}
           {portfolio.overdue > 0 && (
             <PortfolioStat v={sar(portfolio.overdue)}
-              l={`ريال متأخر · ${plural(portfolio.late, "وحدة واحدة", "وحدتان", "وحدات", "وحدة")}`} tone="warn" />
+              l={`ريال متأخر قيد المطالبة · ${plural(portfolio.late, "وحدة واحدة", "وحدتان", "وحدات", "وحدة")}`} tone="warn" />
           )}
           {portfolio.litigationOwed > 0 && (
             <PortfolioStat v={sar(portfolio.litigationOwed)}
@@ -2281,7 +2302,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
           {(portfolio.due + portfolio.soon) > 0 && (
             <PortfolioStat v={String(portfolio.due + portfolio.soon)} l={`تستحق خلال ${plural(officeSoon, "يوم واحد", "يومين", "أيام", "يومًا")}`} />
           )}
-          {portfolio.expiring > 0 && <PortfolioStat v={String(portfolio.expiring)} l="عقود للتجديد أو الإخلاء" />}
+          {portfolio.expiring > 0 && <PortfolioStat v={String(portfolio.expiring)} l={`عقود انتهت أو تنتهي خلال ${plural(officeExpiring, "يوم واحد", "يومين", "أيام", "يومًا")}`} />}
           {portfolio.overdue === 0 && (portfolio.due + portfolio.soon) === 0 && portfolio.expiring === 0 && (
             <div className="text-xs text-[#C9D8D4]">لا متأخرات ولا استحقاقات قريبة ✓</div>
           )}
@@ -2334,18 +2355,8 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
         {isManager && may("all_properties") && <button className="btn btn-ghost text-sm max-sm:!hidden" onClick={openNewProperty}>+ عقار</button>}
       </div>
 
-      {/* (24 نوفمبر 2026) الجوال: الوحدات كانت بعد ~1450px من الأرقام واللوحات. زرّان يوصلان لها بضغطة */}
-      {tenants.length > 0 && (
-        <div className="sm:hidden grid grid-cols-2 gap-2 -mt-2 mb-4">
-          <button type="button" className="btn btn-primary text-sm min-h-[44px]"
-            onClick={() => document.getElementById("units-list")?.scrollIntoView({ behavior: "smooth", block: "start" })}>
-            {ul === "شقة" ? "الشقق" : "الوحدات"} ({tenants.length}) ↓</button>
-          <button type="button" className="btn btn-ghost bg-white text-sm min-h-[44px]"
-            onClick={() => { document.getElementById("units-list")?.scrollIntoView({ behavior: "smooth", block: "start" }); setTimeout(() => (document.getElementById("units-q") as HTMLInputElement | null)?.focus({ preventScroll: true }), 450); }}>
-            🔍 ابحث عن مستأجر</button>
-        </div>
-      )}
-
+      {/* (25 نوفمبر — التقييم الثالث) زرّا «الوحدات ↓» و«ابحث» على الجوال أُزيلا: كانا يعوّضان طول الصفحة،
+          والآن «اليوم» ينطوي في سطر واحد على الجوال فتظهر الوحدات أقرب. */}
       {/* (22 نوفمبر 2026) «اليوم» — كل ما يحتاج إجراءً في هذا العقار في مكان واحد أعلى الصفحة:
           المتأخر (مع التذكير)، ما يستحق قريبًا، العقود المنتهية، ومهام السجل المستحقة.
           كانت موزّعة على شريط وشرائح وأسفل الصفحة — والمتأخر يُعرض ثلاث مرات. */}
@@ -2369,8 +2380,22 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
         );
         const act = "btn btn-ghost text-xs bg-white min-h-[36px]";
         return (
-          <section className="bg-white border border-line rounded-2xl shadow-sm p-4 mb-4" aria-labelledby="today-h">
-            <h2 id="today-h" className="font-display font-bold text-deep text-base mb-3">⚡ اليوم في {p.name}</h2>
+          <section className="bg-white border border-line rounded-2xl shadow-sm p-4 max-sm:p-3 mb-4" aria-labelledby="today-h">
+            {/* (25 نوفمبر — التقييم الثالث) على الجوال: سطر ملخّص ينفتح بلمسة — كان «اليوم» وحده
+                يدفع أول مستأجر ~300px. على الكمبيوتر مفتوح دائمًا كما كان. */}
+            <h2 id="today-h" className="font-display font-bold text-deep text-base sm:mb-3">
+              <button type="button" className="sm:pointer-events-none w-full flex items-center justify-between gap-2 text-start min-h-[44px] sm:min-h-0"
+                aria-expanded={todayOpen} aria-controls="today-body" onClick={() => setTodayOpen((v) => !v)}>
+                <span className="min-w-0">⚡ اليوم في {p.name}
+                  {!todayOpen && !any && <span className="sm:hidden block text-xs font-normal text-[#137a50]">لا شيء عاجل ✓</span>}
+                  {!todayOpen && any && <span className="sm:hidden block text-xs font-normal text-[#8f2b26] truncate">
+                    {[overdue > 0 ? `متأخر ${sar(overdue)} ريال` : "", expN ? `${plural(expN, "عقد", "عقدان", "عقود", "عقدًا")} للتجديد` : "", soonN ? `${soonN} تستحق قريبًا` : "", dueTasks.length ? `${plural(dueTasks.length, "مهمة", "مهمتان", "مهام", "مهمة")}` : ""].filter(Boolean).join(" · ")}
+                  </span>}
+                </span>
+                <span className="sm:hidden text-muted text-xs shrink-0" aria-hidden>{todayOpen ? "▴" : "▾"}</span>
+              </button>
+            </h2>
+            <div id="today-body" className={todayOpen ? "max-sm:mt-2" : "max-sm:hidden"}>
             {!any ? (
               <p className="text-sm text-[#137a50] font-semibold">لا متأخرات ولا استحقاقات قريبة ولا مهام اليوم ✓</p>
             ) : (
@@ -2380,7 +2405,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                     <button type="button" className={act} onClick={() => goList("late")}>عرضهم</button>
                     {lateCount > 0 && may("send_reminders") && <button type="button" className="btn btn-wa text-xs min-h-[36px]" onClick={() => setRemindAll(true)}>💬 ذكّرهم</button>}
                   </>}>
-                    متأخر <b className="tabular-nums">{sar(overdue)}</b> ريال على {plural(lateCount, "وحدة واحدة", "وحدتين", "وحدات", "وحدة")}
+                    متأخر قيد المطالبة <b className="tabular-nums">{sar(overdue)}</b> ريال على {plural(lateCount, "وحدة واحدة", "وحدتين", "وحدات", "وحدة")}
                   </Row>
                 )}
                 {expiringSoon && (
@@ -2434,6 +2459,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                 )}
               </div>
             )}
+            </div>
           </section>
         );
       })()}
@@ -2519,7 +2545,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
 
       <div className="grid grid-cols-1 gap-5 items-start">
         <div id="units-list" className="bg-white border border-line rounded-2xl shadow-sm scroll-mt-4">
-          <div className="flex items-center justify-between border-b border-line px-5 py-4 gap-2 flex-wrap">
+          <div className="flex items-center justify-between border-b border-line px-5 py-4 max-sm:px-3 max-sm:py-3 gap-2 flex-wrap">
             {/* كان مخفيًّا تحت 1024px: من حفظ «جدول» مرة يبقى حبيسه بلا مخرج،
                 والجدول على 400px يحتاج تمريرًا أفقيًّا بثلاثة أضعاف العرض. */}
             <div className="inline-flex items-center gap-0.5 border border-line rounded-lg p-0.5 me-2 align-middle text-[11px]">
@@ -2539,12 +2565,12 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                 دورك: {ROLE_LABEL[role] || role}
               </span>}
             </h2>
-            <div className="flex gap-2 flex-wrap">
+            <div className="flex gap-2 flex-wrap max-sm:w-full max-sm:flex-nowrap max-sm:[&>*]:flex-1 max-sm:[&>*]:min-w-0">
               {/* ثلاث قوائم بدل تسعة أزرار: ما يُطبع · ما يخصّ المالك · ما يخصّ البيانات.
                   الأدوات نفسها — لكن العين تجد مكانها بدل أن تمسح صفًّا طويلًا. */}
               {/* (24 نوفمبر 2026) الجوال: قائمة واحدة «أدوات العقار» بدل ثلاث تأخذ سطرين */}
               <div className="sm:hidden">
-                <MenuBtn label={<><Icon name="doc" className="me-1.5" />أدوات العقار</>} items={[
+                <MenuBtn label={<><Icon name="doc" className="me-1.5" />أدوات</>} items={[
                   { sep: "مستندات" },
                 { label: "كشف حساب العقار", run: () => setStmtOpen(true) },
                 { label: "كشف المستحقات (للمحصّل)", run: () => setDueOpen(true) },
@@ -2598,28 +2624,28 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
 
               </div>
               {lateCount > 0 && may("send_reminders") && (
-                <button className="btn btn-wa text-xs" onClick={() => setRemindAll(true)}
-                  title="إرسال تذكير واتساب لكل المتأخرين واحدًا تلو الآخر">💬 تذكير جماعي ({lateCount})</button>
+                <button className="btn btn-wa text-xs justify-center" onClick={() => setRemindAll(true)}
+                  title="إرسال تذكير واتساب لكل المتأخرين واحدًا تلو الآخر">💬 <span className="max-sm:hidden">تذكير جماعي</span><span className="sm:hidden">ذكّر</span> ({lateCount})</button>
               )}
-              {may("edit_tenants") && <button className="btn btn-gold text-xs" onClick={() => setModal({ kind: "tenant" })}>+ {ul}</button>}
+              {may("edit_tenants") && <button className="btn btn-gold text-xs justify-center max-sm:!flex-none" onClick={() => setModal({ kind: "tenant" })} aria-label={`إضافة ${ul}`}>+ {ul}</button>}
             </div>
           </div>
 
           {/* شريط التحكّم: بحث · تصفية · فرز */}
           {tenants.length > 0 && (
-            <div className="border-b border-line px-4 py-3 flex flex-wrap gap-2 items-center bg-paper">
+            <div className="border-b border-line px-4 py-3 max-sm:px-3 flex flex-wrap gap-2 items-center bg-paper">
               {/* النص الطويل كان يُقصّ على الجوال فلا يُعرف ما يُبحث به — قصير هنا، والكامل في title (30 سبتمبر 2026) */}
-              <input id="units-q" className="fld flex-1 min-w-[150px] basis-full sm:basis-0 sm:w-auto" value={q} onChange={(e) => setQ(e.target.value)} type="search"
+              <input id="units-q" className="fld flex-1 min-w-[150px] max-sm:min-w-0 sm:basis-0 sm:w-auto" value={q} onChange={(e) => setQ(e.target.value)} type="search"
                 aria-label={`بحث في الوحدات: الاسم أو رقم ${ul} أو الجوال أو الهوية أو رقم العقد أو حساب الكهرباء`}
                 title={`ابحث بالاسم أو رقم ${ul} أو الجوال أو الهوية أو رقم العقد أو حساب الكهرباء`}
                 placeholder={`ابحث: اسم، ${ul}، جوال، هوية…`} />
-              <select className="fld flex-1 sm:flex-none sm:w-[170px]" aria-label="ترتيب الوحدات" value={sort} onChange={(e) => setSort(e.target.value as any)}>
+              <select className="fld max-sm:w-[128px] max-sm:text-xs sm:w-[170px]" aria-label="ترتيب الوحدات" value={sort} onChange={(e) => setSort(e.target.value as any)}>
                 <option value="urgent">الأهم أولًا</option>
                 <option value="due">الأقرب استحقاقًا</option>
                 <option value="amount">الأكبر متأخرًا</option>
                 <option value="name">الاسم</option>
               </select>
-              <div className="flex flex-wrap gap-1.5 w-full">
+              <div className="flex flex-wrap gap-1.5 w-full max-sm:flex-nowrap max-sm:overflow-x-auto max-sm:-mx-3 max-sm:px-3 max-sm:pb-1 max-sm:[&>*]:shrink-0">
                 {(() => {
                   /* الأساسية دائمًا · الثانوية حين يكون فيها شيء · «المزيد» يكشفها (أو تُكشف إن كانت هي المختارة) */
                   const PRIMARY = ["all", "late", "incomplete", "expiring", "vacant"];
@@ -2808,7 +2834,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                                 ) : (<>
                                   {/* (20 أكتوبر 2026) زرّ واحد للسداد بدل ✔ و½: ✔ كان يسجّل بتاريخ اليوم بلا نافذة،
                                       فتُسجَّل دفعات وصلت قبل أيام بتاريخ خاطئ. الآن كل دفعة تمرّ بالنافذة وحرّاسها. */}
-                                  {canCollect && <QuickBtn title="تسجيل دفعة مستلمة" cls={!st.fullyPaid && !((st.daysToEnd ?? 0) < 0 && st.unpaid === 0) && st.unpaid > 0 ? "btn-primary" : "btn-ghost"} onClick={() => setPaying(t)}><span className="whitespace-nowrap">💰 دفعة</span></QuickBtn>}
+                                  {canCollect && <QuickBtn title="تسجيل دفعة مستلمة" cls={!st.fullyPaid && !((st.daysToEnd ?? 0) < 0 && st.unpaid === 0) && st.unpaid > 0 ? "btn-primary" : "btn-ghost"} onClick={() => setPaying(t)}><span className="whitespace-nowrap">💰 تسجيل دفعة</span></QuickBtn>}
                                   {may("send_reminders") && !st.fullyPaid && !((st.daysToEnd ?? 0) < 0 && st.unpaid === 0) && <a href={remindLink(t)} target="_blank" rel="noreferrer" className="btn btn-wa text-xs px-2.5" title="إرسال تذكير واتساب" onClick={(e) => { e.preventDefault(); openExternal(remindLink(t)); }}>&#128172;</a>}
                                   {endNoticeDue(t, st) && <a href={endNoticeLink(t)} target="_blank" rel="noreferrer" className="btn btn-wa text-xs px-2.5" title="إشعار انتهاء العقد (واتساب)" onClick={(e) => { e.preventDefault(); openExternal(endNoticeLink(t)); }}>&#128197;</a>}
                                 </>)}
@@ -3443,7 +3469,7 @@ function PaymentModal({ tenant, unitWord, onClose, onSubmit, st, recent = null, 
 
   return (
     <Shell onClose={onClose}>
-      <h3 className="font-display font-bold text-deep text-xl mb-1">تسجيل مبلغ مستلم</h3>
+      <h3 id="pay-title" className="font-display font-bold text-deep text-xl mb-1">💰 تسجيل دفعة</h3>
       <p className="text-sm text-muted mb-4">{tenant.name} · {unitWord} {tenant.unit || "—"}</p>
 
       <div className="bg-paper2 border border-line rounded-xl p-3 mb-4 text-sm">
@@ -4066,10 +4092,10 @@ function MenuBtn({ label, items, badge = 0 }: {
             {items.map((it, i) => it.sep ? (
               <div key={i} className="px-3.5 pt-2.5 pb-1 text-[10px] font-bold text-muted tracking-wide border-t border-line/70 first:border-0 first:pt-1">{it.sep}</div>
             ) : it.href ? (
-              <Link key={i} href={it.href} role="menuitem" className="block px-3.5 py-2 [@media(pointer:coarse)]:min-h-[44px] [@media(pointer:coarse)]:py-3 text-xs font-semibold text-deep hover:bg-paper2">{it.label}</Link>
+              <Link key={i} href={it.href} role="menuitem" className="block px-3.5 py-2 [@media(pointer:coarse)]:min-h-[44px] max-sm:min-h-[44px] [@media(pointer:coarse)]:py-3 text-xs font-semibold text-deep hover:bg-paper2">{it.label}</Link>
             ) : (
               <button key={i} type="button" role="menuitem" onClick={() => { setOpen(false); it.run?.(); }}
-                className="block w-full text-right px-3.5 py-2 [@media(pointer:coarse)]:min-h-[44px] text-xs font-semibold text-deep hover:bg-paper2">{it.label}</button>
+                className="block w-full text-right px-3.5 py-2 [@media(pointer:coarse)]:min-h-[44px] max-sm:min-h-[44px] text-xs font-semibold text-deep hover:bg-paper2">{it.label}</button>
             ))}
           </div>
         </>
@@ -4156,7 +4182,7 @@ function RowMenu({ items }: { items: { label?: string; run?: () => void; danger?
     /* 44px على شاشات اللمس — كانت 28px فيلمس الإبهام البند المجاور (30 سبتمبر 2026) */
     <button key={k} type="button" role="menuitem"
       onClick={() => { setOpen(false); setSec(null); it.run?.(); }}
-      className={`block w-full text-right px-3.5 py-1.5 [@media(pointer:coarse)]:min-h-[44px] [@media(pointer:coarse)]:py-2.5 text-xs font-semibold hover:bg-paper2 transition ${it.danger ? "text-late" : "text-deep"}`}>
+      className={`block w-full text-right px-3.5 py-1.5 [@media(pointer:coarse)]:min-h-[44px] max-sm:min-h-[44px] [@media(pointer:coarse)]:py-2.5 text-xs font-semibold hover:bg-paper2 transition ${it.danger ? "text-late" : "text-deep"}`}>
       {it.label}
     </button>
   );
@@ -4175,7 +4201,7 @@ function RowMenu({ items }: { items: { label?: string; run?: () => void; danger?
               <div key={"g" + gi} className="border-t border-line first:border-0">
                 <button type="button" aria-expanded={openAt === g.at}
                   onClick={() => setSec(openAt === g.at ? -2 : g.at)}
-                  className={`flex w-full items-center justify-between gap-2 px-3.5 py-1.5 [@media(pointer:coarse)]:min-h-[44px] text-[11px] font-bold hover:bg-paper2 ${/خطر/.test(g.title) ? "text-late" : "text-muted"}`}>
+                  className={`flex w-full items-center justify-between gap-2 px-3.5 py-1.5 [@media(pointer:coarse)]:min-h-[44px] max-sm:min-h-[44px] text-[11px] font-bold hover:bg-paper2 ${/خطر/.test(g.title) ? "text-late" : "text-muted"}`}>
                   <span>{g.title} <span className="font-normal">({g.list.length})</span></span>
                   <span aria-hidden="true">{openAt === g.at ? "▾" : "◂"}</span>
                 </button>
@@ -4298,9 +4324,17 @@ function Shell({ children, onClose, wide }: { children: React.ReactNode; onClose
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
+  /* (25 نوفمبر — التقييم الثالث) قارئ الشاشة يعلن عنوان النافذة: أول عنوان فيها يصير aria-labelledby */
+  const boxRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const box = boxRef.current; if (!box) return;
+    const h = box.querySelector("h1,h2,h3") as HTMLElement | null; if (!h) return;
+    if (!h.id) h.id = "dlg-" + Math.random().toString(36).slice(2, 9);
+    box.setAttribute("aria-labelledby", h.id);
+  }, []);
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4" onClick={(e) => { if (e.target === e.currentTarget) tryClose(); }}>
-      <div role="dialog" aria-modal="true"
+      <div role="dialog" aria-modal="true" ref={boxRef}
         className={`relative w-full ${wide ? "max-w-2xl" : "max-w-md"} bg-white rounded-2xl shadow-xl p-6 pt-11 max-h-[90vh] overflow-auto`}
         onInput={() => { dirty.current = true; }} onChange={() => { dirty.current = true; }}>
         {/* لاصق أعلى النافذة: في نموذج طويل يبقى ظاهرًا بعد التمرير */}
@@ -4504,7 +4538,7 @@ function PropertyModal({ open, initial, orgName, ownerNames = [], officeSoon = 1
               </div>
               {d.rent_seller === "owner" ? (
                 <div className="grid sm:grid-cols-2 gap-3 mt-3">
-                  <Field label="الرقم الضريبي للمالك" hint={d.owner_vat_number && !isValidVatNo(d.owner_vat_number) ? "غير صحيح — 15 رقمًا يبدأ وينتهي بـ3" : "بدونه تصدر «فاتورة» لا «فاتورة ضريبية»"}>
+                  <Field label="الرقم الضريبي للمالك" hint={d.owner_vat_number && !isValidVatNo(d.owner_vat_number) ? "غير صحيح — 15 رقمًا يبدأ وينتهي بـ3" : "إن كان المالك مسجَّلًا في الضريبة: رقمه يُطبع في المطالبة. بدون رقم صحيح لا يُصدر مستند فيه ضريبة باسمه"}>
                     <input className="fld" dir="ltr" inputMode="numeric" maxLength={20} value={d.owner_vat_number || ""} placeholder="3xxxxxxxxxxxxx3"
                       onChange={(e) => setD({ ...d, owner_vat_number: e.target.value })} />
                   </Field>
@@ -5035,7 +5069,7 @@ function TenantModal({ open, initial, unitWord, error, saving, onClose, onSubmit
           <Field label="رقم الهوية / السجل" hint="اختياري — أدخله فقط إن احتجته في الخطابات"><input className="fld" value={d.national_id || ""} onChange={(e) => setD({ ...d, national_id: e.target.value })} /></Field>
           {(vatEnabled || d.vat_number) && (
             <div className="grid sm:grid-cols-2 gap-3">
-              <Field label="الرقم الضريبي للمستأجر" hint={d.vat_number && !isValidVatNo(d.vat_number) ? "غير صحيح — 15 رقمًا يبدأ وينتهي بـ3" : "للمستأجر المسجَّل في الضريبة (شركة/مؤسسة) — تصدر له «فاتورة ضريبية» قياسية بدل المبسطة"}>
+              <Field label="الرقم الضريبي للمستأجر" hint={d.vat_number && !isValidVatNo(d.vat_number) ? "غير صحيح — 15 رقمًا يبدأ وينتهي بـ3" : "للمستأجر المسجَّل في الضريبة (شركة/مؤسسة) — يُطبع رقمه وعنوانه في المطالبة"}>
                 <input className="fld" dir="ltr" inputMode="numeric" maxLength={20} value={d.vat_number || ""} placeholder="3xxxxxxxxxxxxx3"
                   onChange={(e) => setD({ ...d, vat_number: e.target.value })} />
               </Field>
@@ -5433,7 +5467,7 @@ function OwnerReportModal({ property, unitWord, issuer, onClose, db, canFee = tr
                     <button type="button" className="btn btn-gold text-sm" onClick={issueFee} disabled={feeBusy}>{feeBusy ? "…" : "إصدار فاتورة الأتعاب"}</button>
                   </div>
                 )}
-                <p className="text-[11px] text-muted">المشتري: {(property as any).owner_name || "— (أضف اسم المالك في إعدادات العقار)"}{!fee.calc.vatEnabled ? " · فاتورة أتعاب بلا ضريبة (مكتبك غير مسجَّل في الضريبة)" : isValidVatNo((property as any).owner_vat_number) ? " · فاتورة ضريبية قياسية (المالك مسجَّل في الضريبة)" : " · فاتورة ضريبية مبسطة"}. بعد الإصدار لا تُعدَّل؛ الإلغاء بإشعار دائن.</p>
+                <p className="text-[11px] text-muted">المشتري: {(property as any).owner_name || "— (أضف اسم المالك في إعدادات العقار)"}{!fee.calc.vatEnabled ? " · فاتورة أتعاب بلا ضريبة (مكتبك غير مسجَّل في الضريبة)" :  " · تصدر «مطالبة» بالأتعاب شاملة الضريبة — الفاتورة الضريبية من نظام فوترتك المربوط بمنصة «فاتورة»"}. بعد الإصدار لا تُعدَّل؛ الإلغاء بإشعار دائن.</p>
               </div>
             )}
             {feeList && feeList.length > 0 && (

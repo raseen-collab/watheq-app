@@ -456,7 +456,7 @@ export default function SettingsView({ profile }: { profile: any }) {
             <input className="fld" value={p.billing_address || ""} maxLength={200} placeholder="المدينة، الحي، الشارع"
               onChange={(e) => setP({ ...p, billing_address: e.target.value })} />
             {p.vat_number && isValidVatNo(p.vat_number) && !String(p.billing_address || "").trim() && (
-              <span className="block text-xs text-late mt-1">أضف العنوان — يُطبع في كل فاتورة ضريبية مبسطة.</span>
+              <span className="block text-xs text-late mt-1">أضف العنوان — يُطبع في المطالبات والفواتير.</span>
             )}
           </label>
           <label className="block">
