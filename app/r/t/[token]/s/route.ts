@@ -36,6 +36,7 @@ export async function GET(_req: Request, { params }: { params: { token: string }
     const office = d.office || {};
     const { trial, expired } = issuerMarks(office as any);
     const issuer = { org_name: office.org_name, billing_name: office.billing_name, billing_phone: office.billing_phone,
+      brand_logo: (office as any).brand_logo, brand_color: (office as any).brand_color,
       cr_number: office.cr_number, vat_number: office.vat_number, due_soon_days: office.due_soon_days,
       due_imminent_days: office.due_imminent_days, expiring_days: office.expiring_days, trial, expired };
     /* بلا هوية ولا جوال: الرابط قد يُعاد توجيهه */
