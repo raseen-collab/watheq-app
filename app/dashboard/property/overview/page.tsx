@@ -49,7 +49,7 @@ export default async function OverviewPage() {
           <h1 className="font-display font-bold text-deep text-xl">نظرة عامة على المحفظة</h1>
           <p className="text-xs text-muted">كل العقارات في صفحة واحدة — ما يحتاج إجراءً، وبحث في كل المستأجرين.</p>
         </div>
-        <Link href="/dashboard/property" className="btn btn-ghost text-sm">← لوحة العقارات</Link>
+        <Link href="/dashboard/property" className="btn btn-ghost text-sm">→ لوحة العقارات</Link>
       </div>
       <PortfolioView properties={properties as any[]} windows={windows} compliance={compliance || []} orgName={(profile as any)?.org_name || ""}
         issuer={{ ...(profile || {}), trial, expired }} />
