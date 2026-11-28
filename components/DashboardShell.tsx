@@ -158,7 +158,8 @@ export default function DashboardShell({
             {/* (24 نوفمبر 2026 — تقييم P2-8) المساعدة كانت مخفية داخل زرّ الترس العائم — صارت ظاهرة في الشريط */}
             <button type="button" onClick={() => window.dispatchEvent(new CustomEvent("watheq:help"))}
               className="text-[#CFE0DB] hover:text-white text-sm min-h-[44px] px-1 whitespace-nowrap">❓ مساعدة</button>
-            {isOwner && <Link href="/settings" className="text-[#CFE0DB] hover:text-white text-sm min-h-[44px] inline-flex items-center px-1">الإعدادات</Link>}
+            {/* (28 نوفمبر) الموظف له «حسابي» (كلمة المرور) — إعدادات المكتب لصاحبه وحده */}
+            <Link href="/settings" className="text-[#CFE0DB] hover:text-white text-sm min-h-[44px] inline-flex items-center px-1">{isOwner ? "الإعدادات" : "حسابي"}</Link>
             {/* (22 نوفمبر 2026) بلاغ مشكلة — الصفحة والجهاز يُرفقان تلقائيًّا */}
             <ReportProblem className="text-[#CFE0DB] hover:text-white text-sm whitespace-nowrap" />
             <span className="text-[#9FB8B3] hidden sm:inline max-w-[130px] truncate">{userName}</span>

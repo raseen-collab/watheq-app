@@ -580,7 +580,7 @@ export default function SettingsView({ profile }: { profile: any }) {
 }
 
 /* (28 نوفمبر) تغيير كلمة المرور من داخل الحساب — كان متاحًا فقط عبر «نسيت كلمة المرور» ورابط البريد */
-function PasswordSection({ onMsg }: { onMsg: (m: { t: "ok" | "err"; m: string } | null) => void }) {
+export function PasswordSection({ onMsg }: { onMsg: (m: { t: "ok" | "err"; m: string } | null) => void }) {
   const supabase = createClient();
   const [a, setA] = useState("");
   const [b, setB] = useState("");
@@ -627,3 +627,24 @@ function PasswordSection({ onMsg }: { onMsg: (m: { t: "ok" | "err"; m: string } 
   );
 }
 
+
+/* (28 نوفمبر) حساب الموظف: لا يرى إعدادات المكتب، لكن يغيّر كلمة مروره بنفسه */
+export function StaffAccount() {
+  const supabase = createClient();
+  const [email, setEmail] = useState("");
+  const [msg, setMsg] = useState<{ t: "ok" | "err"; m: string } | null>(null);
+  useEffect(() => { supabase.auth.getUser().then(({ data }) => setEmail(data.user?.email || "")).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  return (
+    <>
+      <section className="bg-white border border-line rounded-2xl p-6 mb-5">
+        <h2 className="font-semibold text-deep text-lg mb-2">👤 حسابي</h2>
+        <div className="text-xs text-muted mb-1">البريد (للدخول)</div>
+        <div className="font-semibold text-deep break-all" dir="ltr">{email || "—"}</div>
+      </section>
+      {msg && <div role="status" className={`rounded-xl p-3 mb-5 text-sm ${msg.t === "ok" ? "bg-[#E6F4EC] border border-[#B7DFC7] text-[#137a50]" : "bg-[#FBE9E7] border border-[#F5C6C2] text-late"}`}>{msg.m}</div>}
+      <PasswordSection onMsg={setMsg} />
+    </>
+  );
+}
