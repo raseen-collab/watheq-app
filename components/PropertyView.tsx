@@ -473,7 +473,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
   function refreshNow() {
     setRefreshing(true);
     router.refresh();
-    setTimeout(() => setRefreshing(false), 1200);
+    setTimeout(() => { setRefreshing(false); notify("ok", "تم تحديث البيانات ✓"); }, 1200);
   }
   /* (24 نوفمبر 2026) زرّ ↻ صار مخفيًّا على الجوال: نحدّث تلقائيًّا حين يرجع المستخدم للتطبيق
      بعد دقيقة أو أكثر (دفعة من البوت أو من موظف ثانٍ أثناء غيابه). التجربة العامة بلا خادم: لا شيء. */
@@ -2339,7 +2339,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
 
       {/* (28 نوفمبر — التقييم الرابع) الجوال: سطر واحد — قائمة العقار تحمل الاسم وعدد الوحدات،
           فالعنوان المكرَّر فوقها يُخفى، و«تعديل» و«نظرة عامة» أيقونتان بوسم واضح. */}
-      <div className="flex flex-wrap items-center gap-2 mb-5 max-sm:mb-3 max-sm:flex-nowrap">
+      <div className="flex flex-wrap items-center gap-2 mb-5 max-sm:mb-3 max-sm:flex-nowrap max-sm:gap-1.5">
         <div className="flex-1 min-w-0 basis-full sm:basis-auto max-sm:hidden">
           {/* كان ينهار إلى كلمة في كل سطر بجوار قائمة اختيار العقار على
               الجوال — لأن الحاوية تتقاسم السطر معها بلا حدّ أدنى للعرض. */}
@@ -2372,12 +2372,13 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
 {/* شريط العقار صار للتنقّل وحده. كل الأدوات انتقلت إلى شريط الوحدات
             مجمَّعةً في ثلاث قوائم — كان الشريطان يعرضان 15 زرًّا معًا،
             ومستندات المالك موزّعة بينهما بلا منطق. */}
-        <button type="button" className="btn btn-ghost text-sm px-3 max-sm:!hidden" onClick={refreshNow} disabled={refreshing}
-          title="تحديث البيانات من السيرفر (بعد تسجيل دفعة من البوت مثلًا)">{refreshing ? "…" : "↻"}</button>
-        {isManager && <button type="button" className="btn btn-ghost text-sm px-3 max-sm:shrink-0 max-sm:min-w-[44px] max-sm:justify-center" onClick={() => setModal({ kind: "editProp" })} title="تعديل بيانات هذا العقار" aria-label="تعديل بيانات العقار">✎<span className="max-sm:hidden"> تعديل</span></button>}
+        {/* (28 نوفمبر — التقييم) ظاهر على الجوال أيضًا، ويؤكّد بإشعار «تم التحديث» */}
+        <button type="button" className="btn btn-ghost text-sm px-3 max-sm:shrink-0 max-sm:w-11 max-sm:!px-0 max-sm:justify-center" onClick={refreshNow} disabled={refreshing}
+          aria-label="تحديث البيانات" title="تحديث البيانات من السيرفر (بعد تسجيل دفعة من البوت أو من موظف آخر)">{refreshing ? "…" : "↻"}</button>
+        {isManager && <button type="button" className="btn btn-ghost text-sm px-3 max-sm:shrink-0 max-sm:w-11 max-sm:!px-0 max-sm:justify-center" onClick={() => setModal({ kind: "editProp" })} title="تعديل بيانات هذا العقار" aria-label="تعديل بيانات العقار">✎<span className="max-sm:hidden"> تعديل</span></button>}
         {/* التجربة العامة بلا جلسة: الروابط إلى صفحات اللوحة تنتهي في /login —
             نفتح دعوة التسجيل بدلها كبقية الأفعال المحجوبة في التجربة (30 سبتمبر 2026) */}
-        {items.length > 1 && <Link href="/dashboard/property/overview" className="btn btn-ghost text-sm max-sm:shrink-0 max-sm:min-w-[44px] max-sm:justify-center" title="كل العقارات في صفحة واحدة" aria-label="نظرة عامة على كل العقارات"
+        {items.length > 1 && <Link href="/dashboard/property/overview" className="btn btn-ghost text-sm max-sm:shrink-0 max-sm:w-11 max-sm:!px-0 max-sm:justify-center" title="كل العقارات في صفحة واحدة" aria-label="نظرة عامة على كل العقارات"
           onClick={(e) => { if (demo) { e.preventDefault(); window.dispatchEvent(new CustomEvent("watheq:demo-overview")); } }}>🗂️<span className="max-sm:hidden"> نظرة عامة</span></Link>}
         {isManager && may("all_properties") && <button className="btn btn-ghost text-sm max-sm:!hidden" onClick={openNewProperty}>+ عقار</button>}
       </div>
@@ -2502,12 +2503,17 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       {/* (22 نوفمبر 2026 — طلب مكاتب: الصفحة طويلة ومكررة) أرقام العقار والعدادات
           تُطوى تحت سطر واحد؛ ما يحتاج إجراءً صار في بطاقة «اليوم» فوقها. الاختيار يُحفظ للمتصفح. */}
       {(tenants.length > 0 || (active && (active.meters || []).length > 0)) && (
+      <div className="relative">
+      {/* (28 نوفمبر — التقييم) الجوال: «تقرير المالك» بلمسة واحدة بجانب سطر الأرقام وهو مطويّ */}
+      {!detailsOpen && tenants.length > 0 && may("view_financials") && (
+        <button type="button" className="sm:hidden absolute top-2.5 left-9 z-10 btn btn-ghost text-xs bg-white min-h-[44px] !px-2.5" onClick={() => setReporting(true)} aria-label="تقرير المالك">📄 تقرير المالك</button>
+      )}
       <details className="mb-5 max-sm:mb-3 bg-white border border-line rounded-2xl shadow-sm group" open={detailsOpen}
         onToggle={(e) => { const o = (e.currentTarget as HTMLDetailsElement).open; setDetailsOpen(o);
           /* يُحفظ ما فتحه أو طواه المستخدم بيده فقط — لا التغيير الافتراضي عند التحميل */
           if (detailsByUser.current) { detailsByUser.current = false; try { localStorage.setItem("wq_prop_details", o ? "1" : "0"); } catch { /* */ } } }}>
         <summary onClick={() => { detailsByUser.current = true; }} className="cursor-pointer select-none list-none px-4 py-3 flex items-center justify-between gap-2 text-sm font-semibold text-deep min-h-[44px]">
-          <span>📊 أرقام العقار{active && (active.meters || []).length > 0 ? " والعدادات" : ""}
+          <span className={!detailsOpen && tenants.length > 0 && may("view_financials") ? "max-sm:pe-[118px]" : ""}>📊 أرقام العقار{active && (active.meters || []).length > 0 ? " والعدادات" : ""}
             {detailsOpen || tenants.length === 0
               ? <span className="text-xs font-normal text-muted"> — المحصَّل هذا الشهر · الدخل السنوي · المصروفات{active && (active.meters || []).length > 0 ? " · أرقام العدادات" : ""}</span>
               : <span className="block text-xs font-normal text-muted mt-0.5">
@@ -2584,6 +2590,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
 
         </div>
       </details>
+      </div>
       )}
 
       <div className="grid grid-cols-1 gap-5 items-start">
@@ -4755,7 +4762,37 @@ function TenantModal({ open, initial, unitWord, error, saving, onClose, onSubmit
   const [localErr, setLocalErr] = useState<string | null>(null);
   /* (28 نوفمبر — التقييم) سبب الرفض يُمرَّر إليه تلقائيًّا ويقرؤه القارئ الآلي — على الجوال كان تحت الطيّة */
   const errBoxRef = useRef<HTMLDivElement | null>(null);
-  useEffect(() => { if ((localErr || error) && errBoxRef.current) { try { errBoxRef.current.scrollIntoView({ behavior: "smooth", block: "center" }); errBoxRef.current.focus({ preventScroll: true }); } catch { /* */ } } }, [localErr, error]);
+  useEffect(() => {
+    const msg = localErr || error;
+    if (!msg || !errBoxRef.current) return;
+    try {
+      /* (28 نوفمبر — التقييم) الخانة المقصودة نفسها تُميَّز بإطار أحمر ويُنقل إليها المؤشر؛
+         وإن لم تُعرف الخانة يُمرَّر إلى رسالة السبب كما كان. */
+      const root = (errBoxRef.current.closest("[role=dialog]") || document) as ParentNode;
+      document.querySelectorAll(".wq-field-err").forEach((el) => el.classList.remove("wq-field-err"));
+      const MAP: [RegExp, RegExp][] = [
+        [/قيمة الدفعة/, /قيمة الدفعة/], [/تاريخ البداية|بداية العقد/, /بداية العقد|موعد/],
+        [/الرقم الضريبي/, /الرقم الضريبي/], [/اسم المستأجر/, /اسم المستأجر/], [/دورة السداد/, /دورة السداد/],
+      ];
+      let target: HTMLElement | null = null;
+      for (const [m, lbl] of MAP) {
+        if (!m.test(msg)) continue;
+        const label = Array.from(root.querySelectorAll("label")).find((l) => lbl.test(l.textContent || ""));
+        target = (label?.querySelector("input, select, textarea") as HTMLElement | null) || null;
+        if (target) break;
+      }
+      if (target) {
+        target.classList.add("wq-field-err");
+        target.scrollIntoView({ behavior: "smooth", block: "center" });
+        target.focus({ preventScroll: true });
+        const clear = () => { target?.classList.remove("wq-field-err"); target?.removeEventListener("input", clear); };
+        target.addEventListener("input", clear);
+      } else {
+        errBoxRef.current.scrollIntoView({ behavior: "smooth", block: "center" });
+        errBoxRef.current.focus({ preventScroll: true });
+      }
+    } catch { /* */ }
+  }, [localErr, error]);
   const [extraOpen] = useState(() => !!(initial && ((initial as any).first_due || (initial as any).national_id || (initial as any).phone2 || Number((initial as any).carried_debt) > 0
     || (initial as any).contract_no || (initial as any).elec_account || (initial as any).water_account || (initial as any).meter_elec_in
     || (initial as any).meter_water_in || ((initial as any).vat_mode && (initial as any).vat_mode !== "auto"))));
