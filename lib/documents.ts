@@ -613,8 +613,8 @@ function unitsRegisterHTML(p: any, tenants: any[], g: any, issuer: any = {}): st
       const due = dueIncl(st, vatOf(p, t)), car = Number(t.carried_debt) || 0;
       /* «المتأخر 0 + 4,000 دين مرحَّل» يُقرأ متناقضًا — الصفر لا يُطبع */
       body += KV("المتأخر", due + car > 0
-        ? (due > 0 ? `<b style="color:#a5322c">${sar(due)}</b>${car > 0 ? ` <span style="color:#9A4B00">+ ${sar(car)} دين مرحَّل</span>` : ""}`
-          : `<span style="color:#9A4B00"><b>${sar(car)}</b> دين مرحَّل من مدة سابقة</span>`)
+        ? (due > 0 ? `<b style="color:#a5322c">${sar(due)}</b>${car > 0 ? ` <span style="color:#9A4B00">+ ${sar(car)} متأخرات سابقة</span>` : ""}`
+          : `<span style="color:#9A4B00"><b>${sar(car)}</b> متأخرات من مدة سابقة</span>`)
         /* في فترة السماح: مستحق لم يتأخر بعد — كما تقول اللوحة، لا «لا شيء» وحدها */
         : st.inGrace ? `<span style="color:#9A4B00">لا شيء بعد — فترة سماح ${st.graceDaysLeft > 0 ? `(${daysAr(st.graceDaysLeft, true)})` : ""}</span>`
         : `<span style="color:#137a50">لا شيء</span>`);
@@ -805,7 +805,7 @@ export function statementHTML(t: Tenant, p: Property, issuer: Issuer = {}, payme
   const who = issuer.billing_name || issuer.org_name || p.manager || "إدارة الأملاك";
   const v = vatOf(p, t);
   /* المبلغ كما دفعه المستأجر: قسط «مضافة فوق الإيجار» يُسجَّل قبل الضريبة فنُظهره شاملًا؛
-     سداد الدين المرحَّل/دين سابق شاملٌ أصلًا فلا يُضاف عليه (11 أكتوبر 2026) */
+     سداد المتأخرات السابقة/دين سابق شاملٌ أصلًا فلا يُضاف عليه (11 أكتوبر 2026) */
   const grossPay = (r: any) => (v.enabled && !v.inclusive && (!r.applies_to || r.applies_to === "rent"))
     ? splitVat(Number(r.amount) || 0, v).total : (Number(r.amount) || 0);
   const unit = splitVat(Number(t.rent_amount) || 0, v);      // تفصيل الدفعة الواحدة
@@ -867,7 +867,7 @@ ${header(mode === "full" ? "كشف حساب شامل" : "كشف حساب مخت�
     <div class="r"><span>بداية العقد</span><span>${arDateH(t.contract_start)}</span></div>
     <div class="r"><span>نهاية العقد</span><span>${arDateH(st.endDate)}</span></div>
     <div class="r"><span>دورة السداد</span><span>${freqLabel(t.payment_frequency)}</span></div>
-    <div class="r"><span>قيمة الدفعة${v.enabled ? " (شاملة الضريبة)" : ""}</span><span>${sar(unit.total)} ريال</span></div>
+    <div class="r"><span>دفعة الإيجار${v.enabled ? " (شاملة الضريبة)" : ""}</span><span>${sar(unit.total)} ريال</span></div>
     ${v.enabled ? `<div class="r"><span>منها إيجار أساسي</span><span>${sar(unit.base)} ريال</span></div>
     <div class="r"><span>ضريبة القيمة المضافة (${v.rate}%)</span><span>${sar(unit.vat)} ريال</span></div>` : ""}
   </div>
@@ -880,7 +880,7 @@ ${header(mode === "full" ? "كشف حساب شامل" : "كشف حساب مخت�
     <div class="r"><span>المتأخر${v.enabled ? " (شامل الضريبة)" : ""}</span><span>${sar(v.enabled ? dueSplit.total : st.amountDue)} ريال</span></div>
     ${v.enabled && st.amountDue > 0 ? `<div class="r"><span>منه ضريبة</span><span>${sar(dueSplit.vat)} ريال</span></div>` : ""}
     ${st.hasPartial ? `<div class="r"><span>منه سداد جزئي${v.enabled ? " (شامل الضريبة)" : ""}</span><span>${sar(partialIncl)} ريال</span></div>` : ""}
-    ${carried > 0 ? `<div class="r"><span>دين مرحَّل من مدة سابقة</span><span>${sar(carried)} ريال</span></div>` : ""}
+    ${carried > 0 ? `<div class="r"><span>متأخرات من مدة سابقة</span><span>${sar(carried)} ريال</span></div>` : ""}
     ${/* كانت «الدفعة القادمة» تعرض أقدم دفعة غير مسدَّدة — تاريخًا ماضيًا حين
          يكون على المستأجر متبقٍّ من دفعة سابقة. والكشف يُرسل للمستأجر نفسه.
          الآن: المتأخر بتاريخه، والقادمة بتاريخها الحقيقي. */
@@ -917,7 +917,7 @@ ${mode === "full" ? `
     ${(t as any).water_account ? `<div class="r"><span>حساب الماء</span><span dir="ltr">${(t as any).water_account}</span></div>` : ""}
     ${(t as any).meter_elec_in ? `<div class="r"><span>قراءة الكهرباء عند التسليم</span><span dir="ltr">${(t as any).meter_elec_in}</span></div>` : ""}
     ${(t as any).meter_water_in ? `<div class="r"><span>قراءة الماء عند التسليم</span><span dir="ltr">${(t as any).meter_water_in}</span></div>` : ""}
-    ${(t as any).deposit_amount ? `<div class="r"><span>مبلغ التأمين</span><span>${sar(Number((t as any).deposit_amount) || 0)} ريال</span></div>` : ""}
+    ${(t as any).deposit_amount ? `<div class="r"><span>مبلغ الضمان</span><span>${sar(Number((t as any).deposit_amount) || 0)} ريال</span></div>` : ""}
   </div>
   <div class="box">
     <div class="r"><span>العقار</span><span>${p.name}${p.city ? ` — ${p.city}` : ""}</span></div>
@@ -955,7 +955,7 @@ ${shownPays.length ? `
       <td>${r.paid_on ? arDate(r.paid_on) : "—"}</td>
       <td>${sar(grossPay(r))}</td>
       <td>${payMethod(r)}</td>
-      <td>${[r.receipt_no ? `<span dir="ltr" style="font-family:monospace">سند ${escH(r.receipt_no)}</span>` : "", r.applies_to === "carried" ? "سداد دين مرحَّل" : r.applies_to === "past_debt" ? "سداد دين سابق" : "", r.note ? escH(r.note) : ""].filter(Boolean).join(" · ") || "—"}</td>
+      <td>${[r.receipt_no ? `<span dir="ltr" style="font-family:monospace">سند ${escH(r.receipt_no)}</span>` : "", r.applies_to === "carried" ? "سداد متأخرات سابقة" : r.applies_to === "past_debt" ? "سداد دين سابق" : "", r.note ? escH(r.note) : ""].filter(Boolean).join(" · ") || "—"}</td>
     </tr>`).join("")}
     <tr style="background:#F3EEE2;font-weight:700">
       <td colspan="2">إجمالي المستلم</td>
@@ -1640,7 +1640,7 @@ ${header("عرض سعر", q.quote_no, issuer)}
     <tr><td>دورية السداد</td><td style="text-align:left;font-weight:600">${freqLabel(q.payment_frequency)}</td></tr>
     <tr><td>عدد الدفعات</td><td style="text-align:left;font-weight:600">${periods}</td></tr>
     <tr><td>تاريخ بداية العقد المقترح</td><td style="text-align:left;font-weight:600">${arDate(q.start_date)}</td></tr>
-    <tr><td>مبلغ التأمين المسترد</td><td style="text-align:left;font-weight:600">${sar(q.deposit)} ريال</td></tr>
+    <tr><td>مبلغ الضمان المسترد</td><td style="text-align:left;font-weight:600">${sar(q.deposit)} ريال</td></tr>
   </tbody>
 </table>
 
@@ -1650,8 +1650,8 @@ ${header("عرض سعر", q.quote_no, issuer)}
     <tr><td>الإجمالي قبل الضريبة</td><td style="text-align:left;font-weight:600">${sar(x.base)}</td></tr>
     ${v.enabled ? `<tr><td>ضريبة القيمة المضافة (${v.rate}%)</td><td style="text-align:left;font-weight:600">${sar(x.vat)}</td></tr>` : ""}
     <tr><td style="font-weight:700">الإجمالي${v.enabled ? " شامل الضريبة" : ""}</td><td style="text-align:left;font-weight:700">${sar(x.total)}</td></tr>
-    <tr><td>التأمين المسترد</td><td style="text-align:left;font-weight:600">${sar(q.deposit)}</td></tr>
-    <tr><td style="font-weight:700">المطلوب عند التعاقد (الدفعة الأولى + التأمين)</td><td style="text-align:left;font-weight:700">${sar(xp.total + (Number(q.deposit) || 0))}</td></tr>
+    <tr><td>مبلغ الضمان المسترد</td><td style="text-align:left;font-weight:600">${sar(q.deposit)}</td></tr>
+    <tr><td style="font-weight:700">المطلوب عند التعاقد (الدفعة الأولى + مبلغ الضمان)</td><td style="text-align:left;font-weight:700">${sar(xp.total + (Number(q.deposit) || 0))}</td></tr>
   </tbody>
 </table>
 
@@ -1829,7 +1829,7 @@ ${mode === "full" ? `
 ${propertyMetersHTML(p, (t) => `<h1 style="font-size:1rem">${t}</h1>`)}` : ""}
 
 ${totalDue > 0 ? `<div class="due"><span class="l">إجمالي الإيجار المتأخر${totalVat > 0 ? ` (منه ضريبة ${sar(totalVat)} ريال)` : ""}</span><span class="v">${sar(totalDue)} ريال</span></div>` : ""}
-${/* (30 سبتمبر 2026) الدين المرحَّل ودين المستأجرين السابقين كانا يُذكران فقط إن
+${/* (30 سبتمبر 2026) المتأخرات السابقة ودين المستأجرين السابقين كانا يُذكران فقط إن
      وُجد متأخر حالي — عقار كل دينه مرحَّل كان يخرج كشفه بلا أي ذكر له. */
   stArr.carried + stArr.legacy > 0 ? `<div class="note">${totalDue > 0 ? "ويُضاف إليه" : "لا متأخر على العقود الحالية، لكن على العقار"}
   ${[stArr.carried > 0 ? `<b>${sar(stArr.carried)}</b> ريال دينًا مُرحَّلًا من مدد سابقة` : "", stArr.legacy > 0 ? `<b>${sar(stArr.legacy)}</b> ريال على مستأجرين سابقين` : ""].filter(Boolean).join(" و")}
@@ -1849,8 +1849,8 @@ ${/* (30 سبتمبر 2026) الدين المرحَّل ودين المستأج�
       ${/* «القادمة» من upcomingDate: nextDueDate هو أقدم قسط غير مسدَّد — تاريخ ماضٍ للمتأخر */ ""}
       <td>${vc ? "—" : st.upcomingDate ? arDate(st.upcomingDate) : st.upcomingDate === null ? "—" : arDate(st.nextDueDate)}</td>
       <td>${st.totalOwed ? `${(() => { const d = dueIncl(vc ? { amountDue: st.legacyArrears } : st, vatOf(p, t)); return d > 0
-        ? `${sar(d)}${st.carriedDebt > 0 ? `<div style="font-size:.62rem;color:#9A4B00">+ ${sar(st.carriedDebt)} دين مرحَّل</div>` : ""}`
-        : `${sar(st.carriedDebt)}<div style="font-size:.62rem;color:#9A4B00">دين مرحَّل</div>`; })()}${vc ? '<div style="font-size:.65rem;color:#5C6B67">على المستأجر السابق</div>' : ""}` : "—"}</td>
+        ? `${sar(d)}${st.carriedDebt > 0 ? `<div style="font-size:.62rem;color:#9A4B00">+ ${sar(st.carriedDebt)} متأخرات سابقة</div>` : ""}`
+        : `${sar(st.carriedDebt)}<div style="font-size:.62rem;color:#9A4B00">متأخرات سابقة</div>`; })()}${vc ? '<div style="font-size:.65rem;color:#5C6B67">على المستأجر السابق</div>' : ""}` : "—"}</td>
       <td>${vc ? '<span class="pill">شاغرة</span>'
           : st.inGrace ? '<span class="pill u">فترة سماح</span>'
           : isPartialOnly(st) && st.status === "late" ? '<span class="pill u">سداد جزئي</span>'
@@ -2547,7 +2547,7 @@ ${footer(issuer)}`;
 }
 
 // ============================================================
-// مخالصة إخلاء وحدة — تسوية التأمين وقراءات العدادات
+// مخالصة إخلاء وحدة — تسوية مبلغ الضمان وقراءات العدادات
 // ============================================================
 
 export function moveOutSettlementHTML(
@@ -2625,16 +2625,16 @@ ${(t.elec_account || t.water_account) ? `<div class="sub" style="margin-bottom:6
 </table>
 <div class="note">يتحمّل المستأجر استهلاك الخدمات حتى تاريخ الإخلاء، ويلتزم بنقل أو فصل الاشتراكات باسمه.</div>
 
-<h1 style="font-size:1rem">ثانيًا: تسوية مبلغ التأمين</h1>
+<h1 style="font-size:1rem">ثانيًا: تسوية مبلغ الضمان</h1>
 <table>
   <tbody>
-    <tr><td>مبلغ التأمين المستلم</td><td style="text-align:left;font-weight:600">${sar(s.deposit)} ريال</td></tr>
+    <tr><td>مبلغ الضمان المستلم</td><td style="text-align:left;font-weight:600">${sar(s.deposit)} ريال</td></tr>
     <tr><td>يُخصم: إيجار متأخر حتى تاريخ الإخلاء${vatOf(p, t).enabled ? " (شامل الضريبة)" : ""}</td><td style="text-align:left;font-weight:600">${sar(rentOwed)} ريال</td></tr>
-    ${carriedOwed > 0 ? `<tr><td>يُخصم: دين مرحَّل من مدة سابقة</td><td style="text-align:left;font-weight:600">${sar(carriedOwed)} ريال</td></tr>` : ""}
+    ${carriedOwed > 0 ? `<tr><td>يُخصم: متأخرات من مدة سابقة</td><td style="text-align:left;font-weight:600">${sar(carriedOwed)} ريال</td></tr>` : ""}
     <tr><td>يُخصم: تلفيات وأعمال إصلاح</td><td style="text-align:left;font-weight:600">${sar(s.deductions)} ريال</td></tr>
     ${s.refund > 0
       ? `<tr style="background:#E6F4EC;font-weight:700"><td>المستحق ردّه للمستأجر</td><td style="text-align:left">${sar(s.refund)} ريال</td></tr>`
-      : `<tr style="background:#FBE9E7;font-weight:700"><td>المستحق على المستأجر بعد استنفاد التأمين</td><td style="text-align:left">${sar(s.dueFromTenant)} ريال</td></tr>`}
+      : `<tr style="background:#FBE9E7;font-weight:700"><td>المستحق على المستأجر بعد استنفاد مبلغ الضمان</td><td style="text-align:left">${sar(s.dueFromTenant)} ريال</td></tr>`}
   </tbody>
 </table>
 ${t.deposit_notes ? `<div class="note">تفصيل الخصومات: ${String(t.deposit_notes).replace(/</g, "&lt;")}</div>` : ""}
@@ -2656,9 +2656,9 @@ ${list.length ? `
 <div class="note">
   بتوقيع الطرفين على هذه المخالصة، تُعدّ العلاقة الإيجارية منتهية عن ${ul} رقم (${t.unit || "—"})،
   ${/* (30 سبتمبر 2026) «يُقرّ كل طرف باستلام مستحقاته» كانت تُطبع حتى والمستأجر
-       مدين بعد استنفاد التأمين — فيوقّع المؤجّر على إبراءٍ لم يقصده. */
+       مدين بعد استنفاد مبلغ الضمان — فيوقّع المؤجّر على إبراءٍ لم يقصده. */
     s.dueFromTenant > 0
-    ? `ويُقرّ المستأجر بأن في ذمّته للمؤجّر مبلغ <b>${sar(s.dueFromTenant)}</b> ريال بعد استنفاد التأمين، يلتزم بسداده، ولا تُعدّ هذه المخالصة إبراءً منه`
+    ? `ويُقرّ المستأجر بأن في ذمّته للمؤجّر مبلغ <b>${sar(s.dueFromTenant)}</b> ريال بعد استنفاد مبلغ الضمان، يلتزم بسداده، ولا تُعدّ هذه المخالصة إبراءً منه`
     : s.refund > 0
       ? `ويلتزم المؤجّر بردّ مبلغ <b>${sar(s.refund)}</b> ريال للمستأجر، ويُقرّ كل طرف بأنه لا مطالبة له على الآخر فيما سُوّي أعلاه بعد ذلك`
       : "ويُقرّ كل طرف بأنه لا مطالبة له على الآخر فيما سُوّي أعلاه"}،
@@ -3317,10 +3317,10 @@ export function ownerConsolidatedStatementHTML(
       return `<tr>
         <td>${x.t.unit || "—"}</td>
         <td>${x.vacant ? `<span style="color:#5C6B67">— شاغرة —</span>${sub("على المستأجر السابق")}` : `${x.t.name || "—"}${x.t.phone ? `<div style="font-size:.72rem;color:#5C6B67" dir="ltr">${x.t.phone}</div>` : ""}`}</td>
-        <td><b>${sar(x.amount)}</b>${x.lateAmt > 0 && x.st.hasPartial ? sub(`سدّد ${sar(x.st.partial)} جزئيًّا`) : ""}${x.soonAmt > 0 ? sub(`${x.carried > 0 ? `منه ${sar(x.soonAmt)} ` : ""}لم يحلّ بعد`) : ""}${x.carried > 0 && (x.lateAmt > 0 || x.soonAmt > 0 || x.legacy > 0) ? sub(`منه ${sar(x.carried)} دين مرحَّل`) : x.carried > 0 ? sub("دين مرحَّل من مدة سابقة") : ""}</td>
+        <td><b>${sar(x.amount)}</b>${x.lateAmt > 0 && x.st.hasPartial ? sub(`سدّد ${sar(x.st.partial)} جزئيًّا`) : ""}${x.soonAmt > 0 ? sub(`${x.carried > 0 ? `منه ${sar(x.soonAmt)} ` : ""}لم يحلّ بعد`) : ""}${x.carried > 0 && (x.lateAmt > 0 || x.soonAmt > 0 || x.legacy > 0) ? sub(`منه ${sar(x.carried)} متأخرات سابقة`) : x.carried > 0 ? sub("متأخرات من مدة سابقة") : ""}</td>
         <td>${dueOn ? `${arDate(dueOn)}<div style="font-size:.72rem;color:#5C6B67">${hijriShort(dueOn)}</div>` : "—"}</td>
         <td>${when}</td>
-        <td>${x.vacant ? "شاغرة — دين سابق" : x.lateAmt <= 0 && x.soonAmt <= 0 ? "دين مرحَّل" : unitStatusLabel(x.key, x.st)}</td>
+        <td>${x.vacant ? "شاغرة — دين سابق" : x.lateAmt <= 0 && x.soonAmt <= 0 ? "متأخرات سابقة" : unitStatusLabel(x.key, x.st)}</td>
       </tr>`;
     };
 
@@ -3359,7 +3359,7 @@ ${propRows.filter((x) => !x.owe.length).length ? `
 <h2 style="margin-top:20px">عقارات بلا متأخرات</h2>
 <div class="sub">${propRows.filter((x) => !x.owe.length).map((x) => `${x.r.s.property.name} (${countAr(x.r.units, "وحدة")})`).join(" · ")}</div>` : ""}
 
-<div class="note">كشف استرشادي بالمتأخرات والمستحقات القائمة حتى ${arDate(today())}، مُستخرج من عقود الوحدات ودفعاتها المسجّلة في وثيق، شاملًا الديون المرحَّلة من مدد سابقة. لا يشمل المحصَّل ولا المصروفات ولا صافي المالك — لتلك اطلب الكشف الشامل. الوحدات الشاغرة لا تُدرج إلا إن بقي دين على مستأجرها السابق.</div>
+<div class="note">كشف استرشادي بالمتأخرات والمستحقات القائمة حتى ${arDate(today())}، مُستخرج من عقود الوحدات ودفعاتها المسجّلة في وثيق، شاملًا المتأخرات السابقة من مدد سابقة. لا يشمل المحصَّل ولا المصروفات ولا صافي المالك — لتلك اطلب الكشف الشامل. الوحدات الشاغرة لا تُدرج إلا إن بقي دين على مستأجرها السابق.</div>
 <div class="sign"><div>إدارة الأملاك: ${who}<br><br>التوقيع: ________________</div><div>المالك: ${ownerName}<br><br>تاريخ الإصدار: ${arDate(today())}</div></div>
 ${footer(issuer)}`;
     return SHELL(`المتأخرات والمستحق — ${ownerName}`, body, markOf(issuer));
@@ -3386,7 +3386,7 @@ ${ownerPaidAll > 0.005 ? `<div class="note" style="border-inline-start-color:#B8
   ${T.vat > 0 ? `<div class="r"><span>إجمالي المقبوض من المستأجرين</span><span>${sar(T.gross)} ريال — منه ${sar(T.vat)} ضريبة تُورَّد للهيئة</span></div>` : ""}
   <div class="r"><span>${T.vat > 0 ? "صافي الإيجار للمالك بعد الضريبة" : "المُحصَّل خلال الفترة"}</span><span><b style="color:#137a50">${sar(T.collected)}</b> ريال من ${countAr(rows.length, "عقار")}</span></div>
   <div class="r"><span>المتأخرات القائمة</span><span><b style="color:${T.due > 0 ? "#a5322c" : "#137a50"}">${sar(T.due)}</b> ريال — تراكمية لكل المدد لا الفترة</span></div>
-  ${T.carried + T.legacy > 0 ? `<div class="r"><span style="padding-inline-start:12px">— ويُضاف إليها</span><span>${[T.carried > 0 ? `${sar(T.carried)} دين مرحَّل` : "", T.legacy > 0 ? `${sar(T.legacy)} على مستأجرين سابقين` : ""].filter(Boolean).join(" · ")}</span></div>` : ""}
+  ${T.carried + T.legacy > 0 ? `<div class="r"><span style="padding-inline-start:12px">— ويُضاف إليها</span><span>${[T.carried > 0 ? `${sar(T.carried)} متأخرات سابقة` : "", T.legacy > 0 ? `${sar(T.legacy)} على مستأجرين سابقين` : ""].filter(Boolean).join(" · ")}</span></div>` : ""}
 </div>
 <div class="note" style="margin-bottom:12px">
   المُحصَّل والمصروفات والأتعاب عن <b>الفترة المحددة وحدها</b>؛ أما «المتأخرات القائمة» فرقم تراكمي لكامل العقود — فلا يُقارن بها مباشرة.
@@ -4099,8 +4099,8 @@ export function trustDocHTML(r: TrustRow, p: { name: string; property_type?: str
   const unitNo = String(unit?.unit || r.unit || "").trim();
   const party = String(r.party || unit?.name || "").trim();
   const statement = isDepositKind(r.kind)
-    ? (incoming ? `تأمين ${unitNo ? `${ul} رقم (${unitNo})` : ""} — أمانة تُردّ عند انتهاء العقد بعد خصم ما يثبت استحقاقه`
-                : `استرداد تأمين ${unitNo ? `${ul} رقم (${unitNo})` : ""}`)
+    ? (incoming ? `مبلغ ضمان ${unitNo ? `${ul} رقم (${unitNo})` : ""} — أمانة تُردّ عند انتهاء العقد بعد خصم ما يثبت استحقاقه`
+                : `استرداد مبلغ الضمان ${unitNo ? `${ul} رقم (${unitNo})` : ""}`)
     : (incoming ? `حصة من فاتورة عداد مشترك${r.meter ? ` رقم ${r.meter}` : ""}${r.bill_period ? ` عن ${r.bill_period}` : ""}`
                 : `سداد فاتورة عداد مشترك${r.meter ? ` رقم ${r.meter}` : ""}${r.bill_period ? ` عن ${r.bill_period}` : ""}`);
   const body = `
@@ -4153,7 +4153,7 @@ export type ReceiptProperty = { name: string; property_type?: string | null; cit
   vat_enabled?: boolean | null; vat_rate?: number | null; vat_inclusive?: boolean | null };
 
 const receiptStatement = (pay: ReceiptPayment, ul: string, unit: string, freq?: string | null) => {
-  if (pay.applies_to === "carried") return "سداد دين مرحَّل من مدة سابقة";
+  if (pay.applies_to === "carried") return "سداد متأخرات من مدة سابقة";
   if (pay.applies_to === "past_debt") return "سداد متأخرات مستأجر سابق";
   const n = Number(pay.periods_covered) || 0;
   const cov = n > 0 ? ` — ${n === 1 ? "دفعة واحدة" : n === 2 ? "دفعتان" : `${n} دفعات`}${freq ? ` (${freqLabel(freq)})` : ""}` : " — دفعة جزئية";

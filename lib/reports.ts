@@ -412,7 +412,7 @@ async function payTenant(db: DB, profile: any, tenantId: string, mode: "one" | "
   const { data: prop } = await db.from("properties").select("id,user_id,grace_days").eq("id", t.property_id).maybeSingle();
   if (!prop || String(prop.user_id) !== String(profile.id)) return { ok: false, msg: "غير مصرّح." };
   const rent = Number(t.rent_amount) || 0;
-  if (rent <= 0) return { ok: false, msg: "قيمة الدفعة غير محدّدة لهذا العقد." };
+  if (rent <= 0) return { ok: false, msg: "دفعة الإيجار غير محدّدة لهذا العقد." };
   /* حارس التكرار في القاعدة لا في الذاكرة: Vercel يشغّل نسخًا متعددة لا تتشارك الذاكرة،
      فنقرتان على «سجّل» قد تصلان لنسختين فتُسجَّلان. نرفض دفعة ثانية من البوت للمستأجر
      نفسه خلال 90 ثانية. (الموقع عرف المشكلة نفسها: ثماني ضغطات على ✔.) */

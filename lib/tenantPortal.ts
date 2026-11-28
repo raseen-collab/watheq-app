@@ -60,11 +60,11 @@ const T = {
     statusH: "حالة حسابك", incomplete: "بيانات العقد غير مكتملة لدى المكتب بعد — تظهر حالتك هنا بعد استكمالها.",
     owedLbl: (vat: string) => `المستحق عليك${vat}`, cur: "ريال", sar: (n: string) => `${n} ريال`,
     lateN: "دفعات متأخرة", lateCount: (n: number) => n === 1 ? "دفعة واحدة" : n === 2 ? "دفعتان" : `${n} دفعات`,
-    lateSince: "متأخر منذ", partialDue: "مدفوع جزئيًّا من الدفعة المستحقة", carried: "دين مرحَّل من مدة سابقة",
+    lateSince: "متأخر منذ", partialDue: "مدفوع جزئيًّا من الدفعة المستحقة", carried: "متأخرات من مدة سابقة",
     clear: "لا متأخرات عليك ✓", prepaid: "مدفوع مقدّمًا من الدفعة القادمة",
     vatTag: " (شاملة الضريبة)",
     withRenewal: "مع تجديد العقد",
-    contractH: "عقدك", contractNo: "رقم العقد", instalment: (vat: string) => `قيمة الدفعة${vat}`, cycle: "دورة السداد",
+    contractH: "عقدك", contractNo: "رقم العقد", instalment: (vat: string) => `دفعة الإيجار${vat}`, cycle: "دورة السداد",
     next: "الدفعة القادمة", start: "بداية العقد", end: "نهاية العقد", stmt: "كشف الحساب (طباعة / PDF)",
     claimH: "أرسلت الحوالة؟", claimIntro: "أبلغ المكتب بحوالتك ليطابقها مع الحساب البنكي ثم يسجّل دفعتك. لا تحتاج صورة.",
     claimMany: "لديك 3 حوالات بانتظار المراجعة — انتظر قرار المكتب ثم أبلغ عن غيرها.",
@@ -73,7 +73,7 @@ const T = {
     waOr: "أو", waLink: "أرسل صورة الإيصال واتساب",
     waText: (ul: string, unit: string, prop: string, name: string) => `السلام عليكم، أرسلت حوالة إيجار ${ul} (${unit}) في ${prop} — مرفق صورة الإيصال. ${name}`,
     transfer: (d: string) => `حوالة ${d}`, ref: "مرجع", cOk: "سُجّلت ✓", cNo: "رُفضت", cWait: "بانتظار المراجعة", rejWhy: "سبب الرفض:",
-    paysH: "دفعاتك المسجّلة", carriedPay: " · سداد دين مرحَّل", receipt: "🧾 سند القبض", noPays: "لا دفعات مسجّلة في هذا العقد بعد.",
+    paysH: "دفعاتك المسجّلة", carriedPay: " · سداد متأخرات سابقة", receipt: "🧾 سند القبض", noPays: "لا دفعات مسجّلة في هذا العقد بعد.",
     reqMany: "لديك 5 طلبات مفتوحة — ينتظر بعضها الإنجاز قبل فتح طلب جديد.",
     newReq: "+ طلب صيانة جديد", rCat: "نوع المشكلة", rWhere: "مكانها", rIn: (ul: string) => `داخل ${ul}`, rCommon: "الأجزاء المشتركة",
     rDesc: "الوصف", rDescPh: "مثال: تسريب مياه تحت مغسلة المطبخ",
@@ -346,7 +346,7 @@ export function renderTenantReceiptPage(d: TenantReceiptData, opts: { nonce: str
   const no = x.receipt_no || "—";
   const reversed = !!x.reversed_on;
   const n = Number(x.periods_covered) || 0;
-  const statement = x.applies_to === "carried" ? "سداد دين مرحَّل من مدة سابقة"
+  const statement = x.applies_to === "carried" ? "سداد متأخرات من مدة سابقة"
     : x.applies_to === "past_debt" ? "سداد متأخرات مستأجر سابق"
     : `أجرة ${ul} رقم (${unit})${n > 0 ? ` — ${n === 1 ? "دفعة واحدة" : n === 2 ? "دفعتان" : `${n} دفعات`} (${freqLabel(t.payment_frequency)})` : " — دفعة جزئية"}`;
   const hij = hDate(x.paid_on);

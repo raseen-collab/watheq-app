@@ -994,11 +994,11 @@ export const rentWithVat = (t: any, p: any) => withVat(Number(t?.rent_amount) ||
 // ============================================================
 
 export type Settlement = {
-  deposit: number;       // مبلغ التأمين المستلم
+  deposit: number;       // مبلغ الضمان المستلم
   deductions: number;    // خصومات التلفيات
   outstanding: number;   // إيجار متأخر عند الإخلاء
   refund: number;        // المستحق للمستأجر (لا يقلّ عن صفر)
-  dueFromTenant: number; // ما يبقى على المستأجر بعد استنفاد التأمين
+  dueFromTenant: number; // ما يبقى على المستأجر بعد استنفاد مبلغ الضمان
 };
 
 /**

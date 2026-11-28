@@ -154,11 +154,11 @@ export function auditOffice(properties: P[], payments: any[] = [], expenses: any
       if (!vac && !t.covered_by && !(num(t.rent_amount) > 0)) {
         push({ severity: "critical", title: "وحدة مؤجّرة بإيجار صفر", ...base,
           why: "لا تُحتسب لها مستحقات ولا تدخل في الدخل المتوقع — تبدو منتظمة وهي غائبة عن الحساب.",
-          fix: "أدخل قيمة الدفعة الواحدة (لا الإيجار السنوي)." });
+          fix: "أدخل دفعة الإيجار الواحدة (لا الإيجار السنوي)." });
       }
       if (num(t.rent_amount) < 0) {
         push({ severity: "critical", title: "إيجار سالب", ...base,
-          why: "يقلب كل الحسابات المبنية عليه.", fix: "صحّح قيمة الدفعة." });
+          why: "يقلب كل الحسابات المبنية عليه.", fix: "صحّح دفعة الإيجار." });
       }
       if (t.payment_frequency && !isValidFreq(String(t.payment_frequency))) {
         push({ severity: "warn", title: `دورة سداد غير معروفة: ${t.payment_frequency}`, ...base,
@@ -225,9 +225,9 @@ export function auditOffice(properties: P[], payments: any[] = [], expenses: any
           why: "تذكير واتساب لن يصل هذا المستأجر.", fix: "صحّح الرقم (يبدأ بـ05 وطوله 10 أرقام)." });
       }
       if (num(t.carried_debt) > 0 && vac) {
-        push({ severity: "info", title: `دين مرحَّل ${Math.round(num(t.carried_debt)).toLocaleString("en-US")} على وحدة شاغرة`, ...base,
+        push({ severity: "info", title: `متأخرات سابقة ${Math.round(num(t.carried_debt)).toLocaleString("en-US")} على وحدة شاغرة`, ...base,
           why: "دين على مستأجر سابق ما زال مفتوحًا — يحتاج متابعة أو شطبًا بقرار.",
-          fix: "تابع التحصيل، أو صفّر الدين المرحَّل من بطاقة الوحدة إن سُوّي." });
+          fix: "تابع التحصيل، أو صفّر المتأخرات السابقة من بطاقة الوحدة إن سُوّيت." });
       }
       // الضريبة على وحدة سكنية
       if (p.vat_enabled && t.vat_mode === "on" && ["apartment", "studio", "annex", "room"].includes(String(t.unit_type))) {

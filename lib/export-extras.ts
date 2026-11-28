@@ -50,7 +50,7 @@ export function zipPath(property: string, unit: string | null | undefined, day: 
 export const AUDIT_TABLE_AR: Record<string, string> = {
   properties: "العقارات", tenants: "الوحدات والمستأجرون", property_notes: "سجل العقار", payments: "الدفعات",
   expenses: "المصروفات", expense_templates: "المصروفات المتكررة", ledger_adjustments: "التصحيحات", past_tenancies: "المستأجرون السابقون",
-  trust_ledger: "الأمانات", office_ledger: "دفتر المكتب", tenant_requests: "طلبات الصيانة", tenant_payment_claims: "بلاغات الحوالات",
+  trust_ledger: "الضمان والعدادات", office_ledger: "دفتر المكتب", tenant_requests: "طلبات الصيانة", tenant_payment_claims: "بلاغات الحوالات",
   maintenance_vendors: "دليل الفنيين", office_messages: "الرسائل الداخلية", compliance_items: "التزامات المكتب",
   listings: "المعروضات", listing_shows: "عرض على", seeker_requests: "طلبات الباحثين",
   associations: "الجمعيات", owners: "ملاك الجمعيات", association_notes: "سجل الجمعيات", association_expenses: "مصروفات الجمعيات",

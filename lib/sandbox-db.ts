@@ -203,7 +203,7 @@ export function sandboxClient(store: SandboxStore) {
         const t = store.tenants.find((x) => x.id === args.p_tenant);
         if (!t) return { data: null, error: { message: "العقد غير موجود" } };
         const rent = Number(t.rent_amount) || 0;
-        if (rent <= 0) return { data: null, error: { message: "قيمة الدفعة غير محدّدة" } };
+        if (rent <= 0) return { data: null, error: { message: "دفعة الإيجار غير محدّدة" } };
         const pool = Math.max(0, Number(t.partial_amount) || 0) + Number(args.p_amount || 0);
         const completed = Math.floor(pool / rent);
         t.partial_amount = r2(pool - completed * rent);
@@ -266,7 +266,7 @@ export function sandboxClient(store: SandboxStore) {
             t.carried_debt = c;
           } else {
             const rent = Number(t.rent_amount) || 0;
-            if (rent <= 0) return { data: null, error: { message: "قيمة الدفعة غير محدّدة لهذا العقد" } };
+            if (rent <= 0) return { data: null, error: { message: "دفعة الإيجار غير محدّدة لهذا العقد" } };
             const credit = Math.max(0, r2((Number(t.paid_periods) || 0) * rent + (Number(t.partial_amount) || 0) + delta));
             const paid = Math.floor(credit / rent + 1e-9);
             pay.periods_covered = Math.max(0, (Number(pay.periods_covered) || 0) + (paid - (Number(t.paid_periods) || 0)));
@@ -330,10 +330,10 @@ export function sandboxClient(store: SandboxStore) {
         const t = store.tenants.find((x) => x.id === args.p_tenant);
         const amt = r2(Number(args.p_amount) || 0);
         if (!t) return { data: null, error: { message: "الوحدة غير موجودة" } };
-        if (amt <= 0 || amt > (Number(t.carried_debt) || 0) + 0.005) return { data: null, error: { message: "المبلغ أكبر من الدين المرحَّل" } };
+        if (amt <= 0 || amt > (Number(t.carried_debt) || 0) + 0.005) return { data: null, error: { message: "المبلغ أكبر من المتأخرات السابقة" } };
         store.payments = [{ id: `sb_pay_${Math.random().toString(36).slice(2, 10)}`, tenant_id: t.id, property_id: t.property_id,
           paid_on: args.p_paid_on || new Date().toISOString().slice(0, 10), amount: amt, method: args.p_method || "transfer",
-          reference: args.p_reference ?? null, note: "سداد دين مرحَّل", periods_covered: 0, payer_name: t.name, unit_label: t.unit, applies_to: "carried",
+          reference: args.p_reference ?? null, note: "سداد متأخرات سابقة", periods_covered: 0, payer_name: t.name, unit_label: t.unit, applies_to: "carried",
           created_at: new Date().toISOString() }, ...store.payments];
         t.carried_debt = r2((Number(t.carried_debt) || 0) - amt);
         const prop = store.properties.find((p) => p.id === t.property_id);
@@ -345,9 +345,9 @@ export function sandboxClient(store: SandboxStore) {
         const cur = Number(t?.carried_debt) || 0;
         if (!t) return { data: null, error: { message: "الوحدة غير موجودة" } };
         if (!String(args.p_note || "").trim()) return { data: null, error: { message: "اذكر سبب الشطب" } };
-        if (cur <= 0) return { data: null, error: { message: "لا دين مرحَّل على هذه الوحدة" } };
+        if (cur <= 0) return { data: null, error: { message: "لا متأخرات سابقة على هذه الوحدة" } };
         const amt = r2(args.p_amount == null ? cur : Number(args.p_amount));
-        if (!(amt > 0) || amt > cur + 0.005) return { data: null, error: { message: "المبلغ أكبر من الدين المرحَّل" } };
+        if (!(amt > 0) || amt > cur + 0.005) return { data: null, error: { message: "المبلغ أكبر من المتأخرات السابقة" } };
         t.carried_debt = r2(cur - amt);
         return { data: { written_off: amt, carried_debt: t.carried_debt }, error: null };
       }
@@ -388,10 +388,10 @@ export function sandboxClient(store: SandboxStore) {
         if (!pay) return { data: null, error: { message: "الدفعة غير موجودة" } };
         const from = pay.applies_to || "rent", to = args.p_to;
         if (!["rent", "carried"].includes(to) || from === to || !(Number(pay.amount) > 0) || pay.past_tenancy_id)
-          return { data: null, error: { message: "تُنقل دفعات الإيجار والدين المرحَّل للوحدة الحالية فقط" } };
+          return { data: null, error: { message: "تُنقل دفعات الإيجار والمتأخرات السابقة للوحدة الحالية فقط" } };
         const t = store.tenants.find((x) => x.id === pay.tenant_id);
         if (to === "carried" && Number(pay.amount) > (Number(t?.carried_debt) || 0) + 0.005)
-          return { data: null, error: { message: "المبلغ أكبر من الدين المرحَّل" } };
+          return { data: null, error: { message: "المبلغ أكبر من المتأخرات السابقة" } };
         const rev = reversePay(pay.id);
         if (rev.error) return rev;
         const rec = to === "carried"
@@ -399,7 +399,7 @@ export function sandboxClient(store: SandboxStore) {
           : await api.rpc("watheq_record_payment", { p_tenant: pay.tenant_id, p_amount: pay.amount, p_paid_on: pay.paid_on, p_method: pay.method, p_reference: pay.reference });
         if (rec.error) return rec;
         const np = store.payments[0];
-        np.note = [to === "carried" ? "سداد دين مرحَّل" : "", `منقولة من ${from === "rent" ? "الأقساط" : "الدين المرحَّل"}`].filter(Boolean).join(" — ");
+        np.note = [to === "carried" ? "سداد متأخرات سابقة" : "", `منقولة من ${from === "rent" ? "الأقساط" : "المتأخرات السابقة"}`].filter(Boolean).join(" — ");
         return { data: { payment_id: np.id, from, to }, error: null };
       }
       return { data: null, error: null };

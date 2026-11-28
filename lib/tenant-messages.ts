@@ -103,7 +103,7 @@ export function endNoticeText(i: EndNoticeInput): string {
   if (total > 0) {
     L.push("وبيان المستحقات غير المسدَّدة حتى تاريخه:");
     if (overdue > 0) L.push(`• ${i.unpaid > 1 ? `دفعات متأخرة (${i.unpaid})` : "دفعة متأخرة"}: ${sar(overdue)} ريال${i.overdueVat ? " (شامل الضريبة)" : ""}`);
-    if (carried > 0) L.push(`• دين مرحَّل من مدة سابقة: ${sar(carried)} ريال`);
+    if (carried > 0) L.push(`• متأخرات من مدة سابقة: ${sar(carried)} ريال`);
     if (overdue > 0 && carried > 0) L.push(`• الإجمالي المطلوب: ${sar(total)} ريال`);
   } else {
     L.push("ولا توجد عليكم مستحقات متأخرة حتى تاريخه، شاكرين التزامكم بالسداد.");
@@ -361,16 +361,16 @@ export function reminderText(i: ReminderInput): string {
     if (!i.nextDueDate) L.push(`نودّ التواصل معكم بخصوص عقد ${unit} بعقار ${i.propertyName}.`);
     else L.push(`تذكير ودّي بأن الدفعة القادمة عن ${unit} بعقار ${i.propertyName} تستحق بتاريخ ${arDate(i.nextDueDate)}${hj(i.nextDueDate, i.hijri)}${
       i.daysToNextDue !== null && i.daysToNextDue > 0 ? ` — بعد ${arDays(i.daysToNextDue)}` : i.daysToNextDue === 0 ? " — اليوم" : ""}.`);
-    if (i.instalment) L.push(`• قيمة الدفعة: ${sar(i.instalment)} ريال${i.instalmentVat > 0 ? ` (منها ${sar(i.instalmentVat)} ريال ضريبة قيمة مضافة)` : ""}`);
-    if (i.carried > 0) L.push(`• ويتبقّى عليكم دين مرحَّل من مدة سابقة: ${sar(i.carried)} ريال`);
+    if (i.instalment) L.push(`• دفعة الإيجار: ${sar(i.instalment)} ريال${i.instalmentVat > 0 ? ` (منها ${sar(i.instalmentVat)} ريال ضريبة قيمة مضافة)` : ""}`);
+    if (i.carried > 0) L.push(`• ويتبقّى عليكم متأخرات من مدة سابقة: ${sar(i.carried)} ريال`);
   } else {
     L.push(`نودّ تذكيركم بوجود مستحقّات غير مسدَّدة عن ${unit} بعقار ${i.propertyName}، وبيانها:`);
     L.push(`• عدد الدفعات المتأخرة: ${i.unpaid}`);
-    if (i.instalment) L.push(`• قيمة الدفعة: ${sar(i.instalment)} ريال`);
+    if (i.instalment) L.push(`• دفعة الإيجار: ${sar(i.instalment)} ريال`);
     if ((i.partial || 0) > 0) L.push(`• المسدَّد جزئيًّا: ${sar(i.partial!)} ريال`);
     L.push(`• المبلغ المتبقّي${i.owedVat ? " (شامل الضريبة)" : ""}: ${sar(i.owed)} ريال`);
     if (i.carried > 0) {
-      L.push(`• دين مرحَّل من مدة سابقة: ${sar(i.carried)} ريال`);
+      L.push(`• متأخرات من مدة سابقة: ${sar(i.carried)} ريال`);
       L.push(`• الإجمالي المطلوب: ${sar(round2(i.owed + i.carried))} ريال`);
     }
     if (i.nextDueDate) L.push(`• مستحقّة منذ: ${arDate(i.nextDueDate)}${hj(i.nextDueDate, i.hijri)}`);

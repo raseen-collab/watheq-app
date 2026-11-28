@@ -26,7 +26,7 @@ export const OFFICE_TABLES: TableSpec[] = [
   { table: "expenses", scope: "user", ar: "المصروفات" },
   { table: "expense_templates", scope: "user", ar: "المصروفات المتكررة" },
   { table: "expense_template_skips", scope: "template", ar: "إيقافات المتكرر" },
-  { table: "trust_ledger", scope: "user", ar: "الأمانات" },
+  { table: "trust_ledger", scope: "user", ar: "الضمان والعدادات" },
   { table: "office_ledger", scope: "user", ar: "دفتر المكتب" },
   { table: "property_notes", scope: "property", ar: "سجل العقار" },
   { table: "tenant_requests", scope: "user", ar: "طلبات الصيانة" },

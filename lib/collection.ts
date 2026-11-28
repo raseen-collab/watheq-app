@@ -75,7 +75,7 @@ export function buildCollection(input: {
     const base = { property: pName[x.property_id] || "—", unit: t.unit ?? x.unit_label ?? null, tenant: t.name ?? x.payer_name ?? null,
       paid_on: x.paid_on, amount: amt, contract_no: t.contract_no || (x.reference ? `حوالة ${x.reference}` : null), calendar: t.calendar };
     if (!x.tenant_id) return { ...base, statement: x.applies_to === "past_debt" || x.note === "سداد دين مستأجر سابق" ? "سداد دين مستأجر سابق" : "دفعة (مستأجر سابق)", _kind: "past" as const };
-    if (x.applies_to === "carried") return { ...base, statement: "سداد دين مرحَّل", _kind: "carried" as const };
+    if (x.applies_to === "carried") return { ...base, statement: "سداد متأخرات سابقة", _kind: "carried" as const };
     if (!inTerm(x, t)) return { ...base, statement: "دفعة من مدة سابقة", _kind: "old_term" as const };
     const rent = Number(t.rent_amount) || 0;
     if (rent <= 0) return { ...base, statement: "دفعة", _kind: "rent" as const };

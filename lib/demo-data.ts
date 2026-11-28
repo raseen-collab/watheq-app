@@ -103,7 +103,7 @@ export function buildDemo(today = new Date()): DemoProperty[] {
     t[14] = { ...t[14], litigation: true, paid_periods: 1, payment_frequency: "monthly", contract_start: shift(-210) };     // تنفيذ
     t[17] = { ...t[17], contract_start: shift(-350), payment_frequency: "annual", contract_periods: 1, paid_periods: 1 }; // ينتهي قريبًا
     t[20] = { ...t[20], contract_start: shift(-88), payment_frequency: "quarterly", paid_periods: 0 };                     // يستحق اليوم تقريبًا
-    t[22] = { ...t[22], carried_debt: 4500, paid_periods: 2, payment_frequency: "monthly", contract_start: shift(-70) };  // دين مرحَّل
+    t[22] = { ...t[22], carried_debt: 4500, paid_periods: 2, payment_frequency: "monthly", contract_start: shift(-70) };  // متأخرات سابقة
     props.push({
       name: "عمارة الياسمين", city: "المدينة المنورة", address: "حي العزيزية — شارع الملك عبدالعزيز",
       property_type: "residential", usage: "families", owner_name: "عبدالله بن سعد الحربي",

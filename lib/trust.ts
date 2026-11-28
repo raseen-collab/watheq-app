@@ -35,8 +35,8 @@ export type TrustRow = {
 };
 
 export const TRUST_KINDS: { v: TrustKind; l: string; icon: string; hint: string }[] = [
-  { v: "deposit_in", l: "استلام تأمين", icon: "🛡️", hint: "من المستأجر عند العقد — لا يدخل الإيجار ولا تقرير المالك" },
-  { v: "deposit_out", l: "استرداد تأمين", icon: "↩︎", hint: "للمستأجر عند الإخلاء — كاملًا أو بعد الخصم" },
+  { v: "deposit_in", l: "استلام مبلغ الضمان", icon: "🛡️", hint: "من المستأجر عند العقد — لا يدخل الإيجار ولا تقرير المالك" },
+  { v: "deposit_out", l: "استرداد مبلغ الضمان", icon: "↩︎", hint: "للمستأجر عند الإخلاء — كاملًا أو بعد الخصم" },
   { v: "utility_in", l: "حصة فاتورة مشتركة", icon: "⚡", hint: "حصة مستأجر من فاتورة عداد مشترك" },
   { v: "utility_out", l: "سداد فاتورة مشتركة", icon: "🧾", hint: "سداد المكتب للفاتورة كاملة — يقابل الحصص" },
 ];
@@ -53,9 +53,9 @@ export const isDepositKind = (k?: string | null) => k === "deposit_in" || k === 
 /** عنوان السند المطبوع — قبض TR أو صرف TV */
 export function trustDocTitle(k?: string | null): string {
   switch (k) {
-    case "deposit_in": return "سند قبض تأمين";
+    case "deposit_in": return "سند قبض مبلغ ضمان";
     case "utility_in": return "سند قبض حصة فاتورة";
-    case "deposit_out": return "سند صرف — استرداد تأمين";
+    case "deposit_out": return "سند صرف — استرداد مبلغ الضمان";
     case "utility_out": return "سند صرف — سداد فاتورة";
     default: return "سند أمانة";
   }
@@ -137,12 +137,12 @@ export function checkTrustDraft(d: TrustDraft, opts: { today: string; heldForTen
   const day = String(d.entry_on || "").slice(0, 10);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) errors.push("التاريخ مطلوب.");
   else if (day > opts.today) errors.push("التاريخ بعد اليوم — اكتب يوم وصول المال أو صرفه فعلًا.");
-  if (isDepositKind(d.kind) && !d.tenant_id) errors.push("اختر الوحدة — التأمين يُتابَع لكل وحدة.");
+  if (isDepositKind(d.kind) && !d.tenant_id) errors.push("اختر الوحدة — مبلغ الضمان يُتابَع لكل وحدة.");
   if (d.kind === "deposit_out" && d.tenant_id && amt > 0) {
     const held = num(opts.heldForTenant);
     if (amt - held > 0.005) warnings.push(held > 0
-      ? `المسترد (${amt}) أكبر من التأمين المسجَّل استلامه لهذه الوحدة (${held}).`
-      : "لا يوجد تأمين مسجَّل استلامه لهذه الوحدة في الأمانات — سجّل الاستلام أولًا إن كان وصل قبل استخدام وثيق.");
+      ? `المسترد (${amt}) أكبر من مبلغ الضمان المسجَّل استلامه لهذه الوحدة (${held}).`
+      : "لا يوجد مبلغ ضمان مسجَّل استلامه لهذه الوحدة — سجّل الاستلام أولًا إن كان وصل قبل استخدام وثيق.");
   }
   if (d.kind === "utility_out" && amt > 0 && opts.meterBalance !== undefined) {
     const bal = num(opts.meterBalance);
