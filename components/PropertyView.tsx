@@ -4,9 +4,9 @@ import { wqConfirm } from "@/lib/confirm";
 import { friendlyError, systemGap } from "@/lib/friendlyError";
 import { LIMIT_MSG, atLimit, type LimitsWire } from "@/lib/entitlements";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { InfoTip } from "@/components/HoaRound3";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import Icon from "@/components/Icon";
 import { createClient } from "@/lib/supabase-client";
 import { cleanMeters, metersCountLine, METER_TYPE_AR, MAX_METERS, type PropertyMeter } from "@/lib/meters";
 import { officeId, getOffice, ROLE_LABEL, OWNER_PERMS } from "@/lib/office";
@@ -351,6 +351,18 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       setView(!wide ? "cards" : (saved === "table" || saved === "cards" ? (saved as any) : "table"));
     } catch { /* */ }
   }, []);
+  /* (28 نوفمبر — التقييم) «/» يقفز إلى بحث الوحدات من أي مكان في الصفحة (كما في أغلب الأدوات) */
+  useEffect(() => {
+    const k = (e: KeyboardEvent) => {
+      if (e.key !== "/" || e.ctrlKey || e.metaKey || e.altKey) return;
+      const t = e.target as HTMLElement | null;
+      if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
+      const el = document.getElementById("units-q") as HTMLInputElement | null;
+      if (el) { e.preventDefault(); el.focus(); el.scrollIntoView({ block: "center", behavior: "smooth" }); }
+    };
+    window.addEventListener("keydown", k);
+    return () => window.removeEventListener("keydown", k);
+  }, []);
   function pickView(v: "cards" | "table") { setView(v); try { localStorage.setItem("watheq.units.view", v); } catch { /* */ } }
   /**
    * دور المستخدم في هذا المكتب. القاعدة تمنع ما لا يحق له (v9) — لكن عرض
@@ -429,7 +441,10 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
   } catch { /* */ } }, []);
   useEffect(() => { setTPage(0); }, [filter, q, tSort, activeId]);
   useEffect(() => { setCardsShown(60); }, [filter, q, activeId]);
-  const [sort, setSort] = useState<"urgent" | "due" | "amount" | "name">("urgent");
+  const [sort, setSortRaw] = useState<"urgent" | "due" | "amount" | "name">("urgent");
+  /* (28 نوفمبر — التقييم) ترتيب الوحدات يُتذكَّر للمتصفح: من يعمل بـ«الأكبر متأخرًا» لا يعيد اختياره كل مرة */
+  const setSort = (v: "urgent" | "due" | "amount" | "name") => { setSortRaw(v); try { localStorage.setItem("watheq.units.sort", v); } catch { /* */ } };
+  useEffect(() => { try { const v = localStorage.getItem("watheq.units.sort"); if (v === "due" || v === "amount" || v === "name") setSortRaw(v); } catch { /* */ } }, []);
   const [toast, setToast] = useState<null | { k: "ok" | "err"; m: string; undo?: () => void; extra?: { label: string; run: () => void } }>(null);
   /* ديون المستأجرين السابقين المفتوحة (schema-v45). قبل الترحيل لا يوجد
      الجدول — فالخطأ يُتجاهَل ويبقى المؤشر كما كان. */
@@ -2599,7 +2614,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                   الأدوات نفسها — لكن العين تجد مكانها بدل أن تمسح صفًّا طويلًا. */}
               {/* (24 نوفمبر 2026) الجوال: قائمة واحدة «أدوات العقار» بدل ثلاث تأخذ سطرين */}
               <div className="sm:hidden">
-                <MenuBtn label={<><Icon name="doc" className="me-1.5" />أدوات</>} items={[
+                <MenuBtn label={<><span aria-hidden className="me-1">🧰</span>أدوات</>} items={[
                   { sep: "مستندات" },
                 { label: "كشف حساب العقار", run: () => setStmtOpen(true) },
                 { label: "كشف المستحقات (للمحصّل)", run: () => setDueOpen(true) },
@@ -2624,14 +2639,14 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                 ]} />
               </div>
               <div className="hidden sm:contents">
-              <MenuBtn label={<><Icon name="doc" className="me-1.5" />مستندات</>} items={[
+              <MenuBtn label={<><span aria-hidden className="me-1">📄</span>مستندات</>} items={[
                 { label: "كشف حساب العقار", run: () => setStmtOpen(true) },
                 { label: "كشف المستحقات (للمحصّل)", run: () => setDueOpen(true) },
                 { label: "عرض سعر لمستأجر محتمل", run: () => setQuoteOpen(true) },
                 /* «التزامات المكتب» انتقلت إلى «نظرة عامة» — للمكتب كله لا لعقار */
               ]} />
 
-              {may("view_financials") && <MenuBtn label={<><Icon name="owner" className="me-1.5" />المالك</>} items={[
+              {may("view_financials") && <MenuBtn label={<><span aria-hidden className="me-1">👤</span>المالك</>} items={[
                 { sep: "تُرسل للمالك" },
                 { label: "تقرير المالك", run: () => setReporting(true) },
                 { label: "كشف مالك مجمّع", run: () => setOwnerStmtOpen(true) },
@@ -2644,7 +2659,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                 { label: `الديون المرحَّلة${carriedTotal > 0 ? ` (${sar(carriedTotal)})` : ""}`, run: () => setDebtOpen(true) },
               ]} />}
 
-              <MenuBtn label={<><Icon name="data" className="me-1.5" />البيانات</>} items={[
+              <MenuBtn label={<><span aria-hidden className="me-1">🗃️</span>البيانات</>} items={[
                 ...(may("edit_tenants") ? [demo ? { label: "رفع من Excel", run: demoJoin } : { label: "رفع من Excel", href: "/dashboard/property/import" }] : []),
                 { label: "تصدير CSV", run: exportCSV },
                 ...(may("view_activity") ? [{ label: "سجل الحركات المالية", run: () => setLogOpen(true) }] : []),
@@ -2667,7 +2682,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
               <input id="units-q" className="fld flex-1 min-w-[150px] max-sm:min-w-0 sm:basis-0 sm:w-auto" value={q} onChange={(e) => setQ(e.target.value)} type="search"
                 aria-label={`بحث في الوحدات: الاسم أو رقم ${ul} أو الجوال أو الهوية أو رقم العقد أو حساب الكهرباء`}
                 title={`ابحث بالاسم أو رقم ${ul} أو الجوال أو الهوية أو رقم العقد أو حساب الكهرباء`}
-                placeholder={`ابحث: اسم، ${ul}، جوال، هوية…`} />
+                placeholder={`ابحث: اسم، ${ul}، جوال، هوية…`} aria-keyshortcuts="/" />
               <select className="fld max-sm:w-[128px] max-sm:text-xs sm:w-[170px]" aria-label="ترتيب الوحدات" value={sort} onChange={(e) => setSort(e.target.value as any)}>
                 <option value="urgent">الأهم أولًا</option>
                 <option value="due">الأقرب استحقاقًا</option>
@@ -3070,7 +3085,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                       {canRemind && <a href={remindLink(t)} target="_blank" rel="noreferrer" className={`btn btn-wa text-xs px-2.5 ${wide}`} title="إرسال تذكير واتساب" onClick={(e) => { e.preventDefault(); openExternal(remindLink(t)); }}><span className="whitespace-nowrap">&#128172; تذكير</span></a>}
                       {/* كان 📄 أبيضَ على خلفية بيضاء فيكاد يختفي — الأيقونة ترث لون النص. */}
                       {may("issue_invoices") && <span className={wide}><QuickBtn title="إصدار فاتورة" cls="btn-ghost" onClick={() => openInvoice(t)}>
-                        <span className="whitespace-nowrap"><Icon name="doc" /> فاتورة</span>
+                        <span className="whitespace-nowrap">🧾 فاتورة</span>
                       </QuickBtn></span>}
                       {st.unpaid > 0 && may("send_reminders") && <button className={`btn btn-gold text-xs ${wide}`} onClick={() => makeNotice(t)}>نموذج إشعار</button>}
                       {!primaryRenew && needsRenewal(t) && !t.covered_by && may("renew_contracts") && <button className={`btn text-xs ${wide}`} style={{ background: "#0E3A37", color: "#F6F1E4" }} onClick={() => askRenew(t)}>تجديد</button>}
@@ -4738,6 +4753,9 @@ function TenantModal({ open, initial, unitWord, error, saving, onClose, onSubmit
      المتابعة من دفعته القادمة. كان المكتب مضطرًّا لاختيار «لم يسكن بعد» وهو ساكن. */
   const [occ, setOcc] = useState<"" | "current" | "new" | "fresh">("");
   const [localErr, setLocalErr] = useState<string | null>(null);
+  /* (28 نوفمبر — التقييم) سبب الرفض يُمرَّر إليه تلقائيًّا ويقرؤه القارئ الآلي — على الجوال كان تحت الطيّة */
+  const errBoxRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => { if ((localErr || error) && errBoxRef.current) { try { errBoxRef.current.scrollIntoView({ behavior: "smooth", block: "center" }); errBoxRef.current.focus({ preventScroll: true }); } catch { /* */ } } }, [localErr, error]);
   const [extraOpen] = useState(() => !!(initial && ((initial as any).first_due || (initial as any).national_id || (initial as any).phone2 || Number((initial as any).carried_debt) > 0
     || (initial as any).contract_no || (initial as any).elec_account || (initial as any).water_account || (initial as any).meter_elec_in
     || (initial as any).meter_water_in || ((initial as any).vat_mode && (initial as any).vat_mode !== "auto"))));
@@ -4859,7 +4877,7 @@ function TenantModal({ open, initial, unitWord, error, saving, onClose, onSubmit
           })()}><input className="fld" type="number" value={d.rent_amount || ""} onChange={(e) => setD({ ...d, rent_amount: e.target.value })} placeholder="2500" /></Field>
           <Field label="جوال المستأجر"><input className="fld" value={d.phone || ""} onChange={(e) => setD({ ...d, phone: e.target.value })} placeholder="05xxxxxxxx" /></Field>
         </div>
-        <Field label="دورة السداد">
+        <Field label={<>دورة السداد<InfoTip term="دورة السداد" /></>}>
           <div className="grid grid-cols-3 gap-2">
             {FREQUENCIES.map((f) => (
               <button key={f.value} type="button" onClick={() => {
@@ -4975,7 +4993,7 @@ function TenantModal({ open, initial, unitWord, error, saving, onClose, onSubmit
           const n = Number(d.contract_periods) || 0; const r = Number(d.rent_amount) || 0; const l = Number(d.last_installment) || 0;
           if (n < 2 || r <= 0) return null;
           return (
-            <Field label="القسط الأخير — إن اختلف عن البقية (اختياري)"
+            <Field label={<>القسط الأخير — إن اختلف عن البقية (اختياري)<InfoTip term="القسط الأخير" /></>}
               hint={l > 0 && Math.abs(l - r) >= 0.005
                 ? `${n - 1} × ${sar(r)} + ${sar(l)} = ${sar(Math.round(((n - 1) * r + l) * 100) / 100)} ريال إجمالي المدة`
                 : "اتركه فارغًا إن كانت الأقساط متساوية. مثال إيجار: 20,000 سنويًّا شهريًّا = 1,667 × 11 والأخير 1,663"}>
@@ -5020,7 +5038,7 @@ function TenantModal({ open, initial, unitWord, error, saving, onClose, onSubmit
             {occ === "fresh" ? "بداية جديدة — لا دفعات سابقة في وثيق؛ القديم يبقى في دفاترك." : "عقد جديد — لا دفعات سابقة."} إن استلمت دفعة عند التوقيع أو اليوم فسجّلها بعد الحفظ بزر «💰 تسجيل دفعة».
           </div>
         ) : (
-        <Field label="مسدَّد حتى: آخر دفعة دفعها المستأجر"
+        <Field label={<>مسدَّد حتى: آخر دفعة دفعها المستأجر<InfoTip term="مسدَّد حتى" /></>}
           hint={initial && !isFill
             ? "لتصحيح خطأ فقط. الدفعة الجديدة تُسجَّل بزر «💰 تسجيل دفعة» وتظهر هنا تلقائيًّا"
             : "اختر تاريخ آخر دفعة دفعها، ولو كانت قبل أن تبدأ مع وثيق — ووثيق يحسب منها القادمة والمتأخرة"}>
@@ -5120,10 +5138,10 @@ function TenantModal({ open, initial, unitWord, error, saving, onClose, onSubmit
               ))}
             </div>
           </Field>
-          <Field label="دين مرحَّل (ريال)" hint="متأخرات من عقد سابق أو مستأجر سابق — تظهر في الكشوف ولا تدخل في دفعات العقد الجاري">
+          <Field label={<>دين مرحَّل (ريال)<InfoTip term="دين مرحَّل" /></>} hint="متأخرات من عقد سابق أو مستأجر سابق — تظهر في الكشوف ولا تدخل في دفعات العقد الجاري">
             <input className="fld" type="number" min={0} value={d.carried_debt ?? ""} onChange={(e) => setD({ ...d, carried_debt: e.target.value })} placeholder="0" />
           </Field>
-            <Field label="أول تاريخ استحقاق" hint="اتركه فارغًا إن كان المستأجر يدفع يوم بداية العقد — وهذا أغلب العقود. املأه فقط إن كانت أول دفعة في يوم آخر (يبدأ 1/1 والدفعة الأولى 5/1)">
+            <Field label={<>أول تاريخ استحقاق<InfoTip term="أول تاريخ استحقاق" /></>} hint="اتركه فارغًا إن كان المستأجر يدفع يوم بداية العقد — وهذا أغلب العقود. املأه فقط إن كانت أول دفعة في يوم آخر (يبدأ 1/1 والدفعة الأولى 5/1)">
               <DateField value={d.first_due || ""} onChange={(v) => setD({ ...d, first_due: v })}
                 relative={{ from: startISO, warn: firstDueOutOfRange(startISO, d.first_due, d.payment_frequency, d.calendar) }} />
               {(dueGap || fixedNow("due", "")) && (
@@ -5212,7 +5230,7 @@ function TenantModal({ open, initial, unitWord, error, saving, onClose, onSubmit
       {/* سبب الفشل بجانب الزر: الإشعار العائم في أعلى الصفحة لا يراه من كان
           منزلًا داخل النموذج على الجوال، فيظن أن الزر لا يعمل. */}
       {(localErr || error) && (
-        <div className="bg-[#FBE9E7] border border-[#F5C6C2] text-[#a5322c] rounded-xl p-3 text-sm mt-4 leading-relaxed">
+        <div ref={errBoxRef} role="alert" tabIndex={-1} className="bg-[#FBE9E7] border border-[#F5C6C2] text-[#a5322c] rounded-xl p-3 text-sm mt-4 leading-relaxed outline-none">
           <b>لم يُحفظ:</b> {localErr || error}
         </div>
       )}
@@ -5655,7 +5673,7 @@ function QuoteModal({ property, unitWord, issuer, onClose }: {
 
         {/* «الدفعات المسدَّدة» أزيلت من عرض السعر: مستأجر محتمل لم يوقّع لم يدفع شيئًا، والمستند لا يستعملها — كانت منسوخة من نموذج الوحدة. */}
 
-        <Field label="دورة السداد">
+        <Field label={<>دورة السداد<InfoTip term="دورة السداد" /></>}>
           <div className="grid grid-cols-3 gap-2">
             {FREQUENCIES.map((f) => (
               <button key={f.value} type="button" onClick={() => {

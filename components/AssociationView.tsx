@@ -1468,7 +1468,7 @@ export default function AssociationView({ initial, issuer, limits }: {
                         <QuickBtn title={o.months_late > 0 ? `تأكيد استلام اشتراك ${W.one}` : `استلام اشتراك ${W.one} مقدَّمًا`} cls={o.months_late > 0 ? "btn-primary" : "btn-ghost"}
                           disabled={busyRow} onClick={() => recordOwnerPayment(o, feeFor(o))}>{busyRow ? "…" : "\u2714"}</QuickBtn>
                       )}
-                      <QuickBtn title="تسجيل مبلغ (جزئي أو بتاريخ ومرجع)" cls="btn-ghost" disabled={busyRow} onClick={() => setPaying(o)}>&#189;</QuickBtn>
+                      <QuickBtn title="💰 تسجيل دفعة (كاملة أو جزئية، بتاريخ ومرجع)" cls="btn-ghost" disabled={busyRow} onClick={() => setPaying(o)}>💰</QuickBtn>
                       {o.months_late > 0 && <button type="button" onClick={() => sendReminder(o)} className="btn btn-wa text-xs px-2.5" title="إرسال تذكير واتساب برابط صفحته" aria-label="إرسال تذكير واتساب">&#128172;</button>}
                       {o.phone && <a href={`tel:${String(o.phone).replace(/[^0-9+]/g, "")}`} className="btn btn-ghost text-xs px-2.5 sm:hidden" title="اتصال مباشر">&#128222;</a>}
                       {o.months_late >= 2 && <button type="button" className="btn btn-gold text-xs" onClick={() => makeOwnerNotice(o)}>نموذج إشعار</button>}
@@ -1675,7 +1675,7 @@ function OwnerPaymentModal({ owner, fee, period = "monthly", busy, onClose, onSu
   return (
     <Overlay onClose={onClose}>
       <div role="dialog" aria-modal="true" className="w-full max-w-md bg-white rounded-2xl shadow-xl p-6 max-h-[90vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
-      <h3 className="font-display font-bold text-deep text-xl mb-1">تسجيل مبلغ مستلم</h3>
+      <h3 className="font-display font-bold text-deep text-xl mb-1">💰 تسجيل دفعة</h3>
       <p className="text-sm text-muted mb-1">{owner.name} · {owner.unit ? `وحدة ${owner.unit}` : "—"}</p>
       <p className="text-xs text-muted mb-3 flex flex-wrap items-center gap-x-3"><span className="inline-flex items-center">مقدَّم<InfoTip term="مقدَّم" /></span>
         <span className="inline-flex items-center">سداد جزئي<InfoTip term="سداد جزئي" /></span><span className="inline-flex items-center">سند قبض<InfoTip term="سند قبض" /></span></p>
@@ -2210,7 +2210,7 @@ function OwnerModal({ owner, period = "monthly", onClose, onSubmit }: {
               onChange={(e) => setD({ ...d, months_late: e.target.value })} />
           </Field>
           <p className="text-xs text-muted leading-relaxed">
-            تعديل الفترات المتأخرة يدويًّا للتصحيح فقط؛ الأفضل تسجيل السداد من زرّ ✔ أو ½ ليُحفظ في سجل المدفوعات.
+            تعديل الفترات المتأخرة يدويًّا للتصحيح فقط؛ الأفضل تسجيل السداد من زرّ ✔ أو «💰 تسجيل دفعة» ليُحفظ في سجل المدفوعات.
           </p>
         </div>
 
