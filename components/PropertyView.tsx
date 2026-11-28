@@ -468,7 +468,9 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
   const [hydrated, setHydrated] = useState(false);
   useEffect(() => { setHydrated(true); }, []);
   // يزامن اللوحة مع أحدث بيانات السيرفر — يمنع اختلاف الأرقام بعد تسجيل دفعة من البوت
-  useEffect(() => { setItems(normalize(initial)); }, [initial]);
+  /* (28 نوفمبر — التقييم) وقت آخر مزامنة مع الخادم يظهر بجانب ↻ — حتى يعرف الموظف هل يرى أحدث دفعة */
+  const [syncedAt, setSyncedAt] = useState<string>("");
+  useEffect(() => { setItems(normalize(initial)); try { setSyncedAt(new Intl.DateTimeFormat("ar-SA-u-nu-latn-ca-gregory", { hour: "numeric", minute: "2-digit", timeZone: "Asia/Riyadh" }).format(new Date())); } catch { /* */ } }, [initial]);
   const [refreshing, setRefreshing] = useState(false);
   function refreshNow() {
     setRefreshing(true);
@@ -2374,7 +2376,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
             ومستندات المالك موزّعة بينهما بلا منطق. */}
         {/* (28 نوفمبر — التقييم) ظاهر على الجوال أيضًا، ويؤكّد بإشعار «تم التحديث» */}
         <button type="button" className="btn btn-ghost text-sm px-3 max-sm:shrink-0 max-sm:w-11 max-sm:!px-0 max-sm:justify-center" onClick={refreshNow} disabled={refreshing}
-          aria-label="تحديث البيانات" title="تحديث البيانات من السيرفر (بعد تسجيل دفعة من البوت أو من موظف آخر)">{refreshing ? "…" : "↻"}</button>
+          aria-label={`تحديث البيانات${syncedAt ? ` — آخر تحديث ${syncedAt}` : ""}`} title={`تحديث البيانات من السيرفر (بعد تسجيل دفعة من البوت أو من موظف آخر)${syncedAt ? ` · آخر تحديث ${syncedAt}` : ""}`}>{refreshing ? "…" : "↻"}{syncedAt && <span className="max-sm:hidden ms-1.5 text-[11px] text-muted font-normal">{syncedAt}</span>}</button>
         {isManager && <button type="button" className="btn btn-ghost text-sm px-3 max-sm:shrink-0 max-sm:w-11 max-sm:!px-0 max-sm:justify-center" onClick={() => setModal({ kind: "editProp" })} title="تعديل بيانات هذا العقار" aria-label="تعديل بيانات العقار">✎<span className="max-sm:hidden"> تعديل</span></button>}
         {/* التجربة العامة بلا جلسة: الروابط إلى صفحات اللوحة تنتهي في /login —
             نفتح دعوة التسجيل بدلها كبقية الأفعال المحجوبة في التجربة (30 سبتمبر 2026) */}
@@ -2640,7 +2642,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                 { label: `الديون المرحَّلة${carriedTotal > 0 ? ` (${sar(carriedTotal)})` : ""}`, run: () => setDebtOpen(true) }] : []),
                   { sep: "البيانات" },
                 ...(may("edit_tenants") ? [demo ? { label: "رفع من Excel", run: demoJoin } : { label: "رفع من Excel", href: "/dashboard/property/import" }] : []),
-                { label: "تصدير CSV", run: exportCSV },
+                { label: "تصدير Excel (CSV)", run: exportCSV },
                 ...(may("view_activity") ? [{ label: "سجل الحركات المالية", run: () => setLogOpen(true) }] : []),
                 ...(!may("view_financials") && canTrust ? [{ label: "🛡️ الأمانات — تأمين وفواتير مشتركة", run: () => setTrustFor({ tenantId: null }) }] : []),
                 ]} />
@@ -2668,7 +2670,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
 
               <MenuBtn label={<><span aria-hidden className="me-1">🗃️</span>البيانات</>} items={[
                 ...(may("edit_tenants") ? [demo ? { label: "رفع من Excel", run: demoJoin } : { label: "رفع من Excel", href: "/dashboard/property/import" }] : []),
-                { label: "تصدير CSV", run: exportCSV },
+                { label: "تصدير Excel (CSV)", run: exportCSV },
                 ...(may("view_activity") ? [{ label: "سجل الحركات المالية", run: () => setLogOpen(true) }] : []),
                 ...(!may("view_financials") && canTrust ? [{ label: "🛡️ الأمانات — تأمين وفواتير مشتركة", run: () => setTrustFor({ tenantId: null }) }] : []),
               ]} />
@@ -3775,7 +3777,7 @@ function TurnoverModal({ tenant, unitWord, onClose, onSubmit, vat }: {
       </p>
 
       <div className="flex gap-2 mt-5">
-        <button type="button" className="btn btn-ghost flex-1 justify-center" onClick={onClose}>إلغاء</button>
+        <button type="button" data-shell-cancel className="btn btn-ghost flex-1 justify-center" onClick={onClose}>إلغاء</button>
         <button type="button" className="btn btn-gold flex-1 justify-center"
           onClick={() => onSubmit({ ...d, checklist: list })}>تسجيل الإخلاء</button>
       </div>
@@ -4388,7 +4390,9 @@ function Shell({ children, onClose, wide }: { children: React.ReactNode; onClose
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4" onClick={(e) => { if (e.target === e.currentTarget) tryClose(); }}>
       <div role="dialog" aria-modal="true" ref={boxRef}
         className={`relative w-full ${wide ? "max-w-2xl" : "max-w-md"} bg-white rounded-2xl shadow-xl p-6 pt-11 max-h-[90vh] overflow-auto`}
-        onInput={() => { dirty.current = true; }} onChange={() => { dirty.current = true; }}>
+        onInput={() => { dirty.current = true; }} onChange={() => { dirty.current = true; }}
+        /* (28 نوفمبر — التقييم) «إلغاء» في النماذج يمرّ بنفس حارس ✕ وEsc: كان يُغلق ويُضيّع المُدخَل بلا سؤال */
+        onClickCapture={(e) => { if ((e.target as HTMLElement).closest?.("[data-shell-cancel]")) { e.stopPropagation(); e.preventDefault(); tryClose(); } }}>
         {/* لاصق أعلى النافذة: في نموذج طويل يبقى ظاهرًا بعد التمرير */}
         <div className="sticky -top-9 h-0 -mt-9 mb-9 z-10">
           <button type="button" onClick={tryClose} aria-label="إغلاق" title="إغلاق (Esc)"
@@ -4636,7 +4640,7 @@ function PropertyModal({ open, initial, orgName, ownerNames = [], officeSoon = 1
         </div>
       </div>
       <div className="flex gap-2 mt-6">
-        <button type="button" className="btn btn-ghost flex-1 justify-center" onClick={onClose}>إلغاء</button>
+        <button type="button" data-shell-cancel className="btn btn-ghost flex-1 justify-center" onClick={onClose}>إلغاء</button>
         <button type="button" className="btn btn-gold flex-1 justify-center" disabled={!(d.name || "").trim() || busy}
           title={!(d.name || "").trim() ? "أدخل اسم العقار أولًا" : "حفظ"}
           style={!(d.name || "").trim() ? { opacity: .5, cursor: "not-allowed" } : undefined}
@@ -5272,7 +5276,7 @@ function TenantModal({ open, initial, unitWord, error, saving, onClose, onSubmit
         </div>
       )}
       <div className="flex gap-2 mt-6">
-        <button type="button" className="btn btn-ghost flex-1 justify-center" onClick={onClose}>إلغاء</button>
+        <button type="button" data-shell-cancel className="btn btn-ghost flex-1 justify-center" onClick={onClose}>إلغاء</button>
         <button type="button" className="btn btn-gold flex-1 justify-center" disabled={(String(d.status) !== "vacated" && !(d.name || "").trim()) || !!saving}
           title={String(d.status) !== "vacated" && !(d.name || "").trim() ? "أدخل اسم المستأجر أولًا" : "حفظ"}
           /* كان يتجاهل الشاغرة: الزرّ يعمل (disabled صحيح) لكنه يبدو
@@ -6059,7 +6063,7 @@ function RenewModal({ tenant, unitWord, onClose, onRenew }: {
       </p>
 
       <div className="flex gap-2 mt-5">
-        <button type="button" className="btn btn-ghost flex-1 justify-center" onClick={onClose}>إلغاء</button>
+        <button type="button" data-shell-cancel className="btn btn-ghost flex-1 justify-center" onClick={onClose}>إلغاء</button>
         <button className="btn btn-gold flex-1 justify-center" disabled={busy || !Number(periods) || pastPending}
           title={pastPending ? "أجب على التنبيه أولًا" : undefined}
           /* يعود الزرّ إن توقّف التجديد (إلغاء سؤال أو خطأ) — كان يبقى «...» معطّلًا */
@@ -6089,7 +6093,7 @@ function EnforcementModal({ tenant, unitWord, onClose, onSubmit }: {
         <Field label="سند الأمر" hint="اختياري"><input className="fld" value={order} onChange={(e) => setOrder(e.target.value)} placeholder="رقم/وصف سند الأمر" /></Field>
       </div>
       <div className="flex gap-2 mt-6">
-        <button type="button" className="btn btn-ghost flex-1 justify-center" onClick={onClose}>إلغاء</button>
+        <button type="button" data-shell-cancel className="btn btn-ghost flex-1 justify-center" onClick={onClose}>إلغاء</button>
         <button className="btn flex-1 justify-center" style={{ background: "#475569", color: "#fff" }} onClick={() => onSubmit(no.trim(), order.trim())}>
           {already ? "حفظ" : "رفع للتنفيذ"}
         </button>
