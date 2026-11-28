@@ -452,3 +452,6 @@ html:not([data-theme="dark"]) .fld::placeholder, html:not([data-theme="dark"]) i
   .btn, button.btn, a.btn { min-height: 44px; }
   button.btn.\!py-0\.5, button.btn.\!py-1 { min-height: 36px; }
 }
+
+/* (28 نوفمبر — التقييم) الخانة التي رُفض الحفظ بسببها */
+.wq-field-err { border-color: #D0453F !important; box-shadow: 0 0 0 3px rgba(208,69,63,.18) !important; }
