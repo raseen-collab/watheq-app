@@ -415,8 +415,10 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
   /* (25 نوفمبر) «اليوم» مطوي على الجوال افتراضيًّا (يُفتح بلمسة)، ومفتوح على الكمبيوتر */
   const [todayOpen, setTodayOpen] = useState(false);
   /* (22 نوفمبر 2026) «أرقام العقار والعدادات» مطويّة افتراضيًّا — ويُتذكّر اختيار المستخدم */
-  const [detailsOpen, setDetailsOpen] = useState(false);
-  useEffect(() => { try { if (localStorage.getItem("wq_prop_details") === "1") setDetailsOpen(true); } catch { /* */ } }, []);
+  /* (27 نوفمبر 2026 — مكتب التميز: «خانة دخل العقار اختفت») أرقام العقار مفتوحة افتراضيًّا؛
+     من يطويها يبقى اختياره محفوظًا في متصفحه. كانت مطويّة افتراضيًّا منذ 22 نوفمبر فظنّها المكتب حُذفت. */
+  const [detailsOpen, setDetailsOpen] = useState(true);
+  useEffect(() => { try { if (localStorage.getItem("wq_prop_details") === "0") setDetailsOpen(false); } catch { /* */ } }, []);
   useEffect(() => { setTPage(0); }, [filter, q, tSort, activeId]);
   useEffect(() => { setCardsShown(60); }, [filter, q, activeId]);
   const [sort, setSort] = useState<"urgent" | "due" | "amount" | "name">("urgent");
