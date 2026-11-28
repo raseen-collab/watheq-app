@@ -415,7 +415,7 @@ export default function PortfolioView({ properties, windows, compliance, orgName
                         <div key={x.id} className="flex items-center justify-between gap-3 px-3 py-2 text-sm">
                           <div className="min-w-0">
                             <div className="font-medium truncate">{w ? w.t.name : (x.payer_name ? `${x.payer_name} (سابق)` : "مستأجر سابق")}</div>
-                            <div className="text-[11px] text-muted truncate">{w ? `${w.p.name} · ${withUnitWord(UNIT_AR[w.p.property_type] || "وحدة", w.t.unit)}` : (x.unit_label ? `وحدة ${x.unit_label}` : "")}{x.method && METHOD[x.method] ? ` · ${METHOD[x.method]}` : ""}{x.applies_to === "carried" ? " · سداد دين مرحَّل" : x.applies_to === "past_debt" ? " · سداد دين سابق" : ""}{openRev.has(String(x.id)) ? " · معكوسة" : ""}</div>
+                            <div className="text-[11px] text-muted truncate">{w ? `${w.p.name} · ${withUnitWord(UNIT_AR[w.p.property_type] || "وحدة", w.t.unit)}` : (x.unit_label ? `وحدة ${x.unit_label}` : "")}{x.method && METHOD[x.method] ? ` · ${METHOD[x.method]}` : ""}{x.applies_to === "carried" ? " · سداد متأخرات سابقة" : x.applies_to === "past_debt" ? " · سداد دين سابق" : ""}{openRev.has(String(x.id)) ? " · معكوسة" : ""}</div>
                           </div>
                           <div className={`tabular-nums font-semibold whitespace-nowrap ${amt < 0 ? "text-late" : "text-[#137a50]"}`}>
                             {amt < 0 ? `تراجع ${sar(Math.round(-amt))}` : sar(Math.round(amt))}</div>

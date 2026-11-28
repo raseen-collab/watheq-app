@@ -131,7 +131,7 @@ export default function DataHealth({ initial }: { initial: any[] }) {
           <div className="font-semibold text-deep">ديون مستأجرين سابقين سُجّلت أقل من المستحق ({gaps.length})</div>
           <p className="text-xs text-muted mt-1 leading-relaxed">
             إعادات تأجير تمّت قبل تحديث 22 سبتمبر: خيار «سُوّي» كان يُسقط الدين بلا أثر، ومهلة السماح كانت تُسقط قسطًا حلّ قبل الخروج.
-            المستحق محسوب من بيانات عقد المستأجر المحفوظة لحظة خروجه. بعد التصحيح سوِّه من «الديون المرحَّلة»:
+            المستحق محسوب من بيانات عقد المستأجر المحفوظة لحظة خروجه. بعد التصحيح سوِّه من «المتأخرات السابقة»:
             <b> «سجّل سدادًا»</b> إن استلمتَه، أو <b>«شطب»</b> إن تنازلتَ عنه.
           </p>
           {gapMsg && <div className="text-xs mt-2 text-[#137a50]">{gapMsg}</div>}
@@ -145,7 +145,7 @@ export default function DataHealth({ initial }: { initial: any[] }) {
                   const { error } = await supabase.rpc("watheq_correct_past_debt", { p_past: g.id, p_amount: g.expected, p_note: "فحص سلامة البيانات: إعادة حساب من عقد المستأجر" });
                   if (error) { setGapMsg(/does not exist|function/i.test(error.message) ? systemGap("DataHealth:144") : friendlyError(error.message)); return; }
                   setGaps((cur) => cur.filter((x) => x.id !== g.id));
-                  setGapMsg(`صُحّح دين ${g.name} — سوِّه الآن من «الديون المرحَّلة».`);
+                  setGapMsg(`صُحّح دين ${g.name} — سوِّه الآن من «المتأخرات السابقة».`);
                 }}>صحّح إلى {g.expected.toLocaleString("en-US")}</button>
               </div>
             ))}

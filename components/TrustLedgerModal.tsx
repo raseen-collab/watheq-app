@@ -152,8 +152,8 @@ export default function TrustLedgerModal({ propertyId, propertyName, propertyTyp
       <div data-testid="trust-modal" className="w-full max-w-3xl bg-white rounded-2xl shadow-xl p-4 sm:p-6 max-h-[92vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-start justify-between gap-3 flex-wrap">
           <div className="min-w-0">
-            <h2 className="font-display font-bold text-deep text-xl">🛡️ الأمانات — {propertyName}</h2>
-            <p className="text-sm text-muted mt-1">التأمين وحصص العدادات المشتركة: مال يمرّ بالمكتب — لا يدخل الإيجار ولا تقرير المالك ولا الأتعاب.</p>
+            <h2 className="font-display font-bold text-deep text-xl">🛡️ الضمان والعدادات المشتركة — {propertyName}</h2>
+            <p className="text-sm text-muted mt-1">مبلغ الضمان وحصص العدادات المشتركة: مال يمرّ بالمكتب — لا يدخل الإيجار ولا تقرير المالك ولا الأتعاب.</p>
           </div>
           <button className="btn btn-ghost text-xs" onClick={onClose}>إغلاق</button>
         </div>
@@ -165,7 +165,7 @@ export default function TrustLedgerModal({ propertyId, propertyName, propertyTyp
         {/* الأرصدة */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-4">
           <div className="rounded-xl border border-line bg-paper p-3">
-            <div className="text-[.72rem] text-muted">تأمين محتفَظ به (أمانة للمستأجرين)</div>
+            <div className="text-[.72rem] text-muted">مبلغ ضمان محتفَظ به (أمانة للمستأجرين)</div>
             <div className="font-display font-bold text-xl text-deep">{sar(totals.depositHeld)} <span className="text-xs font-normal">ريال</span></div>
           </div>
           <div className="rounded-xl border border-line bg-paper p-3">
@@ -199,7 +199,7 @@ export default function TrustLedgerModal({ propertyId, propertyName, propertyTyp
           <div className="grid sm:grid-cols-2 gap-3 mt-4">
             {deps.length > 0 && (
               <div className="rounded-xl border border-line p-3">
-                <div className="text-sm font-semibold mb-1.5">التأمين لكل وحدة</div>
+                <div className="text-sm font-semibold mb-1.5">الضمان لكل وحدة</div>
                 <div className="flex flex-col gap-1 text-xs">
                   {deps.map((d) => {
                     const t = d.tenant_id ? tenantById.get(d.tenant_id) : null;
@@ -234,7 +234,7 @@ export default function TrustLedgerModal({ propertyId, propertyName, propertyTyp
 
         {/* القيود */}
         <div className="flex items-center gap-1.5 flex-wrap mt-4">
-          {([["all", "الكل"], ["deposit", "التأمين"], ["utility", "الفواتير المشتركة"]] as [Tab, string][]).map(([k, l]) => (
+          {([["all", "الكل"], ["deposit", "الضمان"], ["utility", "الفواتير المشتركة"]] as [Tab, string][]).map(([k, l]) => (
             <button key={k} className={`btn text-xs ${tab === k ? "btn-primary" : "btn-ghost"}`} onClick={() => setTab(k)}>{l}</button>
           ))}
           {focusT && (
@@ -249,7 +249,7 @@ export default function TrustLedgerModal({ propertyId, propertyName, propertyTyp
           <p className="text-sm text-muted mt-3">جارٍ التحميل…</p>
         ) : !shown.length ? (
           <p className="text-sm text-muted mt-3 bg-paper border border-line rounded-lg p-3">
-            {all.length ? "لا قيود في هذا العرض." : "لا أمانات مسجّلة بعد. سجّل تأمين مستأجر أو حصته من فاتورة عداد مشترك — يصدر له سند قبض مرقّم ولا يدخل الإيجار."}
+            {all.length ? "لا قيود في هذا العرض." : "لا قيود بعد. سجّل مبلغ ضمان مستأجر أو حصته من فاتورة عداد مشترك — يصدر له سند قبض مرقّم ولا يدخل الإيجار."}
           </p>
         ) : (
           <div className="mt-3 flex flex-col gap-2">
@@ -280,7 +280,7 @@ export default function TrustLedgerModal({ propertyId, propertyName, propertyTyp
             })}
           </div>
         )}
-        <p className="text-[11px] text-muted mt-4">المبلغ والنوع لا يُعدَّلان بعد صدور السند — للتصحيح احذف القيد وسجّله من جديد. دفعة إيجار سُجّلت خطأً وهي تأمين أو حصة فاتورة: انقلها من «سجل المدفوعات» ← زر «⇄ أمانة».</p>
+        <p className="text-[11px] text-muted mt-4">المبلغ والنوع لا يُعدَّلان بعد صدور السند — للتصحيح احذف القيد وسجّله من جديد. دفعة إيجار سُجّلت خطأً وهي مبلغ ضمان أو حصة فاتورة: انقلها من «سجل المدفوعات» ← زر «⇄ أمانة».</p>
       </div>
     </div>
   );
@@ -321,7 +321,7 @@ function TrustForm({ kind, tenants, propertyType, busy, meterHints, defaultTenan
               {occupied.map((x) => <option key={x.id} value={x.id}>{unitWordFor(x.unit_type, propertyType)} {x.unit || "—"}{x.name ? ` · ${x.name}` : ""}</option>)}
             </select>
             {kind === "deposit_out" && d.tenant_id && <span className="block text-[11px] text-muted mt-0.5">المحتفظ به لهذه الوحدة: {sar(held)} ريال</span>}
-            {kind === "deposit_in" && agreed > 0 && <span className="block text-[11px] text-muted mt-0.5">التأمين المكتوب في بيانات الوحدة: {sar(agreed)} ريال</span>}
+            {kind === "deposit_in" && agreed > 0 && <span className="block text-[11px] text-muted mt-0.5">مبلغ الضمان المكتوب في بيانات الوحدة: {sar(agreed)} ريال</span>}
           </label>
         )}
         {!dep && (

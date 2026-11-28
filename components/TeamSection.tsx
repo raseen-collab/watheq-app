@@ -34,7 +34,7 @@ const PERMS: { k: string; label: string; hint: string; def: Record<string, boole
 
   { group: "العقود والوحدات", k: "edit_tenants",    label: "إضافة وتعديل الوحدات", hint: "العقود والرفع من Excel", def: { manager: true, collector: false, viewer: false } },
   { group: "العقود والوحدات", k: "renew_contracts", label: "تجديد العقود", hint: "تمديد المدة وتعديل الإيجار", def: { manager: true, collector: false, viewer: false } },
-  { group: "العقود والوحدات", k: "move_out",        label: "الإخلاء والمخالصة", hint: "إنهاء العقد وتسوية التأمين", def: { manager: true, collector: false, viewer: false } },
+  { group: "العقود والوحدات", k: "move_out",        label: "الإخلاء والمخالصة", hint: "إنهاء العقد وتسوية مبلغ الضمان", def: { manager: true, collector: false, viewer: false } },
 
   { group: "أرقام المكتب والمالك", k: "manage_expenses",   label: "تسجيل المصروفات", hint: "ما يُدفع نيابة عن المالك", def: { manager: true, collector: false, viewer: false } },
   { group: "أرقام المكتب والمالك", k: "view_financials",   label: "أرقام المالك", hint: "تقرير المالك وكشفه وأتعاب الإدارة", def: { manager: true, collector: false, viewer: false } },

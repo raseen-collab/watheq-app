@@ -170,7 +170,7 @@ export default function HijriScheduleTool() {
               <p className="text-[11px] text-muted mt-1.5">{periods} دفعة</p>
             </div>
             <label className="block">
-              <span className="text-sm font-semibold block mb-2">قيمة الدفعة <span className="text-muted font-normal">— اختياري</span></span>
+              <span className="text-sm font-semibold block mb-2">دفعة الإيجار <span className="text-muted font-normal">— اختياري</span></span>
               <input className="fld" inputMode="numeric" value={rent}
                 onChange={(e) => setRent(e.target.value.replace(/[^\d.]/g, ""))} placeholder="مثال 25000" />
             </label>

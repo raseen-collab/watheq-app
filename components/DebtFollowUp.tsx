@@ -2,7 +2,7 @@
 import { pastDebtMsg, pastDebtMsgEn } from "@/lib/tenant-messages";
 import { pickMsg } from "@/lib/msg-lang";
 // ============================================================
-// وثيق — متابعة الديون المرحَّلة
+// وثيق — متابعة المتأخرات السابقة
 //
 // محاكاة سبع سنوات أظهرت 13.6 مليون ريال ديونًا مرحَّلة عند مكتب واحد.
 // الرقم صحيح، لكنه أعمى: لا يُعرف متى نشأ، ولا آخر متابعة، ولا مصيره.
@@ -234,9 +234,9 @@ export default function DebtFollowUp({ properties, orgName, onClose, db }: {
    */
   async function writeOff(r: Row) {
     const amount = r.source === "past" ? r.carried_debt : r2(Number(r._carried) || 0);
-    if (amount <= 0) return setErr("لا دين مرحَّل على هذه الوحدة — متأخرات المستأجر السابق تُسوّى بإعادة تأجير الوحدة.");
+    if (amount <= 0) return setErr("لا متأخرات سابقة على هذه الوحدة — متأخرات المستأجر السابق تُسوّى بإعادة تأجير الوحدة.");
     const why = prompt(`شطب ${sar(amount)} ريال على ${r.name}${r.source === "unit" && (Number(r._legacy) || 0) > 0
-      ? `\n(الدين المرحَّل وحده — متأخرات المستأجر السابق ${sar(Number(r._legacy))} تبقى)` : ""}\n\nلا يُسجَّل نقد — تنازلٌ عن الدين. اذكر السبب (يُحفظ في السجل):`);
+      ? `\n(المتأخرات السابقة وحدها — متأخرات المستأجر السابق ${sar(Number(r._legacy))} تبقى)` : ""}\n\nلا يُسجَّل نقد — تنازلٌ عن الدين. اذكر السبب (يُحفظ في السجل):`);
     if (why === null) return;
     if (!why.trim()) return setErr("اذكر سبب الشطب.");
     setBusy(true); setErr(null);
@@ -275,7 +275,7 @@ export default function DebtFollowUp({ properties, orgName, onClose, db }: {
       <div className="bg-paper rounded-2xl border border-line w-full max-w-5xl max-h-[92vh] flex flex-col overflow-hidden" onClick={(e) => e.stopPropagation()}>
         <div className="bg-deep text-[#EAF1EE] px-5 py-3 flex items-center justify-between">
           <div>
-            <div className="font-display font-bold text-goldSoft">💼 الديون المرحَّلة</div>
+            <div className="font-display font-bold text-goldSoft">💼 المتأخرات السابقة</div>
             <div className="text-[11px] opacity-75">مبالغ على مستأجرين سابقين أو من عقود منتهية — مرتّبة بالأقدم</div>
           </div>
           <button className="text-sm opacity-80 hover:opacity-100" onClick={onClose}>إغلاق ✕</button>

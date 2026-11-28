@@ -273,10 +273,10 @@ export default function ExportData() {
 
       add("الوحدات والمستأجرون", tenants.map((t) => ({
         "العقار": pName[t.property_id] || "", "الوحدة": t.unit || "", "المستأجر": t.name, "رقم العقد": t.contract_no || "", "الجوال": t.phone || "",
-        "رقم الهوية": t.national_id || "", "قيمة الدفعة": t.rent_amount, "الدورة": FREQ_AR[t.payment_frequency] || "",
-        "بداية العقد": t.contract_start || "", "نهاية العقد": t.contract_end || "", "عدد الدفعات": t.contract_periods || "", "القسط الأخير (إن اختلف)": (t as any).last_installment || "",
+        "رقم الهوية": t.national_id || "", "دفعة الإيجار": t.rent_amount, "الدورة": FREQ_AR[t.payment_frequency] || "",
+        "بداية العقد": t.contract_start || "", "نهاية العقد": t.contract_end || "", "عدد الدفعات": t.contract_periods || "", "دفعة الإيجار الأخيرة (إن اختلفت)": (t as any).last_installment || "",
         "المسدَّد (دفعات)": t.paid_periods || 0, "مبلغ جزئي": t.partial_amount || 0, "الحالة": STATUS_AR[t.status] || t.status || "نشط",
-        "تاريخ الإخلاء": t.move_out_date || "", "التأمين": t.deposit_amount || "", "خصومات التأمين": t.deposit_deductions || "",
+        "تاريخ الإخلاء": t.move_out_date || "", "مبلغ الضمان": t.deposit_amount || "", "خصومات الضمان": t.deposit_deductions || "",
         "حساب الكهرباء": t.elec_account || "", "حساب الماء": t.water_account || "",
         "قراءة كهرباء (تسليم)": t.meter_elec_in || "", "قراءة كهرباء (إخلاء)": t.meter_elec_out || "",
         "قراءة ماء (تسليم)": t.meter_water_in || "", "قراءة ماء (إخلاء)": t.meter_water_out || "",
@@ -286,11 +286,11 @@ export default function ExportData() {
         "أول استحقاق": t.first_due || "",
         "نوع الوحدة": UNIT_AR[t.unit_type] || "", "الغرف": t.rooms ?? "", "دورات المياه": t.baths ?? "", "المكيفات": t.acs ?? "",
         "الضريبة": t.vat_mode === "on" ? "تُطبَّق" : t.vat_mode === "off" ? "معفاة" : "تلقائي",
-        "دين مرحَّل": Number(t.carried_debt) || 0, "سبب الدين المرحَّل": t.carried_debt_note || "",
+        "متأخرات سابقة": Number(t.carried_debt) || 0, "سبب المتأخرات السابقة": t.carried_debt_note || "",
         /* متابعة الدين (v36): بلا حالته وتاريخه لا يستطيع المكتب استئناف المطالبة */
         "حالة الدين": DEBT_ST_AR[(t as any).debt_status] || "", "نشأ الدين": (t as any).debt_since || "", "آخر متابعة": (t as any).debt_note || "",
         "في التنفيذ": t.litigation ? "نعم" : "", "رقم طلب التنفيذ": t.enforcement_no || "",
-        "ملاحظات التأمين": t.deposit_notes || "", "تاريخ الإشعار": t.notice_date || "",
+        "ملاحظات الضمان": t.deposit_notes || "", "تاريخ الإشعار": t.notice_date || "",
         /* v74: إشعار نقل حساب الكهرباء — كم مرة أُرسل وآخر مرة */
         "إشعارات نقل الكهرباء": Number(t.elec_notice_count) || "", "آخر إشعار كهرباء": String(t.elec_notice_at || "").slice(0, 10),
         "لغة الرسائل": (t as any).msg_lang === "en" ? "English" : (t as any).msg_lang === "both" ? "عربي + English" : "عربي",
@@ -306,7 +306,7 @@ export default function ExportData() {
         /* الساكن باسمه الحيّ؛ ودفعات من سبقه بالاسم المحفوظ فيها (v45) */
         "الوحدة": (x.tenant_id && tById[x.tenant_id]?.unit) || x.unit_label || "",
         "المستأجر": (x.tenant_id && tById[x.tenant_id]?.name) || x.payer_name || "",
-        "تسدّد": ({ rent: "أقساط", carried: "دين مرحَّل", past_debt: "دين مستأجر سابق" } as any)[x.applies_to] || "أقساط",
+        "تسدّد": ({ rent: "أقساط", carried: "متأخرات سابقة", past_debt: "دين مستأجر سابق" } as any)[x.applies_to] || "أقساط",
         "المبلغ": x.amount, "الطريقة": METHOD_AR[x.method] || x.method || "", "الدفعات المغطاة": x.periods_covered || "",
         /* مرجع الحوالة يُطابق به المكتب كشف بنكه — وكان يسقط من التصدير */
         "مرجع الحوالة": x.reference || "", "ملاحظة": x.note || "",
@@ -320,7 +320,7 @@ export default function ExportData() {
       add("مطابقة التحصيل", tenants.filter((t) => Number(t.rent_amount) > 0 && (Number(t.paid_periods) || Number(t.partial_amount) || rec[t.id]?.received)).map((t) => {
         const r = rec[t.id];
         return {
-          "العقار": pName[t.property_id] || "", "الوحدة": t.unit || "", "المستأجر": t.name, "قيمة الدفعة": t.rent_amount,
+          "العقار": pName[t.property_id] || "", "الوحدة": t.unit || "", "المستأجر": t.name, "دفعة الإيجار": t.rent_amount,
           "المسدَّد (دفعات)": t.paid_periods || 0, "مبلغ جزئي": t.partial_amount || 0,
           "المسدَّد حسب العقد": r.counted, "المستلم بسندات في المنصة": r.received,
           "مسدَّد قبل التسجيل (رصيد افتتاحي)": r.opening || "", "مستلم يزيد — راجعه": r.excess || "",
@@ -382,7 +382,7 @@ export default function ExportData() {
       })), [22, 10, 14, 12, 10, 10, 10, 12, 12, 10, 8, 12, 18, 30, 18]);
 
       /* الأمانات (v87): التأمين وحصص العدادات المشتركة — ليست إيجارًا ولا مصروفًا؛ الأرصدة في ورقة تالية */
-      add("الأمانات", trust.map((x: any) => ({
+      add("الضمان والعدادات", trust.map((x: any) => ({
         "التاريخ": x.entry_on, "رقم السند": x.doc_no || "", "النوع": trustKindLabel(x.kind),
         "قبض/صرف": isTrustIn(x.kind) ? "قبض" : "صرف", "المبلغ": Number(x.amount) || 0,
         "العقار": pName[x.property_id] || "", "الوحدة": (x.tenant_id && tById[x.tenant_id]?.unit) || x.unit || "",
@@ -396,12 +396,12 @@ export default function ExportData() {
         trust.forEach((x: any) => { (byProp[x.property_id] ||= []).push(x); });
         const balRows: Record<string, any>[] = [];
         for (const [pid, rs] of Object.entries(byProp)) {
-          depositBalances(rs).forEach((d) => balRows.push({ "العقار": pName[pid] || "", "البند": "تأمين", "الوحدة / العداد": d.unit || "",
+          depositBalances(rs).forEach((d) => balRows.push({ "العقار": pName[pid] || "", "البند": "مبلغ ضمان", "الوحدة / العداد": d.unit || "",
             "الطرف": (d.tenant_id && tById[d.tenant_id]?.name) || d.party || "", "المستلم/المجموع": d.received, "المردود/المسدَّد": d.refunded, "الرصيد": d.held }));
           meterBalances(rs).forEach((m) => balRows.push({ "العقار": pName[pid] || "", "البند": "عداد مشترك", "الوحدة / العداد": m.meter || "بلا رقم",
             "الطرف": "", "المستلم/المجموع": m.collected, "المردود/المسدَّد": m.paid, "الرصيد": m.balance }));
         }
-        add("أرصدة الأمانات", balRows, [22, 12, 16, 22, 14, 14, 12]);
+        add("أرصدة الضمان والعدادات", balRows, [22, 12, 16, 22, 14, 14, 12]);
       }
 
       add("دفتر المكتب", officeLedger.map((x: any) => ({
@@ -560,7 +560,7 @@ export default function ExportData() {
         [`تاريخ التصدير: ${new Date().toLocaleDateString("ar-SA-u-ca-gregory-nu-latn", { timeZone: "Asia/Riyadh" })}`],
         [""],
         ["ورقة «قالب الرفع» بنفس أعمدة قالب الرفع في وثيق — لو رجعت يومًا، ارفعها من صفحة «رفع Excel» وتعود وحداتك القائمة بعقودها وعدد دفعاتها المسدّدة ودينها المرحَّل."],
-        ["ما لا يعود بالرفع (محفوظ هنا للرجوع إليه): سجل الدفعات بتواريخها، الوحدات المُخلاة، المبالغ الجزئية، الفواتير، المستأجرون السابقون، المصروفات، الأمانات، دفتر المكتب. أنشئ العقارات بأسمائها نفسها قبل الرفع."],
+        ["ما لا يعود بالرفع (محفوظ هنا للرجوع إليه): سجل الدفعات بتواريخها، الوحدات المُخلاة، المبالغ الجزئية، الفواتير، المستأجرون السابقون، المصروفات، الضمان والعدادات، دفتر المكتب. أنشئ العقارات بأسمائها نفسها قبل الرفع."],
         ["احفظ نسخة كل شهر في مكان آمن خارج جهازك (بريدك أو قوقل درايف): تصدير Excel للقراءة + «نسخة احتياطية كاملة (JSON)» فيها كل الحقول كما هي. لو احتجت استرجاعها يومًا أرسلها لنا على واتساب 0550165210 ونعيدها لحسابك."],
         ["بقية الأوراق للعمل خارج وثيق: كل جدول بأسماء أعمدة عربية واضحة، بلا أكواد داخلية."],
         ["عمود «سجّله» يبيّن من أدخل كل سطر من فريقك. «موظف سابق» = موظف أُزيل من الفريق. فارغ = إدخال أقدم من تسجيل اسم المُدخِل."],
@@ -627,7 +627,7 @@ export default function ExportData() {
     <div id="export" className="bg-white border border-line rounded-2xl p-5 scroll-mt-24">
       <h3 className="font-display font-bold text-deep text-lg mb-1">📦 تصدير بياناتي</h3>
       <p className="text-xs text-muted mb-4 leading-relaxed">
-        ملف Excel واحد فيه كل شيء: العقارات، الوحدات والعقود، الدفعات بسنداتها، المصروفات والمتكرر منها، الأمانات (التأمين وحصص العدادات المشتركة)، دفتر المكتب، الفواتير، المستأجرون السابقون، طلبات الصيانة بفنيّها وتكلفتها ودليل الفنيين، السجل، الرسائل الداخلية، تعديلات الدفعات، المعروضات وسجل «عُرض على»، طلبات الزبائن، الالتزامات، والجمعيات — وكل سطر باسم من أدخله من فريقك.
+        ملف Excel واحد فيه كل شيء: العقارات، الوحدات والعقود، الدفعات بسنداتها، المصروفات والمتكرر منها، الضمان والعدادات (مبلغ الضمان وحصص العدادات المشتركة)، دفتر المكتب، الفواتير، المستأجرون السابقون، طلبات الصيانة بفنيّها وتكلفتها ودليل الفنيين، السجل، الرسائل الداخلية، تعديلات الدفعات، المعروضات وسجل «عُرض على»، طلبات الزبائن، الالتزامات، والجمعيات — وكل سطر باسم من أدخله من فريقك.
         <b className="text-deep"> احفظ نسخة كل شهر</b> — إن تعطّل شيء يومًا تبقى بياناتك كاملة عندك.
         بياناتك ملكك — تأخذها كاملة متى شئت، وتعيد رفعها كما هي إن عدت.
       </p>
