@@ -253,7 +253,7 @@ export async function GET(req: Request) {
       `القائمة كاملة: /late`, "");
     if (expiring.length) parts.push(`📄 <b>عقود انتهت أو تنتهي قريبًا — جدّد أو سجّل الإخلاء (${expiring.length})</b>`, ...expiring.slice(0, 12), ...more(expiring.length), "");
     /* الثابت لا يُكرَّر بالأسماء كل صباح — سطر واحد، والتفاصيل من اللوحة */
-    if (legacyList.length) parts.push(`💼 ديون على مستأجرين سابقين: <b>${legacyList.length}</b> — «الديون المرحَّلة» في اللوحة`, "");
+    if (legacyList.length) parts.push(`💼 ديون على مستأجرين سابقين: <b>${legacyList.length}</b> — «المتأخرات السابقة» في اللوحة`, "");
     if (tasks.length) parts.push(`🔧 <b>مهام العقارات (${tasks.length})</b>`, ...tasks.slice(0, 10), ...more(tasks.length), "");
     if (litigationList.length) parts.push(`⚖️ في التنفيذ القضائي: <b>${litigationList.length}</b> — لا تُرسل لهم تذكيرات`, "");
     if (compliance.length) parts.push(`⚖️ <b>التزامات المكتب (${compliance.length})</b>`, ...compliance.slice(0, 12), "");
