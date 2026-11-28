@@ -48,7 +48,8 @@ export default function ResetPasswordPage() {
       const msg = String(e?.message || e);
       if (msg.includes("Password should")) setError("كلمة المرور قصيرة — استخدم 6 أحرف على الأقل.");
       else if (/different from the old|same password/i.test(msg)) setError("الكلمة الجديدة مطابقة للقديمة — اختر غيرها.");
-      else setError(msg);
+      else if (/session|not authenticated|Auth session missing|expired/i.test(msg)) setError("انتهت جلسة رابط الاستعادة — ارجع لصفحة الدخول واطلب رابطًا جديدًا من «نسيت كلمة المرور».");
+      else setError(/[\u0600-\u06FF]/.test(msg) ? msg : "تعذّر حفظ كلمة المرور. أعد المحاولة، وإن تكرر راسلنا على واتساب 0550165210.");
       setLoading(false);
     }
   }
