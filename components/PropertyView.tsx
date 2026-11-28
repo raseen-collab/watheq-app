@@ -417,8 +417,16 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
   /* (22 نوفمبر 2026) «أرقام العقار والعدادات» مطويّة افتراضيًّا — ويُتذكّر اختيار المستخدم */
   /* (27 نوفمبر 2026 — مكتب التميز: «خانة دخل العقار اختفت») أرقام العقار مفتوحة افتراضيًّا؛
      من يطويها يبقى اختياره محفوظًا في متصفحه. كانت مطويّة افتراضيًّا منذ 22 نوفمبر فظنّها المكتب حُذفت. */
+  /* (28 نوفمبر) على الجوال تبقى مطويّة افتراضيًّا: فتحها يدفع جدول الوحدات ~600px للأسفل.
+     والرقمان الأهم (المحصَّل والدخل السنوي) يظهران في سطر العنوان نفسه وهي مطويّة،
+     فلا تبدو الخانة «مختفية». الكمبيوتر: مفتوحة. اختيار المستخدم بيده يُحفظ ويغلب. */
   const [detailsOpen, setDetailsOpen] = useState(true);
-  useEffect(() => { try { if (localStorage.getItem("wq_prop_details") === "0") setDetailsOpen(false); } catch { /* */ } }, []);
+  const detailsByUser = useRef(false);
+  useEffect(() => { try {
+    const pref = localStorage.getItem("wq_prop_details");
+    if (pref === "0") setDetailsOpen(false);
+    else if (pref !== "1" && window.matchMedia("(max-width: 639px)").matches) setDetailsOpen(false);
+  } catch { /* */ } }, []);
   useEffect(() => { setTPage(0); }, [filter, q, tSort, activeId]);
   useEffect(() => { setCardsShown(60); }, [filter, q, activeId]);
   const [sort, setSort] = useState<"urgent" | "due" | "amount" | "name">("urgent");
@@ -2478,10 +2486,17 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
           تُطوى تحت سطر واحد؛ ما يحتاج إجراءً صار في بطاقة «اليوم» فوقها. الاختيار يُحفظ للمتصفح. */}
       {(tenants.length > 0 || (active && (active.meters || []).length > 0)) && (
       <details className="mb-5 bg-white border border-line rounded-2xl shadow-sm group" open={detailsOpen}
-        onToggle={(e) => { const o = (e.currentTarget as HTMLDetailsElement).open; setDetailsOpen(o); try { localStorage.setItem("wq_prop_details", o ? "1" : "0"); } catch { /* */ } }}>
-        <summary className="cursor-pointer select-none list-none px-4 py-3 flex items-center justify-between gap-2 text-sm font-semibold text-deep min-h-[44px]">
+        onToggle={(e) => { const o = (e.currentTarget as HTMLDetailsElement).open; setDetailsOpen(o);
+          /* يُحفظ ما فتحه أو طواه المستخدم بيده فقط — لا التغيير الافتراضي عند التحميل */
+          if (detailsByUser.current) { detailsByUser.current = false; try { localStorage.setItem("wq_prop_details", o ? "1" : "0"); } catch { /* */ } } }}>
+        <summary onClick={() => { detailsByUser.current = true; }} className="cursor-pointer select-none list-none px-4 py-3 flex items-center justify-between gap-2 text-sm font-semibold text-deep min-h-[44px]">
           <span>📊 أرقام العقار{active && (active.meters || []).length > 0 ? " والعدادات" : ""}
-            <span className="text-xs font-normal text-muted"> — المحصَّل هذا الشهر · الدخل السنوي · المصروفات{active && (active.meters || []).length > 0 ? " · أرقام العدادات" : ""}</span></span>
+            {detailsOpen || tenants.length === 0
+              ? <span className="text-xs font-normal text-muted"> — المحصَّل هذا الشهر · الدخل السنوي · المصروفات{active && (active.meters || []).length > 0 ? " · أرقام العدادات" : ""}</span>
+              : <span className="block text-xs font-normal text-muted mt-0.5">
+                  المحصَّل هذا الشهر <b className="text-[#137a50] tabular-nums">{collectedThisMonth === null ? "…" : sar(Math.round(collectedThisMonth))}</b>
+                  {" · "}الدخل السنوي <b className="text-deep tabular-nums">{sar(Math.round(annualRentRoll(tenants as any[]).annual))}</b> ريال
+                </span>}</span>
           <span className="text-muted text-xs group-open:rotate-180 transition-transform">▾</span>
         </summary>
         <div className="px-4 pb-4">
@@ -2758,7 +2773,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                       <thead className="bg-paper sticky top-0 z-10 shadow-[0_1px_0_var(--tw-shadow-color)] shadow-line">
                         <tr>
                           <Th k="unit" label={ul} cls="w-14" />
-                          <Th k="name" label="المستأجر" cls="w-[30%]" />
+                          <Th k="name" label="المستأجر" cls="w-[30%] min-w-[200px]" />
                           <th className="px-3 py-2.5 text-right font-semibold text-xs text-muted whitespace-nowrap w-[15%]">الإيجار</th>
                           <Th k="due" label="الاستحقاق القادم" cls="w-[16%]" />
                           <Th k="urgent" label="الحالة" cls="w-[11%]" />
@@ -2782,7 +2797,8 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                               {key !== "vacant" && <MeterLine t={t} onSend={meterNoticeDue(t) ? () => { void sendMeterNotice(t); } : undefined} />}
                             </td>
                             <td className={`px-3 ${cellY} whitespace-nowrap tabular-nums ${key === "vacant" ? "text-muted italic" : "text-muted"}`}>{t.covered_by && key !== "vacant" ? <span title="المبلغ والدفعات مسجّلة على الوحدة الرئيسية">ضمن عقد {coverLead(t)?.unit || "—"}</span> : key === "vacant" && !(Number(t.rent_amount) > 0) ? <span title="أدخله من «تعديل البيانات» ليظهر في عرض السعر وحساب الشغور">— <div className="text-[10px]">الإيجار المطلوب لم يُحدَّد</div></span> : <>{sar(t.rent_amount)} / {freqShort(t.payment_frequency)}{key === "vacant" && <div className="text-[10px]">الإيجار المطلوب</div>}</>}</td>
-                            <td className={`px-3 ${cellY} whitespace-nowrap tabular-nums`}>
+                            {/* كان nowrap فيأخذ العمود 375px ويُعصر اسم المستأجر في 104px — الصف 200px على الكمبيوتر */}
+                            <td className={`px-3 ${cellY} tabular-nums min-w-[170px]`}>
                               {key === "vacant" ? <span className="text-muted">—</span>
                               : st.fullyPaid && st.endDate ? (<>
                                 {/* الأخضر و«ينتهي» لعقد انتهى فعلًا يقرأه المكتب
