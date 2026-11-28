@@ -31,6 +31,27 @@ function safeNext(raw: string | null): string {
   }
 }
 
+/* لا تصل رسالة إنجليزية خام للمستخدم — لا من النموذج ولا من رابط البريد العائد عبر
+   /auth/callback (26 نوفمبر 2026: «Email link is invalid or has expired» ظهرت لمستخدم
+   فتح رابط التفعيل/الاستعادة من تطبيق Gmail). النص الأصلي يبقى في سجل المتصفح. */
+function authErrorAr(raw: string): string {
+  const msg = String(raw || "");
+  if (/access_denied/i.test(msg)) return "أُلغي الدخول بقوقل.";
+  if (/link is invalid|has expired|otp_expired|expired/i.test(msg))
+    return "رابط البريد انتهت صلاحيته أو استُخدم من قبل. اطلب رابطًا جديدًا (من «نسيت كلمة المرور» أو بإعادة التسجيل) وافتح أحدث رسالة فقط خلال ساعة — أو ادخل مباشرة بكلمة المرور أو بحساب قوقل.";
+  if (/code verifier|flow state|code challenge|both auth code/i.test(msg))
+    return "فُتح الرابط في متصفح غير الذي طلبته منه. افتحه في نفس المتصفح (مثل Safari أو Chrome) أو اطلب رابطًا جديدًا من هنا.";
+  if (/Invalid login/i.test(msg)) return "بريد أو كلمة مرور غير صحيحة.";
+  if (/already registered/i.test(msg)) return "هذا البريد مسجّل مسبقًا — سجّل الدخول، أو اضغط «نسيت كلمة المرور».";
+  if (/Password should/i.test(msg)) return "كلمة المرور قصيرة — استخدم 6 أحرف على الأقل.";
+  if (/Email not confirmed/i.test(msg)) return "لم يُفعّل بريدك بعد — افتح رسالة التفعيل في بريدك (وتحقق من مجلد الرسائل غير المرغوبة).";
+  if (/rate limit|after \d+ seconds|too many/i.test(msg)) return "محاولات كثيرة متتابعة — انتظر دقيقة ثم أعد المحاولة.";
+  if (/network|fetch failed|Failed to fetch/i.test(msg)) return "تعذّر الاتصال — تحقّق من الإنترنت وأعد المحاولة.";
+  if (/User not found/i.test(msg)) return "لا يوجد حساب بهذا البريد — أنشئ حسابًا جديدًا.";
+  if (/[\u0600-\u06FF]/.test(msg)) return msg;   // رسالة عربية من عندنا (مثل «رمز الدخول مفقود»)
+  return "تعذّر إتمام العملية. أعد المحاولة، وإن تكرر راسلنا على واتساب 0550165210 ونساعدك فورًا.";
+}
+
 export default function LoginPage() {
   return (
     <Suspense fallback={<div className="min-h-screen grid place-items-center text-muted">جارٍ التحميل…</div>}>
@@ -77,7 +98,7 @@ function LoginInner() {
     if (searchParams.get("mode") === "signup") setMode("signup");
     // خطأ عائد من /auth/callback (فشل قوقل أو رفض المستخدم)
     const err = searchParams.get("err");
-    if (err) setError(err.includes("access_denied") ? "أُلغي الدخول بقوقل." : err);
+    if (err) setError(authErrorAr(err));
   }, [searchParams]);
 
   /* محطة القمع: ظهور نموذج إنشاء الحساب — مرة واحدة للجلسة (track يمنع التكرار) */
@@ -206,14 +227,7 @@ function LoginInner() {
          يُفقد الثقة. نترجم الحالات الشائعة، وما عداها رسالة عربية مع
          وسيلة تواصل — والنص الأصلي في سجل المتصفح للتشخيص. */
       console.error("Watheq auth error:", msg);
-      if (/Invalid login/i.test(msg)) setError("بريد أو كلمة مرور غير صحيحة.");
-      else if (/already registered/i.test(msg)) setError("هذا البريد مسجّل مسبقًا — سجّل الدخول، أو اضغط «نسيت كلمة المرور».");
-      else if (/Password should/i.test(msg)) setError("كلمة المرور قصيرة — استخدم 6 أحرف على الأقل.");
-      else if (/Email not confirmed/i.test(msg)) setError("لم يُفعّل بريدك بعد — افتح رسالة التفعيل في بريدك (وتحقق من مجلد الرسائل غير المرغوبة).");
-      else if (/rate limit|after \d+ seconds|too many/i.test(msg)) setError("محاولات كثيرة متتابعة — انتظر دقيقة ثم أعد المحاولة.");
-      else if (/network|fetch failed|Failed to fetch/i.test(msg)) setError("تعذّر الاتصال — تحقّق من الإنترنت وأعد المحاولة.");
-      else if (/User not found/i.test(msg)) setError("لا يوجد حساب بهذا البريد — أنشئ حسابًا جديدًا.");
-      else setError("تعذّر إتمام العملية. أعد المحاولة، وإن تكرر راسلنا على واتساب 0550165210 ونساعدك فورًا.");
+      setError(authErrorAr(msg));
     } finally {
       setLoading(false);   // leaving يبقي الزر معطّلًا حتى تُغادر الصفحة
     }
