@@ -2322,8 +2322,10 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
         </div>
       )}
 
-      <div className="flex flex-wrap items-center gap-2 mb-5">
-        <div className="flex-1 min-w-0 basis-full sm:basis-auto">
+      {/* (28 نوفمبر — التقييم الرابع) الجوال: سطر واحد — قائمة العقار تحمل الاسم وعدد الوحدات،
+          فالعنوان المكرَّر فوقها يُخفى، و«تعديل» و«نظرة عامة» أيقونتان بوسم واضح. */}
+      <div className="flex flex-wrap items-center gap-2 mb-5 max-sm:mb-3 max-sm:flex-nowrap">
+        <div className="flex-1 min-w-0 basis-full sm:basis-auto max-sm:hidden">
           {/* كان ينهار إلى كلمة في كل سطر بجوار قائمة اختيار العقار على
               الجوال — لأن الحاوية تتقاسم السطر معها بلا حدّ أدنى للعرض. */}
           <h1 className="font-display font-bold text-deep text-lg sm:text-xl flex items-center gap-2 truncate">
@@ -2341,7 +2343,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
         )}
         {/* كان max-w-[220px] يقصّ عدد الوحدات من آخر الخيار على 390px — يأخذ الآن ما بقي من السطر (30 سبتمبر 2026) */}
         <select value={p.id} onChange={(e) => { if (e.target.value === "__new") { openNewProperty(); return; } setActiveId(e.target.value); }} aria-label="اختيار العقار"
-          className="fld flex-1 min-w-[170px] max-w-full sm:flex-none sm:max-w-[300px] font-semibold text-deep">
+          className="fld flex-1 min-w-[170px] max-sm:min-w-0 max-w-full sm:flex-none sm:max-w-[300px] font-semibold text-deep">
           {(() => {
             const q = normalizeSearch(propQ);
             const list = [...items].sort((a, b) => a.name.localeCompare(b.name, "ar"))
@@ -2357,11 +2359,11 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
             ومستندات المالك موزّعة بينهما بلا منطق. */}
         <button type="button" className="btn btn-ghost text-sm px-3 max-sm:!hidden" onClick={refreshNow} disabled={refreshing}
           title="تحديث البيانات من السيرفر (بعد تسجيل دفعة من البوت مثلًا)">{refreshing ? "…" : "↻"}</button>
-        {isManager && <button type="button" className="btn btn-ghost text-sm px-3" onClick={() => setModal({ kind: "editProp" })} title="تعديل بيانات هذا العقار" aria-label="تعديل بيانات العقار">✎ تعديل</button>}
+        {isManager && <button type="button" className="btn btn-ghost text-sm px-3 max-sm:shrink-0 max-sm:min-w-[44px] max-sm:justify-center" onClick={() => setModal({ kind: "editProp" })} title="تعديل بيانات هذا العقار" aria-label="تعديل بيانات العقار">✎<span className="max-sm:hidden"> تعديل</span></button>}
         {/* التجربة العامة بلا جلسة: الروابط إلى صفحات اللوحة تنتهي في /login —
             نفتح دعوة التسجيل بدلها كبقية الأفعال المحجوبة في التجربة (30 سبتمبر 2026) */}
-        {items.length > 1 && <Link href="/dashboard/property/overview" className="btn btn-ghost text-sm" title="كل العقارات في صفحة واحدة"
-          onClick={(e) => { if (demo) { e.preventDefault(); window.dispatchEvent(new CustomEvent("watheq:demo-overview")); } }}>🗂️ نظرة عامة</Link>}
+        {items.length > 1 && <Link href="/dashboard/property/overview" className="btn btn-ghost text-sm max-sm:shrink-0 max-sm:min-w-[44px] max-sm:justify-center" title="كل العقارات في صفحة واحدة" aria-label="نظرة عامة على كل العقارات"
+          onClick={(e) => { if (demo) { e.preventDefault(); window.dispatchEvent(new CustomEvent("watheq:demo-overview")); } }}>🗂️<span className="max-sm:hidden"> نظرة عامة</span></Link>}
         {isManager && may("all_properties") && <button className="btn btn-ghost text-sm max-sm:!hidden" onClick={openNewProperty}>+ عقار</button>}
       </div>
 
@@ -2390,7 +2392,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
         );
         const act = "btn btn-ghost text-xs bg-white min-h-[36px]";
         return (
-          <section className="bg-white border border-line rounded-2xl shadow-sm p-4 max-sm:p-3 mb-4" aria-labelledby="today-h">
+          <section className="bg-white border border-line rounded-2xl shadow-sm p-4 max-sm:p-3 mb-4 max-sm:mb-3" aria-labelledby="today-h">
             {/* (25 نوفمبر — التقييم الثالث) على الجوال: سطر ملخّص ينفتح بلمسة — كان «اليوم» وحده
                 يدفع أول مستأجر ~300px. على الكمبيوتر مفتوح دائمًا كما كان. */}
             <h2 id="today-h" className="font-display font-bold text-deep text-base sm:mb-3">
@@ -2485,7 +2487,7 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
       {/* (22 نوفمبر 2026 — طلب مكاتب: الصفحة طويلة ومكررة) أرقام العقار والعدادات
           تُطوى تحت سطر واحد؛ ما يحتاج إجراءً صار في بطاقة «اليوم» فوقها. الاختيار يُحفظ للمتصفح. */}
       {(tenants.length > 0 || (active && (active.meters || []).length > 0)) && (
-      <details className="mb-5 bg-white border border-line rounded-2xl shadow-sm group" open={detailsOpen}
+      <details className="mb-5 max-sm:mb-3 bg-white border border-line rounded-2xl shadow-sm group" open={detailsOpen}
         onToggle={(e) => { const o = (e.currentTarget as HTMLDetailsElement).open; setDetailsOpen(o);
           /* يُحفظ ما فتحه أو طواه المستخدم بيده فقط — لا التغيير الافتراضي عند التحميل */
           if (detailsByUser.current) { detailsByUser.current = false; try { localStorage.setItem("wq_prop_details", o ? "1" : "0"); } catch { /* */ } } }}>
@@ -2527,6 +2529,15 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
           </div>
         );
       })()}
+      {/* (28 نوفمبر — التقييم الرابع) المستندات الأكثر طلبًا بجانب أرقامها — كان تقرير المالك
+          مدفونًا في قائمة «أدوات» على الجوال. القوائم باقية لبقية المستندات. */}
+      {tenants.length > 0 && (
+        <div className="flex flex-wrap gap-2 mb-3">
+          {may("view_financials") && <button type="button" className="btn btn-ghost text-xs bg-white min-h-[44px]" onClick={() => setReporting(true)}>📄 تقرير المالك</button>}
+          <button type="button" className="btn btn-ghost text-xs bg-white min-h-[44px]" onClick={() => setStmtOpen(true)}>🧾 كشف حساب العقار</button>
+          {may("view_financials") && <button type="button" className="btn btn-ghost text-xs bg-white min-h-[44px]" onClick={() => setCollOpen(true)}>💰 كشف التحصيل</button>}
+        </div>
+      )}
 
       {/* الوحدات تأخذ العرض كاملًا: مكتب بمئات الوحدات يحتاج كل بكسل للجدول،
           وسجل العقار (ملاحظات نصية) ينتقل أسفلها — يُقرأ حين يُطلب لا دائمًا. */}
@@ -2562,10 +2573,11 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
 
       <div className="grid grid-cols-1 gap-5 items-start">
         <div id="units-list" className="bg-white border border-line rounded-2xl shadow-sm scroll-mt-4">
-          <div className="flex items-center justify-between border-b border-line px-5 py-4 max-sm:px-3 max-sm:py-3 gap-2 flex-wrap">
+          <div className="flex items-center justify-between border-b border-line px-5 py-4 max-sm:px-3 max-sm:py-2 gap-2 flex-wrap max-sm:flex-nowrap max-sm:gap-1.5">
             {/* كان مخفيًّا تحت 1024px: من حفظ «جدول» مرة يبقى حبيسه بلا مخرج،
                 والجدول على 400px يحتاج تمريرًا أفقيًّا بثلاثة أضعاف العرض. */}
-            <div className="inline-flex items-center gap-0.5 border border-line rounded-lg p-0.5 me-2 align-middle text-[11px]">
+            {/* الجوال: بطاقات دائمًا (الجدول على 390px يُخفي الحالة والمبلغ والأزرار) — المفتاح يُخفى هناك */}
+            <div className="inline-flex items-center gap-0.5 border border-line rounded-lg p-0.5 me-2 align-middle text-[11px] max-sm:!hidden">
               <button type="button" onClick={() => pickView("table")} className={`px-3 py-2 min-h-[44px] sm:min-h-0 sm:py-1 rounded-md ${view === "table" ? "bg-deep text-goldSoft" : "text-muted hover:text-deep"}`} title="جدول: صف لكل وحدة">☰ جدول</button>
               <button type="button" onClick={() => pickView("cards")} className={`px-3 py-2 min-h-[44px] sm:min-h-0 sm:py-1 rounded-md ${view === "cards" ? "bg-deep text-goldSoft" : "text-muted hover:text-deep"}`} title="بطاقات">▦ بطاقات</button>
             </div>
@@ -2575,14 +2587,14 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
                 <button type="button" onClick={() => setDensity(true)} className={`px-2.5 py-1 rounded-md ${dense ? "bg-deep text-goldSoft" : "text-muted hover:text-deep"}`} title="صفوف مضغوطة — وحدات أكثر في الشاشة">مضغوط</button>
               </div>
             )}
-            <h2 className="font-semibold">الوحدات والمستأجرون
+            <h2 className="font-semibold max-sm:text-sm max-sm:flex max-sm:items-center max-sm:shrink-0"><span className="max-sm:hidden">الوحدات والمستأجرون</span><span className="sm:hidden">الوحدات</span>
               {active && <StatusLegend soonDays={windowsOf(active).soonDays} imminentDays={windowsOf(active).imminentDays} expiringDays={windowsOf(active).expiringDays} graceDays={active.grace_days}
                 scope={active.soon_days || active.imminent_days ? `هذا العقار (${active.name})` : "المكتب"} />}
-              {role && <span className="ms-2 text-[11px] font-normal bg-paper2 border border-line rounded-full px-2 py-0.5 text-muted">
+              {role && <span className="ms-2 text-[11px] font-normal bg-paper2 border border-line rounded-full px-2 py-0.5 text-muted max-sm:hidden">
                 دورك: {ROLE_LABEL[role] || role}
               </span>}
             </h2>
-            <div className="flex gap-2 flex-wrap max-sm:w-full max-sm:flex-nowrap max-sm:[&>*]:flex-1 max-sm:[&>*]:min-w-0">
+            <div className="flex gap-2 flex-wrap max-sm:flex-nowrap max-sm:ms-auto max-sm:gap-1.5">
               {/* ثلاث قوائم بدل تسعة أزرار: ما يُطبع · ما يخصّ المالك · ما يخصّ البيانات.
                   الأدوات نفسها — لكن العين تجد مكانها بدل أن تمسح صفًّا طويلًا. */}
               {/* (24 نوفمبر 2026) الجوال: قائمة واحدة «أدوات العقار» بدل ثلاث تأخذ سطرين */}
@@ -2641,10 +2653,10 @@ export default function PropertyView({ initial, orgName, issuer, compliance, due
 
               </div>
               {lateCount > 0 && may("send_reminders") && (
-                <button className="btn btn-wa text-xs justify-center" onClick={() => setRemindAll(true)}
-                  title="إرسال تذكير واتساب لكل المتأخرين واحدًا تلو الآخر">💬 <span className="max-sm:hidden">تذكير جماعي</span><span className="sm:hidden">ذكّر</span> ({lateCount})</button>
+                <button className="btn btn-wa text-xs justify-center max-sm:!px-2.5 max-sm:shrink-0" onClick={() => setRemindAll(true)} aria-label={`تذكير جماعي لـ${lateCount} متأخرين`}
+                  title="إرسال تذكير واتساب لكل المتأخرين واحدًا تلو الآخر">💬 <span className="max-sm:hidden">تذكير جماعي</span><span className="sm:hidden">ذكّر</span> {lateCount}</button>
               )}
-              {may("edit_tenants") && <button className="btn btn-gold text-xs justify-center max-sm:!flex-none" onClick={() => setModal({ kind: "tenant" })} aria-label={`إضافة ${ul}`}>+ {ul}</button>}
+              {may("edit_tenants") && <button className="btn btn-gold text-xs justify-center max-sm:!flex-none max-sm:min-w-[44px] max-sm:!px-2" onClick={() => setModal({ kind: "tenant" })} aria-label={`إضافة ${ul}`} title={`إضافة ${ul}`}>+<span className="max-sm:hidden"> {ul}</span></button>}
             </div>
           </div>
 
