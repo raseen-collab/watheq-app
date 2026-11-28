@@ -1,7 +1,8 @@
 "use client";
 import { wqConfirm } from "@/lib/confirm";
 import { friendlyError } from "@/lib/friendlyError";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { subState } from "@/lib/subscription";
 import { cleanVatNo, isValidVatNo, PAYMENT_MEANS } from "@/lib/einvoice";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase-client";
@@ -28,6 +29,26 @@ export default function SettingsView({ profile }: { profile: any }) {
   const [msg, setMsg] = useState<{ t: "ok" | "err"; m: string } | null>(null);
   const [testing, setTesting] = useState(false);
   const [copied, setCopied] = useState(false);
+  /* (28 نوفمبر) الإعدادات صارت تبويبات بدل صفحة بطول تسع شاشات — طلب عبيد «غير منظّمة جدًّا».
+     التبويب في رابط الصفحة (#account …) فيُفتح مباشرة ويبقى عند التحديث. */
+  type Tab = "account" | "office" | "contracts" | "alerts" | "billing" | "team" | "subscription" | "data";
+  const TABS: { k: Tab; l: string }[] = [
+    { k: "account", l: "👤 حسابي" }, { k: "office", l: "🏷️ المكتب" }, { k: "contracts", l: "📄 العقود والتحصيل" },
+    { k: "alerts", l: "🔔 التنبيهات" }, { k: "billing", l: "🧾 الفوترة والضريبة" }, { k: "team", l: "👥 الفريق" },
+    { k: "subscription", l: "💳 الاشتراك" }, { k: "data", l: "🗃️ بياناتي" },
+  ];
+  const [tab, setTabRaw] = useState<Tab>("account");
+  useEffect(() => {
+    const h = window.location.hash.slice(1) as Tab;
+    if (TABS.some((t) => t.k === h)) setTabRaw(h);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const setTab = (t: Tab) => { setTabRaw(t); setMsg(null); try { history.replaceState(null, "", `#${t}`); } catch { /* */ } };
+  const editable = tab === "office" || tab === "contracts" || tab === "alerts" || tab === "billing";
+  const [email, setEmail] = useState<string>("");
+  useEffect(() => { supabase.auth.getUser().then(({ data }) => setEmail(data.user?.email || "")).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   function copyCode() {
     navigator.clipboard?.writeText(`/link ${p.telegram_link_code || ""}`);
@@ -153,23 +174,51 @@ export default function SettingsView({ profile }: { profile: any }) {
     setTesting(false);
   }
 
+  const sub = subState(profile);
+  const planName = profile?.plan === "marketer" ? "باقة المسوّق" : profile?.plan === "basic" ? "باقة المالك" : profile?.plan ? "باقة المكتب" : "";
+  const fmtD = (v?: string | null) => { if (!v) return "—"; try { return new Intl.DateTimeFormat("ar-SA-u-nu-latn-ca-gregory", { day: "numeric", month: "long", year: "numeric", timeZone: "Asia/Riyadh" }).format(new Date(v)); } catch { return String(v).slice(0, 10); } };
+  const left = sub.trial ? sub.trialDaysLeft : sub.subDaysLeft;
+
   return (
     <div className="max-w-2xl mx-auto">
-      <div className="flex items-center justify-between mb-6 flex-wrap gap-2">
-        <div>
-          <h1 className="font-display font-bold text-deep text-2xl">الإعدادات</h1>
-          <p className="text-muted text-sm">بيانات الفوترة وقناة التنبيهات.</p>
-        </div>
+      <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+        <h1 className="font-display font-bold text-deep text-2xl">الإعدادات</h1>
         <Link href="/dashboard" className="btn btn-ghost text-sm">← العودة للّوحة</Link>
       </div>
 
+      {/* شريط التبويبات — يتمرّر أفقيًّا على الجوال */}
+      <nav aria-label="أقسام الإعدادات" className="-mx-4 px-4 mb-5 overflow-x-auto">
+        <div role="tablist" className="flex gap-1.5 min-w-max sm:min-w-0 sm:flex-wrap">
+          {TABS.map((t) => (
+            <button key={t.k} type="button" role="tab" aria-selected={tab === t.k} onClick={() => setTab(t.k)}
+              className={`min-h-[44px] px-3.5 rounded-xl text-sm font-semibold border whitespace-nowrap ${tab === t.k ? "bg-deep text-goldSoft border-deep" : "bg-white text-muted border-line hover:text-deep"}`}>
+              {t.l}
+            </button>
+          ))}
+        </div>
+      </nav>
+
       {msg && (
-        <div className={`rounded-xl p-3 mb-5 text-sm ${msg.t === "ok"
+        <div role="status" className={`rounded-xl p-3 mb-5 text-sm ${msg.t === "ok"
           ? "bg-[#E6F4EC] border border-[#B7DFC7] text-[#137a50]"
           : "bg-[#FBE9E7] border border-[#F5C6C2] text-late"}`}>{msg.m}</div>
       )}
 
-      {/* نوع الحساب */}
+      {tab === "account" && (<>
+        <section className="bg-white border border-line rounded-2xl p-6 mb-5">
+          <h2 className="font-semibold text-deep text-lg mb-3">👤 حسابي</h2>
+          <div className="grid sm:grid-cols-2 gap-3 text-sm">
+            <div className="bg-paper border border-line rounded-xl p-3"><div className="text-xs text-muted mb-1">الاسم</div><div className="font-semibold text-deep">{profile?.full_name || "—"}</div></div>
+            <div className="bg-paper border border-line rounded-xl p-3"><div className="text-xs text-muted mb-1">البريد (للدخول)</div><div className="font-semibold text-deep break-all" dir="ltr">{email || "—"}</div></div>
+            <div className="bg-paper border border-line rounded-xl p-3"><div className="text-xs text-muted mb-1">المكتب</div><div className="font-semibold text-deep">{p.billing_name || p.org_name || "—"}</div></div>
+            <div className="bg-paper border border-line rounded-xl p-3"><div className="text-xs text-muted mb-1">جوال التواصل</div><div className="font-semibold text-deep" dir="ltr">{p.billing_phone || "—"}</div></div>
+          </div>
+          <p className="text-[11px] text-muted mt-3">اسم المكتب والجوال يُعدَّلان من «🧾 الفوترة والضريبة». ولتغيير البريد راسلنا على واتساب.</p>
+        </section>
+        <PasswordSection onMsg={setMsg} />
+      </>)}
+
+      {tab === "office" && (<>
       <section className="bg-white border border-line rounded-2xl p-6 mb-5">
         <h2 className="font-semibold text-deep text-lg mb-1">👤 نوع الحساب</h2>
         <p className="text-sm text-muted mb-4">يحدّد اللوحة التي تُفتح لك عند الدخول. اختر «الاثنان معًا» لتحصل على لوحتين وتبدّل بينهما، أو «المسوّق العقاري» لصفحة المعروضات والطلبات وحدها.</p>
@@ -196,171 +245,6 @@ export default function SettingsView({ profile }: { profile: any }) {
           </p>
         )}
       </section>
-
-      {/* تنبيهات تليجرام */}
-      <section className="bg-white border border-line rounded-2xl p-5 mb-4">
-        <h2 className="font-semibold text-deep text-lg mb-1">🗓️ تقويم العقود</h2>
-        <p className="text-xs text-muted mb-3 leading-relaxed">
-          التقويم الذي تُحسب به أقساط عقودك. المكتب الذي عقوده هجرية يضبطه مرة هنا فترثه
-          كل الوحدات الجديدة — والفرق ليس شكليًّا: السنة الهجرية 354 يومًا والميلادية 365،
-          فالخطأ يزحف بالاستحقاق 11 يومًا كل سنة.
-        </p>
-        <div className="inline-flex border border-line rounded-lg p-0.5 text-sm">
-          {(["hijri", "gregorian"] as const).map((c) => (
-            <button key={c} type="button" onClick={() => setP({ ...p, default_calendar: c })}
-              className={`px-4 py-1.5 rounded-md ${(p.default_calendar || "gregorian") === c ? "bg-deep text-goldSoft" : "text-muted hover:text-deep"}`}>
-              {c === "hijri" ? "هجري" : "ميلادي"}
-            </button>
-          ))}
-        </div>
-        <p className="text-[11px] text-muted mt-2">
-          يمكن تغييره لأي وحدة على حدة من بطاقتها — هذا الافتراضي فقط.
-        </p>
-      </section>
-
-      <section className="bg-white border border-line rounded-2xl p-6 mb-5">
-        <div className="flex items-start justify-between gap-3 flex-wrap mb-1">
-          <h2 className="font-semibold text-deep text-lg">📨 بوت تليجرام</h2>
-          {p.telegram_chat_id ? (
-            <span className="text-xs font-bold bg-[#E6F4EC] text-[#137a50] border border-[#B7DFC7] rounded-full px-3 py-1">✓ مربوط</span>
-          ) : (
-            <span className="text-xs font-bold bg-[#FBF1DF] text-[#8a5a11] border border-[#EBD9AA] rounded-full px-3 py-1">غير مربوط</span>
-          )}
-        </div>
-        <p className="text-sm text-muted mb-4">
-          ملخّص إداري يومي على تليجرام: المستحقات القريبة، المتأخرات، والعقود المنتهية.
-          <b> التنبيهات لك وحدك</b> — رسائل المستأجرين تبقى عبر واتساب منك مباشرة.
-        </p>
-
-        {!p.telegram_chat_id ? (
-          <div className="bg-paper border border-line rounded-xl p-5 mb-4">
-            <div className="font-semibold text-deep mb-3">اربط حسابك في خطوتين</div>
-
-            <div className="flex gap-3 mb-4">
-              <span className="w-7 h-7 rounded-lg bg-gold text-white grid place-items-center font-bold text-sm shrink-0">1</span>
-              <div className="flex-1">
-                <div className="text-sm font-semibold mb-2">افتح البوت واضغط Start</div>
-                <a href={`https://t.me/${BOT_USERNAME}`} target="_blank" rel="noreferrer"
-                   className="btn text-sm" style={{ background: "#176E9E", color: "#fff" }}>
-                  فتح @{BOT_USERNAME}
-                </a>
-              </div>
-            </div>
-
-            <div className="flex gap-3">
-              <span className="w-7 h-7 rounded-lg bg-gold text-white grid place-items-center font-bold text-sm shrink-0">2</span>
-              <div className="flex-1">
-                <div className="text-sm font-semibold mb-2">أرسل له هذا الأمر</div>
-                <div className="flex gap-2 items-center flex-wrap">
-                  <code className="bg-deep text-goldSoft px-4 py-2.5 rounded-lg font-mono text-base tracking-wider select-all">
-                    /link {p.telegram_link_code || "……"}
-                  </code>
-                  <button onClick={copyCode} className="btn btn-ghost text-sm">{copied ? "✓ نُسخ" : "نسخ"}</button>
-                  <button onClick={regen} className="text-xs text-muted underline hover:text-deep">رمز جديد</button>
-                </div>
-                <p className="text-xs text-muted mt-2 leading-relaxed">
-                  سيردّ عليك البوت بتأكيد الربط فورًا، ثم حدّث هذه الصفحة.
-                  {/* البوت يقبل الرمز بأي صيغة — نقولها لأن من يفشل مرة يظن أن الرمز خاطئ */}
-                  <br />وإن لم يردّ: أرسل <b className="text-deep">الرمز وحده</b> بلا كلمة /link — كلاهما يعمل.
-                  وتأكد أنك في محادثة <b className="text-deep">@Watheqapp_bot</b> لا في مجموعة.
-                </p>
-              </div>
-            </div>
-          </div>
-        ) : (
-          <div className="bg-[#E6F4EC] border border-[#B7DFC7] rounded-xl p-4 mb-4 flex items-center justify-between gap-3 flex-wrap">
-            <div className="text-sm text-[#137a50]">
-              <b>حسابك مربوط بتليجرام</b>
-              {p.telegram_username ? ` — @${p.telegram_username}` : ""}
-              <div className="text-xs mt-1 opacity-80">جرّب في البوت: /summary أو /late</div>
-            </div>
-            <div className="flex gap-2">
-              <button onClick={testTelegram} disabled={testing} className="btn btn-ghost text-sm">{testing ? "..." : "رسالة تجريبية"}</button>
-              <button onClick={unlink} className="text-sm text-late underline">فكّ الربط</button>
-            </div>
-          </div>
-        )}
-
-        {/* حدود الحالات — كل مكتب يختار ما يناسب أسلوبه */}
-        <div className="border border-line rounded-xl p-3 bg-paper mb-3">
-          <div className="text-sm font-bold text-deep mb-2">متى يُعدّ الاستحقاق «قريبًا» ومتى يُعدّ المستأجر «متأخرًا»</div>
-          <div className="grid sm:grid-cols-3 gap-3">
-            <label className="block">
-              <span className="block text-sm font-semibold mb-1"><span className="inline-block w-2.5 h-2.5 rounded-full bg-gold me-1" />«قريب» — قبل الاستحقاق بـ</span>
-              <input className="fld" type="number" min={1} max={60} value={p.due_soon_days ?? 10} onChange={(e) => setP({ ...p, due_soon_days: e.target.value })} />
-              <span className="block text-[11px] text-muted mt-1">للمتابعة الهادئة.</span>
-            </label>
-            <label className="block">
-              <span className="block text-sm font-semibold mb-1"><span className="inline-block w-2.5 h-2.5 rounded-full bg-[#DC2626] me-1" />«ينتهي قريبًا» — قبل انتهاء العقد بـ</span>
-              <input className="fld" type="number" min={1} max={180} value={p.expiring_days ?? 60} onChange={(e) => setP({ ...p, expiring_days: e.target.value })} />
-              <span className="block text-[11px] text-muted mt-1">يظهر بالأحمر في فلتر «تجديد». مثلًا 49 يومًا.</span>
-            </label>
-            <label className="block">
-              <span className="block text-sm font-semibold mb-1"><span className="inline-block w-2.5 h-2.5 rounded-full bg-[#D97706] me-1" />«مستحق» — قبل الاستحقاق بـ</span>
-              <input className="fld" type="number" min={1} max={60} value={p.due_imminent_days ?? 5} onChange={(e) => setP({ ...p, due_imminent_days: e.target.value })} />
-              <span className="block text-[11px] text-muted mt-1">وقت التذكير. يجب أن تكون أقل من «قريب».</span>
-            </label>
-          </div>
-          <div className="text-sm text-muted leading-relaxed mt-3">
-            <b className="text-deep">النمط:</b> منتظم ← <span className="text-gold font-semibold">قريب</span> ← <span className="text-[#9A4B00] font-semibold">مستحق</span> ← يستحق اليوم ← <span className="text-late font-semibold">متأخر</span> (من اليوم التالي).
-            هذه إعدادات كل عقاراتك، ويمكن لأي عقار تجاوزها من إعداداته الخاصة. وإن أردت مهلة بعد الاستحقاق حدّد «فترة السماح» في إعدادات العقار.
-          </div>
-        </div>
-
-        <div className="grid sm:grid-cols-2 gap-3">
-          <label className="block">
-            <span className="block text-sm font-semibold mb-1">تنبيه تليجرام قبل الاستحقاق بـ</span>
-            <select className="fld" value={p.notify_days_before ?? 5}
-              onChange={(e) => setP({ ...p, notify_days_before: e.target.value })}>
-              {/* «1 أيام» و«14 أيام» خطأ: العربية تفرّق بين المفرد والمثنى و3–10
-                  و11 فأكثر. القاعدة مطبَّقة هنا كما في بقية الواجهة. */}
-              {[1, 2, 3, 5, 7, 10, 14].map((d) => (
-                <option key={d} value={d}>
-                  {d === 1 ? "يوم واحد" : d === 2 ? "يومين" : d <= 10 ? `${d} أيام` : `${d} يومًا`}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="flex items-center gap-2 mt-6">
-            <input type="checkbox" className="w-4 h-4" checked={p.notify_enabled ?? true}
-              onChange={(e) => setP({ ...p, notify_enabled: e.target.checked })} />
-            <span className="text-sm font-semibold">تفعيل الملخّص اليومي</span>
-          </label>
-        </div>
-      </section>
-
-      {/* (v82) بنود إشعار انتهاء العقد — من خطاب مكتب «الأولى» الورقي */}
-      <section className="bg-white border border-line rounded-2xl p-6 mb-5">
-        <h2 className="font-semibold text-deep text-lg mb-1">📅 إشعار انتهاء العقد</h2>
-        <p className="text-sm text-muted mb-4">بنود اختيارية تُضاف إلى رسالة «إشعار انتهاء العقد» التي تُرسل للمستأجر واتساب. ما تتركه فارغًا لا يظهر في الرسالة.</p>
-        <div className="grid sm:grid-cols-3 gap-3">
-          <label className="block">
-            <span className="block text-sm font-semibold mb-1">رسوم إدارية عند التجديد (ريال)</span>
-            <input className="fld" type="number" min={0} value={p.notice_admin_fee ?? ""} onChange={(e) => setP({ ...p, notice_admin_fee: e.target.value })} placeholder="مثال: 500" />
-          </label>
-          <label className="block">
-            <span className="block text-sm font-semibold mb-1">أجرة يومية بعد نهاية العقد (ريال)</span>
-            <input className="fld" type="number" min={0} value={p.notice_daily_rent ?? ""} onChange={(e) => setP({ ...p, notice_daily_rent: e.target.value })} placeholder="مثال: 200" />
-            <span className="block text-[11px] text-muted mt-1">تُحتسب عن كل يوم تأخير في الإخلاء حتى تسليم المفاتيح.</span>
-          </label>
-          <label className="block">
-            <span className="block text-sm font-semibold mb-1">رقم المادة في العقد <span className="text-muted text-xs font-normal">— اختياري</span></span>
-            <input className="fld" dir="ltr" maxLength={40} value={p.notice_daily_article ?? ""} onChange={(e) => setP({ ...p, notice_daily_article: e.target.value })} placeholder="مثال: 12/3" />
-          </label>
-        </div>
-        <div className="grid sm:grid-cols-2 gap-3 mt-3">
-          <label className="flex items-center gap-2">
-            <input type="checkbox" className="w-4 h-4" checked={!!p.notice_no_renew_arrears} onChange={(e) => setP({ ...p, notice_no_renew_arrears: e.target.checked })} />
-            <span className="text-sm font-semibold">ذكر أن التجديد لا يتم مع وجود متأخرات</span>
-          </label>
-          <label className="flex items-center gap-2">
-            <input type="checkbox" className="w-4 h-4" checked={!!p.notice_show_rent} onChange={(e) => setP({ ...p, notice_show_rent: e.target.checked })} />
-            <span className="text-sm font-semibold">ذكر قيمة الإيجار السنوي الحالي عند التجديد</span>
-          </label>
-        </div>
-      </section>
-
-      {/* (v100) هوية المكتب في ترويسة اللوحة */}
       <section className="bg-white border border-line rounded-2xl p-6 mb-5">
         <h2 className="font-semibold text-deep text-lg mb-1">🏷️ هوية المكتب</h2>
         <p className="text-sm text-muted mb-4">شعار مكتبك ولونه على كل مستند تُصدره: سندات القبض والفواتير وكشوف الحساب وتقارير المالك. بلا شعار يظهر أول حرف من اسم مكتبك. الاسم يُؤخذ من «اسم المنشأة» في بيانات الفوترة.</p>
@@ -426,8 +310,176 @@ export default function SettingsView({ profile }: { profile: any }) {
           <span className="block text-xs text-late mt-2">اكتب «اسم المنشأة» في بيانات الفوترة تحت — هو الاسم اللي يظهر.</span>
         )}
       </section>
+      </>)}
 
-      {/* بيانات الفوترة */}
+      {tab === "contracts" && (<>
+      <section className="bg-white border border-line rounded-2xl p-5 mb-5">
+        <h2 className="font-semibold text-deep text-lg mb-1">🗓️ تقويم العقود</h2>
+        <p className="text-xs text-muted mb-3 leading-relaxed">
+          التقويم الذي تُحسب به أقساط عقودك. المكتب الذي عقوده هجرية يضبطه مرة هنا فترثه
+          كل الوحدات الجديدة — والفرق ليس شكليًّا: السنة الهجرية 354 يومًا والميلادية 365،
+          فالخطأ يزحف بالاستحقاق 11 يومًا كل سنة.
+        </p>
+        <div className="inline-flex border border-line rounded-lg p-0.5 text-sm">
+          {(["hijri", "gregorian"] as const).map((c) => (
+            <button key={c} type="button" onClick={() => setP({ ...p, default_calendar: c })}
+              className={`px-4 py-1.5 rounded-md ${(p.default_calendar || "gregorian") === c ? "bg-deep text-goldSoft" : "text-muted hover:text-deep"}`}>
+              {c === "hijri" ? "هجري" : "ميلادي"}
+            </button>
+          ))}
+        </div>
+        <p className="text-[11px] text-muted mt-2">
+          يمكن تغييره لأي وحدة على حدة من بطاقتها — هذا الافتراضي فقط.
+        </p>
+      </section>
+      <section className="bg-white border border-line rounded-2xl p-6 mb-5">
+        <h2 className="font-semibold text-deep text-lg mb-3">⏱️ حالات الاستحقاق</h2>
+        {/* حدود الحالات — كل مكتب يختار ما يناسب أسلوبه */}
+        <div>
+          <div className="text-sm font-bold text-deep mb-2">متى يُعدّ الاستحقاق «قريبًا» ومتى يُعدّ المستأجر «متأخرًا»</div>
+          <div className="grid sm:grid-cols-3 gap-3">
+            <label className="block">
+              <span className="block text-sm font-semibold mb-1"><span className="inline-block w-2.5 h-2.5 rounded-full bg-gold me-1" />«قريب» — قبل الاستحقاق بـ</span>
+              <input className="fld" type="number" min={1} max={60} value={p.due_soon_days ?? 10} onChange={(e) => setP({ ...p, due_soon_days: e.target.value })} />
+              <span className="block text-[11px] text-muted mt-1">للمتابعة الهادئة.</span>
+            </label>
+            <label className="block">
+              <span className="block text-sm font-semibold mb-1"><span className="inline-block w-2.5 h-2.5 rounded-full bg-[#DC2626] me-1" />«ينتهي قريبًا» — قبل انتهاء العقد بـ</span>
+              <input className="fld" type="number" min={1} max={180} value={p.expiring_days ?? 60} onChange={(e) => setP({ ...p, expiring_days: e.target.value })} />
+              <span className="block text-[11px] text-muted mt-1">يظهر بالأحمر في فلتر «تجديد». مثلًا 49 يومًا.</span>
+            </label>
+            <label className="block">
+              <span className="block text-sm font-semibold mb-1"><span className="inline-block w-2.5 h-2.5 rounded-full bg-[#D97706] me-1" />«مستحق» — قبل الاستحقاق بـ</span>
+              <input className="fld" type="number" min={1} max={60} value={p.due_imminent_days ?? 5} onChange={(e) => setP({ ...p, due_imminent_days: e.target.value })} />
+              <span className="block text-[11px] text-muted mt-1">وقت التذكير. يجب أن تكون أقل من «قريب».</span>
+            </label>
+          </div>
+          <div className="text-sm text-muted leading-relaxed mt-3">
+            <b className="text-deep">النمط:</b> منتظم ← <span className="text-gold font-semibold">قريب</span> ← <span className="text-[#9A4B00] font-semibold">مستحق</span> ← يستحق اليوم ← <span className="text-late font-semibold">متأخر</span> (من اليوم التالي).
+            هذه إعدادات كل عقاراتك، ويمكن لأي عقار تجاوزها من إعداداته الخاصة. وإن أردت مهلة بعد الاستحقاق حدّد «فترة السماح» في إعدادات العقار.
+          </div>
+        </div>
+      </section>
+      <section className="bg-white border border-line rounded-2xl p-6 mb-5">
+        <h2 className="font-semibold text-deep text-lg mb-1">📅 إشعار انتهاء العقد</h2>
+        <p className="text-sm text-muted mb-4">بنود اختيارية تُضاف إلى رسالة «إشعار انتهاء العقد» التي تُرسل للمستأجر واتساب. ما تتركه فارغًا لا يظهر في الرسالة.</p>
+        <div className="grid sm:grid-cols-3 gap-3">
+          <label className="block">
+            <span className="block text-sm font-semibold mb-1">رسوم إدارية عند التجديد (ريال)</span>
+            <input className="fld" type="number" min={0} value={p.notice_admin_fee ?? ""} onChange={(e) => setP({ ...p, notice_admin_fee: e.target.value })} placeholder="مثال: 500" />
+          </label>
+          <label className="block">
+            <span className="block text-sm font-semibold mb-1">أجرة يومية بعد نهاية العقد (ريال)</span>
+            <input className="fld" type="number" min={0} value={p.notice_daily_rent ?? ""} onChange={(e) => setP({ ...p, notice_daily_rent: e.target.value })} placeholder="مثال: 200" />
+            <span className="block text-[11px] text-muted mt-1">تُحتسب عن كل يوم تأخير في الإخلاء حتى تسليم المفاتيح.</span>
+          </label>
+          <label className="block">
+            <span className="block text-sm font-semibold mb-1">رقم المادة في العقد <span className="text-muted text-xs font-normal">— اختياري</span></span>
+            <input className="fld" dir="ltr" maxLength={40} value={p.notice_daily_article ?? ""} onChange={(e) => setP({ ...p, notice_daily_article: e.target.value })} placeholder="مثال: 12/3" />
+          </label>
+        </div>
+        <div className="grid sm:grid-cols-2 gap-3 mt-3">
+          <label className="flex items-center gap-2">
+            <input type="checkbox" className="w-4 h-4" checked={!!p.notice_no_renew_arrears} onChange={(e) => setP({ ...p, notice_no_renew_arrears: e.target.checked })} />
+            <span className="text-sm font-semibold">ذكر أن التجديد لا يتم مع وجود متأخرات</span>
+          </label>
+          <label className="flex items-center gap-2">
+            <input type="checkbox" className="w-4 h-4" checked={!!p.notice_show_rent} onChange={(e) => setP({ ...p, notice_show_rent: e.target.checked })} />
+            <span className="text-sm font-semibold">ذكر قيمة الإيجار السنوي الحالي عند التجديد</span>
+          </label>
+        </div>
+      </section>
+      </>)}
+
+      {tab === "alerts" && (<>
+      <section className="bg-white border border-line rounded-2xl p-6 mb-5">
+        <div className="flex items-start justify-between gap-3 flex-wrap mb-1">
+          <h2 className="font-semibold text-deep text-lg">📨 بوت تليجرام</h2>
+          {p.telegram_chat_id ? (
+            <span className="text-xs font-bold bg-[#E6F4EC] text-[#137a50] border border-[#B7DFC7] rounded-full px-3 py-1">✓ مربوط</span>
+          ) : (
+            <span className="text-xs font-bold bg-[#FBF1DF] text-[#8a5a11] border border-[#EBD9AA] rounded-full px-3 py-1">غير مربوط</span>
+          )}
+        </div>
+        <p className="text-sm text-muted mb-4">
+          ملخّص إداري يومي على تليجرام: المستحقات القريبة، المتأخرات، والعقود المنتهية.
+          <b> التنبيهات لك وحدك</b> — رسائل المستأجرين تبقى عبر واتساب منك مباشرة.
+        </p>
+
+        {!p.telegram_chat_id ? (
+          <div className="bg-paper border border-line rounded-xl p-5 mb-4">
+            <div className="font-semibold text-deep mb-3">اربط حسابك في خطوتين</div>
+
+            <div className="flex gap-3 mb-4">
+              <span className="w-7 h-7 rounded-lg bg-gold text-white grid place-items-center font-bold text-sm shrink-0">1</span>
+              <div className="flex-1">
+                <div className="text-sm font-semibold mb-2">افتح البوت واضغط Start</div>
+                <a href={`https://t.me/${BOT_USERNAME}`} target="_blank" rel="noreferrer"
+                   className="btn text-sm" style={{ background: "#176E9E", color: "#fff" }}>
+                  فتح @{BOT_USERNAME}
+                </a>
+              </div>
+            </div>
+
+            <div className="flex gap-3">
+              <span className="w-7 h-7 rounded-lg bg-gold text-white grid place-items-center font-bold text-sm shrink-0">2</span>
+              <div className="flex-1">
+                <div className="text-sm font-semibold mb-2">أرسل له هذا الأمر</div>
+                <div className="flex gap-2 items-center flex-wrap">
+                  <code className="bg-deep text-goldSoft px-4 py-2.5 rounded-lg font-mono text-base tracking-wider select-all">
+                    /link {p.telegram_link_code || "……"}
+                  </code>
+                  <button onClick={copyCode} className="btn btn-ghost text-sm">{copied ? "✓ نُسخ" : "نسخ"}</button>
+                  <button onClick={regen} className="text-xs text-muted underline hover:text-deep">رمز جديد</button>
+                </div>
+                <p className="text-xs text-muted mt-2 leading-relaxed">
+                  سيردّ عليك البوت بتأكيد الربط فورًا، ثم حدّث هذه الصفحة.
+                  {/* البوت يقبل الرمز بأي صيغة — نقولها لأن من يفشل مرة يظن أن الرمز خاطئ */}
+                  <br />وإن لم يردّ: أرسل <b className="text-deep">الرمز وحده</b> بلا كلمة /link — كلاهما يعمل.
+                  وتأكد أنك في محادثة <b className="text-deep">@Watheqapp_bot</b> لا في مجموعة.
+                </p>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="bg-[#E6F4EC] border border-[#B7DFC7] rounded-xl p-4 mb-4 flex items-center justify-between gap-3 flex-wrap">
+            <div className="text-sm text-[#137a50]">
+              <b>حسابك مربوط بتليجرام</b>
+              {p.telegram_username ? ` — @${p.telegram_username}` : ""}
+              <div className="text-xs mt-1 opacity-80">جرّب في البوت: /summary أو /late</div>
+            </div>
+            <div className="flex gap-2">
+              <button onClick={testTelegram} disabled={testing} className="btn btn-ghost text-sm">{testing ? "..." : "رسالة تجريبية"}</button>
+              <button onClick={unlink} className="text-sm text-late underline">فكّ الربط</button>
+            </div>
+          </div>
+        )}
+
+
+        <div className="grid sm:grid-cols-2 gap-3">
+          <label className="block">
+            <span className="block text-sm font-semibold mb-1">تنبيه تليجرام قبل الاستحقاق بـ</span>
+            <select className="fld" value={p.notify_days_before ?? 5}
+              onChange={(e) => setP({ ...p, notify_days_before: e.target.value })}>
+              {/* «1 أيام» و«14 أيام» خطأ: العربية تفرّق بين المفرد والمثنى و3–10
+                  و11 فأكثر. القاعدة مطبَّقة هنا كما في بقية الواجهة. */}
+              {[1, 2, 3, 5, 7, 10, 14].map((d) => (
+                <option key={d} value={d}>
+                  {d === 1 ? "يوم واحد" : d === 2 ? "يومين" : d <= 10 ? `${d} أيام` : `${d} يومًا`}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="flex items-center gap-2 mt-6">
+            <input type="checkbox" className="w-4 h-4" checked={p.notify_enabled ?? true}
+              onChange={(e) => setP({ ...p, notify_enabled: e.target.checked })} />
+            <span className="text-sm font-semibold">تفعيل الملخّص اليومي</span>
+          </label>
+        </div>
+      </section>
+      </>)}
+
+      {tab === "billing" && (<>
       <section className="bg-white border border-line rounded-2xl p-6 mb-5">
         <h2 className="font-semibold text-deep text-lg mb-1">🧾 بيانات الفوترة</h2>
         <p className="text-sm text-muted mb-4">تظهر في كشوف الحساب والفواتير التي تُصدرها.</p>
@@ -473,14 +525,41 @@ export default function SettingsView({ profile }: { profile: any }) {
           </label>
         </div>
       </section>
+      </>)}
 
-      <div className="mb-6"><TeamSection /></div>
-      <div className="mb-6"><ExportData /></div>
-      <div className="mb-6"><DeleteAccount /></div>
+      {tab === "team" && <div className="mb-6"><TeamSection /></div>}
 
-      <button onClick={save} disabled={saving} className="btn btn-gold w-full justify-center">
-        {saving ? "..." : "حفظ الإعدادات"}
-      </button>
+      {tab === "subscription" && (
+        <section className="bg-white border border-line rounded-2xl p-6 mb-5">
+          <h2 className="font-semibold text-deep text-lg mb-3">💳 الاشتراك</h2>
+          <div className="grid sm:grid-cols-2 gap-3 text-sm">
+            <div className="bg-paper border border-line rounded-xl p-3"><div className="text-xs text-muted mb-1">الحالة</div>
+              <div className={`font-semibold ${sub.expired ? "text-late" : sub.grace || sub.kind === "paid_soon" ? "text-[#9A4B00]" : "text-[#137a50]"}`}>
+                {sub.paid && !sub.grace ? `مشترك — ${planName}` : sub.grace ? `انتهى — مهلة ${sub.graceDaysLeft} أيام` : sub.trial ? "فترة تجربة" : "منتهٍ"}
+              </div></div>
+            <div className="bg-paper border border-line rounded-xl p-3"><div className="text-xs text-muted mb-1">{sub.trial ? "تنتهي التجربة" : "ينتهي الاشتراك"}</div>
+              <div className="font-semibold text-deep">{fmtD(sub.trial ? profile?.trial_ends_at : profile?.subscribed_until)}</div>
+              {left !== null && left >= 0 && <div className="text-[11px] text-muted mt-0.5">بقي {left} يومًا</div>}
+            </div>
+          </div>
+          <div className="flex gap-2 flex-wrap mt-4">
+            <Link href="/subscribe" className="btn btn-gold text-sm">{sub.paid && !sub.grace ? "التجديد والباقات" : "اشترك الآن"}</Link>
+            <a href="https://wa.me/966550165210" target="_blank" rel="noreferrer" className="btn btn-wa text-sm">💬 تواصل معنا</a>
+          </div>
+          <p className="text-[11px] text-muted mt-3">فاتورة اشتراكك تصلك على واتساب بعد كل تجديد.</p>
+        </section>
+      )}
+
+      {tab === "data" && (<>
+        <div className="mb-6"><ExportData /></div>
+        <div className="mb-6 border-2 border-[#F5C6C2] rounded-2xl p-1"><div className="text-xs font-bold text-late px-4 pt-3">⚠️ منطقة خطر</div><DeleteAccount /></div>
+      </>)}
+
+      {editable && (
+        <button onClick={save} disabled={saving} className="btn btn-gold w-full justify-center">
+          {saving ? "..." : "حفظ الإعدادات"}
+        </button>
+      )}
 
       {dirty && !saving && (
         <div className="fixed inset-x-0 bottom-0 z-40 bg-deep text-[#EAF1EE] border-t border-goldSoft/30 shadow-2xl"
@@ -499,3 +578,52 @@ export default function SettingsView({ profile }: { profile: any }) {
     </div>
   );
 }
+
+/* (28 نوفمبر) تغيير كلمة المرور من داخل الحساب — كان متاحًا فقط عبر «نسيت كلمة المرور» ورابط البريد */
+function PasswordSection({ onMsg }: { onMsg: (m: { t: "ok" | "err"; m: string } | null) => void }) {
+  const supabase = createClient();
+  const [a, setA] = useState("");
+  const [b, setB] = useState("");
+  const [show, setShow] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const err = a && a.length < 8 ? "8 أحرف على الأقل." : b && a !== b ? "التأكيد لا يطابق كلمة المرور." : "";
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!a || err) return;
+    setBusy(true); onMsg(null);
+    const { error } = await supabase.auth.updateUser({ password: a });
+    setBusy(false);
+    if (error) {
+      const m = String(error.message || "");
+      onMsg({ t: "err", m: /different from the old|same.*password/i.test(m) ? "كلمة المرور الجديدة لازم تختلف عن الحالية."
+        : /reauthenticat|recent login|session/i.test(m) ? "لأمان حسابك: سجّل خروج وادخل من جديد، ثم غيّر كلمة المرور خلال دقائق."
+        : /weak|should be at least|characters/i.test(m) ? "كلمة المرور ضعيفة — استعمل 8 أحرف على الأقل فيها أرقام وحروف."
+        : friendlyError(m) });
+      return;
+    }
+    setA(""); setB("");
+    onMsg({ t: "ok", m: "تم تغيير كلمة المرور ✓ — استعملها في دخولك القادم." });
+  }
+  return (
+    <section className="bg-white border border-line rounded-2xl p-6 mb-5">
+      <h2 className="font-semibold text-deep text-lg mb-1">🔒 تغيير كلمة المرور</h2>
+      <p className="text-sm text-muted mb-4">إن كنت تدخل بحساب قوقل فقط، تقدر تضيف كلمة مرور هنا وتدخل بالطريقتين.</p>
+      <form onSubmit={submit} className="space-y-3">
+        <label className="block">
+          <span className="block text-sm font-semibold mb-1">كلمة المرور الجديدة</span>
+          <div className="relative">
+            <input className="fld !pr-16" type={show ? "text" : "password"} autoComplete="new-password" dir="ltr" value={a} onChange={(e) => setA(e.target.value)} />
+            <button type="button" onClick={() => setShow(!show)} className="absolute inset-y-0 right-0 px-3 text-xs text-muted hover:text-deep min-w-[44px]" aria-label={show ? "إخفاء كلمة المرور" : "إظهار كلمة المرور"}>{show ? "إخفاء" : "إظهار"}</button>
+          </div>
+        </label>
+        <label className="block">
+          <span className="block text-sm font-semibold mb-1">تأكيدها</span>
+          <input className="fld" type={show ? "text" : "password"} autoComplete="new-password" dir="ltr" value={b} onChange={(e) => setB(e.target.value)} />
+        </label>
+        {err && <p className="text-xs text-late">{err}</p>}
+        <button type="submit" disabled={busy || !a || !b || !!err} className="btn btn-gold text-sm disabled:opacity-50">{busy ? "..." : "تغيير كلمة المرور"}</button>
+      </form>
+    </section>
+  );
+}
+
