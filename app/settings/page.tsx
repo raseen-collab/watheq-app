@@ -1,7 +1,7 @@
 import { createClient } from "@/lib/supabase-server";
 import { redirect } from "next/navigation";
 import Link from "next/link";
-import SettingsView from "@/components/SettingsView";
+import SettingsView, { StaffAccount } from "@/components/SettingsView";
 import { getOffice } from "@/lib/office";
 
 export const metadata = { title: "الإعدادات — وثيق" };
@@ -36,6 +36,8 @@ export default async function SettingsPage() {
           </p>
           <Link href="/dashboard/property" className="btn btn-gold">← العودة إلى اللوحة</Link>
         </div>
+        {/* (28 نوفمبر) حساب الموظف نفسه: بريده وتغيير كلمة مروره */}
+        <div className="text-right mt-6"><StaffAccount /></div>
       </main>
     );
   }
