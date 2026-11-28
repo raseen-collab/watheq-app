@@ -44,6 +44,6 @@ t("statement total paid 8,500", /إجمالي المسدَّد من العقد<\
 const ten2 = { ...ten, paid_periods: 2, partial_amount: 0 };
 const h2 = D.statementHTML(ten2, { ...P, tenants: [ten2] }, {}, sp, "full");
 t("no opening line when receipts cover", !/مسدَّد قبل بدء التسجيل/.test(h2));
-t("carried payment labelled in statement", /سداد دين مرحَّل/.test(h));
+t("carried payment labelled in statement", /سداد متأخرات سابقة/.test(h));
 console.log(`collection-recon: ${ok} ✓  ${bad} ✗`);
 process.exit(bad ? 1 : 0);

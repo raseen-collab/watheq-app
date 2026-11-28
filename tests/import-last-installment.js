@@ -28,7 +28,7 @@ const H2 = ["اسم المستأجر", "رقم الوحدة", "قيمة الدف
 r = P.parseGrid([H2, ["ع", "4", "1667", "شهري", "2026-01-01", "12", "1663"]], props, "2026-11-25", { rentBasis: "payment" }).rows[0];
 t("explicit column 1663", r.rent_amount === 1667 && r.last_installment === 1663, `${r.rent_amount}/${r.last_installment}`);
 r = P.parseGrid([H2, ["ع", "4", "1667", "شهري", "2026-01-01", "12", "abc"]], props, "2026-11-25", { rentBasis: "payment" }).rows[0];
-t("bad explicit → error", /القسط الأخير/.test(r._error || ""));
+t("bad explicit → error", /دفعة الإيجار الأخيرة/.test(r._error || ""));
 /* ز) الحمولة: المفتاح ثابت في كل الصفوف */
 const rows = parse([["هيثم", "1", "20000", "شهري", "2026-01-01", "12", "0"], ["س", "3", "24000", "شهري", "2026-01-01", "12", "0"]], o);
 const { main } = Pay.buildImportPayload(rows, "p1", { today: "2026-11-25" });

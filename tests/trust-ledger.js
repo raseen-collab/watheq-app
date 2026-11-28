@@ -58,7 +58,7 @@ t("bad kind error", c.errors.length >= 1);
 const issuer = { billing_name: "مكتب الأولى لإدارة الأملاك" };
 const prop = { name: "مركز الزهراء", property_type: "residential" };
 const hin = D.trustDocHTML({ ...rows[0], doc_no: "TR-00007", party: "سعد <b>x</b>", method: "cash" }, prop, issuer, { unit: "101", unit_type: "showroom", name: "سعد" });
-t("TR doc title", hin.includes("سند قبض تأمين") && hin.includes("TR-00007"));
+t("TR doc title", hin.includes("سند قبض مبلغ ضمان") && hin.includes("TR-00007"));
 t("showroom word in doc", hin.includes("معرض 101") && !hin.includes("شقة 101"));
 t("amount words", /ثلاثة آلاف/.test(hin));
 t("not rent note", hin.includes("ليس إيجارًا"));

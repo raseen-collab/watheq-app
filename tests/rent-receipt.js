@@ -23,7 +23,7 @@ t("not reversed", !h.includes("معكوس"));
 const h2 = D.receiptHTML({ ...pay, reversed_on: "2026-11-15T10:00:00Z" }, ten, prop, issuer);
 t("reversed stamp", h2.includes("معكوس — أُلغيت هذه الدفعة") && h2.includes("سند معكوس"));
 const h3 = D.receiptHTML({ ...pay, applies_to: "carried", periods_covered: 0 }, ten, prop, {});
-t("carried statement + default issuer", h3.includes("سداد دين مرحَّل") && h3.includes("إدارة الأملاك"));
+t("carried statement + default issuer", h3.includes("سداد متأخرات") && h3.includes("إدارة الأملاك"));
 const h4 = D.receiptHTML({ ...pay, periods_covered: 0, applies_to: "rent" }, ten, prop, issuer);
 t("partial statement", h4.includes("دفعة جزئية"));
 t("no receipt no → dash, no crash", D.receiptHTML({ ...pay, receipt_no: null }, ten, prop, issuer).includes("—"));
