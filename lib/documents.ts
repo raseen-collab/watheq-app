@@ -1902,6 +1902,13 @@ ${footer(issuer)}`;
  * يُعرض المستند داخل التطبيق نفسه في طبقة ملء الشاشة، فلا يعتمد على إذن.
  */
 export function openDoc(html: string) {
+  /* (28 نوفمبر — التقييم الرابع) على الجوال أو التطبيق المثبَّت يُعرض داخل التطبيق مباشرة:
+     التبويب الجديد كان يُخرج المستخدم من مكانه، والرجوع يعيد تحميل اللوحة. الحاسب كما كان. */
+  try {
+    const narrow = window.matchMedia("(max-width: 767px)").matches
+      || window.matchMedia("(display-mode: standalone)").matches;
+    if (narrow) { showDocInline(html); return; }
+  } catch { /* نكمل */ }
   try {
     const w = window.open("", "_blank");
     if (w && w.document) {
@@ -1925,6 +1932,9 @@ function showDocInline(html: string) {
   const overlay = document.createElement("div");
   overlay.id = "watheq-doc-overlay";
   overlay.setAttribute("dir", "rtl");
+  overlay.setAttribute("role", "dialog");
+  overlay.setAttribute("aria-modal", "true");
+  overlay.setAttribute("aria-label", "مستند وثيق");
   overlay.style.cssText =
     "position:fixed;inset:0;z-index:99999;background:#F6F1E4;display:flex;flex-direction:column";
 
@@ -1939,12 +1949,13 @@ function showDocInline(html: string) {
     b.style.cssText =
       `appearance:none;border:0;border-radius:10px;padding:10px 16px;font-size:15px;` +
       `font-weight:700;cursor:pointer;background:${bg};color:${color};` +
-      `font-family:inherit`;
+      `font-family:inherit;min-height:44px`;
     return b;
   };
 
   const printBtn = mkBtn("🖨️ طباعة / حفظ PDF", "#E7C877", "#0E3A37");
-  const closeBtn = mkBtn("إغلاق", "transparent", "#F6F1E4");
+  const closeBtn = mkBtn("✕ إغلاق", "transparent", "#F6F1E4");
+  closeBtn.setAttribute("aria-label", "إغلاق المستند والعودة");
   closeBtn.style.border = "1px solid rgba(246,241,228,.45)";
 
   const frame = document.createElement("iframe");
@@ -1959,7 +1970,21 @@ function showDocInline(html: string) {
       window.print();
     }
   };
-  closeBtn.onclick = () => overlay.remove();
+  /* قفل تمرير الصفحة خلف المستند، والإغلاق بزر Esc أو «رجوع» المتصفح يُعيد المستخدم لمكانه */
+  const prevOverflow = document.body.style.overflow;
+  document.body.style.overflow = "hidden";
+  const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") close(); };
+  const onPop = () => close(true);
+  function close(fromPop = false) {
+    overlay.remove();
+    document.body.style.overflow = prevOverflow;
+    window.removeEventListener("keydown", onKey);
+    window.removeEventListener("popstate", onPop);
+    if (!fromPop) { try { if (history.state && (history.state as any).watheqDoc) history.back(); } catch { /* */ } }
+  }
+  window.addEventListener("keydown", onKey);
+  try { history.pushState({ ...(history.state || {}), watheqDoc: 1 }, ""); window.addEventListener("popstate", onPop); } catch { /* */ }
+  closeBtn.onclick = () => close();
 
   bar.appendChild(printBtn);
   bar.appendChild(closeBtn);
@@ -1967,6 +1992,17 @@ function showDocInline(html: string) {
   overlay.appendChild(frame);
   document.body.appendChild(overlay);
 
+  /* شريط المستند الداخلي له «طباعة» و«إغلاق» (window.close لا يعمل داخل الإطار) —
+     نخفيهما لأن الشريط العلوي يؤديهما، ونُبقي زر اللغة إن وُجد. */
+  frame.onload = () => {
+    try {
+      const d = frame.contentDocument;
+      if (!d) return;
+      ["wq-print", "wq-close"].forEach((id) => { const el = d.getElementById(id); if (el) (el as HTMLElement).style.display = "none"; });
+      const bar = d.querySelector(".noprint") as HTMLElement | null;
+      if (bar && !d.getElementById("wq-lang")) bar.style.display = "none";
+    } catch { /* لا شيء */ }
+  };
   // srcdoc بدل document.write: يعمل في كل المتصفحات ولا يحتاج إذنًا
   frame.srcdoc = html;
 }
